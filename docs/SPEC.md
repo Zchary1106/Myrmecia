@@ -397,7 +397,259 @@ interface Notification {
 - [ ] Task history & replay
 - [ ] Dark/light theme
 
-## 10. Non-Functional Requirements
+## 10. Advanced Features (v2+)
+
+### 10.1 Multi-Model Agent Support
+Different agents can use different LLM backends based on task requirements:
+
+```typescript
+interface AgentModelConfig {
+  provider: 'claude' | 'openai' | 'openrouter' | 'local'
+  model: string           // e.g. 'claude-opus-4-20250514', 'gpt-4o', 'deepseek-coder'
+  fallback?: string       // fallback model if primary fails
+  temperature?: number
+  maxTokens?: number
+}
+
+// Recommended defaults:
+// PM / Review Agent  → Claude Opus (deep reasoning)
+// Dev Agent          → Claude Sonnet (speed + quality)
+// QA Agent           → cheaper model (structured output)
+// UI Agent           → Claude Sonnet or GPT-4o (visual reasoning)
+```
+
+### 10.2 Agent-to-Agent Communication
+Direct messaging channel between agents for iterative collaboration:
+
+```typescript
+interface AgentMessage {
+  id: string
+  from: string            // agent id
+  to: string              // agent id
+  type: 'question' | 'feedback' | 'handoff' | 'context'
+  content: string
+  taskId: string          // related task
+  replyTo?: string        // message id
+  timestamp: Date
+}
+
+// Example flow:
+// QA Agent → Dev Agent: "Test X fails, looks like null check missing in auth.ts:42"
+// Dev Agent → QA Agent: "Fixed, re-run tests please"
+// QA Agent → Orchestrator: "All tests pass now"
+```
+
+Dashboard shows agent conversations in a chat-style view per task.
+
+### 10.3 Shared Project Context
+Automatic context injection so all agents stay aligned:
+
+```
+.agent-factory/
+└── shared/
+    ├── project-context.md    # Auto-generated: repo structure, tech stack, conventions
+    ├── decisions.md          # Append-only decision log
+    ├── conventions.md        # Code style, naming, patterns
+    └── known-issues.md       # Known bugs, limitations
+```
+
+Every agent prompt automatically includes relevant shared context. Agents can write to `decisions.md` and `known-issues.md` to share learnings.
+
+### 10.4 Cost Tracking & Budget Control
+
+```typescript
+interface CostTracker {
+  // Per-task tracking
+  taskCost: {
+    taskId: string
+    inputTokens: number
+    outputTokens: number
+    estimatedCost: number   // USD
+    model: string
+  }
+  
+  // Budget controls
+  budget: {
+    daily: number           // max daily spend (USD)
+    perTask: number         // max per task
+    perPipeline: number     // max per pipeline
+    warningThreshold: 0.8   // warn at 80%
+  }
+  
+  // Actions on budget exceed
+  onBudgetExceed: 'pause' | 'notify' | 'downgrade-model' | 'reject'
+}
+```
+
+Dashboard shows:
+- Real-time cost per task, agent, pipeline
+- Daily/weekly/monthly burn rate charts
+- Cost per completed feature (pipeline total)
+- Model cost comparison (which model is most cost-effective)
+
+### 10.5 Human-in-the-Loop (Advanced)
+Beyond simple gate approval — rich interactive collaboration:
+
+```typescript
+interface HumanInteraction {
+  type: 'question'         // Agent asks user a question
+      | 'review'           // Agent requests review of output
+      | 'choice'           // Agent presents options for user to pick
+      | 'correction'       // User pushes a mid-task correction
+      | 'redirect'         // User changes task direction entirely
+  
+  // Agent → Human
+  question?: {
+    text: string
+    options?: string[]     // optional multiple choice
+    context: string        // why the agent is asking
+    blocking: boolean      // task paused until answered?
+  }
+  
+  // Human → Agent (mid-task injection)
+  injection?: {
+    text: string           // "change approach: use GraphQL instead of REST"
+    priority: 'suggestion' | 'override'  // suggestion = agent decides; override = must follow
+  }
+}
+```
+
+### 10.6 Priority Queue & Task Preemption
+
+```typescript
+interface TaskPriority {
+  level: 'low' | 'normal' | 'high' | 'urgent'
+  
+  // Urgent tasks can preempt running tasks:
+  // 1. Current task is suspended (state saved)
+  // 2. Urgent task runs on the agent
+  // 3. After urgent completes, suspended task resumes
+  preemptible: boolean    // can this task be preempted?
+  preempts: boolean       // can this task preempt others?
+}
+
+// Queue ordering: urgent > high > normal > low
+// Within same priority: FIFO
+// Preemption only for 'urgent' level
+```
+
+### 10.7 Agent Skill Learning (Self-Improvement)
+
+```typescript
+interface SkillLearning {
+  // After each task completion:
+  postTaskReview: {
+    taskId: string
+    success: boolean
+    duration: number
+    
+    // Auto-extracted patterns
+    techniques: string[]      // what worked
+    pitfalls: string[]        // what went wrong
+    toolsUsed: string[]       // commands, APIs used
+  }
+  
+  // Accumulated into agent-specific knowledge:
+  agentKnowledge: {
+    agentId: string
+    skills: LearnedSkill[]    // generated SKILL.md files
+    lessons: string[]         // failure learnings
+    preferences: Record<string, string>  // e.g. "test framework: vitest"
+  }
+}
+
+// Skill generation trigger:
+// - Task took >3 tool calls AND succeeded
+// - New tool/API/pattern was used
+// - User explicitly says "remember this"
+// Generated skill is saved to agents/{role}/learned/{skill-name}.md
+// and auto-injected into future prompts for similar tasks
+```
+
+### 10.8 Project Templates
+Pre-configured project scaffolds for common architectures:
+
+```yaml
+# templates/projects/react-express.yaml
+name: React + Express Full Stack
+description: TypeScript full-stack with Vite, Express, Prisma, Tailwind
+scaffold:
+  - path: package.json
+    template: monorepo-root
+  - path: packages/client/
+    template: vite-react-ts
+  - path: packages/server/
+    template: express-ts
+  - path: docker-compose.yml
+    template: dev-stack
+pipeline: full-product  # which pipeline to use
+conventions: |
+  - TypeScript strict mode
+  - Functional React components
+  - Express with Zod validation
+  - Prisma for ORM
+  - Vitest for testing
+```
+
+Other templates: `chrome-extension`, `cli-tool`, `nextjs-app`, `mobile-expo`, `discord-bot`, etc.
+
+### 10.9 Agent Personas
+Each agent has a personality for a more engaging dashboard experience:
+
+```typescript
+interface AgentPersona {
+  avatar: string          // emoji or image URL
+  statusMessages: {
+    idle: string[]        // ["Waiting for tasks...", "Coffee break ☕"]
+    working: string[]     // ["Heads down coding 💻", "In the zone..."]
+    blocked: string[]     // ["Need help here 🙋", "Stuck on something..."]
+    done: string[]        // ["Ship it! 🚀", "Another one bites the dust"]
+    error: string[]       // ["Something broke 💥", "Oops..."]
+  }
+  personality: string     // affects communication style in agent-to-agent chat
+}
+
+// Default personas:
+// PM Agent    🎯 — professional, structured, asks good questions
+// UI Agent    🎨 — creative, opinionated about aesthetics
+// Dev Agent   ⌨️ — pragmatic, occasionally sarcastic
+// QA Agent    🔍 — meticulous, finds edge cases others miss
+// Ops Agent   🚀 — cautious, loves automation
+// Review Agent 📝 — diplomatic but thorough
+```
+
+### 10.10 Task Replay & Post-Mortem
+Complete playback of task/pipeline execution for review and learning:
+
+```typescript
+interface TaskReplay {
+  taskId: string
+  timeline: ReplayEvent[]
+  
+  // Playback modes:
+  // - Full: every log entry, token by token
+  // - Summary: key decisions and outputs only
+  // - Diff: show what changed at each step
+}
+
+interface ReplayEvent {
+  timestamp: Date
+  type: 'prompt' | 'response' | 'tool_call' | 'file_change' | 'decision' | 'error'
+  content: string
+  agentId: string
+  duration: number
+  tokenCount?: number
+  cost?: number
+}
+
+// Dashboard features:
+// - Timeline scrubber (like video player)
+// - Side-by-side file diffs at each point
+// - Cost breakdown per step
+// - "What if" — re-run from any point with different input
+```
+
+## 11. Non-Functional Requirements
 
 - **Concurrency**: Support 6+ agents running simultaneously
 - **Latency**: Dashboard updates within 500ms of state change
