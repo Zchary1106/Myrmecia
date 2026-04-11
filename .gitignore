@@ -1,0 +1,6 @@
+node_modules/
+dist/
+.env
+*.db
+.agent-factory/tasks/
+.agent-factory/pipelines/

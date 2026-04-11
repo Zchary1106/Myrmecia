@@ -1,0 +1,26 @@
+name: Feature
+description: Feature development with code review
+stages:
+  - name: Spec
+    role: pm
+    prompt_template: |
+      Write a brief feature spec for the following:
+      {input}
+
+  - name: Code
+    role: dev
+    prompt_template: |
+      Implement this feature:
+      {input}
+
+  - name: Test
+    role: qa
+    prompt_template: |
+      Test this feature implementation:
+      {input}
+
+  - name: Review
+    role: review
+    prompt_template: |
+      Review this code for quality, security, and best practices:
+      {input}
