@@ -318,10 +318,89 @@ Server Restart Recovery:
   4. Resume pipelines from last completed stage
 ```
 
-## 7. Performance Considerations
+## 8. Advanced Architecture Components (v2+)
+
+### 8.1 Multi-Model Router
+
+```typescript
+class ModelRouter {
+  private configs: Map<string, AgentModelConfig>
+  
+  async selectModel(agent: Agent, task: Task): Promise<ModelConfig> {
+    if (task.priority === 'urgent' && this.budget.remaining < threshold) {
+      return this.cheapestAvailable(agent.role);
+    }
+    return agent.config.model || this.roleDefaults[agent.role];
+  }
+  
+  async executeWithFallback(prompt: string, config: ModelConfig): Promise<string>
+}
+```
+
+### 8.2 Agent Communication Hub
+
+```typescript
+class AgentComms {
+  async send(from: string, to: string, msg: AgentMessage): Promise<void>
+  async broadcast(taskId: string, msg: AgentMessage): Promise<void>
+  onMessage(agentId: string, handler: (msg: AgentMessage) => void): void
+  getPendingMessages(agentId: string): AgentMessage[]
+}
+```
+
+### 8.3 Cost Controller
+
+```typescript
+class CostController {
+  async trackUsage(taskId: string, usage: TokenUsage): Promise<void>
+  async checkBudget(scope: 'task' | 'daily' | 'pipeline', id: string): Promise<BudgetStatus>
+  async onBudgetExceed(scope: string, action: BudgetAction): Promise<void>
+  getCostStream(): Observable<CostEvent>
+  async getDailyCost(): Promise<CostReport>
+  async getTaskCost(taskId: string): Promise<CostReport>
+}
+```
+
+### 8.4 Skill Learning Engine
+
+```typescript
+class SkillLearner {
+  async analyzeCompletion(task: Task, logs: LogEntry[]): Promise<LearnedPattern[]>
+  async generateSkill(patterns: LearnedPattern[]): Promise<SkillDefinition>
+  async enrichPrompt(agentId: string, taskPrompt: string): Promise<string>
+  async recordFailure(task: Task, error: string): Promise<void>
+  async getRelevantLessons(taskDescription: string): Promise<Lesson[]>
+}
+```
+
+### 8.5 Human Interaction Manager
+
+```typescript
+class HumanInteractionManager {
+  async requestInput(agentId: string, question: HumanQuestion): Promise<void>
+  async submitResponse(questionId: string, response: string): Promise<void>
+  async injectCorrection(taskId: string, correction: TaskCorrection): Promise<void>
+  async getPendingQuestions(): Promise<HumanQuestion[]>
+}
+```
+
+### 8.6 Task Replay Engine
+
+```typescript
+class ReplayEngine {
+  async record(taskId: string, event: ReplayEvent): Promise<void>
+  async getTimeline(taskId: string): Promise<ReplayEvent[]>
+  async getSnapshot(taskId: string, timestamp: Date): Promise<TaskSnapshot>
+  async rerunFrom(taskId: string, eventIndex: number, newInput?: string): Promise<Task>
+}
+```
+
+## 9. Performance Considerations
 
 - **SQLite WAL mode** for concurrent reads during writes
 - **WebSocket channels** to avoid broadcasting all events to all clients
 - **Log rotation**: Keep last 1000 log entries per task in memory, persist to DB
 - **Artifact cleanup**: Auto-clean task artifacts older than 30 days
 - **Process pooling**: Reuse Claude Code processes for same-agent sequential tasks (optional)
+- **Cost-aware scheduling**: Downgrade model when budget is tight
+- **Replay storage**: Compress old replay data, keep recent in hot storage
