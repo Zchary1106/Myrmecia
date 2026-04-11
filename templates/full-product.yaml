@@ -1,0 +1,47 @@
+name: Full Product
+description: End-to-end product development from spec to deployment
+stages:
+  - name: Spec
+    role: pm
+    prompt_template: |
+      Based on the following requirement, write a detailed product specification.
+      Include user stories, data models, API design, and acceptance criteria.
+      
+      Requirement:
+      {input}
+
+  - name: Design
+    role: ui
+    prompt_template: |
+      Based on the following product spec, create a detailed UI/UX design specification.
+      Include component hierarchy, design tokens, layout specs, and interaction patterns.
+      
+      Product Spec:
+      {input}
+
+  - name: Code
+    role: dev
+    prompt_template: |
+      Implement the following design and spec as production-ready code.
+      Use TypeScript, React for frontend, Express for backend.
+      
+      Design & Spec:
+      {input}
+
+  - name: Test
+    role: qa
+    prompt_template: |
+      Write comprehensive tests for the following implementation.
+      Cover unit tests, integration tests, and edge cases.
+      
+      Implementation:
+      {input}
+
+  - name: Deploy
+    role: ops
+    prompt_template: |
+      Create deployment configuration for the following application.
+      Include Dockerfile, CI/CD pipeline, and deployment instructions.
+      
+      Application:
+      {input}

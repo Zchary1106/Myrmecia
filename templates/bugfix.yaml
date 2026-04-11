@@ -1,0 +1,27 @@
+name: Bugfix
+description: Quick bug triage, fix, and verification
+stages:
+  - name: Triage
+    role: pm
+    prompt_template: |
+      Analyze this bug report. Identify root cause, affected components, and severity.
+      
+      Bug Report:
+      {input}
+
+  - name: Fix
+    role: dev
+    prompt_template: |
+      Fix the following bug based on the triage analysis.
+      Write minimal, targeted changes.
+      
+      Triage:
+      {input}
+
+  - name: Test
+    role: qa
+    prompt_template: |
+      Verify the bug fix. Write a regression test to prevent recurrence.
+      
+      Fix:
+      {input}
