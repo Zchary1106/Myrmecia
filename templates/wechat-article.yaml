@@ -1,0 +1,48 @@
+name: WeChat Article
+description: 公众号文章创作流水线（选题→写作→审核→排版）
+stages:
+  - name: 选题分析
+    role: product-manager
+    agent: pm
+    prompt_template: |
+      分析以下主题的公众号文章选题价值。
+      评估：目标读者、传播潜力、热度趋势、差异化角度。
+      输出：推荐的切入角度和文章大纲。
+      
+      主题：
+      {input}
+
+  - name: 内容创作
+    role: content-writer
+    agent: wechat-writer
+    prompt_template: |
+      根据以下选题分析，撰写完整的公众号文章。
+      
+      选题分析：
+      {input}
+
+  - name: 内容审核
+    role: reviewer
+    agent: review
+    prompt_template: |
+      审核以下公众号文章，检查：
+      1. 事实准确性
+      2. 逻辑连贯性
+      3. 表达流畅度
+      4. AI 痕迹（套话、模板感）
+      5. 敏感内容风险
+      
+      给出修改建议或通过。
+      
+      文章：
+      {input}
+
+  - name: 排版优化
+    role: content-writer
+    agent: wechat-writer
+    prompt_template: |
+      根据审核意见优化文章，并输出最终排版版本。
+      包含：最终标题、摘要、正文、封面图提示词、标签。
+      
+      审核意见 + 原文：
+      {input}
