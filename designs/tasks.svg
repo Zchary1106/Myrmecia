@@ -1,0 +1,179 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="900" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif">
+  <defs>
+    <filter id="shadow" x="-2%" y="-2%" width="104%" height="104%">
+      <feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#000" flood-opacity="0.3"/>
+    </filter>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#6366f1"/>
+      <stop offset="100%" stop-color="#818cf8"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1200" height="900" fill="#0f1117"/>
+
+  <!-- Header -->
+  <text x="32" y="40" fill="#fff" font-size="20" font-weight="700">📋 任务看板</text>
+  <text x="160" y="40" fill="#6b7280" font-size="13">Task Kanban</text>
+
+  <!-- Mode chips + Create button -->
+  <g transform="translate(660,18)">
+    <rect x="0" y="0" width="130" height="32" rx="8" fill="#1a1b23" stroke="#374151" stroke-width="1"/>
+    <text x="65" y="21" fill="#9ca3af" font-size="11" text-anchor="middle">Master Dispatch</text>
+    <rect x="140" y="0" width="110" height="32" rx="8" fill="#1a1b23" stroke="#374151" stroke-width="1"/>
+    <text x="195" y="21" fill="#9ca3af" font-size="11" text-anchor="middle">Direct Assign</text>
+    <rect x="260" y="0" width="90" height="32" rx="8" fill="#1a1b23" stroke="#374151" stroke-width="1"/>
+    <text x="305" y="21" fill="#9ca3af" font-size="11" text-anchor="middle">Pipeline</text>
+    <rect x="370" y="0" width="130" height="32" rx="8" fill="url(#accent)"/>
+    <text x="435" y="21" fill="#fff" font-size="12" text-anchor="middle" font-weight="600">+ Create Task</text>
+  </g>
+
+  <!-- Kanban Columns -->
+  <!-- Pending -->
+  <g transform="translate(24,64)">
+    <rect width="280" height="810" rx="12" fill="#1a1b23" filter="url(#shadow)"/>
+    <text x="16" y="30" fill="#9ca3af" font-size="13" font-weight="600">⏳ Pending</text>
+    <rect x="230" y="14" width="32" height="22" rx="6" fill="#374151"/>
+    <text x="246" y="30" fill="#9ca3af" font-size="11" text-anchor="middle">3</text>
+
+    <!-- Task Card 1 -->
+    <g transform="translate(12,46)">
+      <rect width="256" height="120" rx="10" fill="#0f1117" stroke="#374151" stroke-width="1"/>
+      <circle cx="240" cy="16" r="4" fill="#ef4444"/>
+      <text x="12" y="28" fill="#fff" font-size="13" font-weight="600">Deploy v2.0</text>
+      <rect x="12" y="38" width="68" height="20" rx="5" fill="#6366f120"/>
+      <text x="46" y="52" fill="#818cf8" font-size="10" text-anchor="middle">Pipeline</text>
+      <text x="12" y="78" fill="#9ca3af" font-size="11">🚀 Ops Agent</text>
+      <text x="12" y="96" fill="#6b7280" font-size="10">等待前置阶段完成</text>
+      <text x="12" y="112" fill="#6b7280" font-size="10">⏱ 排队中</text>
+    </g>
+
+    <!-- Task Card 2 -->
+    <g transform="translate(12,178)">
+      <rect width="256" height="120" rx="10" fill="#0f1117" stroke="#374151" stroke-width="1"/>
+      <circle cx="240" cy="16" r="4" fill="#f59e0b"/>
+      <text x="12" y="28" fill="#fff" font-size="13" font-weight="600">优化搜索性能</text>
+      <rect x="12" y="38" width="56" height="20" rx="5" fill="#22c55e20"/>
+      <text x="40" y="52" fill="#22c55e" font-size="10" text-anchor="middle">Direct</text>
+      <text x="12" y="78" fill="#9ca3af" font-size="11">⌨️ Dev Agent</text>
+      <text x="12" y="96" fill="#6b7280" font-size="10">P2 · 预估 15 min</text>
+      <text x="12" y="112" fill="#6b7280" font-size="10">⏱ 排队中</text>
+    </g>
+
+    <!-- Task Card 3 -->
+    <g transform="translate(12,310)">
+      <rect width="256" height="120" rx="10" fill="#0f1117" stroke="#374151" stroke-width="1"/>
+      <circle cx="240" cy="16" r="4" fill="#22c55e"/>
+      <text x="12" y="28" fill="#fff" font-size="13" font-weight="600">添加暗色主题</text>
+      <rect x="12" y="38" width="62" height="20" rx="5" fill="#f59e0b20"/>
+      <text x="43" y="52" fill="#f59e0b" font-size="10" text-anchor="middle">Master</text>
+      <text x="12" y="78" fill="#9ca3af" font-size="11">待分配</text>
+      <text x="12" y="96" fill="#6b7280" font-size="10">P3 · 预估 8 min</text>
+      <text x="12" y="112" fill="#6b7280" font-size="10">⏱ 排队中</text>
+    </g>
+  </g>
+
+  <!-- Running -->
+  <g transform="translate(318,64)">
+    <rect width="280" height="810" rx="12" fill="#1a1b23" filter="url(#shadow)"/>
+    <text x="16" y="30" fill="#22c55e" font-size="13" font-weight="600">▶ Running</text>
+    <rect x="230" y="14" width="32" height="22" rx="6" fill="#22c55e20"/>
+    <text x="246" y="30" fill="#22c55e" font-size="11" text-anchor="middle">2</text>
+
+    <!-- Task Card -->
+    <g transform="translate(12,46)">
+      <rect width="256" height="140" rx="10" fill="#0f1117" stroke="#6366f1" stroke-width="1.5"/>
+      <circle cx="240" cy="16" r="4" fill="#ef4444"/>
+      <text x="12" y="28" fill="#fff" font-size="13" font-weight="600">Build weather app</text>
+      <rect x="12" y="38" width="62" height="20" rx="5" fill="#f59e0b20"/>
+      <text x="43" y="52" fill="#f59e0b" font-size="10" text-anchor="middle">Master</text>
+      <text x="12" y="78" fill="#9ca3af" font-size="11">⌨️ Dev Agent · 执行中</text>
+      <!-- Progress bar -->
+      <rect x="12" y="90" width="232" height="6" rx="3" fill="#374151"/>
+      <rect x="12" y="90" width="150" height="6" rx="3" fill="#6366f1"/>
+      <text x="12" y="112" fill="#6b7280" font-size="10">⏱ 8m 12s · 14.3k tokens · $0.42</text>
+      <text x="12" y="130" fill="#6b7280" font-size="10">📁 /workspace/weather-app</text>
+    </g>
+
+    <!-- Task Card 2 -->
+    <g transform="translate(12,198)">
+      <rect width="256" height="130" rx="10" fill="#0f1117" stroke="#374151" stroke-width="1"/>
+      <circle cx="240" cy="16" r="4" fill="#f59e0b"/>
+      <text x="12" y="28" fill="#fff" font-size="13" font-weight="600">需求拆解 - Todo App</text>
+      <rect x="12" y="38" width="68" height="20" rx="5" fill="#6366f120"/>
+      <text x="46" y="52" fill="#818cf8" font-size="10" text-anchor="middle">Pipeline</text>
+      <text x="12" y="78" fill="#9ca3af" font-size="11">🎯 PM Agent · 阶段 1/5</text>
+      <rect x="12" y="90" width="232" height="6" rx="3" fill="#374151"/>
+      <rect x="12" y="90" width="70" height="6" rx="3" fill="#22c55e"/>
+      <text x="12" y="112" fill="#6b7280" font-size="10">⏱ 2m 30s · 1.2k tokens · $0.08</text>
+    </g>
+  </g>
+
+  <!-- Review -->
+  <g transform="translate(612,64)">
+    <rect width="280" height="810" rx="12" fill="#1a1b23" filter="url(#shadow)"/>
+    <text x="16" y="30" fill="#f59e0b" font-size="13" font-weight="600">👀 Review</text>
+    <rect x="230" y="14" width="32" height="22" rx="6" fill="#f59e0b20"/>
+    <text x="246" y="30" fill="#f59e0b" font-size="11" text-anchor="middle">1</text>
+
+    <g transform="translate(12,46)">
+      <rect width="256" height="140" rx="10" fill="#0f1117" stroke="#f59e0b" stroke-width="1.5"/>
+      <circle cx="240" cy="16" r="4" fill="#ef4444"/>
+      <text x="12" y="28" fill="#fff" font-size="13" font-weight="600">Fix auth bug</text>
+      <rect x="12" y="38" width="56" height="20" rx="5" fill="#22c55e20"/>
+      <text x="40" y="52" fill="#22c55e" font-size="10" text-anchor="middle">Direct</text>
+      <text x="12" y="78" fill="#9ca3af" font-size="11">🔍 QA Agent · 审阅中</text>
+      <rect x="12" y="90" width="232" height="6" rx="3" fill="#374151"/>
+      <rect x="12" y="90" width="200" height="6" rx="3" fill="#f59e0b"/>
+      <text x="12" y="112" fill="#6b7280" font-size="10">⏱ 1m 45s · 发现 2 个问题</text>
+      <!-- Action buttons -->
+      <rect x="12" y="120" width="70" height="24" rx="6" fill="#22c55e"/>
+      <text x="47" y="136" fill="#fff" font-size="10" text-anchor="middle" font-weight="500">Approve</text>
+      <rect x="90" y="120" width="70" height="24" rx="6" fill="#ef4444"/>
+      <text x="125" y="136" fill="#fff" font-size="10" text-anchor="middle" font-weight="500">Reject</text>
+    </g>
+  </g>
+
+  <!-- Done -->
+  <g transform="translate(906,64)">
+    <rect width="280" height="810" rx="12" fill="#1a1b23" filter="url(#shadow)"/>
+    <text x="16" y="30" fill="#6b7280" font-size="13" font-weight="600">✅ Done</text>
+    <rect x="230" y="14" width="32" height="22" rx="6" fill="#374151"/>
+    <text x="246" y="30" fill="#6b7280" font-size="11" text-anchor="middle">5</text>
+
+    <g transform="translate(12,46)">
+      <rect width="256" height="90" rx="10" fill="#0f1117" stroke="#374151" stroke-width="1" opacity="0.7"/>
+      <text x="12" y="24" fill="#9ca3af" font-size="13" font-weight="500">Fix login redirect</text>
+      <text x="12" y="44" fill="#6b7280" font-size="11">⌨️ Dev · Direct · 4m 22s</text>
+      <text x="12" y="62" fill="#6b7280" font-size="10">✅ $0.18 · 2 分钟前</text>
+      <text x="12" y="80" fill="#22c55e" font-size="10">成功</text>
+    </g>
+
+    <g transform="translate(12,148)">
+      <rect width="256" height="90" rx="10" fill="#0f1117" stroke="#374151" stroke-width="1" opacity="0.7"/>
+      <text x="12" y="24" fill="#9ca3af" font-size="13" font-weight="500">设计登录页</text>
+      <text x="12" y="44" fill="#6b7280" font-size="11">🎨 UI · Master · 6m 10s</text>
+      <text x="12" y="62" fill="#6b7280" font-size="10">✅ $0.32 · 18 分钟前</text>
+      <text x="12" y="80" fill="#22c55e" font-size="10">成功</text>
+    </g>
+
+    <g transform="translate(12,250)">
+      <rect width="256" height="90" rx="10" fill="#0f1117" stroke="#374151" stroke-width="1" opacity="0.7"/>
+      <text x="12" y="24" fill="#9ca3af" font-size="13" font-weight="500">Code review #42</text>
+      <text x="12" y="44" fill="#6b7280" font-size="11">📝 Review · Direct · 3m 05s</text>
+      <text x="12" y="62" fill="#6b7280" font-size="10">✅ $0.12 · 30 分钟前</text>
+      <text x="12" y="80" fill="#22c55e" font-size="10">Approved</text>
+    </g>
+
+    <g transform="translate(12,352)">
+      <rect width="256" height="90" rx="10" fill="#0f1117" stroke="#374151" stroke-width="1" opacity="0.7"/>
+      <text x="12" y="24" fill="#9ca3af" font-size="13" font-weight="500">数据库迁移脚本</text>
+      <text x="12" y="44" fill="#6b7280" font-size="11">⌨️ Dev · Pipeline · 12m 40s</text>
+      <text x="12" y="62" fill="#6b7280" font-size="10">✅ $0.56 · 1 小时前</text>
+      <text x="12" y="80" fill="#22c55e" font-size="10">成功</text>
+    </g>
+  </g>
+
+  <!-- Bottom nav -->
+  <text x="600" y="888" fill="#374151" font-size="11" text-anchor="middle">Overview · Tasks · Pipelines · Agents · Settings</text>
+  <rect x="577" y="878" width="42" height="2" rx="1" fill="#6366f1"/>
+</svg>

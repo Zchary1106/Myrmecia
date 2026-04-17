@@ -1,0 +1,175 @@
+# Agent Registry — 默认 Agent 列表
+# 所有 Agent 均支持动态注册/注销，此文件为预置配置
+
+agents:
+  # ===== 核心开发 Agent =====
+  - id: master
+    name: Master Agent
+    emoji: 🧠
+    role: orchestrator
+    description: 任务分解与调度，自动将复杂需求拆解为子任务并分配给专业 Agent
+    skill: agents/master.md
+    model:
+      provider: claude
+      model: claude-opus-4-20250514
+      maxTokens: 16384
+    capabilities: [planning, decomposition, coordination, review]
+    triggers: [自动分配, 帮我做, build me, create a]
+
+  - id: pm
+    name: PM Agent
+    emoji: 🎯
+    role: product-manager
+    description: 需求分析、PRD 编写、用户故事、验收标准
+    skill: agents/pm.md
+    model:
+      provider: claude
+      model: claude-sonnet-4-20250514
+      maxTokens: 8192
+    capabilities: [spec, user-stories, requirements, acceptance-criteria]
+    triggers: [需求, spec, PRD, 用户故事, requirement]
+
+  - id: ui
+    name: UI Agent
+    emoji: 🎨
+    role: designer
+    description: UI/UX 设计规范、组件层级、Design Token、响应式策略
+    skill: agents/ui.md
+    model:
+      provider: claude
+      model: claude-sonnet-4-20250514
+      maxTokens: 8192
+    capabilities: [design, wireframe, component, responsive, accessibility]
+    triggers: [设计, UI, 界面, wireframe, design]
+
+  - id: dev
+    name: Dev Agent
+    emoji: ⌨️
+    role: developer
+    description: 全栈开发，TypeScript + React + Express，写生产级代码
+    skill: agents/dev.md
+    model:
+      provider: claude
+      model: claude-sonnet-4-20250514
+      maxTokens: 8192
+    capabilities: [typescript, react, express, database, api, frontend, backend]
+    triggers: [写代码, 实现, 开发, implement, code, fix]
+
+  - id: qa
+    name: QA Agent
+    emoji: 🔍
+    role: tester
+    description: 测试用例编写、单元测试、集成测试、边界检测
+    skill: agents/qa.md
+    model:
+      provider: claude
+      model: claude-sonnet-4-20250514
+      maxTokens: 8192
+    capabilities: [testing, unit-test, integration-test, coverage, edge-cases]
+    triggers: [测试, test, QA, 验证, coverage]
+
+  - id: ops
+    name: Ops Agent
+    emoji: 🚀
+    role: devops
+    description: Docker、CI/CD、部署、监控、运维
+    skill: agents/ops.md
+    model:
+      provider: claude
+      model: claude-sonnet-4-20250514
+      maxTokens: 8192
+    capabilities: [docker, cicd, deploy, monitoring, nginx, systemd]
+    triggers: [部署, deploy, CI/CD, Docker, 运维]
+
+  - id: review
+    name: Review Agent
+    emoji: 📝
+    role: reviewer
+    description: 代码审查、安全扫描、最佳实践检查
+    skill: agents/review.md
+    model:
+      provider: claude
+      model: claude-opus-4-20250514
+      maxTokens: 8192
+    capabilities: [code-review, security, best-practices, architecture]
+    triggers: [review, 审查, 代码审核, security scan]
+
+  # ===== 内容创作 Agent =====
+  - id: wechat-writer
+    name: 公众号写手
+    emoji: ✍️
+    role: content-writer
+    description: 微信公众号文章创作，科技/AI/互联网方向，有传播力的深度内容
+    skill: agents/wechat-writer.md
+    model:
+      provider: claude
+      model: claude-sonnet-4-20250514
+      maxTokens: 8192
+    capabilities: [wechat, article, copywriting, seo, chinese-content]
+    triggers: [公众号, 写文章, 推文, 微信文章, wechat article]
+
+  - id: xiaohongshu-writer
+    name: 小红书写手
+    emoji: 📕
+    role: content-writer
+    description: 小红书图文笔记创作，种草/测评/教程，高互动爆款内容
+    skill: agents/xiaohongshu-writer.md
+    model:
+      provider: claude
+      model: claude-sonnet-4-20250514
+      maxTokens: 4096
+    capabilities: [xiaohongshu, rednote, social-media, chinese-content, lifestyle]
+    triggers: [小红书, 笔记, 种草, 小红书文案, rednote]
+
+  # ===== 工具型 Agent =====
+  - id: i18n
+    name: i18n Agent
+    emoji: 🌍
+    role: internationalization
+    description: 多语言翻译、本地化适配、i18n key 提取
+    skill: agents/i18n.md
+    model:
+      provider: claude
+      model: claude-sonnet-4-20250514
+      maxTokens: 8192
+    capabilities: [translation, i18n, l10n, locale, multilingual]
+    triggers: [翻译, 国际化, i18n, translate, localization]
+
+  - id: db-migration
+    name: DB Migration Agent
+    emoji: 🗄️
+    role: database
+    description: 数据库 schema 设计、迁移文件生成、索引优化
+    skill: agents/db-migration.md
+    model:
+      provider: claude
+      model: claude-sonnet-4-20250514
+      maxTokens: 8192
+    capabilities: [database, migration, schema, sql, prisma, drizzle]
+    triggers: [数据库, 迁移, migration, schema, 建表]
+
+  - id: api-design
+    name: API Design Agent
+    emoji: 🔌
+    role: api-architect
+    description: RESTful/GraphQL API 设计、OpenAPI 规范、错误码体系
+    skill: agents/api-design.md
+    model:
+      provider: claude
+      model: claude-sonnet-4-20250514
+      maxTokens: 8192
+    capabilities: [api, rest, graphql, openapi, swagger]
+    triggers: [API, 接口设计, endpoint, swagger, openapi]
+
+  - id: doc-writer
+    name: Doc Writer Agent
+    emoji: 📚
+    role: documentation
+    description: 技术文档、README、API 文档、部署手册、CHANGELOG
+    skill: agents/doc-writer.md
+    model:
+      provider: claude
+      model: claude-sonnet-4-20250514
+      maxTokens: 8192
+    capabilities: [documentation, readme, changelog, guide, adr]
+    triggers: [文档, README, docs, 使用指南, changelog]

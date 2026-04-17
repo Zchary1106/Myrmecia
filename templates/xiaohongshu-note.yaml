@@ -1,0 +1,35 @@
+name: Xiaohongshu Note
+description: 小红书笔记创作流水线（选题→创作→优化）
+stages:
+  - name: 选题策划
+    role: product-manager
+    agent: pm
+    prompt_template: |
+      分析以下主题的小红书笔记策划。
+      评估：目标人群、热门话题匹配、竞品笔记分析、爆款潜力。
+      输出：推荐风格模板（种草/教程/清单/故事）和内容框架。
+      
+      主题：
+      {input}
+
+  - name: 笔记创作
+    role: content-writer
+    agent: xiaohongshu-writer
+    prompt_template: |
+      根据以下策划方案，创作完整的小红书图文笔记。
+      
+      策划方案：
+      {input}
+
+  - name: SEO 优化
+    role: content-writer
+    agent: xiaohongshu-writer
+    prompt_template: |
+      优化以下小红书笔记的搜索表现：
+      1. 标题关键词密度
+      2. 标签策略（大流量 + 精准长尾）
+      3. 正文关键词自然植入
+      4. 发布时间建议
+      
+      原始笔记：
+      {input}
