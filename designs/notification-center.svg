@@ -1,0 +1,117 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="900" viewBox="0 0 1200 900">
+  <defs>
+    <filter id="shadow" x="-2%" y="-2%" width="104%" height="104%">
+      <feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#000" flood-opacity="0.3"/>
+    </filter>
+  </defs>
+  <rect width="1200" height="900" fill="#0f1117"/>
+
+  <!-- Header -->
+  <text x="40" y="44" fill="#fff" font-family="system-ui,sans-serif" font-size="22" font-weight="700">🔔 通知中心</text>
+
+  <!-- Filter Tabs -->
+  <rect x="250" y="18" width="56" height="32" rx="8" fill="#6366f1"/>
+  <text x="264" y="39" fill="#fff" font-family="system-ui,sans-serif" font-size="13" font-weight="600">All</text>
+
+  <rect x="316" y="18" width="72" height="32" rx="8" fill="transparent" stroke="#374151" stroke-width="1"/>
+  <text x="326" y="39" fill="#9ca3af" font-family="system-ui,sans-serif" font-size="13">待处理</text>
+  <!-- Badge -->
+  <circle cx="382" cy="26" r="9" fill="#f59e0b"/>
+  <text x="382" y="30" fill="#fff" font-family="system-ui,sans-serif" font-size="10" font-weight="700" text-anchor="middle">3</text>
+
+  <rect x="400" y="18" width="72" height="32" rx="8" fill="transparent" stroke="#374151" stroke-width="1"/>
+  <text x="414" y="39" fill="#9ca3af" font-family="system-ui,sans-serif" font-size="13">已完成</text>
+
+  <rect x="484" y="18" width="56" height="32" rx="8" fill="transparent" stroke="#374151" stroke-width="1"/>
+  <text x="498" y="39" fill="#9ca3af" font-family="system-ui,sans-serif" font-size="13">失败</text>
+
+  <!-- Notification 1: Yellow - Ops approval -->
+  <rect x="40" y="68" width="1120" height="94" rx="12" fill="#1a1b23" filter="url(#shadow)" stroke="#374151" stroke-width="1"/>
+  <rect x="40" y="68" width="4" height="94" rx="2" fill="#f59e0b"/>
+  <circle cx="72" cy="96" r="6" fill="#f59e0b"/>
+  <text x="88" y="100" fill="#fff" font-family="system-ui,sans-serif" font-size="15" font-weight="600">Ops Agent 等待审批</text>
+  <text x="280" y="100" fill="#f59e0b" font-family="system-ui,sans-serif" font-size="11">待处理</text>
+  <text x="88" y="122" fill="#9ca3af" font-family="system-ui,sans-serif" font-size="13">Deploy v2.0 → Staging</text>
+  <text x="88" y="144" fill="#6b7280" font-family="system-ui,sans-serif" font-size="12">8 分钟前</text>
+  <!-- Action buttons -->
+  <rect x="940" y="92" width="100" height="32" rx="8" fill="#22c55e" opacity="0.15" stroke="#22c55e" stroke-width="1"/>
+  <text x="962" y="113" fill="#22c55e" font-family="system-ui,sans-serif" font-size="13" font-weight="600">Approve ✅</text>
+  <rect x="1050" y="92" width="90" height="32" rx="8" fill="#ef4444" opacity="0.15" stroke="#ef4444" stroke-width="1"/>
+  <text x="1070" y="113" fill="#ef4444" font-family="system-ui,sans-serif" font-size="13" font-weight="600">Reject ❌</text>
+
+  <!-- Notification 2: Yellow - Dev needs direction -->
+  <rect x="40" y="174" width="1120" height="94" rx="12" fill="#1a1b23" filter="url(#shadow)" stroke="#374151" stroke-width="1"/>
+  <rect x="40" y="174" width="4" height="94" rx="2" fill="#f59e0b"/>
+  <circle cx="72" cy="202" r="6" fill="#f59e0b"/>
+  <text x="88" y="206" fill="#fff" font-family="system-ui,sans-serif" font-size="15" font-weight="600">Dev Agent 需要确认</text>
+  <text x="272" y="206" fill="#f59e0b" font-family="system-ui,sans-serif" font-size="11">待处理</text>
+  <text x="88" y="228" fill="#9ca3af" font-family="system-ui,sans-serif" font-size="13">"使用 GraphQL 还是 REST？请选择方向"</text>
+  <text x="88" y="250" fill="#6b7280" font-family="system-ui,sans-serif" font-size="12">12 分钟前</text>
+  <rect x="930" y="198" width="100" height="32" rx="8" fill="#6366f1" opacity="0.15" stroke="#6366f1" stroke-width="1"/>
+  <text x="950" y="219" fill="#6366f1" font-family="system-ui,sans-serif" font-size="13" font-weight="600">GraphQL</text>
+  <rect x="1040" y="198" width="100" height="32" rx="8" fill="#6366f1" opacity="0.15" stroke="#6366f1" stroke-width="1"/>
+  <text x="1072" y="219" fill="#6366f1" font-family="system-ui,sans-serif" font-size="13" font-weight="600">REST</text>
+
+  <!-- Notification 3: Yellow - Budget warning -->
+  <rect x="40" y="280" width="1120" height="94" rx="12" fill="#1a1b23" filter="url(#shadow)" stroke="#374151" stroke-width="1"/>
+  <rect x="40" y="280" width="4" height="94" rx="2" fill="#f59e0b"/>
+  <circle cx="72" cy="308" r="6" fill="#f59e0b"/>
+  <text x="88" y="312" fill="#fff" font-family="system-ui,sans-serif" font-size="15" font-weight="600">Pipeline 预算预警</text>
+  <text x="262" y="312" fill="#f59e0b" font-family="system-ui,sans-serif" font-size="11">待处理</text>
+  <text x="88" y="334" fill="#9ca3af" font-family="system-ui,sans-serif" font-size="13">Todo App Pipeline 已消耗 $7.80，预估总计 $9.50（超预算 $1.50）</text>
+  <text x="88" y="356" fill="#6b7280" font-family="system-ui,sans-serif" font-size="12">15 分钟前</text>
+  <rect x="950" y="304" width="80" height="32" rx="8" fill="#22c55e" opacity="0.15" stroke="#22c55e" stroke-width="1"/>
+  <text x="970" y="325" fill="#22c55e" font-family="system-ui,sans-serif" font-size="13" font-weight="600">继续</text>
+  <rect x="1040" y="304" width="80" height="32" rx="8" fill="#f59e0b" opacity="0.15" stroke="#f59e0b" stroke-width="1"/>
+  <text x="1060" y="325" fill="#f59e0b" font-family="system-ui,sans-serif" font-size="13" font-weight="600">暂停</text>
+
+  <!-- Notification 4: Green - Dev completed -->
+  <rect x="40" y="386" width="1120" height="82" rx="12" fill="#1a1b23" filter="url(#shadow)" stroke="#374151" stroke-width="1"/>
+  <rect x="40" y="386" width="4" height="82" rx="2" fill="#22c55e"/>
+  <circle cx="72" cy="414" r="6" fill="#22c55e"/>
+  <text x="88" y="418" fill="#fff" font-family="system-ui,sans-serif" font-size="15" font-weight="600">Dev Agent 完成任务</text>
+  <text x="88" y="440" fill="#9ca3af" font-family="system-ui,sans-serif" font-size="13">Fix login redirect · 耗时 4m 22s · $0.45</text>
+  <text x="88" y="456" fill="#6b7280" font-family="system-ui,sans-serif" font-size="12">20 分钟前</text>
+  <rect x="1060" y="408" width="80" height="26" rx="6" fill="#22c55e" opacity="0.1"/>
+  <text x="1078" y="426" fill="#22c55e" font-family="system-ui,sans-serif" font-size="12">已完成 ✓</text>
+
+  <!-- Notification 5: Green - Pipeline stage -->
+  <rect x="40" y="480" width="1120" height="82" rx="12" fill="#1a1b23" filter="url(#shadow)" stroke="#374151" stroke-width="1"/>
+  <rect x="40" y="480" width="4" height="82" rx="2" fill="#22c55e"/>
+  <circle cx="72" cy="508" r="6" fill="#22c55e"/>
+  <text x="88" y="512" fill="#fff" font-family="system-ui,sans-serif" font-size="15" font-weight="600">Pipeline 阶段完成</text>
+  <text x="88" y="534" fill="#9ca3af" font-family="system-ui,sans-serif" font-size="13">Todo App: Design → Code</text>
+  <text x="88" y="550" fill="#6b7280" font-family="system-ui,sans-serif" font-size="12">25 分钟前</text>
+  <rect x="1060" y="502" width="80" height="26" rx="6" fill="#22c55e" opacity="0.1"/>
+  <text x="1078" y="520" fill="#22c55e" font-family="system-ui,sans-serif" font-size="12">已完成 ✓</text>
+
+  <!-- Notification 6: Red - PM failed -->
+  <rect x="40" y="574" width="1120" height="82" rx="12" fill="#1a1b23" filter="url(#shadow)" stroke="#374151" stroke-width="1"/>
+  <rect x="40" y="574" width="4" height="82" rx="2" fill="#ef4444"/>
+  <circle cx="72" cy="602" r="6" fill="#ef4444"/>
+  <text x="88" y="606" fill="#fff" font-family="system-ui,sans-serif" font-size="15" font-weight="600">PM Agent 任务失败</text>
+  <text x="268" y="606" fill="#ef4444" font-family="system-ui,sans-serif" font-size="11">失败</text>
+  <text x="88" y="628" fill="#9ca3af" font-family="system-ui,sans-serif" font-size="13">需求解析超时 · 已自动重试 (1/3)</text>
+  <text x="88" y="644" fill="#6b7280" font-family="system-ui,sans-serif" font-size="12">30 分钟前</text>
+  <rect x="1040" y="596" width="100" height="26" rx="6" fill="#ef4444" opacity="0.1"/>
+  <text x="1058" y="614" fill="#ef4444" font-family="system-ui,sans-serif" font-size="12">重试中 1/3</text>
+
+  <!-- Notification 7: Green - Review completed -->
+  <rect x="40" y="668" width="1120" height="82" rx="12" fill="#1a1b23" filter="url(#shadow)" stroke="#374151" stroke-width="1"/>
+  <rect x="40" y="668" width="4" height="82" rx="2" fill="#22c55e"/>
+  <circle cx="72" cy="696" r="6" fill="#22c55e"/>
+  <text x="88" y="700" fill="#fff" font-family="system-ui,sans-serif" font-size="15" font-weight="600">Review Agent 审阅完成</text>
+  <text x="88" y="722" fill="#9ca3af" font-family="system-ui,sans-serif" font-size="13">Code review #42 · Approved ✓</text>
+  <text x="88" y="738" fill="#6b7280" font-family="system-ui,sans-serif" font-size="12">35 分钟前</text>
+  <rect x="1060" y="690" width="80" height="26" rx="6" fill="#22c55e" opacity="0.1"/>
+  <text x="1078" y="708" fill="#22c55e" font-family="system-ui,sans-serif" font-size="12">已完成 ✓</text>
+
+  <!-- Bottom: Notification Settings -->
+  <rect x="40" y="776" width="1120" height="44" rx="12" fill="#1a1b23" stroke="#374151" stroke-width="0.5"/>
+  <text x="64" y="803" fill="#6b7280" font-family="system-ui,sans-serif" font-size="13">⚙️ 通知设置:</text>
+  <text x="164" y="803" fill="#22c55e" font-family="system-ui,sans-serif" font-size="13">企微推送 ✅</text>
+  <text x="284" y="803" fill="#6b7280" font-family="system-ui,sans-serif" font-size="13">·</text>
+  <text x="300" y="803" fill="#22c55e" font-family="system-ui,sans-serif" font-size="13">浏览器通知 ✅</text>
+  <text x="434" y="803" fill="#6b7280" font-family="system-ui,sans-serif" font-size="13">·</text>
+  <text x="450" y="803" fill="#ef4444" font-family="system-ui,sans-serif" font-size="13">邮件 ❌</text>
+</svg>

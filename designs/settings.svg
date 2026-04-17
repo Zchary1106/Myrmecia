@@ -1,0 +1,217 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="900" viewBox="0 0 1200 900">
+  <defs>
+    <filter id="shadow" x="-2%" y="-2%" width="104%" height="104%">
+      <feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#000" flood-opacity="0.3"/>
+    </filter>
+    <linearGradient id="indigo-grad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#6366f1"/>
+      <stop offset="100%" stop-color="#818cf8"/>
+    </linearGradient>
+  </defs>
+  <!-- Background -->
+  <rect width="1200" height="900" fill="#0f1117"/>
+  
+  <!-- Left Sidebar -->
+  <rect x="0" y="0" width="220" height="900" fill="#1a1b23" rx="0"/>
+  <rect x="219" y="0" width="1" height="900" fill="#374151"/>
+  
+  <!-- Sidebar Title -->
+  <text x="24" y="40" fill="#fff" font-family="system-ui,sans-serif" font-size="18" font-weight="700">⚙️ 设置</text>
+  
+  <!-- Nav Items -->
+  <rect x="12" y="60" width="196" height="40" rx="8" fill="transparent"/>
+  <text x="24" y="85" fill="#9ca3af" font-family="system-ui,sans-serif" font-size="14">📋 General</text>
+  
+  <rect x="12" y="104" width="196" height="40" rx="8" fill="#6366f1" opacity="0.15"/>
+  <rect x="12" y="104" width="3" height="40" rx="2" fill="#6366f1"/>
+  <text x="24" y="129" fill="#fff" font-family="system-ui,sans-serif" font-size="14" font-weight="600">🤖 Agents</text>
+  
+  <rect x="12" y="148" width="196" height="40" rx="8" fill="transparent"/>
+  <text x="24" y="173" fill="#9ca3af" font-family="system-ui,sans-serif" font-size="14">🧩 Models</text>
+  
+  <rect x="12" y="192" width="196" height="40" rx="8" fill="transparent"/>
+  <text x="24" y="217" fill="#9ca3af" font-family="system-ui,sans-serif" font-size="14">💰 Budget</text>
+  
+  <rect x="12" y="236" width="196" height="40" rx="8" fill="transparent"/>
+  <text x="24" y="261" fill="#9ca3af" font-family="system-ui,sans-serif" font-size="14">🔗 Integrations</text>
+
+  <!-- Main Content Area -->
+  <!-- Header -->
+  <text x="244" y="40" fill="#fff" font-family="system-ui,sans-serif" font-size="20" font-weight="700">Agent 管理</text>
+  <text x="244" y="60" fill="#6b7280" font-family="system-ui,sans-serif" font-size="13">管理已注册的 Agent 及其配置</text>
+
+  <!-- Register Button -->
+  <rect x="700" y="22" width="150" height="36" rx="8" fill="#6366f1" filter="url(#shadow)"/>
+  <text x="730" y="45" fill="#fff" font-family="system-ui,sans-serif" font-size="13" font-weight="600">+ Register Agent</text>
+
+  <!-- Agent Registry Table -->
+  <rect x="244" y="76" width="616" height="500" rx="12" fill="#1a1b23" filter="url(#shadow)"/>
+  <rect x="244" y="76" width="616" height="500" rx="12" fill="none" stroke="#374151" stroke-width="1"/>
+  
+  <!-- Table Header -->
+  <rect x="244" y="76" width="616" height="36" rx="12" fill="#161720"/>
+  <rect x="244" y="100" width="616" height="12" fill="#161720"/>
+  <text x="264" y="99" fill="#6b7280" font-family="system-ui,sans-serif" font-size="11" font-weight="600">AGENT</text>
+  <text x="400" y="99" fill="#6b7280" font-family="system-ui,sans-serif" font-size="11" font-weight="600">ROLE</text>
+  <text x="510" y="99" fill="#6b7280" font-family="system-ui,sans-serif" font-size="11" font-weight="600">MODEL</text>
+  <text x="630" y="99" fill="#6b7280" font-family="system-ui,sans-serif" font-size="11" font-weight="600">STATUS</text>
+  <text x="750" y="99" fill="#6b7280" font-family="system-ui,sans-serif" font-size="11" font-weight="600">ACTIONS</text>
+  <line x1="244" y1="112" x2="860" y2="112" stroke="#374151" stroke-width="0.5"/>
+
+  <!-- Agent Rows -->
+  <!-- Row 1: PM -->
+  <text x="264" y="132" fill="#fff" font-family="system-ui,sans-serif" font-size="13">🎯 PM</text>
+  <text x="400" y="132" fill="#9ca3af" font-family="system-ui,sans-serif" font-size="12">Product Manager</text>
+  <text x="510" y="132" fill="#9ca3af" font-family="system-ui,sans-serif" font-size="12">Claude 3.5</text>
+  <rect x="630" y="120" width="36" height="18" rx="9" fill="#22c55e" opacity="0.2"/><circle cx="654" cy="129" r="6" fill="#22c55e"/>
+  <text x="750" y="132" fill="#6b7280" font-family="system-ui,sans-serif" font-size="12">✏️  🗑️</text>
+  <line x1="254" y1="142" x2="850" y2="142" stroke="#374151" stroke-width="0.3"/>
+
+  <!-- Row 2: UI -->
+  <text x="264" y="160" fill="#fff" font-family="system-ui,sans-serif" font-size="13">🎨 UI</text>
+  <text x="400" y="160" fill="#9ca3af" font-family="system-ui,sans-serif" font-size="12">Designer</text>
+  <text x="510" y="160" fill="#9ca3af" font-family="system-ui,sans-serif" font-size="12">Claude 3.5</text>
+  <rect x="630" y="148" width="36" height="18" rx="9" fill="#22c55e" opacity="0.2"/><circle cx="654" cy="157" r="6" fill="#22c55e"/>
+  <text x="750" y="160" fill="#6b7280" font-family="system-ui,sans-serif" font-size="12">✏️  🗑️</text>
+  <line x1="254" y1="170" x2="850" y2="170" stroke="#374151" stroke-width="0.3"/>
+
+  <!-- Row 3: Dev -->
+  <text x="264" y="188" fill="#fff" font-family="system-ui,sans-serif" font-size="13">⌨️ Dev</text>
+  <text x="400" y="188" fill="#9ca3af" font-family="system-ui,sans-serif" font-size="12">Developer</text>
+  <text x="510" y="188" fill="#9ca3af" font-family="system-ui,sans-serif" font-size="12">GPT-4o</text>
+  <rect x="630" y="176" width="36" height="18" rx="9" fill="#22c55e" opacity="0.2"/><circle cx="654" cy="185" r="6" fill="#22c55e"/>
+  <text x="750" y="188" fill="#6b7280" font-family="system-ui,sans-serif" font-size="12">✏️  🗑️</text>
+  <line x1="254" y1="198" x2="850" y2="198" stroke="#374151" stroke-width="0.3"/>
+
+  <!-- Row 4: QA -->
+  <text x="264" y="216" fill="#fff" font-family="system-ui,sans-serif" font-size="13">🔍 QA</text>
+  <text x="400" y="216" fill="#9ca3af" font-family="system-ui,sans-serif" font-size="12">Tester</text>
+  <text x="510" y="216" fill="#9ca3af" font-family="system-ui,sans-serif" font-size="12">Claude 3.5</text>
+  <rect x="630" y="204" width="36" height="18" rx="9" fill="#22c55e" opacity="0.2"/><circle cx="654" cy="213" r="6" fill="#22c55e"/>
+  <text x="750" y="216" fill="#6b7280" font-family="system-ui,sans-serif" font-size="12">✏️  🗑️</text>
+  <line x1="254" y1="226" x2="850" y2="226" stroke="#374151" stroke-width="0.3"/>
+
+  <!-- Row 5: Ops -->
+  <text x="264" y="244" fill="#fff" font-family="system-ui,sans-serif" font-size="13">🚀 Ops</text>
+  <text x="400" y="244" fill="#9ca3af" font-family="system-ui,sans-serif" font-size="12">DevOps</text>
+  <text x="510" y="244" fill="#9ca3af" font-family="system-ui,sans-serif" font-size="12">DeepSeek</text>
+  <rect x="630" y="232" width="36" height="18" rx="9" fill="#22c55e" opacity="0.2"/><circle cx="654" cy="241" r="6" fill="#22c55e"/>
+  <text x="750" y="244" fill="#6b7280" font-family="system-ui,sans-serif" font-size="12">✏️  🗑️</text>
+  <line x1="254" y1="254" x2="850" y2="254" stroke="#374151" stroke-width="0.3"/>
+
+  <!-- Row 6: Review -->
+  <text x="264" y="272" fill="#fff" font-family="system-ui,sans-serif" font-size="13">📝 Review</text>
+  <text x="400" y="272" fill="#9ca3af" font-family="system-ui,sans-serif" font-size="12">Code Reviewer</text>
+  <text x="510" y="272" fill="#9ca3af" font-family="system-ui,sans-serif" font-size="12">Claude 3.5</text>
+  <rect x="630" y="260" width="36" height="18" rx="9" fill="#22c55e" opacity="0.2"/><circle cx="654" cy="269" r="6" fill="#22c55e"/>
+  <text x="750" y="272" fill="#6b7280" font-family="system-ui,sans-serif" font-size="12">✏️  🗑️</text>
+  <line x1="254" y1="282" x2="850" y2="282" stroke="#374151" stroke-width="0.3"/>
+
+  <!-- Row 7: 公众号 -->
+  <text x="264" y="300" fill="#fff" font-family="system-ui,sans-serif" font-size="13">✍️ 公众号</text>
+  <text x="400" y="300" fill="#9ca3af" font-family="system-ui,sans-serif" font-size="12">Content Writer</text>
+  <text x="510" y="300" fill="#9ca3af" font-family="system-ui,sans-serif" font-size="12">GPT-4o</text>
+  <rect x="630" y="288" width="36" height="18" rx="9" fill="#22c55e" opacity="0.2"/><circle cx="654" cy="297" r="6" fill="#22c55e"/>
+  <text x="750" y="300" fill="#6b7280" font-family="system-ui,sans-serif" font-size="12">✏️  🗑️</text>
+  <line x1="254" y1="310" x2="850" y2="310" stroke="#374151" stroke-width="0.3"/>
+
+  <!-- Row 8: 小红书 -->
+  <text x="264" y="328" fill="#fff" font-family="system-ui,sans-serif" font-size="13">📕 小红书</text>
+  <text x="400" y="328" fill="#9ca3af" font-family="system-ui,sans-serif" font-size="12">Social Writer</text>
+  <text x="510" y="328" fill="#9ca3af" font-family="system-ui,sans-serif" font-size="12">GPT-4o</text>
+  <rect x="630" y="316" width="36" height="18" rx="9" fill="#22c55e" opacity="0.2"/><circle cx="654" cy="325" r="6" fill="#22c55e"/>
+  <text x="750" y="328" fill="#6b7280" font-family="system-ui,sans-serif" font-size="12">✏️  🗑️</text>
+  <line x1="254" y1="338" x2="850" y2="338" stroke="#374151" stroke-width="0.3"/>
+
+  <!-- Row 9: i18n -->
+  <text x="264" y="356" fill="#fff" font-family="system-ui,sans-serif" font-size="13">🌍 i18n</text>
+  <text x="400" y="356" fill="#9ca3af" font-family="system-ui,sans-serif" font-size="12">Translator</text>
+  <text x="510" y="356" fill="#9ca3af" font-family="system-ui,sans-serif" font-size="12">DeepSeek</text>
+  <rect x="630" y="344" width="36" height="18" rx="9" fill="#22c55e" opacity="0.2"/><circle cx="654" cy="353" r="6" fill="#22c55e"/>
+  <text x="750" y="356" fill="#6b7280" font-family="system-ui,sans-serif" font-size="12">✏️  🗑️</text>
+  <line x1="254" y1="366" x2="850" y2="366" stroke="#374151" stroke-width="0.3"/>
+
+  <!-- Row 10: DB -->
+  <text x="264" y="384" fill="#fff" font-family="system-ui,sans-serif" font-size="13">🗄️ DB</text>
+  <text x="400" y="384" fill="#9ca3af" font-family="system-ui,sans-serif" font-size="12">DBA</text>
+  <text x="510" y="384" fill="#9ca3af" font-family="system-ui,sans-serif" font-size="12">Claude 3.5</text>
+  <rect x="630" y="372" width="36" height="18" rx="9" fill="#6b7280" opacity="0.3"/><circle cx="642" cy="381" r="6" fill="#6b7280"/>
+  <text x="750" y="384" fill="#6b7280" font-family="system-ui,sans-serif" font-size="12">✏️  🗑️</text>
+  <line x1="254" y1="394" x2="850" y2="394" stroke="#374151" stroke-width="0.3"/>
+
+  <!-- Row 11: API -->
+  <text x="264" y="412" fill="#fff" font-family="system-ui,sans-serif" font-size="13">🔌 API</text>
+  <text x="400" y="412" fill="#9ca3af" font-family="system-ui,sans-serif" font-size="12">API Engineer</text>
+  <text x="510" y="412" fill="#9ca3af" font-family="system-ui,sans-serif" font-size="12">GPT-4o</text>
+  <rect x="630" y="400" width="36" height="18" rx="9" fill="#22c55e" opacity="0.2"/><circle cx="654" cy="409" r="6" fill="#22c55e"/>
+  <text x="750" y="412" fill="#6b7280" font-family="system-ui,sans-serif" font-size="12">✏️  🗑️</text>
+  <line x1="254" y1="422" x2="850" y2="422" stroke="#374151" stroke-width="0.3"/>
+
+  <!-- Row 12: Doc -->
+  <text x="264" y="440" fill="#fff" font-family="system-ui,sans-serif" font-size="13">📚 Doc</text>
+  <text x="400" y="440" fill="#9ca3af" font-family="system-ui,sans-serif" font-size="12">Tech Writer</text>
+  <text x="510" y="440" fill="#9ca3af" font-family="system-ui,sans-serif" font-size="12">DeepSeek</text>
+  <rect x="630" y="428" width="36" height="18" rx="9" fill="#22c55e" opacity="0.2"/><circle cx="654" cy="437" r="6" fill="#22c55e"/>
+  <text x="750" y="440" fill="#6b7280" font-family="system-ui,sans-serif" font-size="12">✏️  🗑️</text>
+  <line x1="254" y1="450" x2="850" y2="450" stroke="#374151" stroke-width="0.3"/>
+
+  <!-- Row 13: Master -->
+  <text x="264" y="468" fill="#fff" font-family="system-ui,sans-serif" font-size="13">🧠 Master</text>
+  <text x="400" y="468" fill="#9ca3af" font-family="system-ui,sans-serif" font-size="12">Orchestrator</text>
+  <text x="510" y="468" fill="#9ca3af" font-family="system-ui,sans-serif" font-size="12">Claude 3.5</text>
+  <rect x="630" y="456" width="36" height="18" rx="9" fill="#22c55e" opacity="0.2"/><circle cx="654" cy="465" r="6" fill="#22c55e"/>
+  <text x="750" y="468" fill="#6b7280" font-family="system-ui,sans-serif" font-size="12">✏️  🗑️</text>
+  <line x1="254" y1="478" x2="850" y2="478" stroke="#374151" stroke-width="0.3"/>
+
+  <!-- Row 14: Custom -->
+  <text x="264" y="496" fill="#fff" font-family="system-ui,sans-serif" font-size="13">➕ Custom</text>
+  <text x="400" y="496" fill="#9ca3af" font-family="system-ui,sans-serif" font-size="12">Custom Agent</text>
+  <text x="510" y="496" fill="#9ca3af" font-family="system-ui,sans-serif" font-size="12">—</text>
+  <rect x="630" y="484" width="36" height="18" rx="9" fill="#6b7280" opacity="0.3"/><circle cx="642" cy="493" r="6" fill="#6b7280"/>
+  <text x="750" y="496" fill="#6b7280" font-family="system-ui,sans-serif" font-size="12">✏️  🗑️</text>
+
+  <!-- Model Configuration Panel -->
+  <rect x="244" y="592" width="400" height="290" rx="12" fill="#1a1b23" filter="url(#shadow)"/>
+  <rect x="244" y="592" width="400" height="290" rx="12" fill="none" stroke="#374151" stroke-width="1"/>
+  <text x="264" y="620" fill="#fff" font-family="system-ui,sans-serif" font-size="15" font-weight="600">🧩 Model Configuration</text>
+  
+  <text x="264" y="652" fill="#9ca3af" font-family="system-ui,sans-serif" font-size="12">Provider</text>
+  <rect x="264" y="660" width="360" height="34" rx="8" fill="#0f1117" stroke="#374151" stroke-width="1"/>
+  <text x="278" y="682" fill="#fff" font-family="system-ui,sans-serif" font-size="13">Claude (Anthropic)</text>
+  <text x="596" y="682" fill="#6b7280" font-family="system-ui,sans-serif" font-size="12">▼</text>
+
+  <text x="264" y="714" fill="#9ca3af" font-family="system-ui,sans-serif" font-size="12">Default Model</text>
+  <rect x="264" y="722" width="360" height="34" rx="8" fill="#0f1117" stroke="#374151" stroke-width="1"/>
+  <text x="278" y="744" fill="#fff" font-family="system-ui,sans-serif" font-size="13">claude-3.5-sonnet</text>
+  <text x="596" y="744" fill="#6b7280" font-family="system-ui,sans-serif" font-size="12">▼</text>
+
+  <text x="264" y="776" fill="#9ca3af" font-family="system-ui,sans-serif" font-size="12">Fallback Model</text>
+  <rect x="264" y="784" width="360" height="34" rx="8" fill="#0f1117" stroke="#374151" stroke-width="1"/>
+  <text x="278" y="806" fill="#fff" font-family="system-ui,sans-serif" font-size="13">deepseek-v3</text>
+  <text x="596" y="806" fill="#6b7280" font-family="system-ui,sans-serif" font-size="12">▼</text>
+
+  <text x="264" y="840" fill="#9ca3af" font-family="system-ui,sans-serif" font-size="12">Temperature: 0.7</text>
+  <rect x="264" y="850" width="360" height="6" rx="3" fill="#374151"/>
+  <rect x="264" y="850" width="252" height="6" rx="3" fill="#6366f1"/>
+  <circle cx="516" cy="853" r="8" fill="#6366f1" stroke="#fff" stroke-width="2"/>
+
+  <!-- OpenClaw Integration Card -->
+  <rect x="660" y="592" width="300" height="290" rx="12" fill="#1a1b23" filter="url(#shadow)"/>
+  <rect x="660" y="592" width="300" height="290" rx="12" fill="none" stroke="#374151" stroke-width="1"/>
+  <text x="680" y="620" fill="#fff" font-family="system-ui,sans-serif" font-size="15" font-weight="600">🔗 OpenClaw Integration</text>
+
+  <text x="680" y="658" fill="#9ca3af" font-family="system-ui,sans-serif" font-size="13">企微通知</text>
+  <rect x="900" y="644" width="40" height="22" rx="11" fill="#22c55e"/>
+  <circle cx="929" cy="655" r="8" fill="#fff"/>
+
+  <text x="680" y="698" fill="#9ca3af" font-family="system-ui,sans-serif" font-size="13">Telegram</text>
+  <rect x="900" y="684" width="40" height="22" rx="11" fill="#374151"/>
+  <circle cx="911" cy="695" r="8" fill="#6b7280"/>
+
+  <text x="680" y="738" fill="#9ca3af" font-family="system-ui,sans-serif" font-size="12">Webhook URL</text>
+  <rect x="680" y="746" width="260" height="34" rx="8" fill="#0f1117" stroke="#374151" stroke-width="1"/>
+  <text x="694" y="768" fill="#6b7280" font-family="system-ui,sans-serif" font-size="12">https://hook.example.com/...</text>
+
+  <!-- Right edge decorative line -->
+  <rect x="976" y="0" width="224" height="900" fill="#0f1117"/>
+</svg>
