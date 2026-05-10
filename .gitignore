@@ -1,6 +1,14 @@
 node_modules/
 dist/
 .env
+.DS_Store
 *.db
+*.pyc
+*.tsbuildinfo
+__pycache__/
+.agent-factory/
 .agent-factory/tasks/
 .agent-factory/pipelines/
+packages/server/data/
+packages/server/.agent-factory/
+.vite/

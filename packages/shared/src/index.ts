@@ -1,0 +1,639 @@
+export type AgentRole = string;
+
+export interface AgentStats {
+  tasksCompleted: number;
+  tasksFailed: number;
+  avgDurationMs: number;
+  lastActiveAt?: string;
+}
+
+export interface AgentConfig {
+  model?: string;
+  maxConcurrent?: number;
+  timeout?: number;
+  workdir?: string;
+  maxTurns?: number;
+  allowedTools?: string[];
+}
+
+export interface AgentDefinition {
+  id: string;
+  name: string;
+  role: AgentRole;
+  emoji: string;
+  description?: string;
+  whenToUse: string;
+  skillPath?: string;
+  config: AgentConfig;
+  capabilities: string[];
+  triggers: string[];
+  allowedTools?: string[];
+  disallowedTools?: string[];
+  model?: string;
+  maxTurns?: number;
+  stats: AgentStats;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type Agent = AgentDefinition;
+
+export interface AgentSummary extends AgentDefinition {
+  activeExecutions: number;
+}
+
+export type SkillVersionStatus = 'draft' | 'published' | 'archived';
+
+export interface SkillDefinition {
+  id: string;
+  name: string;
+  description?: string;
+  sourcePath?: string;
+  latestVersionId?: string;
+  publishedVersionId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SkillVersion {
+  id: string;
+  skillId: string;
+  version: number;
+  status: SkillVersionStatus;
+  content: string;
+  checksum: string;
+  changelog?: string;
+  createdBy: string;
+  publishedBy?: string;
+  createdAt: string;
+  publishedAt?: string;
+  archivedAt?: string;
+}
+
+export interface SkillAssignment {
+  agentId: string;
+  skillId: string;
+  skillVersionId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SkillDetail extends SkillDefinition {
+  versions: SkillVersion[];
+  assignments: SkillAssignment[];
+}
+
+export type TaskMode = 'master' | 'direct' | 'pipeline';
+export type TaskStatus = 'pending' | 'queued' | 'assigned' | 'running' | 'review' | 'done' | 'failed' | 'cancelled';
+export type Priority = 'low' | 'normal' | 'high' | 'urgent';
+
+export interface Task {
+  id: string;
+  title: string;
+  description: string;
+  mode: TaskMode;
+  status: TaskStatus;
+  priority: Priority;
+  assigneeId?: string;
+  createdBy: 'user' | 'master';
+  parentTaskId?: string;
+  pipelineId?: string;
+  stageIndex?: number;
+  input: string;
+  output?: string;
+  workdir?: string;
+  workspacePath?: string;
+  error?: string;
+  retryCount: number;
+  maxRetries: number;
+  dependsOn: string[];
+  createdAt: string;
+  startedAt?: string;
+  completedAt?: string;
+}
+
+export interface LogEntry {
+  id: number;
+  taskId: string;
+  level: 'info' | 'warn' | 'error' | 'debug';
+  message: string;
+  source: string;
+  createdAt: string;
+}
+
+export type ExecutionStatus = 'running' | 'done' | 'failed' | 'cancelled';
+
+export interface ToolActivity {
+  toolName: string;
+  input: Record<string, unknown>;
+  activityDescription?: string;
+  isSearch?: boolean;
+  isRead?: boolean;
+  timestamp: string;
+}
+
+export type ToolRiskLevel = 'low' | 'medium' | 'high';
+export type ToolExecutionStatus = 'running' | 'done' | 'failed' | 'blocked';
+
+export interface ToolDefinition {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  riskLevel: ToolRiskLevel;
+  enabled: boolean;
+  approvalRequired: boolean;
+  inputSchema: Record<string, unknown>;
+  outputSchema: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ToolPermission {
+  toolId: string;
+  agentId: string;
+  enabled: boolean;
+  approvalRequired?: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ToolExecution {
+  id: string;
+  toolId: string;
+  toolVersionId?: string;
+  taskId?: string;
+  executionId?: string;
+  agentId?: string;
+  status: ToolExecutionStatus;
+  inputSummary?: string;
+  inputHash?: string;
+  outputSummary?: string;
+  error?: string;
+  durationMs?: number;
+  startedAt: string;
+  completedAt?: string;
+}
+
+export type RunTraceStatus = 'running' | 'done' | 'failed' | 'cancelled';
+export type TraceSpanStatus = 'running' | 'done' | 'failed' | 'blocked';
+
+export interface TraceSpan {
+  id: string;
+  traceId: string;
+  parentSpanId?: string;
+  type: string;
+  name: string;
+  status: TraceSpanStatus;
+  startedAt: string;
+  completedAt?: string;
+  durationMs?: number;
+  metadata: Record<string, unknown>;
+  error?: string;
+}
+
+export interface RunTrace {
+  id: string;
+  taskId: string;
+  executionId: string;
+  agentId: string;
+  status: RunTraceStatus;
+  startedAt: string;
+  completedAt?: string;
+  summary?: string;
+  spans: TraceSpan[];
+}
+
+export type ModelHealthStatus = 'unknown' | 'healthy' | 'degraded' | 'disabled';
+
+export interface ModelDefinition {
+  id: string;
+  provider: string;
+  displayName: string;
+  description: string;
+  capabilityTags: string[];
+  costProfile: Record<string, unknown>;
+  maxTokens?: number;
+  enabled: boolean;
+  priority: number;
+  fallbackGroup: string;
+  healthStatus: ModelHealthStatus;
+  lastCheckedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ModelRoute {
+  routeKey: string;
+  defaultModelId?: string;
+  fallbackGroup: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ModelSelection {
+  modelId: string;
+  reason: string;
+  source: 'agent.model' | 'agent.config.model' | 'role.route' | 'global.route' | 'env.default' | 'runtime.default' | 'fallback';
+  requestedModelId?: string;
+  fallbackGroup?: string;
+}
+
+export interface AgentProgress {
+  toolUseCount: number;
+  tokenCount: number;
+  lastActivity?: ToolActivity;
+  recentActivities: ToolActivity[];
+  summary?: string;
+}
+
+export interface ProgressTracker {
+  toolUseCount: number;
+  latestInputTokens: number;
+  cumulativeOutputTokens: number;
+  recentActivities: ToolActivity[];
+}
+
+export interface TaskExecution {
+  id: string;
+  taskId: string;
+  agentDefId: string;
+  skillVersionId?: string;
+  status: ExecutionStatus;
+  progress: AgentProgress;
+  costUSD: number;
+  tokenCount: number;
+  parentExecutionId?: string;
+  startedAt: string;
+  completedAt?: string;
+}
+
+export type ExecutionMessageType = 'user_input' | 'agent_text' | 'tool_use' | 'tool_result' | 'progress' | 'error';
+
+export interface ExecutionMessage {
+  id: number;
+  executionId: string;
+  type: ExecutionMessageType;
+  content: string;
+  toolName?: string;
+  createdAt: string;
+}
+
+export type AgentMessageType = 'task_handoff' | 'progress_update' | 'approval_request' | 'approval_response' | 'text';
+
+export interface AgentMessage {
+  id: number;
+  fromExecution?: string;
+  toExecution?: string;
+  messageType: AgentMessageType;
+  content: string;
+  consumed: boolean;
+  createdAt: string;
+}
+
+export type PipelineStatus = 'running' | 'paused' | 'blocked' | 'done' | 'failed';
+
+export interface PipelineStage {
+  index: number;
+  name: string;
+  agentRole: AgentRole;
+  taskId?: string;
+  status: 'pending' | 'running' | 'review' | 'done' | 'failed' | 'skipped';
+  promptTemplate?: string;
+  input?: string;
+  output?: string;
+  gateApproved?: boolean;
+}
+
+export interface Pipeline {
+  id: string;
+  name: string;
+  templateId?: string;
+  status: PipelineStatus;
+  stages: PipelineStage[];
+  currentStageIndex: number;
+  gateMode: 'auto' | 'manual';
+  input: string;
+  createdAt: string;
+  completedAt?: string;
+}
+
+export interface PipelineTemplate {
+  id: string;
+  name: string;
+  description?: string;
+  stages: { name: string; role: AgentRole; promptTemplate: string }[];
+  createdAt: string;
+}
+
+export interface PipelineTemplateValidationResult {
+  valid: boolean;
+  errors: { stageIndex?: number; field?: string; message: string }[];
+  warnings: { stageIndex?: number; field?: string; message: string }[];
+}
+
+export interface Notification {
+  id: string;
+  type: 'task_complete' | 'task_failed' | 'pipeline_stage' | 'needs_input' | 'agent_error';
+  title: string;
+  message: string;
+  taskId?: string;
+  pipelineId?: string;
+  read: boolean;
+  createdAt: string;
+}
+
+export type InboxEntryType = 'approval' | 'question' | 'input' | 'review';
+export type InboxEntryStatus = 'pending' | 'approved' | 'rejected' | 'answered' | 'cancelled';
+
+export interface InboxEntry {
+  id: string;
+  type: InboxEntryType;
+  status: InboxEntryStatus;
+  title: string;
+  message: string;
+  options: string[];
+  response?: string;
+  taskId?: string;
+  pipelineId?: string;
+  executionId?: string;
+  createdBy: 'system' | 'agent' | 'user';
+  createdAt: string;
+  respondedAt?: string;
+}
+
+export type QualityLoopAttemptStatus = 'reviewing' | 'approved' | 'needs_fix' | 'fixing' | 'fixed' | 'skipped' | 'failed';
+
+export interface QualityLoopAttempt {
+  id: string;
+  taskId: string;
+  iteration: number;
+  status: QualityLoopAttemptStatus;
+  reviewTaskId?: string;
+  fixTaskId?: string;
+  reviewerAgentId?: string;
+  developerAgentId?: string;
+  reviewOutput?: string;
+  fixOutput?: string;
+  error?: string;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+}
+
+export type PlatformEventSeverity = 'info' | 'warn' | 'error';
+
+export interface PlatformEvent {
+  id: number;
+  eventType: WSEventType;
+  severity: PlatformEventSeverity;
+  taskId?: string;
+  pipelineId?: string;
+  agentId?: string;
+  executionId?: string;
+  inboxEntryId?: string;
+  qualityAttemptId?: string;
+  payload: unknown;
+  createdAt: string;
+}
+
+export interface ObservabilitySummary {
+  totals: {
+    events: number;
+    tasks: number;
+    failedTasks: number;
+    cancelledTasks: number;
+    retriedTasks: number;
+    pipelines: number;
+    failedPipelines: number;
+  };
+  failureHotspots: { taskId: string; title: string; count: number; lastFailureAt?: string }[];
+  retryHotspots: { taskId: string; title: string; retryCount: number; status: TaskStatus }[];
+  pipelineHealth: { status: PipelineStatus; count: number }[];
+  recentErrors: PlatformEvent[];
+}
+
+export interface ApiErrorResponse {
+  error: {
+    code: string;
+    message: string;
+    details?: unknown;
+  };
+}
+
+export interface RuntimeDiagnostics {
+  auth: {
+    enabled: boolean;
+    mode: 'local' | 'token';
+  };
+  operator: {
+    actor: OperatorActor;
+    permissions: {
+      canControlRuntime: boolean;
+      canDeleteTasks: boolean;
+    };
+  };
+  queue: {
+    backend: 'memory' | 'redis';
+    redisConfigured: boolean;
+  };
+  database: {
+    pathSource: 'default' | 'env';
+    pathHint: string;
+    migrations: { id: string; appliedAt: string }[];
+  };
+  runtime: {
+    nodeVersion: string;
+    platform: string;
+    pid: number;
+    uptime: number;
+    environment: string;
+  };
+}
+
+export type OperatorRole = 'admin' | 'operator' | 'viewer';
+
+export interface OperatorActor {
+  id: string;
+  role: OperatorRole;
+  source: 'local' | 'token' | 'proxy';
+}
+
+export interface OperatorAction {
+  id: number;
+  action: string;
+  actor: OperatorActor;
+  targetType: 'task' | 'pipeline' | 'inbox' | 'system' | 'agent' | 'tool' | 'skill' | 'model' | 'template';
+  targetId?: string;
+  taskId?: string;
+  pipelineId?: string;
+  inboxEntryId?: string;
+  status: 'success' | 'failed';
+  metadata: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface OperatorPreference<TValue = unknown> {
+  actor: OperatorActor;
+  namespace: string;
+  key: string;
+  value: TValue;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WorkspaceSnapshot {
+  version: 1;
+  generatedAt: string;
+  generatedBy: OperatorActor;
+  redaction: {
+    secrets: 'excluded';
+    diagnostics: 'sanitized';
+  };
+  data: {
+    tasks: Task[];
+    pipelines: Pipeline[];
+    inboxEntries: InboxEntry[];
+    notifications: Notification[];
+    platformEvents: PlatformEvent[];
+    observability: ObservabilitySummary;
+    preferences: OperatorPreference[];
+  };
+}
+
+export interface WorkspaceSnapshotPreview {
+  valid: boolean;
+  version?: number;
+  generatedAt?: string;
+  generatedBy?: OperatorActor;
+  counts: {
+    tasks: number;
+    pipelines: number;
+    inboxEntries: number;
+    notifications: number;
+    platformEvents: number;
+    preferences: number;
+  };
+  warnings: string[];
+}
+
+export type WorkspaceRestoreActionType = 'create' | 'skip' | 'conflict';
+export type WorkspaceRestoreResourceType = 'task' | 'pipeline' | 'inboxEntry' | 'notification' | 'platformEvent' | 'preference';
+
+export interface WorkspaceRestoreAction {
+  type: WorkspaceRestoreActionType;
+  resourceType: WorkspaceRestoreResourceType;
+  resourceId: string;
+  reason: string;
+  dependencies?: string[];
+}
+
+export interface WorkspaceRestorePlan {
+  valid: boolean;
+  preview: WorkspaceSnapshotPreview;
+  summary: {
+    create: number;
+    skip: number;
+    conflict: number;
+    warnings: number;
+  };
+  actions: WorkspaceRestoreAction[];
+  warnings: string[];
+}
+
+export type WorkspacePreferenceRestoreStatus = 'restored' | 'skipped' | 'failed';
+
+export interface WorkspacePreferenceRestoreItem {
+  namespace: string;
+  key: string;
+  status: WorkspacePreferenceRestoreStatus;
+  reason: string;
+}
+
+export interface WorkspacePreferenceRestoreResult {
+  actor: OperatorActor;
+  restored: number;
+  skipped: number;
+  failed: number;
+  items: WorkspacePreferenceRestoreItem[];
+  auditActionId?: number;
+}
+
+export type WSEventType =
+  | 'task:created' | 'task:updated' | 'task:assigned' | 'task:started' | 'task:log'
+  | 'task:done' | 'task:failed' | 'task:cancelled'
+  | 'agent:status' | 'agent:log'
+  | 'pipeline:stage:started' | 'pipeline:stage:done' | 'pipeline:done' | 'pipeline:failed'
+  | 'notification'
+  | 'inbox:created' | 'inbox:updated'
+  | 'quality:updated'
+  | 'execution:started' | 'execution:activity' | 'execution:progress'
+  | 'execution:message' | 'execution:done' | 'execution:failed'
+  | 'tool:started' | 'tool:done' | 'tool:failed' | 'tool:blocked' | 'tool:updated'
+  | 'skill:updated' | 'skill:published' | 'skill:assigned'
+  | 'agent:message';
+
+export interface WSEvent<TPayload = unknown> {
+  type: WSEventType;
+  payload: TPayload;
+  timestamp: string;
+}
+
+export interface WSCommand {
+  type: 'subscribe' | 'unsubscribe';
+  channel: string;
+}
+
+export interface HealthSummary {
+  status: 'ok' | string;
+  uptime: number;
+  agents: {
+    total: number;
+    active: number;
+    idle: number;
+  };
+  tasks: {
+    running: number;
+    queued: number;
+  };
+  pipelines: {
+    active: number;
+  };
+}
+
+export interface TaskEventPayload {
+  taskId: string;
+  task?: Task;
+  agentId?: string;
+  output?: string;
+  error?: string;
+  message?: string;
+}
+
+export interface PipelineEventPayload {
+  pipelineId: string;
+  stageIndex?: number;
+  taskId?: string;
+  output?: string;
+}
+
+export interface ExecutionEventPayload {
+  executionId: string;
+  taskId?: string;
+  agentDefId?: string;
+  progress?: AgentProgress;
+  type?: ExecutionMessageType;
+  content?: string;
+  error?: string;
+}
+
+export interface InboxEventPayload {
+  inboxEntryId: string;
+  entry?: InboxEntry;
+}
+
+export interface QualityLoopEventPayload {
+  taskId: string;
+  attempt?: QualityLoopAttempt;
+}
