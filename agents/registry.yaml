@@ -10,10 +10,11 @@ agents:
     description: 任务分解与调度，自动将复杂需求拆解为子任务并分配给专业 Agent
     skill: agents/master.md
     model:
-      provider: claude
-      model: claude-opus-4-20250514
+      provider: openai
+      model: openai/claude-opus-4.7
       maxTokens: 16384
-    capabilities: [planning, decomposition, coordination, review]
+    capabilities: [planning, decomposition, coordination, review, web-research]
+    allowed_tools: [web.search, web.fetch]
     triggers: [自动分配, 帮我做, build me, create a]
 
   - id: pm
@@ -23,10 +24,11 @@ agents:
     description: 需求分析、PRD 编写、用户故事、验收标准
     skill: agents/pm.md
     model:
-      provider: claude
-      model: claude-sonnet-4-20250514
+      provider: openai
+      model: openai/claude-sonnet-4.6
       maxTokens: 8192
-    capabilities: [spec, user-stories, requirements, acceptance-criteria]
+    capabilities: [spec, user-stories, requirements, acceptance-criteria, web-research]
+    allowed_tools: [web.search, web.fetch, content.hashtag_plan]
     triggers: [需求, spec, PRD, 用户故事, requirement]
 
   - id: ui
@@ -36,10 +38,11 @@ agents:
     description: UI/UX 设计规范、组件层级、Design Token、响应式策略
     skill: agents/ui.md
     model:
-      provider: claude
-      model: claude-sonnet-4-20250514
+      provider: openai
+      model: openai/claude-sonnet-4.6
       maxTokens: 8192
-    capabilities: [design, wireframe, component, responsive, accessibility]
+    capabilities: [design, wireframe, component, responsive, accessibility, image-generation]
+    allowed_tools: [image.generate_svg]
     triggers: [设计, UI, 界面, wireframe, design]
 
   - id: dev
@@ -49,10 +52,11 @@ agents:
     description: 全栈开发，TypeScript + React + Express，写生产级代码
     skill: agents/dev.md
     model:
-      provider: claude
-      model: claude-sonnet-4-20250514
+      provider: openai
+      model: openai/gpt-5.3-codex
       maxTokens: 8192
-    capabilities: [typescript, react, express, database, api, frontend, backend]
+    capabilities: [typescript, react, express, database, api, frontend, backend, web-research]
+    allowed_tools: [web.search, web.fetch]
     triggers: [写代码, 实现, 开发, implement, code, fix]
 
   - id: qa
@@ -62,10 +66,11 @@ agents:
     description: 测试用例编写、单元测试、集成测试、边界检测
     skill: agents/qa.md
     model:
-      provider: claude
-      model: claude-sonnet-4-20250514
+      provider: openai
+      model: openai/claude-haiku-4.5
       maxTokens: 8192
-    capabilities: [testing, unit-test, integration-test, coverage, edge-cases]
+    capabilities: [testing, unit-test, integration-test, coverage, edge-cases, web-research]
+    allowed_tools: [web.search, web.fetch]
     triggers: [测试, test, QA, 验证, coverage]
 
   - id: ops
@@ -75,10 +80,11 @@ agents:
     description: Docker、CI/CD、部署、监控、运维
     skill: agents/ops.md
     model:
-      provider: claude
-      model: claude-sonnet-4-20250514
+      provider: openai
+      model: openai/claude-sonnet-4.6
       maxTokens: 8192
-    capabilities: [docker, cicd, deploy, monitoring, nginx, systemd]
+    capabilities: [docker, cicd, deploy, monitoring, nginx, systemd, web-research]
+    allowed_tools: [web.search, web.fetch]
     triggers: [部署, deploy, CI/CD, Docker, 运维]
 
   - id: review
@@ -88,10 +94,11 @@ agents:
     description: 代码审查、安全扫描、最佳实践检查
     skill: agents/review.md
     model:
-      provider: claude
-      model: claude-opus-4-20250514
+      provider: openai
+      model: openai/claude-sonnet-4.6
       maxTokens: 8192
-    capabilities: [code-review, security, best-practices, architecture]
+    capabilities: [code-review, security, best-practices, architecture, web-research]
+    allowed_tools: [web.search, web.fetch]
     triggers: [review, 审查, 代码审核, security scan]
 
   # ===== 内容创作 Agent =====
@@ -102,10 +109,11 @@ agents:
     description: 微信公众号文章创作，科技/AI/互联网方向，有传播力的深度内容
     skill: agents/wechat-writer.md
     model:
-      provider: claude
-      model: claude-sonnet-4-20250514
+      provider: openai
+      model: openai/claude-sonnet-4.6
       maxTokens: 8192
-    capabilities: [wechat, article, copywriting, seo, chinese-content]
+    capabilities: [wechat, article, copywriting, seo, chinese-content, web-research, wechat-layout, image-generation]
+    allowed_tools: [web.search, web.fetch, crawler.extract_links, content.wechat_layout, content.hashtag_plan, image.generate_svg]
     triggers: [公众号, 写文章, 推文, 微信文章, wechat article]
 
   - id: xiaohongshu-writer
@@ -115,10 +123,11 @@ agents:
     description: 小红书图文笔记创作，种草/测评/教程，高互动爆款内容
     skill: agents/xiaohongshu-writer.md
     model:
-      provider: claude
-      model: claude-sonnet-4-20250514
+      provider: openai
+      model: openai/claude-sonnet-4.6
       maxTokens: 4096
-    capabilities: [xiaohongshu, rednote, social-media, chinese-content, lifestyle]
+    capabilities: [xiaohongshu, rednote, social-media, chinese-content, lifestyle, web-research, hashtag-planning, image-generation]
+    allowed_tools: [web.search, web.fetch, content.hashtag_plan, image.generate_svg]
     triggers: [小红书, 笔记, 种草, 小红书文案, rednote]
 
   # ===== 工具型 Agent =====
@@ -129,10 +138,11 @@ agents:
     description: 多语言翻译、本地化适配、i18n key 提取
     skill: agents/i18n.md
     model:
-      provider: claude
-      model: claude-sonnet-4-20250514
+      provider: openai
+      model: openai/claude-haiku-4.5
       maxTokens: 8192
-    capabilities: [translation, i18n, l10n, locale, multilingual]
+    capabilities: [translation, i18n, l10n, locale, multilingual, web-fetch]
+    allowed_tools: [web.fetch]
     triggers: [翻译, 国际化, i18n, translate, localization]
 
   - id: db-migration
@@ -142,10 +152,11 @@ agents:
     description: 数据库 schema 设计、迁移文件生成、索引优化
     skill: agents/db-migration.md
     model:
-      provider: claude
-      model: claude-sonnet-4-20250514
+      provider: openai
+      model: openai/claude-sonnet-4.6
       maxTokens: 8192
-    capabilities: [database, migration, schema, sql, prisma, drizzle]
+    capabilities: [database, migration, schema, sql, prisma, drizzle, web-research]
+    allowed_tools: [web.search, web.fetch]
     triggers: [数据库, 迁移, migration, schema, 建表]
 
   - id: api-design
@@ -155,10 +166,11 @@ agents:
     description: RESTful/GraphQL API 设计、OpenAPI 规范、错误码体系
     skill: agents/api-design.md
     model:
-      provider: claude
-      model: claude-sonnet-4-20250514
+      provider: openai
+      model: openai/claude-sonnet-4.6
       maxTokens: 8192
-    capabilities: [api, rest, graphql, openapi, swagger]
+    capabilities: [api, rest, graphql, openapi, swagger, web-research]
+    allowed_tools: [web.search, web.fetch]
     triggers: [API, 接口设计, endpoint, swagger, openapi]
 
   - id: doc-writer
@@ -168,8 +180,9 @@ agents:
     description: 技术文档、README、API 文档、部署手册、CHANGELOG
     skill: agents/doc-writer.md
     model:
-      provider: claude
-      model: claude-sonnet-4-20250514
+      provider: openai
+      model: openai/claude-sonnet-4.6
       maxTokens: 8192
-    capabilities: [documentation, readme, changelog, guide, adr]
+    capabilities: [documentation, readme, changelog, guide, adr, web-research, crawler]
+    allowed_tools: [web.search, web.fetch, crawler.extract_links]
     triggers: [文档, README, docs, 使用指南, changelog]

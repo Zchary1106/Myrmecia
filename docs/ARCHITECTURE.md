@@ -1,406 +1,665 @@
-# Technical Architecture: Agent Factory
+# Agent Factory Architecture
 
-## 1. System Overview
+Agent Factory 是一个面向“多 Agent 协作生产”的本地优先编排平台。它把 Agent 定义、任务队列、Pipeline、实时事件、Human-in-the-loop、工具能力和 Dashboard 管理放在同一个系统里，支持从产品需求、设计、开发、测试、部署到内容创作的端到端工作流。
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│                     Web Dashboard (React)                      │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌────────────────┐  │
-│  │ Overview  │ │  Tasks   │ │  Agents  │ │   Pipelines    │  │
-│  └──────────┘ └──────────┘ └──────────┘ └────────────────┘  │
-└────────────────────────┬─────────────────────────────────────┘
-                         │ HTTP + WebSocket
-┌────────────────────────┴─────────────────────────────────────┐
-│                    Orchestrator API (Express)                  │
-│  ┌────────────┐ ┌────────────┐ ┌────────────┐ ┌──────────┐  │
-│  │  REST API  │ │  WS Server │ │  Pipeline  │ │  Event   │  │
-│  │  Routes    │ │  Hub       │ │  Engine    │ │  Bus     │  │
-│  └─────┬──────┘ └─────┬──────┘ └─────┬──────┘ └────┬─────┘  │
-│        └───────────────┴──────────────┴──────────────┘        │
-│                         │                                     │
-│  ┌──────────────────────┴──────────────────────────────────┐  │
-│  │                  Core Services                           │  │
-│  │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌───────────┐  │  │
-│  │  │  Agent   │ │   Task   │ │ Pipeline │ │ Notifier  │  │  │
-│  │  │ Manager  │ │  Queue   │ │ Manager  │ │ Service   │  │  │
-│  │  └────┬─────┘ └────┬─────┘ └────┬─────┘ └───────────┘  │  │
-│  └───────┴─────────────┴────────────┴──────────────────────┘  │
-│                         │                                     │
-│  ┌──────────────────────┴──────────────────────────────────┐  │
-│  │                  Agent Runtime Layer                      │  │
-│  │  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐      │  │
-│  │  │ Claude  │ │ Claude  │ │ Claude  │ │ Claude  │ ...  │  │
-│  │  │ Code #1 │ │ Code #2 │ │ Code #3 │ │ Code #4 │      │  │
-│  │  │ (PM)    │ │ (Dev)   │ │ (QA)    │ │ (Ops)   │      │  │
-│  │  └─────────┘ └─────────┘ └─────────┘ └─────────┘      │  │
-│  └─────────────────────────────────────────────────────────┘  │
-│                         │                                     │
-│  ┌──────────────────────┴──────────────────────────────────┐  │
-│  │                    Storage Layer                          │  │
-│  │  ┌──────────┐ ┌──────────┐ ┌──────────────────────┐    │  │
-│  │  │  SQLite  │ │  Redis   │ │    File System       │    │  │
-│  │  │ metadata │ │  queue   │ │  artifacts/workdirs  │    │  │
-│  │  └──────────┘ └──────────┘ └──────────────────────┘    │  │
-│  └─────────────────────────────────────────────────────────┘  │
-└──────────────────────────────────────────────────────────────┘
+## 1. System Context
+
+```mermaid
+flowchart LR
+  Operator[Operator / User] --> Dashboard[React Dashboard]
+  Dashboard -->|HTTP /api| Server[Express Orchestrator API]
+  Dashboard <-->|WebSocket /ws| WSHub[WebSocket Hub]
+  Server --> SQLite[(SQLite)]
+  Server --> Queue[TaskQueue<br/>In-memory or BullMQ]
+  Queue --> Runtime[Agent Runtime]
+  Runtime --> CrewRunner[Python CrewAI Runner]
+  CrewRunner --> Proxy[Copilot API Reverse Proxy<br/>OpenAI-compatible]
+  CrewRunner --> Tools[Built-in Tools]
+  Runtime --> Workspaces[(Task Workspaces)]
+  Server --> Notifications[Notifications / Inbox]
 ```
 
-## 2. Component Details
+### Responsibilities
 
-### 2.1 Agent Manager
+| Layer | Responsibility |
+| --- | --- |
+| Dashboard | Agent 管理、任务发起、Pipeline 控制、实时状态、Inbox、观测和设置 |
+| Express API | REST API、鉴权、任务/Agent/Pipeline/模板/系统路由 |
+| TaskQueue | 任务入队、优先级、Redis/BullMQ 或本地内存执行路径 |
+| Agent Runtime | 创建 execution、组装 skill prompt、启动 CrewAI、记录消息/成本/状态 |
+| Model Router | 选择实际模型、应用 role/global fallback、记录健康状态和使用量 |
+| CrewAI Runner | 根据 Agent 配置构建 CrewAI Agent，调用模型与工具 |
+| SQLite | Agent 定义、任务、执行记录、消息、Pipeline、通知、审计事件 |
+| WebSocket Hub | 把内部事件广播到 Dashboard 对应 channel |
 
-Responsible for agent lifecycle: creation, configuration, health monitoring.
+## 2. High-level Runtime Architecture
 
-```typescript
-class AgentManager {
-  private agents: Map<string, AgentInstance>
-  
-  async createAgent(config: AgentConfig): Promise<Agent>
-  async startAgent(id: string): Promise<void>
-  async stopAgent(id: string): Promise<void>
-  async getAgent(id: string): Promise<Agent>
-  async listAgents(filter?: AgentFilter): Promise<Agent[]>
-  async assignTask(agentId: string, task: Task): Promise<void>
-  
-  // Health check - periodic
-  async checkHealth(): Promise<AgentHealth[]>
-}
+```mermaid
+flowchart TB
+  subgraph Dashboard["packages/dashboard"]
+    Command[Command Center]
+    Agents[Agent Control Center<br/>Create/Edit Agents]
+    SkillPage[Skill Registry<br/>Draft / Publish / Rollback]
+    Tasks[Task Board]
+    Pipelines[Pipelines<br/>Visual Builder]
+    Timeline[Execution Timeline]
+    Inbox[Human Inbox]
+    Settings[Settings]
+  end
+
+  subgraph Server["packages/server"]
+    Auth[Token Auth Middleware]
+    Routes[REST Routes]
+    EventBus[Event Bus]
+    WSHub[WebSocket Hub]
+    AgentManager[Agent Manager]
+    SkillRegistry[Skill Registry]
+    TaskQueue[Task Queue]
+    PipelineEngine[Pipeline Engine]
+    QualityLoop[Quality Loop]
+    SelfHealing[Self-healing]
+    Runtime[Agent Runtime]
+    ModelRouter[Model Router]
+    DBModels[DB Model Helpers]
+  end
+
+  subgraph Data["Persistence"]
+    SQLite[(SQLite DB)]
+    Registry[agents/registry.yaml]
+    Skills[agents/*.md]
+    Templates[templates/*.yaml]
+    Workspace[.agent-factory/workspaces]
+  end
+
+  subgraph Python["packages/crew"]
+    Runner[crew_runner.py]
+    Builder[agents.py]
+    ToolRegistry[agent_tools.py]
+  end
+
+  Dashboard -->|HTTP /api| Auth --> Routes
+  Dashboard <-->|/ws| WSHub
+  Routes --> AgentManager
+  Routes --> ToolRuntime
+  Routes --> SkillRegistry
+  Routes --> TaskQueue
+  Routes --> PipelineEngine
+  Routes --> DBModels
+  AgentManager --> Registry
+  AgentManager --> SQLite
+  TaskQueue --> Runtime
+  PipelineEngine --> TaskQueue
+  Runtime --> Skills
+  SkillRegistry --> SQLite
+  Runtime --> ModelRouter
+  Runtime --> Workspace
+  Runtime --> Runner
+  Runner --> Builder
+  Builder --> ToolRegistry
+  Builder --> Copilot[Copilot API Reverse Proxy]
+  DBModels --> SQLite
+  EventBus --> WSHub
+  Runtime --> EventBus
+  PipelineEngine --> EventBus
 ```
 
-### 2.2 Task Queue
+## 3. Agent Model
 
-BullMQ-based task queue with priority and dependency support.
+Agent 在系统里是 **capability template**，不是常驻 worker。它描述“这个角色如何工作、能用什么工具、适合哪些任务、默认模型是什么”。实际执行状态放在 `task_executions`、`execution_messages` 和 `run_traces` 中。
 
-```typescript
-class TaskQueue {
-  private queue: Queue
-  private workers: Worker[]
-  
-  async enqueue(task: Task): Promise<void>
-  async dequeue(agentRole: AgentRole): Promise<Task | null>
-  async complete(taskId: string, output: string): Promise<void>
-  async fail(taskId: string, error: string): Promise<void>
-  async cancel(taskId: string): Promise<void>
-  
-  // Dependency resolution
-  async checkDependencies(taskId: string): Promise<boolean>
-  async onDependencyMet(taskId: string): Promise<void>
-}
-```
-
-### 2.3 Pipeline Engine
-
-Manages stage-by-stage execution with gate controls.
-
-```typescript
-class PipelineEngine {
-  async create(templateId: string, input: string): Promise<Pipeline>
-  async advanceStage(pipelineId: string): Promise<void>
-  async approveGate(pipelineId: string): Promise<void>
-  async skipStage(pipelineId: string): Promise<void>
-  async cancel(pipelineId: string): Promise<void>
-  
-  // Called when a stage's task completes
-  async onStageComplete(pipelineId: string, stageIndex: number, output: string): Promise<void>
-}
-```
-
-### 2.4 Master Agent Logic
-
-The Master Agent uses Claude Code to decompose tasks:
-
-```typescript
-class MasterAgent {
-  async decompose(task: Task): Promise<SubTask[]> {
-    const prompt = `
-You are a project manager. Break down this task into subtasks.
-For each subtask, specify:
-- title
-- description (detailed prompt for the agent)
-- role (pm|ui|dev|qa|ops|review)
-- dependencies (which subtasks must complete first)
-
-Task: ${task.description}
-
-Output JSON array of subtasks.
-    `;
-    
-    const result = await this.runtime.execute(prompt);
-    return JSON.parse(result);
+```mermaid
+classDiagram
+  class AgentDefinition {
+    string id
+    string name
+    string role
+    string emoji
+    string description
+    string whenToUse
+    string skillPath
+    AgentConfig config
+    string[] capabilities
+    string[] triggers
+    string[] allowedTools
+    string[] disallowedTools
+    string model
+    number maxTurns
+    AgentStats stats
   }
-  
-  async monitor(parentTaskId: string): Promise<void> {
-    // Watch subtask progress
-    // Handle failures (retry, reassign)
-    // Consolidate when all done
+
+  class AgentConfig {
+    string model
+    number maxConcurrent
+    number timeout
+    string workdir
+    number maxTurns
+    string[] allowedTools
   }
-}
-```
 
-### 2.5 Event Bus
-
-Internal pub/sub for cross-component communication:
-
-```typescript
-type EventType = 
-  | 'task:created' | 'task:assigned' | 'task:started' 
-  | 'task:log' | 'task:done' | 'task:failed'
-  | 'agent:status' | 'agent:log'
-  | 'pipeline:stage:started' | 'pipeline:stage:done' | 'pipeline:done'
-
-class EventBus {
-  private emitter: EventEmitter
-  
-  emit(type: EventType, payload: any): void
-  on(type: EventType, handler: (payload: any) => void): void
-  
-  // Bridge to WebSocket
-  bridgeToWS(wsHub: WSHub): void
-}
-```
-
-## 3. Database Schema
-
-```sql
--- Agents
-CREATE TABLE agents (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  role TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'idle',
-  skill_path TEXT,
-  config JSON NOT NULL DEFAULT '{}',
-  stats JSON NOT NULL DEFAULT '{}',
-  current_task_id TEXT,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-
--- Tasks
-CREATE TABLE tasks (
-  id TEXT PRIMARY KEY,
-  title TEXT NOT NULL,
-  description TEXT NOT NULL,
-  mode TEXT NOT NULL, -- master | direct | pipeline
-  status TEXT NOT NULL DEFAULT 'pending',
-  priority TEXT NOT NULL DEFAULT 'normal',
-  assignee_id TEXT REFERENCES agents(id),
-  created_by TEXT NOT NULL DEFAULT 'user',
-  parent_task_id TEXT REFERENCES tasks(id),
-  pipeline_id TEXT REFERENCES pipelines(id),
-  stage_index INTEGER,
-  input TEXT NOT NULL,
-  output TEXT,
-  workdir TEXT,
-  error TEXT,
-  retry_count INTEGER DEFAULT 0,
-  max_retries INTEGER DEFAULT 2,
-  depends_on JSON DEFAULT '[]',
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  started_at DATETIME,
-  completed_at DATETIME
-);
-
--- Task Logs
-CREATE TABLE task_logs (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  task_id TEXT NOT NULL REFERENCES tasks(id),
-  level TEXT NOT NULL DEFAULT 'info',
-  message TEXT NOT NULL,
-  source TEXT NOT NULL,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-
--- Pipelines
-CREATE TABLE pipelines (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  template_id TEXT,
-  status TEXT NOT NULL DEFAULT 'running',
-  stages JSON NOT NULL,
-  current_stage_index INTEGER DEFAULT 0,
-  gate_mode TEXT NOT NULL DEFAULT 'auto',
-  input TEXT NOT NULL,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  completed_at DATETIME
-);
-
--- Pipeline Templates
-CREATE TABLE pipeline_templates (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  description TEXT,
-  stages JSON NOT NULL,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-
--- Notifications
-CREATE TABLE notifications (
-  id TEXT PRIMARY KEY,
-  type TEXT NOT NULL,
-  title TEXT NOT NULL,
-  message TEXT NOT NULL,
-  task_id TEXT,
-  pipeline_id TEXT,
-  read BOOLEAN DEFAULT FALSE,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-
--- Indexes
-CREATE INDEX idx_tasks_status ON tasks(status);
-CREATE INDEX idx_tasks_assignee ON tasks(assignee_id);
-CREATE INDEX idx_tasks_pipeline ON tasks(pipeline_id);
-CREATE INDEX idx_task_logs_task ON task_logs(task_id);
-CREATE INDEX idx_notifications_read ON notifications(read);
-```
-
-## 4. Agent Communication Protocol
-
-Agents communicate through the file system and event bus:
-
-```
-workspace/
-├── .agent-factory/
-│   ├── tasks/
-│   │   ├── {task-id}/
-│   │   │   ├── input.md       # Task prompt
-│   │   │   ├── output.md      # Agent's output
-│   │   │   ├── artifacts/     # Generated files
-│   │   │   └── logs/          # Execution logs
-│   │   └── ...
-│   ├── pipelines/
-│   │   ├── {pipeline-id}/
-│   │   │   ├── stage-0-spec/  # PM output
-│   │   │   ├── stage-1-design/# UI output
-│   │   │   ├── stage-2-code/  # Dev output
-│   │   │   ├── stage-3-test/  # QA output
-│   │   │   └── stage-4-deploy/# Ops output
-│   │   └── ...
-│   └── shared/                # Shared context between agents
-│       ├── project-context.md
-│       └── conventions.md
-```
-
-**Inter-stage data flow:**
-1. Stage N completes → output written to `stage-N-{name}/output.md`
-2. Pipeline engine reads output
-3. Output injected as input into Stage N+1's prompt
-4. Stage N+1 also gets read access to all previous stage outputs
-
-## 5. Security Model
-
-- **Local-first**: Dashboard binds to `localhost:3000` by default
-- **Agent isolation**: Each Claude Code process runs in its own workdir
-- **No credential sharing**: Agents don't have access to user credentials
-- **Rate limiting**: Max concurrent agents configurable (prevent runaway costs)
-- **Cost tracking**: Log token usage per task/agent for cost awareness
-- **Kill switch**: One-click stop-all-agents from dashboard
-
-## 6. Error Handling & Recovery
-
-```
-Task Failure Flow:
-  1. Agent process exits with error
-  2. TaskQueue marks task as failed
-  3. If retryCount < maxRetries:
-     → Re-enqueue with incremented retryCount
-     → Notify: "Task retrying (attempt N/M)"
-  4. If retryCount >= maxRetries:
-     → Mark task as permanently failed
-     → If in pipeline: pause pipeline, notify user
-     → If master-dispatched: notify master agent
-     → Notify user: "Task failed, needs attention"
-
-Server Restart Recovery:
-  1. Load all tasks with status 'running' from DB
-  2. Mark as 'pending' (re-enqueue)
-  3. Restart agent processes
-  4. Resume pipelines from last completed stage
-```
-
-## 8. Advanced Architecture Components (v2+)
-
-### 8.1 Multi-Model Router
-
-```typescript
-class ModelRouter {
-  private configs: Map<string, AgentModelConfig>
-  
-  async selectModel(agent: Agent, task: Task): Promise<ModelConfig> {
-    if (task.priority === 'urgent' && this.budget.remaining < threshold) {
-      return this.cheapestAvailable(agent.role);
-    }
-    return agent.config.model || this.roleDefaults[agent.role];
+  class AgentStats {
+    number tasksCompleted
+    number tasksFailed
+    number avgDurationMs
+    string lastActiveAt
   }
-  
-  async executeWithFallback(prompt: string, config: ModelConfig): Promise<string>
-}
+
+  AgentDefinition --> AgentConfig
+  AgentDefinition --> AgentStats
 ```
 
-### 8.2 Agent Communication Hub
+### Agent Sources
 
-```typescript
-class AgentComms {
-  async send(from: string, to: string, msg: AgentMessage): Promise<void>
-  async broadcast(taskId: string, msg: AgentMessage): Promise<void>
-  onMessage(agentId: string, handler: (msg: AgentMessage) => void): void
-  getPendingMessages(agentId: string): AgentMessage[]
-}
+| Source | Purpose |
+| --- | --- |
+| `agents/registry.yaml` | 预置 Agent 列表、默认 role/model/tools/capabilities |
+| `agents/*.md` | 预置 Agent 的主 skill prompt |
+| Dashboard Create/Edit | 动态 Agent 或运行时 skill overlay、工具白名单、模型配置 |
+| SQLite `agents` | 最终运行时读取的 Agent 定义源 |
+
+启动时 `AgentManager.initializeFromRegistry()` 会读取 `agents/registry.yaml`。如果 Agent 不存在，会插入 DB；如果已存在，会刷新 registry 中的描述、skill path、capabilities、triggers、allowed tools 和默认模型配置。
+
+## 4. Agent Execution Flow
+
+```mermaid
+sequenceDiagram
+  participant UI as Dashboard
+  participant API as Express API
+  participant Queue as TaskQueue
+  participant RT as AgentRuntime
+  participant DB as SQLite
+  participant Py as crew_runner.py
+  participant LLM as Copilot API Proxy
+  participant Tool as Built-in Tools
+  participant WS as WebSocket Hub
+
+  UI->>API: POST /api/tasks or /api/agents/:id/execute
+  API->>DB: create task
+  API->>Queue: enqueue task
+  Queue->>RT: execute(agent, task)
+  RT->>DB: create task_execution
+  RT->>WS: task:started / execution:started
+  RT->>RT: build system prompt<br/>skill file + runtime profile overlay
+  RT->>Py: spawn python3 crew_runner.py config
+  Py->>Py: build CrewAI Agent
+  Py->>Tool: optional tool calls
+  Py->>LLM: chat via OpenAI-compatible proxy
+  Py-->>RT: JSONL assistant/result events
+  RT->>DB: execution_messages / run_traces / task logs / stats
+  RT->>WS: execution:message / task:done
+  UI-->>WS: receives live updates
 ```
 
-### 8.3 Cost Controller
+### Prompt Composition
 
-```typescript
-class CostController {
-  async trackUsage(taskId: string, usage: TokenUsage): Promise<void>
-  async checkBudget(scope: 'task' | 'daily' | 'pipeline', id: string): Promise<BudgetStatus>
-  async onBudgetExceed(scope: string, action: BudgetAction): Promise<void>
-  getCostStream(): Observable<CostEvent>
-  async getDailyCost(): Promise<CostReport>
-  async getTaskCost(taskId: string): Promise<CostReport>
-}
+Runtime prompt is composed as:
+
+```text
+agents/<agent>.md
+
+## Runtime Profile Override
+You are <name>, a <role> agent.
+Mission: <dashboard description>
+When to use: <whenToUse>
+Capabilities: ...
+Allowed tools: ...
 ```
 
-### 8.4 Skill Learning Engine
+This keeps file-based skills versionable while allowing Dashboard edits to take effect immediately.
 
-```typescript
-class SkillLearner {
-  async analyzeCompletion(task: Task, logs: LogEntry[]): Promise<LearnedPattern[]>
-  async generateSkill(patterns: LearnedPattern[]): Promise<SkillDefinition>
-  async enrichPrompt(agentId: string, taskPrompt: string): Promise<string>
-  async recordFailure(task: Task, error: string): Promise<void>
-  async getRelevantLessons(taskDescription: string): Promise<Lesson[]>
-}
+## 5. Tools and Skills Architecture
+
+Tools are governed by a server-side Tool Runtime and implemented in `packages/crew/agent_tools.py`. An Agent can request tools through `allowedTools`, but the server filters that list through the tool catalog, enabled flags, per-Agent permissions, disallowed tools, and approval requirements before passing tools to CrewAI.
+
+```mermaid
+flowchart LR
+  Agent[Agent Definition] --> Allowed[allowedTools]
+  Allowed --> Policy[Tool Policy Filter]
+  Catalog[(tools / tool_permissions)] --> Policy
+  Policy --> RuntimeConfig[Runtime Config JSON]
+  RuntimeConfig --> CrewRunner[crew_runner.py]
+  CrewRunner --> Builder[build_agent]
+  Builder --> ToolRegistry[TOOL_REGISTRY]
+  ToolRegistry --> WebSearch[web.search]
+  ToolRegistry --> WebFetch[web.fetch]
+  ToolRegistry --> Crawler[crawler.extract_links]
+  ToolRegistry --> Layout[content.wechat_layout]
+  ToolRegistry --> Hashtag[content.hashtag_plan]
+  ToolRegistry --> Image[image.generate_svg]
+  ToolRegistry --> Events[tool_use / tool_result events]
+  Events --> Executions[(tool_executions)]
 ```
 
-### 8.5 Human Interaction Manager
+`/api/tools` exposes the catalog, policy updates, per-Agent permissions, and execution history. The Dashboard **Tools** page shows enabled status, approval requirement, risk level, and recent tool calls.
 
-```typescript
-class HumanInteractionManager {
-  async requestInput(agentId: string, question: HumanQuestion): Promise<void>
-  async submitResponse(questionId: string, response: string): Promise<void>
-  async injectCorrection(taskId: string, correction: TaskCorrection): Promise<void>
-  async getPendingQuestions(): Promise<HumanQuestion[]>
-}
+Skills are governed through a server-side Skill Registry. Startup imports `agents/*.md` as published versions, and Agent execution resolves the prompt from an explicit `skill_assignments` row before falling back to the Agent `skillPath`.
+
+```mermaid
+flowchart LR
+  Markdown[agents/*.md] --> Import[Skill Registry Sync]
+  Import --> SkillsDB[(skills)]
+  Import --> Versions[(skill_versions)]
+  Agent[Agent Definition] --> Assignment[(skill_assignments)]
+  Assignment --> RuntimeSkill[Published Skill Version]
+  Versions --> RuntimeSkill
+  RuntimeSkill --> Prompt[Prompt Build]
+  Prompt --> Trace[prompt.build span<br/>skill checksum]
+  Prompt --> Execution[(task_executions.skill_version_id)]
 ```
 
-### 8.6 Task Replay Engine
+The Dashboard **Skills** page supports draft creation, published-version immutability, markdown preview, line diff against the current published version, and per-Agent assignment/rollback to any published version.
 
-```typescript
-class ReplayEngine {
-  async record(taskId: string, event: ReplayEvent): Promise<void>
-  async getTimeline(taskId: string): Promise<ReplayEvent[]>
-  async getSnapshot(taskId: string, timestamp: Date): Promise<TaskSnapshot>
-  async rerunFrom(taskId: string, eventIndex: number, newInput?: string): Promise<Task>
-}
+### Built-in Tools
+
+| Tool | Capability |
+| --- | --- |
+| `web.search` | DuckDuckGo HTML 搜索，返回标题和链接 |
+| `web.fetch` | 抓取 http/https 页面文本，做事实查证和资料整理 |
+| `crawler.extract_links` | 从页面提取可见链接，适合资料索引/轻量爬虫 |
+| `content.wechat_layout` | 把公众号 Markdown 草稿转成移动端友好的 HTML blocks |
+| `content.hashtag_plan` | 生成中文关键词、标签和搜索意图 |
+| `image.generate_svg` | 本地生成 SVG 封面草稿到 `generated-assets/cover.svg` |
+
+### Recommended Tool Mapping
+
+| Agent | Recommended tools |
+| --- | --- |
+| PM / Master / Review | `web.search`, `web.fetch` |
+| Dev / API / DB / Ops | `web.search`, `web.fetch` |
+| Doc Writer | `web.search`, `web.fetch`, `crawler.extract_links` |
+| WeChat Writer | `web.search`, `web.fetch`, `crawler.extract_links`, `content.wechat_layout`, `content.hashtag_plan`, `image.generate_svg` |
+| Xiaohongshu Writer | `web.search`, `web.fetch`, `content.hashtag_plan`, `image.generate_svg` |
+| UI Agent | `image.generate_svg` |
+| i18n / QA | lightweight fetch/search as needed |
+
+## 6. Model Registry and Routing
+
+The model selector is backed by the server-side Model Registry and constrained to models exposed through the configured copilot-api reverse proxy. CrewAI uses LiteLLM with an OpenAI-compatible client, so both GPT and Claude models are passed with the `openai/` prefix.
+
+```mermaid
+flowchart LR
+  Dashboard[Model dropdown<br/>GET /api/models] --> AgentDB[(agents.model / config.model)]
+  Catalog[(model_registry)] --> Router[Model Router]
+  Routes[(model_routes)] --> Router
+  AgentDB --> Router
+  Router --> Trace[model.route span]
+  Router --> Runtime[AgentRuntime config]
+  Runtime --> Usage[(model_usage_stats)]
+  Runtime --> Runner[crew_runner.py]
+  Runner --> LiteLLM[LiteLLM OpenAI-compatible client]
+  LiteLLM --> Proxy[CREWAI_BASE_URL<br/>copilot-api reverse proxy]
+  Proxy --> Model[GPT / Claude / Codex]
 ```
 
-## 9. Performance Considerations
+Routing order:
 
-- **SQLite WAL mode** for concurrent reads during writes
-- **WebSocket channels** to avoid broadcasting all events to all clients
-- **Log rotation**: Keep last 1000 log entries per task in memory, persist to DB
-- **Artifact cleanup**: Auto-clean task artifacts older than 30 days
-- **Process pooling**: Reuse Claude Code processes for same-agent sequential tasks (optional)
-- **Cost-aware scheduling**: Downgrade model when budget is tight
-- **Replay storage**: Compress old replay data, keep recent in hot storage
+1. Explicit enabled `agent.model`.
+2. Explicit enabled `agent.config.model`.
+3. Enabled `role:<agent.role>` route.
+4. Enabled `global` route.
+5. Highest-priority enabled model in the requested fallback group.
+6. Highest-priority enabled model, then `CREWAI_MODEL` as the final runtime fallback.
+
+Each execution writes a `model.route` trace span and a `model_usage_stats` row with selected model, tokens/cost when available, latency, and route reason. `/api/models` exposes the catalog, enabled flags, health checks, and route updates; model config changes are audited as `model.update` / `model.route.update`.
+
+### Supported Model Options
+
+| Model ID | Best for |
+| --- | --- |
+| `openai/claude-opus-4.7` | Master planning, deep architecture, high-risk review |
+| `openai/claude-opus-4.6` | Complex planning, long-context analysis |
+| `openai/claude-sonnet-4.6` | Balanced default for PM, review, content, docs |
+| `openai/claude-sonnet-4.5` | Stable Claude fallback |
+| `openai/claude-haiku-4.5` | Fast/low-cost QA, i18n, simple processing |
+| `openai/claude-sonnet-4` | Claude Sonnet fallback |
+| `openai/gpt-5.5` | Strong GPT reasoning and orchestration |
+| `openai/gpt-5.4` | Balanced GPT default |
+| `openai/gpt-5.4-mini` | Fast/low-cost GPT tasks |
+| `openai/gpt-5.3-codex` | Coding and refactoring |
+| `openai/gpt-5.2-codex` | Coding fallback |
+| `openai/gpt-5.2` | General fallback |
+| `openai/gpt-5-mini` | Lightweight tasks |
+| `openai/gpt-4.1` | Compatibility fallback |
+
+Environment variables:
+
+```bash
+CREWAI_BASE_URL=https://your-copilot-api.example.com/v1
+CREWAI_API_KEY=...
+CREWAI_MODEL=openai/claude-sonnet-4.6
+```
+
+Per-agent model config takes precedence when the selected model is enabled in the registry; disabled models are skipped and routed through the configured role/global fallback.
+
+## 7. Task and Pipeline Flow
+
+### Direct Task
+
+```mermaid
+flowchart TD
+  Create[Create direct task] --> AgentLookup[Find assignee agent]
+  AgentLookup --> Capacity{Agent has capacity?}
+  Capacity -- no --> RequeueOrFail[Queue / 429 / retry later]
+  Capacity -- yes --> Execute[AgentRuntime.execute]
+  Execute --> Done{Result}
+  Done -- success --> PersistOutput[Persist output, logs, stats]
+  Done -- failure --> PersistError[Persist error, increment failure stats]
+```
+
+### Pipeline Task
+
+```mermaid
+flowchart LR
+  Template[Pipeline Template YAML] --> Pipeline[Pipeline Instance]
+  Pipeline --> Stage1[Stage 1 Agent]
+  Stage1 --> Context[Context Manager]
+  Context --> Stage2[Stage 2 Agent]
+  Stage2 --> Quality[Quality Loop]
+  Quality --> Stage3[Next Stage]
+  Stage3 --> Complete[Pipeline Done]
+```
+
+Pipeline templates live in `templates/*.yaml`, for example:
+
+| Template | Stages |
+| --- | --- |
+| `full-product` | PM → UI → Dev → QA → Ops |
+| `feature` | Spec → Code → Test → Review |
+| `bugfix` | Triage → Fix → Test |
+| `wechat-article` | 选题 → 写作 → 审核 → 排版 |
+| `xiaohongshu-note` | 选题 → 创作 → SEO |
+
+## 8. Dashboard Architecture
+
+```mermaid
+flowchart TB
+  Layout[Layout Shell] --> Sidebar[Agent Sidebar]
+  Layout --> Main[Main View Router]
+  Layout --> RightPanel[Agent Chat / History Panel]
+
+  Main --> Command[CommandCenter]
+  Main --> Agents[AgentsPage<br/>Create/Edit Agent]
+  Main --> Skills[SkillsPage<br/>Skill Versioning]
+  Main --> Orchestrator[OrchestratorView<br/>Pipeline Builder]
+  Main --> Tasks[TasksPage]
+  Main --> Timeline[ExecutionTimeline]
+  Main --> Inbox[InboxView]
+  Main --> Observability[ObservabilityView]
+  Main --> Audit[AuditView]
+  Main --> Settings[SettingsView]
+
+  Store[Zustand Store] --> Main
+  API[lib/api.ts] --> Store
+  WS[useWebSocket] --> Store
+```
+
+### Agent Control Center
+
+The Agents page supports:
+
+- Search by name, role, capability, or tool.
+- Filter by role.
+- View capabilities and enabled tools on each Agent card.
+- Create custom Agents from templates.
+- Edit existing Agents.
+- Update skill overlay, capabilities, triggers, model, max turns, timeout, and allowed tools.
+- Open Skill Registry to draft/publish prompt versions and assign or roll back a specific Agent.
+
+### Visual Pipeline Builder
+
+The Pipelines view includes a lightweight visual builder:
+
+- Stage list with add/remove/reorder controls.
+- Per-stage config panel for name, Agent role, and prompt template.
+- Flow preview for the full stage sequence.
+- Auto/manual gate mode selection.
+- Template validation through `/api/templates/validate`.
+- Save/update template and immediate `POST /api/pipelines` run.
+
+Template mutations are audited as `template.create` and `template.update`.
+
+## 9. Permission and Audit
+
+Operator identity is resolved from proxy headers, API token, or local mode:
+
+```text
+X-Operator-Id / X-Operator-Role -> proxy actor
+Authorization: Bearer ...       -> token-admin
+local dev without auth          -> local-admin
+```
+
+Roles:
+
+| Role | Behavior |
+| --- | --- |
+| `admin` | Full launch, runtime, config, and destructive controls |
+| `operator` | Runtime launch/control and Agent/Tool configuration |
+| `viewer` | Read-only access; write/control routes return `403 OPERATOR_FORBIDDEN` |
+
+Audit records are persisted in `operator_actions`. Current audited controls include task create/cancel/retry/delete, pipeline create/approve/skip/cancel, inbox response, workspace preference restore, Agent create/update/execute, Tool policy/permission updates, Model route/policy updates, Skill create/version/publish/assignment updates, and Template create/update.
+
+## 10. Database Design
+
+```mermaid
+erDiagram
+  agents ||--o{ tasks : assignee
+  agents ||--o{ skill_assignments : uses
+  tasks ||--o{ task_executions : has
+  task_executions ||--o{ execution_messages : emits
+  task_executions }o--|| skill_versions : used_skill
+  task_executions ||--|| run_traces : traces
+  run_traces ||--o{ trace_spans : contains
+  task_executions ||--o{ tool_executions : uses
+  task_executions ||--o{ model_usage_stats : selects
+  agents ||--o{ tool_permissions : grants
+  agents ||--o{ model_usage_stats : records
+  tools ||--o{ tool_permissions : governs
+  tools ||--o{ tool_versions : versions
+  tools ||--o{ tool_executions : records
+  skills ||--o{ skill_versions : versions
+  skills ||--o{ skill_assignments : assigns
+  skill_versions ||--o{ skill_assignments : selected
+  tasks ||--o{ task_logs : logs
+  pipelines ||--o{ tasks : stages
+  pipeline_templates ||--o{ pipelines : instantiates
+  tasks ||--o{ notifications : references
+  model_registry ||--o{ model_usage_stats : records
+  model_registry ||--o{ model_health_checks : checks
+  model_registry ||--o{ model_routes : defaults
+  pipelines ||--o{ notifications : references
+  task_executions ||--o{ inbox_entries : requests
+  tasks ||--o{ quality_loop_attempts : reviews
+
+  agents {
+    text id PK
+    text name
+    text role
+    text skill_path
+    json config
+    json capabilities
+    json triggers
+    json allowed_tools
+    text model
+    integer max_turns
+    json stats
+  }
+
+  tasks {
+    text id PK
+    text title
+    text mode
+    text status
+    text assignee_id FK
+    text input
+    text output
+    text workdir
+    text error
+  }
+
+  task_executions {
+    text id PK
+    text task_id FK
+    text agent_def_id
+    text status
+    json progress
+    real cost_usd
+    integer token_count
+  }
+
+  execution_messages {
+    integer id PK
+    text execution_id
+    text type
+    text content
+    text tool_name
+  }
+
+  run_traces {
+    text id PK
+    text task_id FK
+    text execution_id FK
+    text agent_id FK
+    text status
+    text summary
+  }
+
+  trace_spans {
+    text id PK
+    text trace_id FK
+    text parent_span_id FK
+    text type
+    text name
+    text status
+    json metadata
+    integer duration_ms
+  }
+
+  tools {
+    text id PK
+    text category
+    text risk_level
+    integer enabled
+    integer approval_required
+    json input_schema
+  }
+
+  tool_versions {
+    text id PK
+    text tool_id FK
+    text version
+    text implementation_ref
+    text status
+  }
+
+  tool_permissions {
+    text tool_id FK
+    text agent_id FK
+    integer enabled
+    integer approval_required
+  }
+
+  tool_executions {
+    text id PK
+    text tool_id FK
+    text execution_id FK
+    text task_id FK
+    text agent_id FK
+    text status
+    text input_hash
+    integer duration_ms
+  }
+
+  pipelines {
+    text id PK
+    text template_id
+    text status
+    json stages
+    integer current_stage_index
+    text gate_mode
+  }
+```
+
+Default database path:
+
+```text
+packages/server/data/agent-factory.db
+```
+
+Override with:
+
+```bash
+DB_PATH=/tmp/agent-factory-clean.db pnpm dev
+```
+
+## 11. Events and Real-time Updates
+
+The server emits typed domain events through `eventBus`. `WSHub` maps them to channels so the Dashboard can update only relevant views.
+
+```mermaid
+flowchart LR
+  Runtime[AgentRuntime] --> EventBus
+  Pipeline[PipelineEngine] --> EventBus
+  Queue[TaskQueue] --> EventBus
+  EventBus --> Recorder[EventRecorder]
+  EventBus --> WSHub
+  WSHub --> Dashboard[Dashboard Store]
+  Recorder --> SQLite[(platform_events)]
+```
+
+Typical events:
+
+| Domain | Events |
+| --- | --- |
+| Task | `task:created`, `task:started`, `task:done`, `task:failed` |
+| Execution | `execution:started`, `execution:message`, `execution:done`, `execution:failed` |
+| Pipeline | stage start/done, blocked, done, failed |
+| Agent | registry/status related updates |
+
+## 12. Deployment View
+
+```mermaid
+flowchart TB
+  Browser[Browser] --> Vite[Vite dev server :5173]
+  Vite -->|proxy /api /ws| Node[Node Express :3000]
+  Node --> SQLite[(SQLite file)]
+  Node --> Redis[(Redis optional)]
+  Node --> Python[python3 crew_runner.py]
+  Python --> Copilot[Copilot API reverse proxy]
+  Python --> Internet[Optional web tools]
+  Node --> Workspace[Workspace files]
+```
+
+Local startup:
+
+```bash
+pnpm install
+pnpm dev
+```
+
+Separated startup:
+
+```bash
+pnpm dev:server
+pnpm dev:dashboard
+```
+
+## 13. Reliability and Recovery
+
+| Mechanism | Design |
+| --- | --- |
+| In-memory fallback queue | If Redis is absent, `TaskQueue` executes through local memory path |
+| Recovery on startup | Recover running tasks, interrupted pipelines, and quality-loop attempts |
+| Workspace isolation | Task outputs are written under task workspaces |
+| Execution messages | Runtime activity is persisted for timeline/history views |
+| Operator controls | Cancel/retry/delete/pipeline controls are recorded and role-gated |
+| Human inbox | Approval/question/input/review entries persist operator decisions |
+
+## 14. Current Limits and Extension Points
+
+| Area | Current design | Extension |
+| --- | --- | --- |
+| Tools | Built-in Python CrewAI tools | Add provider-backed image generation, browser automation, MCP tools |
+| Model list | Static dashboard dropdown | Fetch model list from copilot-api if endpoint is available |
+| Agent skills | Markdown + dashboard overlay | Versioned skill registry and diff/rollback |
+| Queue | Redis optional, memory fallback | Distributed workers and per-Agent concurrency pools |
+| Dashboard editing | Agent create/edit supported | Full diff view, dry-run prompt preview, tool permission templates |
+| Content tools | WeChat layout + SVG cover | Real WeChat editor export, image model generation, media library |

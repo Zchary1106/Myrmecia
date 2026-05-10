@@ -1,0 +1,454 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="2200" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif">
+  <defs>
+    <filter id="shadow">
+      <feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#000" flood-opacity="0.4"/>
+    </filter>
+    <linearGradient id="gPurple" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#6366f1"/><stop offset="100%" stop-color="#818cf8"/>
+    </linearGradient>
+    <linearGradient id="gGreen" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#22c55e"/><stop offset="100%" stop-color="#4ade80"/>
+    </linearGradient>
+    <linearGradient id="gBlue" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#3b82f6"/><stop offset="100%" stop-color="#60a5fa"/>
+    </linearGradient>
+    <linearGradient id="gOrange" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f59e0b"/><stop offset="100%" stop-color="#fbbf24"/>
+    </linearGradient>
+    <linearGradient id="gRed" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#ef4444"/><stop offset="100%" stop-color="#f87171"/>
+    </linearGradient>
+    <linearGradient id="gCyan" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#06b6d4"/><stop offset="100%" stop-color="#22d3ee"/>
+    </linearGradient>
+    <marker id="arrow" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#6366f1"/>
+    </marker>
+    <marker id="arrowGreen" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#22c55e"/>
+    </marker>
+    <marker id="arrowOrange" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#f59e0b"/>
+    </marker>
+    <marker id="arrowRed" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#ef4444"/>
+    </marker>
+    <marker id="arrowCyan" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#06b6d4"/>
+    </marker>
+    <marker id="arrowWhite" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#9ca3af"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1400" height="2200" fill="#0a0b10"/>
+
+  <!-- Title -->
+  <text x="700" y="45" fill="#fff" font-size="26" font-weight="800" text-anchor="middle">🏭 Agent Factory — Complete System Architecture</text>
+  <text x="700" y="72" fill="#6b7280" font-size="13" text-anchor="middle">Autonomous Multi-Agent Orchestration System · Powered by Claude Code SDK</text>
+
+  <!-- ====== LAYER 1: User Input ====== -->
+  <text x="40" y="115" fill="#6366f1" font-size="11" font-weight="700" letter-spacing="2">LAYER 1 — USER INPUT</text>
+  <line x1="40" y1="122" x2="1360" y2="122" stroke="#6366f120" stroke-width="1"/>
+
+  <!-- Dashboard -->
+  <rect x="60" y="138" width="520" height="120" rx="16" fill="#12131a" stroke="#6366f140" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="80" y="165" fill="#818cf8" font-size="14" font-weight="700">📊 Web Dashboard (React 19 + Tailwind)</text>
+  <text x="80" y="186" fill="#9ca3af" font-size="11">localhost:5173 — 6 Pages + Real-time WebSocket</text>
+  <!-- Pages -->
+  <g transform="translate(80,200)">
+    <rect width="70" height="24" rx="6" fill="#6366f120"/><text x="35" y="16" fill="#818cf8" font-size="9" text-anchor="middle">Overview</text>
+    <rect x="78" width="56" height="24" rx="6" fill="#6366f120"/><text x="106" y="16" fill="#818cf8" font-size="9" text-anchor="middle">Tasks</text>
+    <rect x="142" width="60" height="24" rx="6" fill="#6366f120"/><text x="172" y="16" fill="#818cf8" font-size="9" text-anchor="middle">Agents</text>
+    <rect x="210" width="72" height="24" rx="6" fill="#6366f120"/><text x="246" y="16" fill="#818cf8" font-size="9" text-anchor="middle">Pipelines</text>
+    <rect x="290" width="76" height="24" rx="6" fill="#6366f120"/><text x="328" y="16" fill="#818cf8" font-size="9" text-anchor="middle">Templates</text>
+    <rect x="374" width="68" height="24" rx="6" fill="#6366f120"/><text x="408" y="16" fill="#818cf8" font-size="9" text-anchor="middle">Settings</text>
+  </g>
+
+  <!-- Supervisor Input -->
+  <rect x="620" y="138" width="720" height="120" rx="16" fill="#12131a" stroke="#22c55e40" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="640" y="165" fill="#4ade80" font-size="14" font-weight="700">🧠 Supervisor Mode — Single Command Input</text>
+  <text x="640" y="186" fill="#9ca3af" font-size="11">POST /api/supervisor/dispatch — One sentence, system handles everything</text>
+  <rect x="640" y="198" width="680" height="36" rx="8" fill="#0f1117" stroke="#22c55e30" stroke-width="1"/>
+  <text x="658" y="221" fill="#6b7280" font-size="12" font-style="italic">"做一个天气App，要好看，要能查5天预报"</text>
+  <text x="1290" y="221" fill="#22c55e" font-size="11" font-weight="600" text-anchor="end">→ Send</text>
+
+  <!-- Arrow from input to classifier -->
+  <line x1="700" y1="258" x2="700" y2="300" stroke="#22c55e" stroke-width="2" marker-end="url(#arrowGreen)"/>
+
+  <!-- ====== LAYER 2: Intelligence ====== -->
+  <text x="40" y="295" fill="#f59e0b" font-size="11" font-weight="700" letter-spacing="2">LAYER 2 — INTENT CLASSIFICATION &amp; ROUTING</text>
+  <line x1="40" y1="302" x2="1360" y2="302" stroke="#f59e0b20" stroke-width="1"/>
+
+  <!-- Intent Classifier -->
+  <rect x="440" y="315" width="520" height="100" rx="16" fill="#12131a" stroke="#f59e0b40" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="460" y="342" fill="#fbbf24" font-size="14" font-weight="700">🔍 Intent Classifier</text>
+  <text x="460" y="362" fill="#9ca3af" font-size="11">Fast keyword matching → LLM fallback for ambiguous input</text>
+  <g transform="translate(460,375)">
+    <rect width="90" height="22" rx="5" fill="#ef444420"/><text x="45" y="15" fill="#f87171" font-size="9" text-anchor="middle">🐛 bugfix</text>
+    <rect x="98" width="108" height="22" rx="5" fill="#3b82f620"/><text x="152" y="15" fill="#60a5fa" font-size="9" text-anchor="middle">🆕 new_product</text>
+    <rect x="214" width="82" height="22" rx="5" fill="#22c55e20"/><text x="255" y="15" fill="#4ade80" font-size="9" text-anchor="middle">⚡ feature</text>
+    <rect x="304" width="72" height="22" rx="5" fill="#a855f720"/><text x="340" y="15" fill="#c084fc" font-size="9" text-anchor="middle">🎯 direct</text>
+    <rect x="384" width="80" height="22" rx="5" fill="#06b6d420"/><text x="424" y="15" fill="#22d3ee" font-size="9" text-anchor="middle">✍️ content</text>
+  </g>
+
+  <!-- Three mode arrows -->
+  <line x1="540" y1="415" x2="200" y2="480" stroke="#3b82f6" stroke-width="1.5" marker-end="url(#arrow)" stroke-dasharray="6,3"/>
+  <line x1="700" y1="415" x2="700" y2="480" stroke="#f59e0b" stroke-width="1.5" marker-end="url(#arrowOrange)" stroke-dasharray="6,3"/>
+  <line x1="860" y1="415" x2="1200" y2="480" stroke="#22c55e" stroke-width="1.5" marker-end="url(#arrowGreen)" stroke-dasharray="6,3"/>
+
+  <text x="330" y="450" fill="#3b82f6" font-size="10" font-weight="600">Mode A: Master</text>
+  <text x="660" y="450" fill="#f59e0b" font-size="10" font-weight="600">Mode C: Pipeline</text>
+  <text x="1030" y="450" fill="#22c55e" font-size="10" font-weight="600">Mode B: Direct</text>
+
+  <!-- ====== LAYER 3: Orchestration ====== -->
+  <text x="40" y="478" fill="#3b82f6" font-size="11" font-weight="700" letter-spacing="2">LAYER 3 — TASK ORCHESTRATION</text>
+  <line x1="40" y1="485" x2="1360" y2="485" stroke="#3b82f620" stroke-width="1"/>
+
+  <!-- Mode A: Master Agent -->
+  <rect x="60" y="498" width="360" height="140" rx="16" fill="#12131a" stroke="#3b82f640" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="80" y="525" fill="#60a5fa" font-size="14" font-weight="700">🧠 Master Agent (Opus)</text>
+  <text x="80" y="545" fill="#9ca3af" font-size="11">Decompose → Review → Assign → Monitor</text>
+  <g transform="translate(80,558)">
+    <rect width="310" height="22" rx="5" fill="#3b82f610"/>
+    <text x="10" y="15" fill="#93c5fd" font-size="10">1. 分析需求 → 2. 拆解子任务 → 3. 分配Agent → 4. 监控</text>
+  </g>
+  <g transform="translate(80,588)">
+    <rect width="310" height="22" rx="5" fill="#3b82f610"/>
+    <text x="10" y="15" fill="#93c5fd" font-size="10">子任务带依赖图: PM→UI→Dev→QA→Ops (自动并行)</text>
+  </g>
+  <text x="80" y="630" fill="#6b7280" font-size="10">Output: JSON subtask array with dependencies</text>
+
+  <!-- Mode C: Pipeline Engine -->
+  <rect x="460" y="498" width="480" height="140" rx="16" fill="#12131a" stroke="#f59e0b40" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="480" y="525" fill="#fbbf24" font-size="14" font-weight="700">🔗 Pipeline Engine</text>
+  <text x="480" y="545" fill="#9ca3af" font-size="11">Template-driven stage-by-stage execution</text>
+  <!-- Pipeline stages visualization -->
+  <g transform="translate(480,560)">
+    <rect width="60" height="28" rx="6" fill="#22c55e25" stroke="#22c55e50" stroke-width="1"/><text x="30" y="18" fill="#4ade80" font-size="10" text-anchor="middle">Spec</text>
+    <text x="70" y="18" fill="#6b7280" font-size="12">→</text>
+    <rect x="80" width="66" height="28" rx="6" fill="#22c55e25" stroke="#22c55e50" stroke-width="1"/><text x="113" y="18" fill="#4ade80" font-size="10" text-anchor="middle">Design</text>
+    <text x="156" y="18" fill="#6b7280" font-size="12">→</text>
+    <rect x="166" width="58" height="28" rx="6" fill="#3b82f625" stroke="#3b82f650" stroke-width="1"/><text x="195" y="18" fill="#60a5fa" font-size="10" text-anchor="middle">Code</text>
+    <text x="234" y="18" fill="#6b7280" font-size="12">→</text>
+    <rect x="244" width="52" height="28" rx="6" fill="#6b728020" stroke="#6b728050" stroke-width="1"/><text x="270" y="18" fill="#9ca3af" font-size="10" text-anchor="middle">Test</text>
+    <text x="306" y="18" fill="#6b7280" font-size="12">→</text>
+    <rect x="316" width="66" height="28" rx="6" fill="#6b728020" stroke="#6b728050" stroke-width="1"/><text x="349" y="18" fill="#9ca3af" font-size="10" text-anchor="middle">Deploy</text>
+  </g>
+  <text x="480" y="610" fill="#9ca3af" font-size="10">Gate Mode: auto (自动推进) | manual (人工审批)</text>
+  <text x="480" y="630" fill="#6b7280" font-size="10">Context Manager: 前序摘要 + 直接前驱全文 → 节省token</text>
+
+  <!-- Mode B: Direct -->
+  <rect x="980" y="498" width="380" height="140" rx="16" fill="#12131a" stroke="#22c55e40" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="1000" y="525" fill="#4ade80" font-size="14" font-weight="700">🎯 Direct Assign</text>
+  <text x="1000" y="545" fill="#9ca3af" font-size="11">Task → Specific Agent → Execute → Result</text>
+  <g transform="translate(1000,558)">
+    <rect width="340" height="22" rx="5" fill="#22c55e10"/>
+    <text x="10" y="15" fill="#86efac" font-size="10">用户选择Agent → 直接执行 → 返回结果</text>
+  </g>
+  <g transform="translate(1000,588)">
+    <rect width="340" height="22" rx="5" fill="#22c55e10"/>
+    <text x="10" y="15" fill="#86efac" font-size="10">适用: review, deploy, test, 翻译, 内容创作</text>
+  </g>
+
+  <!-- All three modes arrow down to Task Queue -->
+  <line x1="240" y1="638" x2="700" y2="690" stroke="#6366f1" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="700" y1="638" x2="700" y2="690" stroke="#6366f1" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="1170" y1="638" x2="700" y2="690" stroke="#6366f1" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- ====== LAYER 4: Queue ====== -->
+  <text x="40" y="688" fill="#06b6d4" font-size="11" font-weight="700" letter-spacing="2">LAYER 4 — TASK QUEUE &amp; SCHEDULING</text>
+  <line x1="40" y1="695" x2="1360" y2="695" stroke="#06b6d420" stroke-width="1"/>
+
+  <rect x="350" y="708" width="700" height="110" rx="16" fill="#12131a" stroke="#06b6d440" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="370" y="735" fill="#22d3ee" font-size="14" font-weight="700">📮 Task Queue (BullMQ + Redis / In-Memory Fallback)</text>
+  <text x="370" y="755" fill="#9ca3af" font-size="11">Priority: urgent &gt; high &gt; normal &gt; low | 6 concurrent workers | Auto-retry (exponential backoff)</text>
+  <g transform="translate(370,768)">
+    <rect width="130" height="24" rx="6" fill="#ef444415"/><text x="65" y="16" fill="#fca5a5" font-size="10" text-anchor="middle">🔴 urgent (P1)</text>
+    <rect x="140" width="120" height="24" rx="6" fill="#f59e0b15"/><text x="200" y="16" fill="#fde68a" font-size="10" text-anchor="middle">🟠 high (P2)</text>
+    <rect x="270" width="130" height="24" rx="6" fill="#3b82f615"/><text x="335" y="16" fill="#93c5fd" font-size="10" text-anchor="middle">🔵 normal (P3)</text>
+    <rect x="410" width="110" height="24" rx="6" fill="#6b728015"/><text x="465" y="16" fill="#d1d5db" font-size="10" text-anchor="middle">⚪ low (P4)</text>
+    <rect x="540" width="120" height="24" rx="6" fill="#22c55e15"/><text x="600" y="16" fill="#86efac" font-size="10" text-anchor="middle">♻️ recovery</text>
+  </g>
+  <text x="370" y="808" fill="#6b7280" font-size="10">Dependency check before dequeue · Server restart auto-recovery · Graceful shutdown</text>
+
+  <!-- Arrow down to Agent Pool -->
+  <line x1="700" y1="818" x2="700" y2="870" stroke="#6366f1" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="715" y="848" fill="#6b7280" font-size="10">dequeue &amp; assign</text>
+
+  <!-- ====== LAYER 5: Agent Pool ====== -->
+  <text x="40" y="868" fill="#a855f7" font-size="11" font-weight="700" letter-spacing="2">LAYER 5 — AGENT POOL &amp; EXECUTION</text>
+  <line x1="40" y1="875" x2="1360" y2="875" stroke="#a855f720" stroke-width="1"/>
+
+  <!-- Agent Pool -->
+  <rect x="60" y="890" width="1280" height="200" rx="16" fill="#12131a" stroke="#a855f740" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="80" y="917" fill="#c084fc" font-size="14" font-weight="700">🤖 Agent Pool — 13 Specialized Agents (from registry.yaml)</text>
+
+  <!-- Agent Cards Row 1 -->
+  <g transform="translate(80,930)">
+    <rect width="112" height="50" rx="8" fill="#6366f115" stroke="#6366f130" stroke-width="1"/>
+    <text x="14" y="22" fill="#fff" font-size="16">🧠</text><text x="36" y="22" fill="#e5e7eb" font-size="10" font-weight="600">Master</text>
+    <text x="14" y="40" fill="#6b7280" font-size="9">orchestrator</text>
+
+    <rect x="122" width="100" height="50" rx="8" fill="#22c55e15" stroke="#22c55e30" stroke-width="1"/>
+    <text x="136" y="22" fill="#fff" font-size="16">🎯</text><text x="158" y="22" fill="#e5e7eb" font-size="10" font-weight="600">PM</text>
+    <text x="136" y="40" fill="#6b7280" font-size="9">product-mgr</text>
+
+    <rect x="232" width="100" height="50" rx="8" fill="#3b82f615" stroke="#3b82f630" stroke-width="1"/>
+    <text x="246" y="22" fill="#fff" font-size="16">🎨</text><text x="268" y="22" fill="#e5e7eb" font-size="10" font-weight="600">UI</text>
+    <text x="246" y="40" fill="#6b7280" font-size="9">designer</text>
+
+    <rect x="342" width="100" height="50" rx="8" fill="#f59e0b15" stroke="#f59e0b30" stroke-width="1"/>
+    <text x="356" y="22" fill="#fff" font-size="16">⌨️</text><text x="378" y="22" fill="#e5e7eb" font-size="10" font-weight="600">Dev</text>
+    <text x="356" y="40" fill="#6b7280" font-size="9">developer</text>
+
+    <rect x="452" width="100" height="50" rx="8" fill="#06b6d415" stroke="#06b6d430" stroke-width="1"/>
+    <text x="466" y="22" fill="#fff" font-size="16">🔍</text><text x="488" y="22" fill="#e5e7eb" font-size="10" font-weight="600">QA</text>
+    <text x="466" y="40" fill="#6b7280" font-size="9">tester</text>
+
+    <rect x="562" width="100" height="50" rx="8" fill="#ef444415" stroke="#ef444430" stroke-width="1"/>
+    <text x="576" y="22" fill="#fff" font-size="16">🚀</text><text x="598" y="22" fill="#e5e7eb" font-size="10" font-weight="600">Ops</text>
+    <text x="576" y="40" fill="#6b7280" font-size="9">devops</text>
+
+    <rect x="672" width="100" height="50" rx="8" fill="#a855f715" stroke="#a855f730" stroke-width="1"/>
+    <text x="686" y="22" fill="#fff" font-size="16">📝</text><text x="708" y="22" fill="#e5e7eb" font-size="10" font-weight="600">Review</text>
+    <text x="686" y="40" fill="#6b7280" font-size="9">reviewer</text>
+
+    <rect x="782" width="100" height="50" rx="8" fill="#ec489915" stroke="#ec489930" stroke-width="1"/>
+    <text x="796" y="22" fill="#fff" font-size="16">✍️</text><text x="818" y="22" fill="#e5e7eb" font-size="10" font-weight="600">WeChat</text>
+    <text x="796" y="40" fill="#6b7280" font-size="9">writer</text>
+
+    <rect x="892" width="110" height="50" rx="8" fill="#ec489915" stroke="#ec489930" stroke-width="1"/>
+    <text x="906" y="22" fill="#fff" font-size="16">📕</text><text x="928" y="22" fill="#e5e7eb" font-size="10" font-weight="600">小红书</text>
+    <text x="906" y="40" fill="#6b7280" font-size="9">writer</text>
+
+    <rect x="1012" width="80" height="50" rx="8" fill="#6b728015" stroke="#6b728030" stroke-width="1"/>
+    <text x="1026" y="22" fill="#fff" font-size="16">🌍</text><text x="1048" y="22" fill="#e5e7eb" font-size="10" font-weight="600">i18n</text>
+    <text x="1026" y="40" fill="#6b7280" font-size="9">translate</text>
+
+    <rect x="1102" width="60" height="50" rx="8" fill="#6b728015" stroke="#6b728030" stroke-width="1"/>
+    <text x="1116" y="22" fill="#6b7280" font-size="10">+3</text>
+    <text x="1116" y="40" fill="#4b5563" font-size="9">more</text>
+  </g>
+
+  <!-- Agent Runtime box -->
+  <g transform="translate(80,1000)">
+    <rect width="1240" height="38" rx="8" fill="#a855f710" stroke="#a855f720" stroke-width="1"/>
+    <text x="20" y="24" fill="#c084fc" font-size="11" font-weight="600">Agent Runtime:</text>
+    <text x="130" y="24" fill="#9ca3af" font-size="11">Claude Code SDK (query → AsyncGenerator&lt;SDKMessage&gt;) → CLI fallback (claude --print --output-format stream-json)</text>
+    <text x="940" y="24" fill="#6b7280" font-size="10">| permissionMode: bypassPermissions | SKILL.md as systemPrompt</text>
+  </g>
+
+  <!-- Arrow down -->
+  <line x1="700" y1="1090" x2="700" y2="1135" stroke="#6366f1" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- ====== LAYER 6: Workspace ====== -->
+  <text x="40" y="1133" fill="#22c55e" font-size="11" font-weight="700" letter-spacing="2">LAYER 6 — WORKSPACE ISOLATION &amp; ARTIFACTS</text>
+  <line x1="40" y1="1140" x2="1360" y2="1140" stroke="#22c55e20" stroke-width="1"/>
+
+  <rect x="150" y="1155" width="1100" height="120" rx="16" fill="#12131a" stroke="#22c55e40" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="170" y="1182" fill="#4ade80" font-size="14" font-weight="700">📁 Workspace Manager — Git Worktree Isolation</text>
+  <text x="170" y="1202" fill="#9ca3af" font-size="11">Each pipeline gets isolated branch &amp; directory · Artifacts written per stage · Auto-merge on completion</text>
+
+  <g transform="translate(170, 1215)">
+    <rect width="200" height="40" rx="6" fill="#0f1117" stroke="#22c55e20" stroke-width="1"/>
+    <text x="10" y="16" fill="#6b7280" font-size="9">.agent-factory/workspaces/</text>
+    <text x="10" y="32" fill="#86efac" font-size="10" font-weight="500">pipeline-{id}/ (git worktree)</text>
+
+    <text x="215" y="24" fill="#4b5563">→</text>
+
+    <rect x="230" width="140" height="40" rx="6" fill="#0f1117" stroke="#3b82f620" stroke-width="1"/>
+    <text x="240" y="16" fill="#6b7280" font-size="9">stage-0-spec/</text>
+    <text x="240" y="32" fill="#93c5fd" font-size="10">output.md ✅</text>
+
+    <text x="385" y="24" fill="#4b5563">→</text>
+
+    <rect x="400" width="148" height="40" rx="6" fill="#0f1117" stroke="#3b82f620" stroke-width="1"/>
+    <text x="410" y="16" fill="#6b7280" font-size="9">stage-1-design/</text>
+    <text x="410" y="32" fill="#93c5fd" font-size="10">output.md ✅</text>
+
+    <text x="563" y="24" fill="#4b5563">→</text>
+
+    <rect x="578" width="140" height="40" rx="6" fill="#0f1117" stroke="#f59e0b20" stroke-width="1"/>
+    <text x="588" y="16" fill="#6b7280" font-size="9">stage-2-code/</text>
+    <text x="588" y="32" fill="#fde68a" font-size="10">output.md 🔄</text>
+
+    <text x="733" y="24" fill="#4b5563">→</text>
+
+    <rect x="748" width="132" height="40" rx="6" fill="#0f1117" stroke="#6b728020" stroke-width="1"/>
+    <text x="758" y="16" fill="#6b7280" font-size="9">stage-3-test/</text>
+    <text x="758" y="32" fill="#6b7280" font-size="10">pending ⏳</text>
+
+    <text x="895" y="24" fill="#4b5563">→</text>
+
+    <rect x="910" width="140" height="40" rx="6" fill="#0f1117" stroke="#6b728020" stroke-width="1"/>
+    <text x="920" y="16" fill="#6b7280" font-size="9">git merge → main</text>
+    <text x="920" y="32" fill="#6b7280" font-size="10">on complete 🔀</text>
+  </g>
+
+  <!-- ====== LAYER 7: Safety & Quality ====== -->
+  <text x="40" y="1310" fill="#ef4444" font-size="11" font-weight="700" letter-spacing="2">LAYER 7 — SAFETY, QUALITY &amp; SELF-HEALING</text>
+  <line x1="40" y1="1317" x2="1360" y2="1317" stroke="#ef444420" stroke-width="1"/>
+
+  <!-- Self-Healing -->
+  <rect x="60" y="1332" width="420" height="170" rx="16" fill="#12131a" stroke="#ef444440" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="80" y="1359" fill="#f87171" font-size="14" font-weight="700">🛡️ Self-Healing Engine (5 Levels)</text>
+  <g transform="translate(80,1372)">
+    <text x="0" y="0" fill="#fca5a5" font-size="11">L1</text><text x="25" y="0" fill="#9ca3af" font-size="11">Retry with better prompt</text>
+    <text x="0" y="20" fill="#fca5a5" font-size="11">L2</text><text x="25" y="20" fill="#9ca3af" font-size="11">Reassign to different agent</text>
+    <text x="0" y="40" fill="#fca5a5" font-size="11">L3</text><text x="25" y="40" fill="#9ca3af" font-size="11">Upgrade model → Opus</text>
+    <text x="0" y="60" fill="#fca5a5" font-size="11">L4</text><text x="25" y="60" fill="#9ca3af" font-size="11">Decompose into smaller tasks</text>
+    <text x="0" y="80" fill="#fca5a5" font-size="11">L5</text><text x="25" y="80" fill="#9ca3af" font-size="11">🆘 Escalate to supervisor</text>
+  </g>
+  <g transform="translate(300,1372)">
+    <text x="0" y="0" fill="#4b5563" font-size="11">←auto</text>
+    <text x="0" y="20" fill="#4b5563" font-size="11">←auto</text>
+    <text x="0" y="40" fill="#4b5563" font-size="11">←auto</text>
+    <text x="0" y="60" fill="#4b5563" font-size="11">←auto</text>
+    <text x="0" y="80" fill="#ef4444" font-size="11">←human</text>
+  </g>
+
+  <!-- Quality Loop -->
+  <rect x="520" y="1332" width="400" height="170" rx="16" fill="#12131a" stroke="#a855f740" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="540" y="1359" fill="#c084fc" font-size="14" font-weight="700">🔄 Quality Loop (max 3 rounds)</text>
+  <g transform="translate(540,1375)">
+    <rect width="80" height="32" rx="6" fill="#f59e0b15" stroke="#f59e0b30" stroke-width="1"/>
+    <text x="40" y="20" fill="#fde68a" font-size="10" text-anchor="middle">⌨️ Dev</text>
+    <text x="94" y="18" fill="#6b7280" font-size="11">→ code</text>
+    <line x1="130" y1="16" x2="170" y2="16" stroke="#a855f7" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <rect x="175" width="90" height="32" rx="6" fill="#a855f715" stroke="#a855f730" stroke-width="1"/>
+    <text x="220" y="20" fill="#c084fc" font-size="10" text-anchor="middle">📝 Review</text>
+    <text x="280" y="20" fill="#6b7280" font-size="11">→</text>
+  </g>
+  <g transform="translate(540,1418)">
+    <rect width="160" height="26" rx="5" fill="#22c55e10"/>
+    <text x="10" y="17" fill="#86efac" font-size="10">✅ APPROVED → next stage</text>
+  </g>
+  <g transform="translate(540,1450)">
+    <rect width="260" height="26" rx="5" fill="#ef444410"/>
+    <text x="10" y="17" fill="#fca5a5" font-size="10">❌ NEEDS_FIX → Dev fixes → Review again</text>
+  </g>
+
+  <!-- Safety Guardrails -->
+  <rect x="960" y="1332" width="380" height="170" rx="16" fill="#12131a" stroke="#f59e0b40" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="980" y="1359" fill="#fbbf24" font-size="14" font-weight="700">🚧 Safety Guardrails</text>
+  <g transform="translate(980,1372)">
+    <text y="0" fill="#9ca3af" font-size="11">💰 Budget: $5/task, $20/day</text>
+    <text y="20" fill="#9ca3af" font-size="11">🚫 No auto-deploy to production</text>
+    <text y="40" fill="#9ca3af" font-size="11">🚫 No force push / delete files</text>
+    <text y="60" fill="#9ca3af" font-size="11">✅ Auto-approve: npm install, tests</text>
+    <text y="80" fill="#9ca3af" font-size="11">⚠️ Real-time cost tracking from SDK</text>
+  </g>
+
+  <!-- ====== LAYER 8: Storage ====== -->
+  <text x="40" y="1540" fill="#06b6d4" font-size="11" font-weight="700" letter-spacing="2">LAYER 8 — STORAGE &amp; PERSISTENCE</text>
+  <line x1="40" y1="1547" x2="1360" y2="1547" stroke="#06b6d420" stroke-width="1"/>
+
+  <rect x="60" y="1562" width="300" height="100" rx="16" fill="#12131a" stroke="#06b6d440" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="80" y="1589" fill="#22d3ee" font-size="14" font-weight="700">🗄️ SQLite (WAL mode)</text>
+  <text x="80" y="1609" fill="#9ca3af" font-size="10">agents · tasks · task_logs</text>
+  <text x="80" y="1625" fill="#9ca3af" font-size="10">pipelines · templates · notifications</text>
+  <text x="80" y="1648" fill="#6b7280" font-size="10">better-sqlite3 · Foreign keys · Indexes</text>
+
+  <rect x="400" y="1562" width="300" height="100" rx="16" fill="#12131a" stroke="#ef444440" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="420" y="1589" fill="#f87171" font-size="14" font-weight="700">📮 Redis (optional)</text>
+  <text x="420" y="1609" fill="#9ca3af" font-size="10">BullMQ job queue</text>
+  <text x="420" y="1625" fill="#9ca3af" font-size="10">Persistent task state</text>
+  <text x="420" y="1648" fill="#6b7280" font-size="10">Auto-fallback to in-memory if unavailable</text>
+
+  <rect x="740" y="1562" width="300" height="100" rx="16" fill="#12131a" stroke="#22c55e40" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="760" y="1589" fill="#4ade80" font-size="14" font-weight="700">📂 File System</text>
+  <text x="760" y="1609" fill="#9ca3af" font-size="10">.agent-factory/workspaces/ (git worktrees)</text>
+  <text x="760" y="1625" fill="#9ca3af" font-size="10">stage artifacts: output.md per stage</text>
+  <text x="760" y="1648" fill="#6b7280" font-size="10">agents/*.md skill files · templates/*.yaml</text>
+
+  <rect x="1080" y="1562" width="280" height="100" rx="16" fill="#12131a" stroke="#f59e0b40" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="1100" y="1589" fill="#fbbf24" font-size="14" font-weight="700">📡 WebSocket Hub</text>
+  <text x="1100" y="1609" fill="#9ca3af" font-size="10">Channel-based pub/sub</text>
+  <text x="1100" y="1625" fill="#9ca3af" font-size="10">EventBus → WS bridge</text>
+  <text x="1100" y="1648" fill="#6b7280" font-size="10">tasks · agents · pipelines · notifications</text>
+
+  <!-- ====== LAYER 9: Event Flow ====== -->
+  <text x="40" y="1700" fill="#818cf8" font-size="11" font-weight="700" letter-spacing="2">EVENT FLOW — REAL-TIME DATA PATH</text>
+  <line x1="40" y1="1707" x2="1360" y2="1707" stroke="#818cf820" stroke-width="1"/>
+
+  <rect x="60" y="1720" width="1280" height="140" rx="16" fill="#12131a" stroke="#818cf840" stroke-width="1.5" filter="url(#shadow)"/>
+
+  <!-- Event flow diagram -->
+  <g transform="translate(100,1748)">
+    <rect width="120" height="36" rx="8" fill="#f59e0b15" stroke="#f59e0b30" stroke-width="1"/>
+    <text x="60" y="22" fill="#fde68a" font-size="11" text-anchor="middle">Agent Runtime</text>
+
+    <line x1="130" y1="18" x2="180" y2="18" stroke="#818cf8" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <rect x="190" width="120" height="36" rx="8" fill="#6366f115" stroke="#6366f130" stroke-width="1"/>
+    <text x="250" y="22" fill="#a5b4fc" font-size="11" text-anchor="middle">Event Bus</text>
+
+    <line x1="320" y1="8" x2="420" y2="-15" stroke="#818cf8" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <line x1="320" y1="18" x2="420" y2="18" stroke="#818cf8" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <line x1="320" y1="28" x2="420" y2="52" stroke="#818cf8" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <rect x="430" y="-28" width="140" height="30" rx="6" fill="#22c55e10" stroke="#22c55e20" stroke-width="1"/>
+    <text x="500" y="-8" fill="#86efac" font-size="10" text-anchor="middle">WS Hub → Dashboard</text>
+
+    <rect x="430" y="4" width="140" height="30" rx="6" fill="#ef444410" stroke="#ef444420" stroke-width="1"/>
+    <text x="500" y="24" fill="#fca5a5" font-size="10" text-anchor="middle">Notifier Service</text>
+
+    <rect x="430" y="38" width="140" height="30" rx="6" fill="#06b6d410" stroke="#06b6d420" stroke-width="1"/>
+    <text x="500" y="58" fill="#67e8f9" font-size="10" text-anchor="middle">Pipeline Engine</text>
+
+    <line x1="580" y1="-13" x2="650" y2="-13" stroke="#22c55e" stroke-width="1.5" marker-end="url(#arrowGreen)"/>
+
+    <rect x="660" y="-28" width="130" height="30" rx="6" fill="#0f1117" stroke="#22c55e30" stroke-width="1"/>
+    <text x="725" y="-8" fill="#4ade80" font-size="10" text-anchor="middle">🖥️ Dashboard UI</text>
+
+    <line x1="580" y1="19" x2="650" y2="19" stroke="#ef4444" stroke-width="1.5" marker-end="url(#arrowRed)"/>
+
+    <rect x="660" y="4" width="130" height="30" rx="6" fill="#0f1117" stroke="#ef444430" stroke-width="1"/>
+    <text x="725" y="24" fill="#f87171" font-size="10" text-anchor="middle">🔔 Notifications</text>
+
+    <line x1="580" y1="53" x2="650" y2="53" stroke="#06b6d4" stroke-width="1.5" marker-end="url(#arrowCyan)"/>
+
+    <rect x="660" y="38" width="130" height="30" rx="6" fill="#0f1117" stroke="#06b6d430" stroke-width="1"/>
+    <text x="725" y="58" fill="#22d3ee" font-size="10" text-anchor="middle">→ Next Stage</text>
+  </g>
+
+  <!-- Event types list -->
+  <g transform="translate(920, 1740)">
+    <text y="0" fill="#818cf8" font-size="11" font-weight="600">Event Types:</text>
+    <text y="18" fill="#6b7280" font-size="10">task:created · task:assigned · task:started</text>
+    <text y="34" fill="#6b7280" font-size="10">task:log · task:done · task:failed</text>
+    <text y="50" fill="#6b7280" font-size="10">agent:status · agent:log</text>
+    <text y="66" fill="#6b7280" font-size="10">pipeline:stage:started · pipeline:stage:done</text>
+    <text y="82" fill="#6b7280" font-size="10">pipeline:done · notification</text>
+  </g>
+
+  <!-- ====== BOTTOM: Tech Stack Summary ====== -->
+  <rect x="60" y="1890" width="1280" height="80" rx="16" fill="#12131a" stroke="#6366f130" stroke-width="1" filter="url(#shadow)"/>
+  <g transform="translate(80,1918)">
+    <text fill="#6366f1" font-size="11" font-weight="700">TECH STACK</text>
+    <text x="100" fill="#9ca3af" font-size="11">Frontend: React 19 + TypeScript + Tailwind + Zustand + Vite</text>
+  </g>
+  <g transform="translate(80,1940)">
+    <text fill="#6366f1" font-size="11" font-weight="700">           </text>
+    <text x="100" fill="#9ca3af" font-size="11">Backend: Express 5 + TypeScript + SQLite (WAL) + BullMQ + Redis + WebSocket</text>
+    <text x="720" fill="#9ca3af" font-size="11">Runtime: Claude Code SDK (@anthropic-ai/claude-code) + CLI fallback</text>
+  </g>
+
+  <!-- File count summary -->
+  <rect x="60" y="1985" width="1280" height="55" rx="12" fill="#0f1117" stroke="#4b556330" stroke-width="1"/>
+  <g transform="translate(80,2010)">
+    <text fill="#4b5563" font-size="11">📁 40+ source files</text>
+    <text x="170" fill="#4b5563" font-size="11">│ 🧪 34 tests (vitest)</text>
+    <text x="370" fill="#4b5563" font-size="11">│ 🤖 13 agents</text>
+    <text x="520" fill="#4b5563" font-size="11">│ 📋 5 pipeline templates</text>
+    <text x="720" fill="#4b5563" font-size="11">│ 🛡️ 5-level self-healing</text>
+    <text x="930" fill="#4b5563" font-size="11">│ 🔄 quality loop (3 rounds)</text>
+    <text x="1140" fill="#4b5563" font-size="11">│ 🚧 safety guardrails</text>
+  </g>
+  <text x="80" y="2030" fill="#374151" font-size="10">pnpm monorepo: packages/server + packages/dashboard · agents/*.md skill files · templates/*.yaml pipeline definitions</text>
+
+  <!-- Version -->
+  <text x="700" y="2070" fill="#1f2937" font-size="10" text-anchor="middle">Agent Factory v0.1.0 — Architecture Diagram — Generated 2026-04-19</text>
+</svg>
