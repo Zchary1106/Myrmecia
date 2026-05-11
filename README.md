@@ -21,29 +21,21 @@ A multi-agent task management platform powered by Claude Code CLI. Manage a pool
 
 ## Architecture
 
-```
-┌─────────────────────────────────┐
-│        Web Dashboard            │
-│  Task Board · Logs · Agents     │
-└──────────────┬──────────────────┘
-               │ WebSocket
-┌──────────────┴──────────────────┐
-│        Orchestrator API         │
-│  Queue · Pool · Pipeline · Bus  │
-└──────────────┬──────────────────┘
-               │
-     ┌─────────┼─────────┐
-     ▼         ▼         ▼
-  Mode A    Mode B    Mode C
-  Master    Direct    Pipeline
-  Dispatch  Assign    Flow
-     │         │         │
-     ▼         ▼         ▼
-┌─────────────────────────────────┐
-│          Agent Pool             │
-│  PM · UI · Dev · QA · Ops · Rev│
-└─────────────────────────────────┘
-```
+### System Overview
+
+![System Architecture](docs/diagrams/architecture-overview.png)
+
+### Pipeline Flow
+
+![Pipeline Flow](docs/diagrams/pipeline-flow.png)
+
+### Agent Pool
+
+![Agent Pool](docs/diagrams/agent-pool.png)
+
+### Tech Stack
+
+![Tech Stack](docs/diagrams/tech-stack.png)
 
 ## Quick Start
 
