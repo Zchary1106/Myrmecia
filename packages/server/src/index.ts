@@ -23,6 +23,7 @@ import executionRoutes from './routes/executions.js';
 import { SelfHealingEngine } from './agents/self-healing.js';
 import { QualityLoop } from './pipelines/quality-loop.js';
 import { CoverageChecker } from './workers/coverage-check.js';
+import { ExecutionScorer } from './evaluation/execution-scorer.js';
 import { closeDb } from './db/database.js';
 import { EventRecorder } from './events/event-recorder.js';
 import { createApiAuthMiddleware, isApiAuthEnabled } from './auth/token-auth.js';
@@ -113,6 +114,10 @@ async function main() {
   // Initialize coverage checker
   logger.info('Coverage checker active');
   new CoverageChecker();
+
+  // Initialize execution scorer
+  logger.info('Execution scorer active');
+  new ExecutionScorer();
 
   // Express app
   const app = express();
