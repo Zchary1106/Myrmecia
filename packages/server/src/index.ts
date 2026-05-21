@@ -52,6 +52,7 @@ import { createApiKeyRoutes } from './auth/api-keys.js';
 import { createDLPRoutes } from './security/dlp-rules.js';
 import { createChannelRoutes } from './notifications/channels.js';
 import { createHealthRoutes } from './observability/health.js';
+import { createCostDashboardRoutes } from './routes/cost-dashboard.js';
 import { pubsub, INSTANCE_ID } from './scaling/redis-pubsub.js';
 import { createDistributedWSHub } from './scaling/distributed-ws.js';
 import { workerPool } from './scaling/worker-pool.js';
@@ -188,6 +189,7 @@ async function main() {
   app.use('/api/v1/api-keys', createApiKeyRoutes());
   app.use('/api/v1/dlp-rules', createDLPRoutes());
   app.use('/api/v1/notification-channels', createChannelRoutes());
+  app.use('/api/v1/cost-dashboard', createCostDashboardRoutes());
   app.get('/api/v1/openapi.json', openApiHandler);
 
   // Legacy /api routes (deprecated alias → same handlers, adds deprecation header)
