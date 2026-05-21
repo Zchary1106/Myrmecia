@@ -373,6 +373,21 @@ function applyModuleSchemas(db: DbDriver) {
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   FOREIGN KEY (task_id) REFERENCES tasks(id)
 );`,
+    // Agent comm log
+    `CREATE TABLE IF NOT EXISTS agent_comm_log (
+  id TEXT PRIMARY KEY,
+  from_agent_id TEXT NOT NULL,
+  to_agent_id TEXT NOT NULL,
+  capability TEXT NOT NULL,
+  mode TEXT NOT NULL CHECK(mode IN ('sync', 'async')),
+  status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'running', 'done', 'failed', 'timeout')),
+  payload_summary TEXT,
+  task_id TEXT,
+  output_summary TEXT,
+  duration_ms INTEGER,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  completed_at TEXT
+);`,
     // Execution scores
     `CREATE TABLE IF NOT EXISTS execution_scores (
   id TEXT PRIMARY KEY,
