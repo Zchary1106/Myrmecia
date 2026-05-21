@@ -5,10 +5,12 @@ import { createOperatorAction } from '../db/models/operator-action.js';
 import {
   archiveSkillVersion,
   assignSkillVersionToAgent,
+  checksumSkillContent,
   createSkillVersion,
   getSkill,
   getSkillDetail,
   getSkillVersion,
+  getSkillVersionByChecksum,
   listSkillAssignments,
   listSkills,
   publishSkillVersion,
@@ -200,6 +202,72 @@ export function createSkillRoutes(): Router {
         skillVersionId: version.id,
       });
       res.status(201).json(version);
+    } catch (err) {
+      sendError(res, err);
+    }
+  });
+
+  const updateContentSchema = z.object({
+    content: z.string().min(1),
+  });
+
+  router.put('/:id/content', async (req, res) => {
+    try {
+      const skill = getSkill(req.params.id);
+      if (!skill) return notFound('SKILL_NOT_FOUND', 'Skill not found');
+
+      const actor = requireOperatorRole(req, 'skill.content.update', ['admin', 'operator']);
+      const body = parseBody(updateContentSchema, req);
+
+      const checksum = checksumSkillContent(body.content);
+      const existing = getSkillVersionByChecksum(req.params.id, checksum);
+      if (existing) {
+        return res.json({ message: 'Content unchanged', version: existing });
+      }
+
+      const version = createSkillVersion({
+        skillId: req.params.id,
+        content: body.content,
+        status: 'published',
+        changelog: 'Updated via API',
+        createdBy: actor.id,
+        publishedBy: actor.id,
+      });
+
+      // Update agent assignments
+      const assignments = listSkillAssignments({ skillId: req.params.id });
+      for (const a of assignments) {
+        assignSkillVersionToAgent(a.agentId, version.id);
+      }
+
+      // Write back to file if skill has a sourcePath
+      if (skill.sourcePath) {
+        try {
+          const { writeFileSync } = await import('fs');
+          const { join, dirname } = await import('path');
+          const { fileURLToPath } = await import('url');
+          const __dir = dirname(fileURLToPath(import.meta.url));
+          const filePath = join(__dir, '../../../..', skill.sourcePath);
+          const { skillWatcher } = await import('../skills/skill-watcher-instance.js');
+          if (skillWatcher) {
+            skillWatcher.addToIgnoreSet(filePath);
+          }
+          writeFileSync(filePath, body.content, 'utf-8');
+        } catch (err: any) {
+          // Non-fatal: DB is the source of truth
+        }
+      }
+
+      eventBus.emit('skill:updated', { skillId: req.params.id, skillVersionId: version.id, source: 'api' });
+      createOperatorAction({
+        action: 'skill.content.update',
+        actor,
+        targetType: 'skill',
+        targetId: req.params.id,
+        metadata: { skillVersionId: version.id, checksum: version.checksum },
+      });
+
+      res.json(version);
     } catch (err) {
       sendError(res, err);
     }
