@@ -401,6 +401,16 @@ function applyModuleSchemas(db: DbDriver) {
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   FOREIGN KEY (task_id) REFERENCES tasks(id)
 );`,
+
+    `CREATE TABLE IF NOT EXISTS shared_artifacts (
+  id TEXT PRIMARY KEY,
+  owner_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  content TEXT NOT NULL,
+  readable_by TEXT NOT NULL DEFAULT '[]',
+  expires_at TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);`,
   ];
 
   for (const sql of schemas) {
