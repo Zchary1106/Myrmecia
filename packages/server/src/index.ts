@@ -32,6 +32,7 @@ import { syncBuiltinTools } from './tools/tool-registry.js';
 import { syncBuiltinModels } from './models/model-registry.js';
 import { syncBuiltinSkills } from './skills/skill-registry.js';
 import { SkillWatcher } from './skills/skill-watcher.js';
+import { setSkillWatcher } from './skills/skill-watcher-instance.js';
 import { logger } from './lib/logger.js';
 import { securityMiddleware } from './middleware/security.js';
 import { globalLimiter, writeLimiter } from './middleware/rate-limit.js';
@@ -92,6 +93,7 @@ async function main() {
   logger.info('Syncing skill registry...');
   syncBuiltinSkills(join(__dirname, '../../../agents'));
   const skillWatcher = new SkillWatcher(join(__dirname, '../../../agents'));
+  setSkillWatcher(skillWatcher);
   skillWatcher.start();
   logger.info('Skill watcher active (hot-reload)');
 
