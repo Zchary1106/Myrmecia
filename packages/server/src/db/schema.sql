@@ -516,3 +516,24 @@ ALTER TABLE task_executions ADD COLUMN skill_version_id TEXT REFERENCES skill_ve
 CREATE INDEX IF NOT EXISTS idx_skill_versions_skill ON skill_versions(skill_id);
 CREATE INDEX IF NOT EXISTS idx_skill_versions_status ON skill_versions(status);
 CREATE INDEX IF NOT EXISTS idx_skill_assignments_skill ON skill_assignments(skill_id);
+
+-- Migration: 202605130001_add_workspace_id_to_core_tables
+ALTER TABLE tasks ADD COLUMN workspace_id TEXT NOT NULL DEFAULT 'default';
+ALTER TABLE agents ADD COLUMN workspace_id TEXT NOT NULL DEFAULT 'default';
+ALTER TABLE pipelines ADD COLUMN workspace_id TEXT NOT NULL DEFAULT 'default';
+ALTER TABLE task_executions ADD COLUMN workspace_id TEXT NOT NULL DEFAULT 'default';
+ALTER TABLE tools ADD COLUMN workspace_id TEXT NOT NULL DEFAULT 'default';
+ALTER TABLE skills ADD COLUMN workspace_id TEXT NOT NULL DEFAULT 'default';
+ALTER TABLE notifications ADD COLUMN workspace_id TEXT NOT NULL DEFAULT 'default';
+ALTER TABLE inbox_entries ADD COLUMN workspace_id TEXT NOT NULL DEFAULT 'default';
+CREATE INDEX IF NOT EXISTS idx_tasks_workspace ON tasks(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_agents_workspace ON agents(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_pipelines_workspace ON pipelines(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_executions_workspace ON task_executions(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_tools_workspace ON tools(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_skills_workspace ON skills(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_notifications_workspace ON notifications(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_inbox_workspace ON inbox_entries(workspace_id);
+
+-- Migration: 202605210001_add_route_weight_to_agents
+ALTER TABLE agents ADD COLUMN route_weight REAL DEFAULT 1.0;

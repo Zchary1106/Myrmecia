@@ -373,6 +373,19 @@ function applyModuleSchemas(db: DbDriver) {
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   FOREIGN KEY (task_id) REFERENCES tasks(id)
 );`,
+    // Execution scores
+    `CREATE TABLE IF NOT EXISTS execution_scores (
+  id TEXT PRIMARY KEY,
+  execution_id TEXT NOT NULL,
+  agent_id TEXT NOT NULL,
+  task_id TEXT NOT NULL,
+  base_score REAL NOT NULL,
+  llm_score REAL,
+  final_score REAL NOT NULL,
+  dimensions TEXT DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (task_id) REFERENCES tasks(id)
+);`,
   ];
 
   for (const sql of schemas) {
