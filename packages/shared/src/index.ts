@@ -280,7 +280,7 @@ export interface ExecutionMessage {
   createdAt: string;
 }
 
-export type AgentMessageType = 'task_handoff' | 'progress_update' | 'approval_request' | 'approval_response' | 'text';
+export type AgentMessageType = 'task_handoff' | 'progress_update' | 'approval_request' | 'approval_response' | 'context_update' | 'text';
 
 export interface AgentMessage {
   id: number;
@@ -304,6 +304,7 @@ export interface PipelineStage {
   input?: string;
   output?: string;
   gateApproved?: boolean;
+  dependsOn?: number[];  // stage indices this depends on (enables parallel execution)
 }
 
 export interface Pipeline {
@@ -565,6 +566,9 @@ export type WSEventType =
   | 'task:done' | 'task:failed' | 'task:cancelled'
   | 'agent:status' | 'agent:log'
   | 'pipeline:stage:started' | 'pipeline:stage:done' | 'pipeline:done' | 'pipeline:failed'
+  | 'pipeline:stage:rolled_back' | 'pipeline:awaiting_retry'
+  | 'coverage:report'
+  | 'score:recorded'
   | 'notification'
   | 'inbox:created' | 'inbox:updated'
   | 'quality:updated'
@@ -572,13 +576,60 @@ export type WSEventType =
   | 'execution:message' | 'execution:done' | 'execution:failed'
   | 'tool:started' | 'tool:done' | 'tool:failed' | 'tool:blocked' | 'tool:updated'
   | 'skill:updated' | 'skill:published' | 'skill:assigned'
-  | 'agent:message';
+  | 'agent:message'
+  | 'orchestration:created' | 'orchestration:task_dispatched' | 'orchestration:task_completed'
+  | 'orchestration:task_failed' | 'orchestration:agent_message' | 'orchestration:done'
+  | 'orchestration:failed';
 
 export interface WSEvent<TPayload = unknown> {
   type: WSEventType;
   payload: TPayload;
   timestamp: string;
 }
+
+// ---------- Coverage Check ----------
+
+export interface CoverageReport {
+  id: string;
+  taskId: string;
+  executionId: string;
+  lineCoverage: number;
+  branchCoverage: number;
+  threshold: number;
+  passed: boolean;
+  summary: string;
+  createdAt: string;
+}
+
+export interface CoverageCheckConfig {
+  enabled: boolean;
+  threshold: number;
+  testCommand: string;
+  filePatterns: string[];
+}
+
+// ---------- Execution Scoring ----------
+
+export interface ExecutionScore {
+  id: string;
+  executionId: string;
+  agentId: string;
+  taskId: string;
+  baseScore: number;
+  llmScore: number | null;
+  finalScore: number;
+  dimensions: {
+    completeness?: number;
+    correctness?: number;
+    codeQuality?: number;
+  };
+  createdAt: string;
+}
+
+// ---------- Pipeline Rollback ----------
+
+export type StageStatus = 'pending' | 'running' | 'done' | 'failed' | 'rolled_back' | 'skipped';
+export type PipelineStatus = 'running' | 'done' | 'failed' | 'paused' | 'blocked' | 'awaiting_retry';
 
 export interface WSCommand {
   type: 'subscribe' | 'unsubscribe';
