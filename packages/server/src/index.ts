@@ -57,6 +57,15 @@ import { pubsub, INSTANCE_ID } from './scaling/redis-pubsub.js';
 import { createDistributedWSHub } from './scaling/distributed-ws.js';
 import { workerPool } from './scaling/worker-pool.js';
 import { initMemorySystem } from './memory/index.js';
+import { CapabilityRegistry } from './agents/capability-registry.js';
+import { AgentComms } from './agents/agent-comms.js';
+import { SharedArtifactStore } from './agents/shared-artifact-store.js';
+import { createCapabilityRoutes } from './routes/capabilities.js';
+import { createAgentCommsRoutes } from './routes/agent-comms.js';
+import { createArtifactRoutes } from './routes/artifacts.js';
+import { artifactCleanupWorker } from './workers/artifact-cleanup.js';
+import { agentRuntime } from './agents/agent-runtime.js';
+import { eventBus } from './events/event-bus.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3000;
@@ -98,6 +107,11 @@ async function main() {
   skillWatcher.start();
   logger.info('Skill watcher active (hot-reload)');
 
+  // Initialize capability registry
+  const capabilityRegistry = new CapabilityRegistry();
+  capabilityRegistry.buildIndex();
+  logger.info('Capability registry built');
+
   // Initialize task queue (uses Redis if REDIS_URL is set, otherwise in-memory)
   logger.info('Initializing task queue...');
   const taskQueue = new TaskQueue(agentManager);
@@ -110,6 +124,11 @@ async function main() {
 
   // Initialize notification service
   new NotifierService();
+
+  // Initialize agent federation
+  const agentComms = new AgentComms(capabilityRegistry, agentRuntime, taskQueue);
+  const artifactStore = new SharedArtifactStore(capabilityRegistry);
+  logger.info('Agent federation protocol active');
 
   // Initialize self-healing engine
   logger.info('Self-healing engine active');
@@ -190,6 +209,9 @@ async function main() {
   app.use('/api/v1/dlp-rules', createDLPRoutes());
   app.use('/api/v1/notification-channels', createChannelRoutes());
   app.use('/api/v1/cost-dashboard', createCostDashboardRoutes());
+  app.use('/api/v1/capabilities', createCapabilityRoutes(capabilityRegistry));
+  app.use('/api/v1/agent-comms', createAgentCommsRoutes(agentComms));
+  app.use('/api/v1/artifacts', createArtifactRoutes(artifactStore));
   app.get('/api/v1/openapi.json', openApiHandler);
 
   // Legacy /api routes (deprecated alias → same handlers, adds deprecation header)
@@ -219,6 +241,9 @@ async function main() {
 
   // Initialize worker pool
   await workerPool.initialize();
+
+  // Artifact cleanup worker
+  setInterval(() => artifactCleanupWorker.run({ logger, emit: (t, p) => eventBus.emit(t as any, p) }), artifactCleanupWorker.intervalMs);
 
   server.listen(PORT, async () => {
     logger.info(`Agent Factory running on http://localhost:${PORT}`);
