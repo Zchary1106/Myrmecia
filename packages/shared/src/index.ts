@@ -579,7 +579,9 @@ export type WSEventType =
   | 'agent:message'
   | 'orchestration:created' | 'orchestration:task_dispatched' | 'orchestration:task_completed'
   | 'orchestration:task_failed' | 'orchestration:agent_message' | 'orchestration:done'
-  | 'orchestration:failed';
+  | 'orchestration:failed'
+  | 'agent:comm:request' | 'agent:comm:response' | 'agent:comm:message'
+  | 'artifact:published' | 'artifact:read';
 
 export interface WSEvent<TPayload = unknown> {
   type: WSEventType;
@@ -686,4 +688,52 @@ export interface InboxEventPayload {
 export interface QualityLoopEventPayload {
   taskId: string;
   attempt?: QualityLoopAttempt;
+}
+
+// ---------- Agent Federation ----------
+
+export interface CommRequest {
+  from: string;
+  capability: string;
+  payload: any;
+  timeout?: number;
+}
+
+export interface CommMessage {
+  from: string;
+  capability: string;
+  payload: any;
+  replyTo?: string;
+}
+
+export interface CommResponse {
+  success: boolean;
+  providerId: string;
+  output: any;
+  durationMs: number;
+}
+
+export interface CommMessageRecord {
+  id: string;
+  fromAgentId: string;
+  toAgentId: string;
+  capability: string;
+  mode: 'sync' | 'async';
+  status: 'pending' | 'running' | 'done' | 'failed' | 'timeout';
+  payloadSummary: string | null;
+  taskId: string | null;
+  outputSummary: string | null;
+  durationMs: number | null;
+  createdAt: string;
+  completedAt: string | null;
+}
+
+export interface Artifact {
+  id: string;
+  ownerId: string;
+  name: string;
+  content: string;
+  readableBy: string[];
+  expiresAt: string;
+  createdAt: string;
 }
