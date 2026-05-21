@@ -31,6 +31,7 @@ import { createApiAuthMiddleware, isApiAuthEnabled } from './auth/token-auth.js'
 import { syncBuiltinTools } from './tools/tool-registry.js';
 import { syncBuiltinModels } from './models/model-registry.js';
 import { syncBuiltinSkills } from './skills/skill-registry.js';
+import { SkillWatcher } from './skills/skill-watcher.js';
 import { logger } from './lib/logger.js';
 import { securityMiddleware } from './middleware/security.js';
 import { globalLimiter, writeLimiter } from './middleware/rate-limit.js';
@@ -90,6 +91,9 @@ async function main() {
   await agentManager.initializeFromRegistry();
   logger.info('Syncing skill registry...');
   syncBuiltinSkills(join(__dirname, '../../../agents'));
+  const skillWatcher = new SkillWatcher(join(__dirname, '../../../agents'));
+  skillWatcher.start();
+  logger.info('Skill watcher active (hot-reload)');
 
   // Initialize task queue (uses Redis if REDIS_URL is set, otherwise in-memory)
   logger.info('Initializing task queue...');
@@ -229,6 +233,7 @@ async function main() {
     await workerPool.shutdown();
     await pubsub.shutdown();
     await taskQueue.shutdown();
+    skillWatcher.stop();
     closeDb();
     server.close();
     process.exit(0);
