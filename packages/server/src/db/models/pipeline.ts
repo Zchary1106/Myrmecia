@@ -11,6 +11,7 @@ function rowToPipeline(row: any): Pipeline {
     templateId: row.template_id,
     createdAt: row.created_at,
     completedAt: row.completed_at,
+    stageCheckpoints: row.stage_checkpoints,
   };
 }
 
@@ -24,17 +25,17 @@ export function createPipeline(data: {
   const db = getDb();
   const id = `pipe_${uuid().slice(0, 8)}`;
 
-  db.prepare(`
+  db.run(`
     INSERT INTO pipelines (id, name, template_id, stages, gate_mode, input)
     VALUES (?, ?, ?, ?, ?, ?)
-  `).run(id, data.name, data.templateId || null, JSON.stringify(data.stages), data.gateMode || 'auto', data.input);
+  `, id, data.name, data.templateId || null, JSON.stringify(data.stages), data.gateMode || 'auto', data.input);
 
   return getPipeline(id)!;
 }
 
 export function getPipeline(id: string): Pipeline | undefined {
   const db = getDb();
-  const row = db.prepare('SELECT * FROM pipelines WHERE id = ?').get(id) as any;
+  const row = db.get('SELECT * FROM pipelines WHERE id = ?', id);
   return row ? rowToPipeline(row) : undefined;
 }
 
@@ -44,7 +45,7 @@ export function listPipelines(filter?: { status?: PipelineStatus }): Pipeline[] 
   const params: any[] = [];
   if (filter?.status) { sql += ' WHERE status = ?'; params.push(filter.status); }
   sql += ' ORDER BY created_at DESC';
-  return (db.prepare(sql).all(...params) as any[]).map(rowToPipeline);
+  return db.all(sql, ...params).map(rowToPipeline);
 }
 
 export function updatePipeline(id: string, updates: Partial<{
@@ -52,6 +53,7 @@ export function updatePipeline(id: string, updates: Partial<{
   stages: PipelineStage[];
   currentStageIndex: number;
   completedAt: string;
+  stageCheckpoints: string;
 }>): Pipeline | undefined {
   const db = getDb();
   const sets: string[] = [];
@@ -61,10 +63,11 @@ export function updatePipeline(id: string, updates: Partial<{
   if (updates.stages !== undefined) { sets.push('stages = ?'); params.push(JSON.stringify(updates.stages)); }
   if (updates.currentStageIndex !== undefined) { sets.push('current_stage_index = ?'); params.push(updates.currentStageIndex); }
   if (updates.completedAt !== undefined) { sets.push('completed_at = ?'); params.push(updates.completedAt); }
+  if (updates.stageCheckpoints !== undefined) { sets.push('stage_checkpoints = ?'); params.push(updates.stageCheckpoints); }
 
   if (sets.length === 0) return getPipeline(id);
   params.push(id);
-  db.prepare(`UPDATE pipelines SET ${sets.join(', ')} WHERE id = ?`).run(...params);
+  db.run(`UPDATE pipelines SET ${sets.join(', ')} WHERE id = ?`, ...params);
   return getPipeline(id);
 }
 
@@ -72,22 +75,22 @@ export function updatePipeline(id: string, updates: Partial<{
 export function createTemplate(data: { name: string; description?: string; stages: any[] }): PipelineTemplate {
   const db = getDb();
   const id = `tmpl_${uuid().slice(0, 8)}`;
-  db.prepare(`
+  db.run(`
     INSERT INTO pipeline_templates (id, name, description, stages) VALUES (?, ?, ?, ?)
-  `).run(id, data.name, data.description || '', JSON.stringify(data.stages));
+  `, id, data.name, data.description || '', JSON.stringify(data.stages));
   return getTemplate(id)!;
 }
 
 export function getTemplate(id: string): PipelineTemplate | undefined {
   const db = getDb();
-  const row = db.prepare('SELECT * FROM pipeline_templates WHERE id = ?').get(id) as any;
+  const row = db.get('SELECT * FROM pipeline_templates WHERE id = ?', id);
   if (!row) return undefined;
   return { ...row, stages: JSON.parse(row.stages), templateId: row.template_id, createdAt: row.created_at };
 }
 
 export function listTemplates(): PipelineTemplate[] {
   const db = getDb();
-  return (db.prepare('SELECT * FROM pipeline_templates ORDER BY created_at DESC').all() as any[]).map(row => ({
+  return db.all('SELECT * FROM pipeline_templates ORDER BY created_at DESC').map(row => ({
     ...row, stages: JSON.parse(row.stages), createdAt: row.created_at,
   }));
 }
@@ -105,6 +108,6 @@ export function updateTemplate(id: string, updates: Partial<{
   if (updates.stages !== undefined) { sets.push('stages = ?'); params.push(JSON.stringify(updates.stages)); }
   if (sets.length === 0) return getTemplate(id);
   params.push(id);
-  db.prepare(`UPDATE pipeline_templates SET ${sets.join(', ')} WHERE id = ?`).run(...params);
+  db.run(`UPDATE pipeline_templates SET ${sets.join(', ')} WHERE id = ?`, ...params);
   return getTemplate(id);
 }

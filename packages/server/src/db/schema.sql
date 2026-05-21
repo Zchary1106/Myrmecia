@@ -537,3 +537,6 @@ CREATE INDEX IF NOT EXISTS idx_inbox_workspace ON inbox_entries(workspace_id);
 
 -- Migration: 202605210001_add_route_weight_to_agents
 ALTER TABLE agents ADD COLUMN route_weight REAL DEFAULT 1.0;
+
+-- Migration: 202605210002_add_stage_checkpoints_to_pipelines
+ALTER TABLE pipelines ADD COLUMN stage_checkpoints TEXT DEFAULT '{}';

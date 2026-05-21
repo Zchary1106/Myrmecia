@@ -292,14 +292,14 @@ export interface AgentMessage {
   createdAt: string;
 }
 
-export type PipelineStatus = 'running' | 'paused' | 'blocked' | 'done' | 'failed';
+export type PipelineStatus = 'running' | 'paused' | 'blocked' | 'done' | 'failed' | 'awaiting_retry';
 
 export interface PipelineStage {
   index: number;
   name: string;
   agentRole: AgentRole;
   taskId?: string;
-  status: 'pending' | 'running' | 'review' | 'done' | 'failed' | 'skipped';
+  status: 'pending' | 'running' | 'review' | 'done' | 'failed' | 'skipped' | 'rolled_back';
   promptTemplate?: string;
   input?: string;
   output?: string;
@@ -629,7 +629,6 @@ export interface ExecutionScore {
 // ---------- Pipeline Rollback ----------
 
 export type StageStatus = 'pending' | 'running' | 'done' | 'failed' | 'rolled_back' | 'skipped';
-export type PipelineStatus = 'running' | 'done' | 'failed' | 'paused' | 'blocked' | 'awaiting_retry';
 
 export interface WSCommand {
   type: 'subscribe' | 'unsubscribe';
