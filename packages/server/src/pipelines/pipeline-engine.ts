@@ -1,6 +1,7 @@
 import { readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { parse as parseYaml } from 'yaml';
+import { execSync } from 'child_process';
 import { createPipeline, getPipeline, listPipelines, updatePipeline } from '../db/models/pipeline.js';
 import { createTemplate, listTemplates, getTemplate } from '../db/models/pipeline.js';
 import { getTask } from '../db/models/task.js';
@@ -9,6 +10,7 @@ import { TaskQueue } from '../queue/task-queue.js';
 import { AgentManager } from '../agents/agent-manager.js';
 import { contextManager } from './context-manager.js';
 import { workspaceManager } from '../workspace/workspace-manager.js';
+import { saveStageCheckpoint } from './pipeline-rollback.js';
 import type { Pipeline, PipelineStage } from '../types.js';
 
 export class PipelineEngine {
@@ -44,6 +46,7 @@ export class PipelineEngine {
               name: s.name,
               role: s.role,
               promptTemplate: s.prompt_template,
+              dependsOn: s.depends_on,
             })),
           });
           console.log(`  Loaded template: ${tmpl.name}`);
@@ -65,6 +68,7 @@ export class PipelineEngine {
       agentRole: s.role,
       status: 'pending' as const,
       promptTemplate: s.promptTemplate,
+      dependsOn: (s as any).dependsOn,
     }));
 
     const pipeline = createPipeline({
@@ -83,9 +87,31 @@ export class PipelineEngine {
       console.warn(`  ⚠️ Workspace creation failed: ${err.message} — using default cwd`);
     }
 
-    // Start first stage
-    await this.startStage(pipeline.id, 0);
+    // Start all stages that have no dependencies (or depend only on completed stages)
+    this.startReadyStages(pipeline.id);
     return getPipeline(pipeline.id)!;
+  }
+
+  /**
+   * Start all pipeline stages whose dependencies are satisfied.
+   * Enables parallel execution when stages share the same dependency level.
+   */
+  private startReadyStages(pipelineId: string) {
+    const pipeline = getPipeline(pipelineId);
+    if (!pipeline || pipeline.status === 'done' || pipeline.status === 'failed') return;
+
+    for (const [idx, stage] of pipeline.stages.entries()) {
+      if (stage.status !== 'pending') continue;
+
+      // Determine dependencies: explicit dependsOn, or implicit sequential (previous stage)
+      const deps = stage.dependsOn ?? (idx > 0 ? [idx - 1] : []);
+      const allDepsCompleted = deps.every(d => pipeline.stages[d]?.status === 'done');
+
+      if (allDepsCompleted) {
+        // Fire-and-forget: don't await — allows parallel starts
+        this.startStage(pipelineId, idx);
+      }
+    }
   }
 
   /** Start a pipeline stage */
@@ -104,6 +130,16 @@ export class PipelineEngine {
     const ws = workspaceManager.getWorkspaceInfo(pipelineId, 'pipeline');
     let workdir = ws?.path || undefined;
     let workspacePath = ws?.path || undefined;
+
+    // Save checkpoint before starting stage
+    if (ws?.path) {
+      try {
+        const sha = execSync('git rev-parse HEAD', { cwd: ws.path, encoding: 'utf-8' }).trim();
+        saveStageCheckpoint(pipelineId, stageIndex, sha);
+      } catch {
+        // Not a git workspace, skip checkpoint
+      }
+    }
 
     // Create stage-specific artifact directory
     if (ws) {
@@ -188,9 +224,10 @@ export class PipelineEngine {
         output: task.output,
       });
 
-      // Check if pipeline is complete
-      const nextIdx = stageIdx + 1;
-      if (nextIdx >= stages.length) {
+      // Check if pipeline is complete (all stages done)
+      const updatedPipeline = getPipeline(pipeline.id)!;
+      const allDone = updatedPipeline.stages.every(s => s.status === 'done' || s.status === 'skipped');
+      if (allDone) {
         updatePipeline(pipeline.id, { status: 'done', completedAt: new Date().toISOString() });
         eventBus.emit('pipeline:done', { pipelineId: pipeline.id });
 
@@ -213,8 +250,8 @@ export class PipelineEngine {
         return;
       }
 
-      // Auto-advance
-      await this.startStage(pipeline.id, nextIdx);
+      // Advance: start all stages whose dependencies are now satisfied
+      this.startReadyStages(pipeline.id);
     }
   }
 
@@ -312,5 +349,25 @@ export class PipelineEngine {
 
     // Cleanup workspace
     await workspaceManager.cleanupWorkspace(pipelineId, 'pipeline');
+  }
+
+  /** Retry a rolled-back stage */
+  async retryStage(pipelineId: string, stageIndex: number): Promise<void> {
+    const pipeline = getPipeline(pipelineId);
+    if (!pipeline) throw new Error(`Pipeline ${pipelineId} not found`);
+
+    const stage = pipeline.stages[stageIndex];
+    if (!stage) throw new Error(`Stage ${stageIndex} not found`);
+    if (stage.status !== 'rolled_back') {
+      throw new Error(`Stage ${stageIndex} is not in rolled_back status (current: ${stage.status})`);
+    }
+
+    const stages = [...pipeline.stages];
+    stages[stageIndex] = { ...stages[stageIndex], status: 'pending', taskId: undefined, output: undefined };
+    updatePipeline(pipelineId, { stages, status: 'running' });
+
+    eventBus.emit('pipeline:awaiting_retry', { pipelineId, stageIndex, action: 'retry' });
+
+    this.startReadyStages(pipelineId);
   }
 }

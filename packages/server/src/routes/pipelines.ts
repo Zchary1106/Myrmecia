@@ -111,5 +111,15 @@ export function createPipelineRoutes(pipelineEngine: PipelineEngine): Router {
     }
   });
 
+  router.post('/:id/stages/:index/retry', async (req, res) => {
+    try {
+      const stageIndex = parseInt(req.params.index, 10);
+      await pipelineEngine.retryStage(req.params.id, stageIndex);
+      res.json({ success: true, message: `Stage ${stageIndex} retry initiated` });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
   return router;
 }
