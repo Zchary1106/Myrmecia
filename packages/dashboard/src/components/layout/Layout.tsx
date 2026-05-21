@@ -5,6 +5,7 @@ import { useWebSocket } from '../../hooks/useWebSocket';
 import { AgentChatPanel } from '../agents/AgentChatPanel';
 import { CommandCenter } from '../common/CommandCenter';
 import { OrchestratorView } from '../orchestrator/OrchestratorView';
+import { OrchestrationBoard } from '../orchestrator/OrchestrationBoard';
 import { ExecutionTimeline } from '../timeline/ExecutionTimeline';
 import { InboxView } from '../inbox/InboxView';
 import { ObservabilityView } from '../observability/ObservabilityView';
@@ -12,6 +13,7 @@ import { AuditView } from '../audit/AuditView';
 import { SettingsView } from '../settings/SettingsView';
 import { CommandBar } from '../common/CommandBar';
 import { TasksPage } from '../../pages/Tasks';
+import { CostDashboardPage } from '../../pages/CostDashboard';
 import { AgentsPage } from '../../pages/Agents';
 import { ToolsPage } from '../../pages/Tools';
 import { ModelsPage } from '../../pages/Models';
@@ -112,6 +114,7 @@ function ViewToggle() {
         { id: 'models', label: 'Models', icon: '🧠' },
         { id: 'skills', label: 'Skills', icon: '📚' },
         { id: 'orchestrator', label: 'Pipelines', icon: '🔗' },
+        { id: 'board', label: 'Board', icon: '🎯' },
         { id: 'inbox', label: 'Inbox', icon: '📥', badge: pendingInboxCount },
       ],
     },
@@ -121,6 +124,7 @@ function ViewToggle() {
         { id: 'timeline', label: 'Timeline', icon: '🧭' },
         { id: 'observability', label: 'Observe', icon: '📈' },
         { id: 'audit', label: 'Audit', icon: '🧾' },
+        { id: 'cost' as DashboardView, label: 'Costs', icon: '💰' },
         { id: 'settings', label: 'Settings', icon: '⚙️' },
       ],
     },
@@ -175,6 +179,8 @@ function MainContent() {
       return <SkillsPage />;
     case 'orchestrator':
       return <OrchestratorView />;
+    case 'board':
+      return <OrchestrationBoard />;
     case 'inbox':
       return <InboxView />;
     case 'timeline':
@@ -187,6 +193,8 @@ function MainContent() {
       return <TasksPage />;
     case 'settings':
       return <SettingsView />;
+    case 'cost':
+      return <CostDashboardPage />;
     default:
       return null;
   }
@@ -220,6 +228,27 @@ export function Layout() {
     loadObservability();
     loadDiagnostics();
     loadOperatorActions();
+
+    // Retry failed initial loads (server might not be ready on first attempt)
+    // Keeps retrying every 5s until all critical data is loaded
+    const retryInterval = setInterval(() => {
+      const state = useStore.getState();
+      const needsRetry =
+        !state.diagnostics ||
+        state.agents.length === 0 ||
+        state.health === null;
+
+      if (!needsRetry) {
+        clearInterval(retryInterval);
+        return;
+      }
+
+      if (!state.diagnostics) loadDiagnostics();
+      if (state.agents.length === 0) loadAgents();
+      if (state.health === null) loadHealth();
+    }, 5000);
+
+    return () => clearInterval(retryInterval);
   }, []);
 
   return (
