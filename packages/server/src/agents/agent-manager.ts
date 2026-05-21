@@ -87,10 +87,25 @@ export class AgentManager {
   /** Find an available agent for a role (with capacity) */
   findAvailableAgent(role: string): AgentDefinition | undefined {
     const agents = listAgents({ role });
-    return agents.find(a => {
+    const available = agents.filter(a => {
       const active = getActiveExecutionCount(a.id);
       return active < (a.config.maxConcurrent || 1);
     });
+
+    if (available.length === 0) return undefined;
+    if (available.length === 1) return available[0];
+
+    // Weighted random selection based on route_weight
+    const weights = available.map(a => (a as any).routeWeight ?? 1.0);
+    const totalWeight = weights.reduce((sum, w) => sum + w, 0);
+    let rand = Math.random() * totalWeight;
+
+    for (let i = 0; i < available.length; i++) {
+      rand -= weights[i];
+      if (rand <= 0) return available[i];
+    }
+
+    return available[available.length - 1];
   }
 
   /** Stop a running task on an agent */
