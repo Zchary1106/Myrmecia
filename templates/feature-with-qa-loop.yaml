@@ -1,0 +1,29 @@
+name: Feature with QA Loop
+description: Feature development with iterative QA — loops until tests pass (max 3 attempts)
+stages:
+  - name: Spec
+    role: pm
+    prompt_template: |
+      Write a brief feature spec for: {input}
+
+  - name: Code
+    role: dev
+    prompt_template: |
+      Implement this feature based on the spec:
+      {input}
+
+  - name: QA Loop
+    role: qa
+    prompt_template: |
+      Test this implementation. If all tests pass, output "All tests passed. PASS".
+      If tests fail, output the failures and suggest fixes.
+      {input}
+    loop:
+      max_iterations: 3
+      exit_condition: pass
+
+  - name: Review
+    role: review
+    prompt_template: |
+      Review the final implementation for quality and security:
+      {input}
