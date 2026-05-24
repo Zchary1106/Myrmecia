@@ -37,6 +37,7 @@ import { logger } from './lib/logger.js';
 import { securityMiddleware } from './middleware/security.js';
 import { globalLimiter, writeLimiter } from './middleware/rate-limit.js';
 import { globalErrorHandler } from './middleware/error-handler.js';
+import { inputSanitizerMiddleware } from './middleware/input-sanitizer.js';
 import { initTelemetry, telemetryMiddleware, metricsHandler } from './observability/telemetry.js';
 import { tenantMiddleware } from './auth/tenant.js';
 import { createAuthRoutes, sessionAuthMiddleware } from './auth/oidc.js';
@@ -175,6 +176,7 @@ async function main() {
   app.use(globalLimiter);
   app.use(telemetryMiddleware);
   app.use('/api', writeLimiter);
+  app.use('/api', inputSanitizerMiddleware);
   app.use('/api', createApiAuthMiddleware({ publicPaths: ['/health'] }));
   // Also apply auth to /api/v1
   app.use('/api/v1', writeLimiter);
