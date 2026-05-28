@@ -35,8 +35,8 @@ export class TaskQueue {
     }
 
     // Listen for task completions to process waiting tasks
-    eventBus.on('task:done', () => this.processNext());
-    eventBus.on('task:failed', () => this.processNext());
+    eventBus.on('task:done', () => { metrics.queueDepth.add(-1, { direction: 'dec' }); this.processNext(); });
+    eventBus.on('task:failed', () => { metrics.queueDepth.add(-1, { direction: 'dec' }); this.processNext(); });
   }
 
   /** Initialize BullMQ with Redis */

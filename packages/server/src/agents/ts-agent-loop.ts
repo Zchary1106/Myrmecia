@@ -129,9 +129,28 @@ export class TsAgentLoop {
     const systemPrompt = buildSystemPrompt(agent, toolPolicy, runtimeSkill);
 
     // Check if the resolved skill is structured (step-driven)
-    const parsedSkill = runtimeSkill
+    let parsedSkill = runtimeSkill
       ? parseSkillContent(runtimeSkill.version.content)
       : null;
+
+    // If no structured skill resolved, try LLM matching
+    if (!parsedSkill?.isStructured) {
+      try {
+        const { matchSkillForTask } = await import('../skills/skill-matcher.js');
+        const { getLatestPublishedSkillVersion } = await import('../db/models/skill.js');
+        const match = await matchSkillForTask(task.input, agent.role);
+        if (match.skillId && match.confidence >= 0.7) {
+          const version = getLatestPublishedSkillVersion(match.skillId);
+          if (version) {
+            const matched = parseSkillContent(version.content);
+            if (matched.isStructured) {
+              parsedSkill = matched;
+              addTaskLog(task.id, 'info', `Skill matched: ${match.skillId} (${(match.confidence * 100).toFixed(0)}% — ${match.reason})`, 'system');
+            }
+          }
+        }
+      } catch { /* matcher unavailable, proceed without */ }
+    }
 
     if (parsedSkill?.isStructured && parsedSkill.config) {
       return this.executeWithSkillExecutor(
