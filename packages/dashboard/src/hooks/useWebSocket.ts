@@ -127,6 +127,7 @@ export function useWebSocket() {
     wsClient.on('task:assigned', onTaskAssigned as (event: WSEvent) => void);
     wsClient.on('agent:status', onAgentStatus);
     wsClient.on('execution:started', onExecutionEvent as (event: WSEvent) => void);
+    wsClient.on('execution:progress', onExecutionEvent as (event: WSEvent) => void);
     wsClient.on('execution:message', onExecutionEvent as (event: WSEvent) => void);
     wsClient.on('execution:done', onExecutionEvent as (event: WSEvent) => void);
     wsClient.on('execution:failed', onExecutionEvent as (event: WSEvent) => void);
@@ -157,6 +158,7 @@ export function useWebSocket() {
       wsClient.off('task:assigned', onTaskAssigned as (event: WSEvent) => void);
       wsClient.off('agent:status', onAgentStatus);
       wsClient.off('execution:started', onExecutionEvent as (event: WSEvent) => void);
+      wsClient.off('execution:progress', onExecutionEvent as (event: WSEvent) => void);
       wsClient.off('execution:message', onExecutionEvent as (event: WSEvent) => void);
       wsClient.off('execution:done', onExecutionEvent as (event: WSEvent) => void);
       wsClient.off('execution:failed', onExecutionEvent as (event: WSEvent) => void);
