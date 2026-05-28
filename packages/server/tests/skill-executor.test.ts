@@ -1,4 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+import { SkillExecutor } from '../src/skills/skill-executor.js';
+import type { SkillExecutorConfig } from '@agent-factory/shared';
 import { parseSkillContent } from '../src/skills/skill-parser.js';
 import { validateStep } from '../src/skills/step-validator.js';
 import { buildMatcherPrompt, parseMatcherResponse } from '../src/skills/skill-matcher.js';
@@ -133,5 +135,71 @@ describe('skill-matcher', () => {
   it('handles malformed LLM response gracefully', () => {
     const result = parseMatcherResponse('I think dev skill is best');
     expect(result.skillId).toBeNull();
+  });
+});
+
+describe('skill-executor', () => {
+  const mockConfig: SkillExecutorConfig = {
+    executor: 'step-driven',
+    steps: [
+      { name: 'analyze', instruction: 'Analyze the code', maxTurns: 2, validation: { command: 'echo "ok"' } },
+      { name: 'implement', instruction: 'Write code', maxTurns: 3, maxRetries: 1, validation: { command: 'echo "done"' } },
+    ],
+    recovery: { onStepFailure: 'retry_then_fail', maxTotalRetries: 3 },
+  };
+
+  it('executes all steps in sequence and returns combined output', async () => {
+    const mockLlmCall = vi.fn()
+      .mockResolvedValueOnce('Analysis: need to change file A')
+      .mockResolvedValueOnce('Implementation complete');
+
+    const executor = new SkillExecutor({
+      config: mockConfig,
+      promptContent: 'You are a dev',
+      workdir: '/tmp',
+      llmCall: mockLlmCall,
+    });
+
+    const result = await executor.run('Build a login page');
+
+    expect(result.success).toBe(true);
+    expect(result.steps).toHaveLength(2);
+    expect(result.steps[0].name).toBe('analyze');
+    expect(result.steps[0].status).toBe('done');
+    expect(result.steps[0].output).toBe('Analysis: need to change file A');
+    expect(result.steps[1].name).toBe('implement');
+    expect(result.steps[1].status).toBe('done');
+    expect(mockLlmCall).toHaveBeenCalledTimes(2);
+  });
+
+  it('retries a step when validation fails', async () => {
+    const failConfig: SkillExecutorConfig = {
+      executor: 'step-driven',
+      steps: [
+        { name: 'code', instruction: 'Write code', maxTurns: 2, maxRetries: 2,
+          validation: { command: 'exit 1', failMessage: 'Tests fail' } },
+      ],
+      recovery: { onStepFailure: 'retry_then_fail', maxTotalRetries: 5 },
+    };
+
+    let callCount = 0;
+    const mockLlmCall = vi.fn().mockImplementation(async () => {
+      callCount++;
+      return `Attempt ${callCount}`;
+    });
+
+    const executor = new SkillExecutor({
+      config: failConfig,
+      promptContent: 'You are a dev',
+      workdir: '/tmp',
+      llmCall: mockLlmCall,
+    });
+
+    const result = await executor.run('Fix the bug');
+
+    expect(result.success).toBe(false);
+    expect(mockLlmCall).toHaveBeenCalledTimes(3);
+    expect(result.steps[0].status).toBe('failed');
+    expect(result.steps[0].retries).toBe(2);
   });
 });
