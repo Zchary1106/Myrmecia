@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { parseSkillContent } from '../src/skills/skill-parser.js';
+import { validateStep } from '../src/skills/step-validator.js';
 
 describe('skill-parser', () => {
   it('parses YAML frontmatter with steps into SkillExecutorConfig', () => {
@@ -56,5 +57,51 @@ You are a developer...`;
     const content = `---\ntitle: Not a structured skill\n---\n\n# Skill`;
     const result = parseSkillContent(content);
     expect(result.isStructured).toBe(false);
+  });
+});
+
+describe('step-validator', () => {
+  it('returns pass=true when command exits 0', async () => {
+    const result = await validateStep({
+      command: 'echo "hello"',
+      workdir: '/tmp',
+      output: 'test output',
+      stepName: 'test-step',
+    });
+    expect(result.pass).toBe(true);
+    expect(result.stdout).toContain('hello');
+  });
+
+  it('returns pass=false when command exits non-zero', async () => {
+    const result = await validateStep({
+      command: 'exit 1',
+      workdir: '/tmp',
+      output: '',
+      stepName: 'test-step',
+    });
+    expect(result.pass).toBe(false);
+  });
+
+  it('substitutes ${workdir}, ${output}, ${stepName} variables', async () => {
+    const result = await validateStep({
+      command: 'echo "${workdir} ${stepName}"',
+      workdir: '/tmp',
+      output: 'some output',
+      stepName: 'analyze',
+    });
+    expect(result.pass).toBe(true);
+    expect(result.stdout).toContain('/tmp analyze');
+  });
+
+  it('returns pass=false on timeout', async () => {
+    const result = await validateStep({
+      command: 'sleep 10',
+      workdir: '/tmp',
+      output: '',
+      stepName: 'slow',
+      timeoutMs: 100,
+    });
+    expect(result.pass).toBe(false);
+    expect(result.error).toContain('timeout');
   });
 });
