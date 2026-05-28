@@ -203,3 +203,46 @@ describe('skill-executor', () => {
     expect(result.steps[0].retries).toBe(2);
   });
 });
+
+describe('skill-executor integration', () => {
+  it('parses a real skill file and executes steps with mock LLM', async () => {
+    const skillContent = `---
+executor: step-driven
+steps:
+  - name: plan
+    instruction: "Create a plan"
+    maxTurns: 1
+    validation:
+      command: "test -n '\${output}'"
+  - name: execute
+    instruction: "Execute the plan"
+    maxTurns: 1
+    validation:
+      command: "echo done"
+---
+
+# Test Skill
+
+You are a test agent.`;
+
+    const parsed = parseSkillContent(skillContent);
+    expect(parsed.isStructured).toBe(true);
+
+    const mockLlm = vi.fn()
+      .mockResolvedValueOnce('Plan: do X then Y')
+      .mockResolvedValueOnce('Executed X and Y successfully');
+
+    const executor = new SkillExecutor({
+      config: parsed.config!,
+      promptContent: parsed.promptContent,
+      workdir: '/tmp',
+      llmCall: mockLlm,
+    });
+
+    const result = await executor.run('Build something');
+    expect(result.success).toBe(true);
+    expect(result.steps).toHaveLength(2);
+    expect(result.finalOutput).toContain('Plan: do X then Y');
+    expect(result.finalOutput).toContain('Executed X and Y successfully');
+  });
+});
