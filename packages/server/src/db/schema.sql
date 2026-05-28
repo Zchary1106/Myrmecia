@@ -540,3 +540,31 @@ ALTER TABLE agents ADD COLUMN route_weight REAL DEFAULT 1.0;
 
 -- Migration: 202605210002_add_stage_checkpoints_to_pipelines
 ALTER TABLE pipelines ADD COLUMN stage_checkpoints TEXT DEFAULT '{}';
+
+-- Migration: 202605290001_add_skill_registry_tables
+CREATE TABLE IF NOT EXISTS skill_registry_sources (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  type TEXT NOT NULL DEFAULT 'github',
+  url TEXT NOT NULL,
+  branch TEXT DEFAULT 'main',
+  path_prefix TEXT DEFAULT '',
+  auth_token TEXT,
+  last_synced_at TEXT,
+  enabled INTEGER DEFAULT 1,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS skill_registry_catalog (
+  id TEXT PRIMARY KEY,
+  source_id TEXT NOT NULL REFERENCES skill_registry_sources(id),
+  name TEXT NOT NULL,
+  description TEXT DEFAULT '',
+  path TEXT NOT NULL,
+  content_hash TEXT,
+  tags TEXT DEFAULT '[]',
+  is_structured INTEGER DEFAULT 0,
+  last_synced_at TEXT,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_catalog_source ON skill_registry_catalog(source_id);

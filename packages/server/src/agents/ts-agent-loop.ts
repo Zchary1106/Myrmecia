@@ -136,7 +136,7 @@ export class TsAgentLoop {
     if (parsedSkill?.isStructured && parsedSkill.config) {
       return this.executeWithSkillExecutor(
         agent, task, abortController, executionId, traceId, rootSpanId,
-        tracker, parsedSkill, toolPolicy, systemPrompt,
+        tracker, parsedSkill as { config: SkillExecutorConfig; promptContent: string }, toolPolicy, systemPrompt,
       );
     }
 

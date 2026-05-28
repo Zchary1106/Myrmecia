@@ -35,26 +35,41 @@ import type {
 } from '@agent-factory/shared';
 import { getApiAuthToken } from './auth';
 
-const BASE = '/api';
+const BASE = '/api/v1';
 
 async function request<T>(path: string, opts?: RequestInit): Promise<T> {
   const token = getApiAuthToken();
-  const res = await fetch(`${BASE}${path}`, {
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...opts?.headers,
-    },
-    ...opts,
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: { message: res.statusText } }));
-    throw new Error(err.error?.message || res.statusText);
+  const maxRetries = opts?.method && opts.method !== 'GET' ? 0 : 1;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const res = await fetch(`${BASE}${path}`, {
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          ...opts?.headers,
+        },
+        ...opts,
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: { message: res.statusText } }));
+        throw new Error(err.error?.message || res.statusText);
+      }
+      return await res.json();
+    } catch (err) {
+      if (attempt < maxRetries) {
+        await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+        continue;
+      }
+      throw err;
+    }
   }
-  return res.json();
+  throw new Error('unreachable');
 }
 
 export const api = {
+  /** Generic GET for any path (relative to /api/v1 if starts with /, or absolute) */
+  get: <T = any>(path: string) => request<T>(path.startsWith('/api/') ? path.replace('/api/v1', '') : path),
   tasks: {
     list: (params?: Record<string, string>) =>
       request<Task[]>(`/tasks${params ? '?' + new URLSearchParams(params) : ''}`),
@@ -127,6 +142,19 @@ export const api = {
         method: 'PUT',
         body: JSON.stringify({ skillVersionId }),
       }),
+    registry: {
+      sources: () => request<any[]>('/skills/registry/sources'),
+      addSource: (data: { name: string; type: string; url: string; branch?: string; pathPrefix?: string; authToken?: string }) =>
+        request<any>('/skills/registry/sources', { method: 'POST', body: JSON.stringify(data) }),
+      deleteSource: (id: string) =>
+        request<any>(`/skills/registry/sources/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+      sync: (sourceId: string) =>
+        request<{ added: number; updated: number }>(`/skills/registry/sources/${encodeURIComponent(sourceId)}/sync`, { method: 'POST' }),
+      browse: (params?: { search?: string; sourceId?: string; structured?: string }) =>
+        request<any[]>(`/skills/registry/browse${params ? '?' + new URLSearchParams(params as any) : ''}`),
+      import: (catalogId: string) =>
+        request<{ skillId: string; versionId: string }>('/skills/registry/import', { method: 'POST', body: JSON.stringify({ catalogId }) }),
+    },
   },
   executions: {
     list: (params?: Record<string, string>) =>
@@ -228,5 +256,83 @@ export const api = {
     classify: (input: string) => request<unknown>('/supervisor/classify', { method: 'POST', body: JSON.stringify({ input }) }),
     guardrails: () => request<unknown>('/supervisor/guardrails'),
     updateGuardrails: (data: unknown) => request<unknown>('/supervisor/guardrails', { method: 'PATCH', body: JSON.stringify(data) }),
+  },
+  knowledge: {
+    documents: () => request<unknown[]>('/knowledge/documents'),
+    upload: (data: { title: string; content: string; metadata?: Record<string, unknown> }) =>
+      request<unknown>('/knowledge/documents', { method: 'POST', body: JSON.stringify(data) }),
+    search: (query: string, topK?: number) =>
+      request<unknown[]>('/knowledge/search', { method: 'POST', body: JSON.stringify({ query, topK }) }),
+  },
+  audit: {
+    list: (params?: Record<string, string>) =>
+      request<unknown[]>(`/audit${params ? '?' + new URLSearchParams(params) : ''}`),
+    verify: () => request<{ valid: boolean; entriesChecked: number; brokenAt?: string }>('/audit/verify'),
+    dlpScan: (content: string) =>
+      request<unknown>('/audit/dlp-scan', { method: 'POST', body: JSON.stringify({ content }) }),
+  },
+  plugins: {
+    list: (status?: string) =>
+      request<unknown[]>(`/plugins${status ? '?status=' + status : ''}`),
+    install: (manifest: unknown, sourceUrl?: string) =>
+      request<unknown>('/plugins/install', { method: 'POST', body: JSON.stringify({ manifest, sourceUrl }) }),
+    enable: (pluginId: string) =>
+      request<unknown>(`/plugins/${pluginId}/enable`, { method: 'POST' }),
+    disable: (pluginId: string) =>
+      request<unknown>(`/plugins/${pluginId}/disable`, { method: 'POST' }),
+    uninstall: (pluginId: string) =>
+      request<unknown>(`/plugins/${pluginId}`, { method: 'DELETE' }),
+  },
+  billing: {
+    report: (params?: Record<string, string>) =>
+      request<unknown>(`/billing/report${params ? '?' + new URLSearchParams(params) : ''}`),
+    quota: () => request<unknown>('/billing/quota'),
+    setQuota: (data: unknown) =>
+      request<unknown>('/billing/quota', { method: 'PUT', body: JSON.stringify(data) }),
+  },
+  usage: {
+    summary: (params?: Record<string, string>) =>
+      request<unknown>(`/usage/summary${params ? '?' + new URLSearchParams(params) : ''}`),
+    byAgent: (since?: string) =>
+      request<unknown[]>(`/usage/by-agent${since ? '?since=' + since : ''}`),
+    byModel: (since?: string) =>
+      request<unknown[]>(`/usage/by-model${since ? '?since=' + since : ''}`),
+    budget: () => request<unknown>('/usage/budget'),
+    setBudget: (data: unknown) =>
+      request<unknown>('/usage/budget', { method: 'PUT', body: JSON.stringify(data) }),
+  },
+  apiKeys: {
+    list: () => request<unknown[]>('/api-keys'),
+    create: (data: { name: string; scopes?: string[]; expiresInDays?: number }) =>
+      request<unknown>('/api-keys', { method: 'POST', body: JSON.stringify(data) }),
+    revoke: (id: string) =>
+      request<unknown>(`/api-keys/${id}`, { method: 'DELETE' }),
+    rotate: (id: string) =>
+      request<unknown>(`/api-keys/${id}/rotate`, { method: 'POST' }),
+  },
+  releases: {
+    list: () => request<unknown[]>('/releases'),
+    create: (data: { version: string; changelog?: string }) =>
+      request<unknown>('/releases', { method: 'POST', body: JSON.stringify(data) }),
+    promote: (id: string) =>
+      request<unknown>(`/releases/${id}/promote`, { method: 'POST' }),
+    rollback: (id: string) =>
+      request<unknown>(`/releases/${id}/rollback`, { method: 'POST' }),
+  },
+  eval: {
+    experiments: () => request<unknown[]>('/eval/experiments'),
+    createExperiment: (data: unknown) =>
+      request<unknown>('/eval/experiments', { method: 'POST', body: JSON.stringify(data) }),
+    results: (experimentId: string) =>
+      request<unknown[]>(`/eval/experiments/${experimentId}/results`),
+  },
+  notificationChannels: {
+    list: () => request<unknown[]>('/notification-channels'),
+    create: (data: unknown) =>
+      request<unknown>('/notification-channels', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id: string, data: unknown) =>
+      request<unknown>(`/notification-channels/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+    delete: (id: string) =>
+      request<unknown>(`/notification-channels/${id}`, { method: 'DELETE' }),
   },
 };

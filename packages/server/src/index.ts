@@ -19,6 +19,7 @@ import { createSupervisorRoutes } from './routes/supervisor.js';
 import { createToolRoutes } from './routes/tools.js';
 import { createModelRoutes } from './routes/models.js';
 import { createSkillRoutes } from './routes/skills.js';
+import { createSkillRegistryRoutes } from './routes/skill-registry.js';
 import executionRoutes from './routes/executions.js';
 import { SelfHealingEngine } from './agents/self-healing.js';
 import { QualityLoop } from './pipelines/quality-loop.js';
@@ -31,6 +32,7 @@ import { createApiAuthMiddleware, isApiAuthEnabled } from './auth/token-auth.js'
 import { syncBuiltinTools } from './tools/tool-registry.js';
 import { syncBuiltinModels } from './models/model-registry.js';
 import { syncBuiltinSkills } from './skills/skill-registry.js';
+import { seedDefaultSources } from './skills/skill-registry-service.js';
 import { SkillWatcher } from './skills/skill-watcher.js';
 import { setSkillWatcher } from './skills/skill-watcher-instance.js';
 import { logger } from './lib/logger.js';
@@ -73,7 +75,7 @@ const PORT = Number(process.env.PORT) || 3000;
 
 async function main() {
   // Initialize telemetry early (before other imports trigger HTTP calls)
-  initTelemetry();
+  await initTelemetry();
   logger.info({ instanceId: INSTANCE_ID, workerMode: workerPool.mode }, 'Agent Factory starting...');
 
   // Initialize database
@@ -103,6 +105,7 @@ async function main() {
   await agentManager.initializeFromRegistry();
   logger.info('Syncing skill registry...');
   syncBuiltinSkills(join(__dirname, '../../../agents'));
+  seedDefaultSources();
   const skillWatcher = new SkillWatcher(join(__dirname, '../../../agents'));
   setSkillWatcher(skillWatcher);
   skillWatcher.start();
@@ -195,6 +198,7 @@ async function main() {
   app.use('/api/v1/tools', createToolRoutes());
   app.use('/api/v1/models', createModelRoutes());
   app.use('/api/v1/skills', createSkillRoutes());
+  app.use('/api/v1/skills/registry', createSkillRegistryRoutes());
   app.use('/api/v1/executions', executionRoutes);
   app.use('/api/v1/pipelines', createPipelineRoutes(pipelineEngine));
   app.use('/api/v1/templates', createTemplateRoutes());
@@ -261,6 +265,8 @@ async function main() {
   // Graceful shutdown
   const shutdown = async () => {
     logger.info('Shutting down gracefully...');
+    const { shutdownTelemetry } = await import('./observability/telemetry.js');
+    await shutdownTelemetry();
     await workerPool.shutdown();
     await pubsub.shutdown();
     await taskQueue.shutdown();
