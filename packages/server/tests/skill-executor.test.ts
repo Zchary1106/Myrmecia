@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { parseSkillContent } from '../src/skills/skill-parser.js';
 import { validateStep } from '../src/skills/step-validator.js';
+import { buildMatcherPrompt, parseMatcherResponse } from '../src/skills/skill-matcher.js';
 
 describe('skill-parser', () => {
   it('parses YAML frontmatter with steps into SkillExecutorConfig', () => {
@@ -103,5 +104,34 @@ describe('step-validator', () => {
     });
     expect(result.pass).toBe(false);
     expect(result.error).toContain('timeout');
+  });
+});
+
+describe('skill-matcher', () => {
+  it('builds a prompt listing available skills for the LLM to choose from', () => {
+    const skills = [
+      { id: 'dev', name: 'TDD Dev Skill', description: 'Test-driven development', trigger: { keywords: ['implement'], agentRoles: ['developer'] } },
+      { id: 'review', name: 'Code Review', description: 'Review code for bugs', trigger: { keywords: ['review'], agentRoles: ['reviewer'] } },
+    ];
+    const prompt = buildMatcherPrompt('Implement a login feature', skills);
+    expect(prompt).toContain('TDD Dev Skill');
+    expect(prompt).toContain('Code Review');
+    expect(prompt).toContain('Implement a login feature');
+  });
+
+  it('parses a valid LLM response with skill ID', () => {
+    const result = parseMatcherResponse('{"skillId": "dev", "confidence": 0.9, "reason": "task involves implementation"}');
+    expect(result.skillId).toBe('dev');
+    expect(result.confidence).toBe(0.9);
+  });
+
+  it('returns null skillId for "none" response', () => {
+    const result = parseMatcherResponse('{"skillId": "none", "confidence": 0.1, "reason": "no match"}');
+    expect(result.skillId).toBeNull();
+  });
+
+  it('handles malformed LLM response gracefully', () => {
+    const result = parseMatcherResponse('I think dev skill is best');
+    expect(result.skillId).toBeNull();
   });
 });
