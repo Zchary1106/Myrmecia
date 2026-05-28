@@ -5,6 +5,7 @@ import { api } from '../lib/api';
 import { cn } from '../lib/utils';
 import { useStore } from '../stores/store';
 import { AuditDrawer } from '../components/audit/AuditDrawer';
+import { SkillMarketplace } from '../components/tasks/SkillMarketplace';
 
 const statusClass: Record<SkillVersion['status'], string> = {
   draft: 'border-yellow-500/20 bg-yellow-500/10 text-yellow-300',
@@ -37,6 +38,7 @@ export function SkillsPage() {
     loadSkillAssignments,
     loadAgents,
   } = useStore();
+  const [activeTab, setActiveTab] = useState<'registry' | 'marketplace'>('registry');
   const [selectedSkillId, setSelectedSkillId] = useState<string | null>(null);
   const [detail, setDetail] = useState<SkillDetail | null>(null);
   const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
@@ -169,7 +171,29 @@ export function SkillsPage() {
           <Metric label="Assignments" value={skillAssignments.length} tone="blue" />
           <Metric label="Agents" value={agents.length} />
         </div>
+
+        {/* Tab Navigation */}
+        <div className="mt-6 flex gap-1 border-b border-border">
+          <button
+            onClick={() => setActiveTab('registry')}
+            className={cn('px-4 py-2 text-sm font-medium border-b-2 -mb-px transition',
+              activeTab === 'registry' ? 'border-accent text-white' : 'border-transparent text-gray-500 hover:text-gray-300')}
+          >
+            Local Registry
+          </button>
+          <button
+            onClick={() => setActiveTab('marketplace')}
+            className={cn('px-4 py-2 text-sm font-medium border-b-2 -mb-px transition',
+              activeTab === 'marketplace' ? 'border-accent text-white' : 'border-transparent text-gray-500 hover:text-gray-300')}
+          >
+            🛒 Marketplace
+          </button>
+        </div>
       </div>
+
+      {activeTab === 'marketplace' ? (
+        <SkillMarketplace />
+      ) : (<>
 
       {error && <div className="rounded-lg border border-red-500/20 bg-red-500/10 p-3 text-sm text-red-300">{error}</div>}
 
@@ -326,6 +350,7 @@ export function SkillsPage() {
           </div>
         </aside>
       </div>
+      </>)}
     </div>
   );
 }
