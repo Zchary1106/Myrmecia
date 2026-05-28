@@ -4,6 +4,7 @@ import { api } from '../../lib/api';
 import { cn } from '../../lib/utils';
 import { readOnlyControlMessage, runtimeControlsAllowed } from '../../lib/permissions';
 import type { ExecutionMessage, LogEntry, OperatorAction, QualityLoopAttempt, Task } from '@agent-factory/shared';
+import { SkillStepProgress } from '../tasks/SkillStepProgress';
 
 type DetailTab = 'overview' | 'trace' | 'logs' | 'quality' | 'audit';
 
@@ -68,6 +69,11 @@ function OverviewTab({ task, agentName }: { task: Task; agentName?: string }) {
         <InfoCard label="Created" value={new Date(task.createdAt).toLocaleString()} />
         <InfoCard label="Retries" value={String(task.retryCount || 0)} />
       </div>
+
+      {/* Skill Executor Step Progress */}
+      {(task.status === 'running' || task.status === 'done' || task.status === 'failed') && (
+        <SkillStepProgress taskId={task.id} />
+      )}
 
       {task.description && (
         <section>
