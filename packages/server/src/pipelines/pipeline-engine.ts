@@ -292,6 +292,14 @@ export class PipelineEngine {
         updatePipeline(pipeline.id, { stages });
       }
 
+      // Rebuild taskToPipeline map for running stages
+      for (let i = 0; i < pipeline.stages.length; i++) {
+        const stage = pipeline.stages[i];
+        if (stage.taskId && stage.status === 'running') {
+          this.taskToPipeline.set(stage.taskId, { pipelineId: pipeline.id, stageIndex: i });
+        }
+      }
+
       if (pipeline.status === 'blocked') {
         eventBus.emit('pipeline:stage:started', {
           pipelineId: pipeline.id,
@@ -371,6 +379,7 @@ export class PipelineEngine {
     const pipeline = getPipeline(pipelineId);
     if (!pipeline) throw new Error(`Pipeline ${pipelineId} not found`);
     if (pipeline.status === 'done') throw new Error('Pipeline is already done');
+    if (pipeline.status === 'running') throw new Error('Pipeline is already running');
 
     const completedIndices = getCompletedStageIndices(pipelineId);
     if (completedIndices.size === 0) {
