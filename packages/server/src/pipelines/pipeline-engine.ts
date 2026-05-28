@@ -1,7 +1,8 @@
 import { readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { parse as parseYaml } from 'yaml';
-import { execSync } from 'child_process';
+import { exec } from 'child_process';
+import { promisify } from 'util';
 import { createPipeline, getPipeline, listPipelines, updatePipeline } from '../db/models/pipeline.js';
 import { createTemplate, listTemplates, getTemplate } from '../db/models/pipeline.js';
 import { getTask } from '../db/models/task.js';
@@ -10,12 +11,16 @@ import { TaskQueue } from '../queue/task-queue.js';
 import { AgentManager } from '../agents/agent-manager.js';
 import { contextManager } from './context-manager.js';
 import { workspaceManager } from '../workspace/workspace-manager.js';
-import { saveStageCheckpoint } from './pipeline-rollback.js';
+import { saveCheckpoint, getCompletedStageIndices } from './checkpoint.js';
 import type { Pipeline, PipelineStage } from '../types.js';
+
+const execAsync = promisify(exec);
 
 export class PipelineEngine {
   private taskQueue: TaskQueue;
   private agentManager: AgentManager;
+  private stageGitShas = new Map<string, string>(); // key: `${pipelineId}:${stageIndex}`
+  private taskToPipeline = new Map<string, { pipelineId: string; stageIndex: number }>();
 
   constructor(taskQueue: TaskQueue, agentManager: AgentManager) {
     this.taskQueue = taskQueue;
@@ -131,13 +136,13 @@ export class PipelineEngine {
     let workdir = ws?.path || undefined;
     let workspacePath = ws?.path || undefined;
 
-    // Save checkpoint before starting stage
+    // Capture git SHA for rollback (saved in unified checkpoint later)
     if (ws?.path) {
       try {
-        const sha = execSync('git rev-parse HEAD', { cwd: ws.path, encoding: 'utf-8' }).trim();
-        saveStageCheckpoint(pipelineId, stageIndex, sha);
+        const { stdout } = await execAsync('git rev-parse HEAD', { cwd: ws.path, encoding: 'utf-8', timeout: 5000 });
+        this.stageGitShas.set(`${pipelineId}:${stageIndex}`, stdout.trim());
       } catch {
-        // Not a git workspace, skip checkpoint
+        // Not a git workspace, skip
       }
     }
 
@@ -174,6 +179,7 @@ export class PipelineEngine {
 
     stages[stageIndex] = { ...stage, status: 'running', taskId: task.id, input: prompt };
     updatePipeline(pipelineId, { stages, currentStageIndex: stageIndex });
+    this.taskToPipeline.set(task.id, { pipelineId, stageIndex });
 
     eventBus.emit('pipeline:stage:started', { pipelineId, stageIndex, taskId: task.id });
   }
@@ -198,61 +204,75 @@ export class PipelineEngine {
 
   /** Handle task completion — write artifacts, advance pipeline */
   private async onTaskComplete(taskId: string) {
-    const pipelines = listPipelines({ status: 'running' });
+    const ref = this.taskToPipeline.get(taskId);
+    if (!ref) return;
+    this.taskToPipeline.delete(taskId);
 
-    for (const pipeline of pipelines) {
-      const stageIdx = pipeline.stages.findIndex(s => s.taskId === taskId);
-      if (stageIdx === -1) continue;
+    const pipeline = getPipeline(ref.pipelineId);
+    if (!pipeline) return;
+    const stageIdx = ref.stageIndex;
 
-      const task = getTask(taskId);
-      if (!task) continue;
+    const task = getTask(taskId);
+    if (!task) return;
 
-      const stages = [...pipeline.stages];
-      stages[stageIdx] = { ...stages[stageIdx], status: 'done', output: task.output || '' };
-      updatePipeline(pipeline.id, { stages });
+    const stages = [...pipeline.stages];
+    stages[stageIdx] = { ...stages[stageIdx], status: 'done', output: task.output || '' };
+    updatePipeline(pipeline.id, { stages });
 
-      // Write stage artifact to workspace
-      const ws = workspaceManager.getWorkspaceInfo(pipeline.id, 'pipeline');
-      if (ws && task.output) {
-        const stageDir = workspaceManager.createStageDir(ws.path, stageIdx, stages[stageIdx].name);
-        workspaceManager.writeStageArtifact(stageDir, task.output, 'output.md');
-      }
+    // Save unified checkpoint for recovery and rollback
+    const gitSha = this.stageGitShas.get(`${pipeline.id}:${stageIdx}`);
+    saveCheckpoint({
+      pipelineId: pipeline.id,
+      stageIndex: stageIdx,
+      stageName: stages[stageIdx].name,
+      stageOutput: task.output || '',
+      context: task.input || '',
+      timestamp: new Date().toISOString(),
+      gitSha,
+    });
+    this.stageGitShas.delete(`${pipeline.id}:${stageIdx}`);
 
-      eventBus.emit('pipeline:stage:done', {
-        pipelineId: pipeline.id,
-        stageIndex: stageIdx,
-        output: task.output,
-      });
-
-      // Check if pipeline is complete (all stages done)
-      const updatedPipeline = getPipeline(pipeline.id)!;
-      const allDone = updatedPipeline.stages.every(s => s.status === 'done' || s.status === 'skipped');
-      if (allDone) {
-        updatePipeline(pipeline.id, { status: 'done', completedAt: new Date().toISOString() });
-        eventBus.emit('pipeline:done', { pipelineId: pipeline.id });
-
-        // Merge workspace back if git worktree
-        if (ws?.isGitWorktree) {
-          const mergeResult = await workspaceManager.mergePipelineWorkspace(
-            pipeline.id,
-            `Agent Factory: ${pipeline.name} complete`
-          );
-          if (!mergeResult.success) {
-            console.warn(`  ⚠️ Workspace merge failed: ${mergeResult.error}`);
-          }
-        }
-        return;
-      }
-
-      // Gate check
-      if (pipeline.gateMode === 'manual') {
-        updatePipeline(pipeline.id, { status: 'paused', stages });
-        return;
-      }
-
-      // Advance: start all stages whose dependencies are now satisfied
-      this.startReadyStages(pipeline.id);
+    // Write stage artifact to workspace
+    const ws = workspaceManager.getWorkspaceInfo(pipeline.id, 'pipeline');
+    if (ws && task.output) {
+      const stageDir = workspaceManager.createStageDir(ws.path, stageIdx, stages[stageIdx].name);
+      workspaceManager.writeStageArtifact(stageDir, task.output, 'output.md');
     }
+
+    eventBus.emit('pipeline:stage:done', {
+      pipelineId: pipeline.id,
+      stageIndex: stageIdx,
+      output: task.output,
+    });
+
+    // Check if pipeline is complete (all stages done)
+    const updatedPipeline = getPipeline(pipeline.id)!;
+    const allDone = updatedPipeline.stages.every(s => s.status === 'done' || s.status === 'skipped');
+    if (allDone) {
+      updatePipeline(pipeline.id, { status: 'done', completedAt: new Date().toISOString() });
+      eventBus.emit('pipeline:done', { pipelineId: pipeline.id });
+
+      // Merge workspace back if git worktree
+      if (ws?.isGitWorktree) {
+        const mergeResult = await workspaceManager.mergePipelineWorkspace(
+          pipeline.id,
+          `Agent Factory: ${pipeline.name} complete`
+        );
+        if (!mergeResult.success) {
+          console.warn(`  ⚠️ Workspace merge failed: ${mergeResult.error}`);
+        }
+      }
+      return;
+    }
+
+    // Gate check
+    if (pipeline.gateMode === 'manual') {
+      updatePipeline(pipeline.id, { status: 'paused', stages });
+      return;
+    }
+
+    // Advance: start all stages whose dependencies are now satisfied
+    this.startReadyStages(pipeline.id);
   }
 
   /** Rebuild in-memory timers/progress after a server restart. */
@@ -260,6 +280,18 @@ export class PipelineEngine {
     const pipelines = listPipelines();
 
     for (const pipeline of pipelines) {
+      // Restore checkpointed stages as done
+      const completedIndices = getCompletedStageIndices(pipeline.id);
+      if (completedIndices.size > 0) {
+        const stages = [...pipeline.stages];
+        for (const idx of completedIndices) {
+          if (stages[idx] && stages[idx].status !== 'done') {
+            stages[idx] = { ...stages[idx], status: 'done' };
+          }
+        }
+        updatePipeline(pipeline.id, { stages });
+      }
+
       if (pipeline.status === 'blocked') {
         eventBus.emit('pipeline:stage:started', {
           pipelineId: pipeline.id,
@@ -334,14 +366,46 @@ export class PipelineEngine {
     await this.startStage(pipelineId, nextIdx);
   }
 
+  /** Resume pipeline from checkpoints — skips completed stages */
+  async resume(pipelineId: string): Promise<Pipeline> {
+    const pipeline = getPipeline(pipelineId);
+    if (!pipeline) throw new Error(`Pipeline ${pipelineId} not found`);
+    if (pipeline.status === 'done') throw new Error('Pipeline is already done');
+
+    const completedIndices = getCompletedStageIndices(pipelineId);
+    if (completedIndices.size === 0) {
+      // No checkpoints — just start from the beginning
+      updatePipeline(pipelineId, { status: 'running' });
+      this.startReadyStages(pipelineId);
+      return getPipeline(pipelineId)!;
+    }
+
+    // Mark checkpointed stages as done
+    const stages = [...pipeline.stages];
+    for (const idx of completedIndices) {
+      if (stages[idx]) {
+        stages[idx] = { ...stages[idx], status: 'done' };
+      }
+    }
+    updatePipeline(pipelineId, { stages, status: 'running' });
+
+    // Start stages whose dependencies are satisfied and which are not checkpointed
+    this.startReadyStages(pipelineId);
+    return getPipeline(pipelineId)!;
+  }
+
   /** Cancel pipeline */
   async cancel(pipelineId: string) {
     const pipeline = getPipeline(pipelineId);
     if (!pipeline) return;
 
     for (const stage of pipeline.stages) {
-      if (stage.taskId && stage.status === 'running') {
-        this.agentManager.cancelTask(stage.taskId);
+      if (stage.taskId) {
+        this.taskToPipeline.delete(stage.taskId);
+        this.stageGitShas.delete(`${pipelineId}:${stage.index}`);
+        if (stage.status === 'running') {
+          this.agentManager.cancelTask(stage.taskId);
+        }
       }
     }
 
@@ -363,6 +427,10 @@ export class PipelineEngine {
     }
 
     const stages = [...pipeline.stages];
+    if (stages[stageIndex].taskId) {
+      this.taskToPipeline.delete(stages[stageIndex].taskId!);
+      this.stageGitShas.delete(`${pipelineId}:${stageIndex}`);
+    }
     stages[stageIndex] = { ...stages[stageIndex], status: 'pending', taskId: undefined, output: undefined };
     updatePipeline(pipelineId, { stages, status: 'running' });
 

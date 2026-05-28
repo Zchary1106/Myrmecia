@@ -55,11 +55,11 @@ const SKILL_SELECT = `
 `;
 
 export function listSkills(): SkillDefinition[] {
-  return (getDb().prepare(`${SKILL_SELECT} ORDER BY s.name ASC`).all() as any[]).map(rowToSkill);
+  return getDb().all(`${SKILL_SELECT} ORDER BY s.name ASC`).map(rowToSkill);
 }
 
 export function getSkill(id: string): SkillDefinition | undefined {
-  const row = getDb().prepare(`${SKILL_SELECT} WHERE s.id = ?`).get(id) as any;
+  const row = getDb().get(`${SKILL_SELECT} WHERE s.id = ?`, id);
   return row ? rowToSkill(row) : undefined;
 }
 
@@ -79,7 +79,7 @@ export function upsertSkill(data: {
   description?: string;
   sourcePath?: string;
 }): SkillDefinition {
-  getDb().prepare(`
+  getDb().run(`
     INSERT INTO skills (id, name, description, source_path)
     VALUES (?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
@@ -87,23 +87,23 @@ export function upsertSkill(data: {
       description = excluded.description,
       source_path = excluded.source_path,
       updated_at = CURRENT_TIMESTAMP
-  `).run(data.id, data.name, data.description || '', data.sourcePath || null);
+  `, data.id, data.name, data.description || '', data.sourcePath || null);
   return getSkill(data.id)!;
 }
 
 export function listSkillVersions(skillId: string): SkillVersion[] {
-  return (getDb().prepare(`
+  return getDb().all(`
     SELECT * FROM skill_versions WHERE skill_id = ? ORDER BY version DESC
-  `).all(skillId) as any[]).map(rowToVersion);
+  `, skillId).map(rowToVersion);
 }
 
 export function getSkillVersion(id: string): SkillVersion | undefined {
-  const row = getDb().prepare('SELECT * FROM skill_versions WHERE id = ?').get(id) as any;
+  const row = getDb().get('SELECT * FROM skill_versions WHERE id = ?', id);
   return row ? rowToVersion(row) : undefined;
 }
 
 export function getSkillVersionByChecksum(skillId: string, checksum: string): SkillVersion | undefined {
-  const row = getDb().prepare('SELECT * FROM skill_versions WHERE skill_id = ? AND checksum = ?').get(skillId, checksum) as any;
+  const row = getDb().get('SELECT * FROM skill_versions WHERE skill_id = ? AND checksum = ?', skillId, checksum);
   return row ? rowToVersion(row) : undefined;
 }
 
@@ -122,15 +122,15 @@ export function createSkillVersion(data: {
   const existing = getSkillVersionByChecksum(data.skillId, checksum);
   if (existing) return existing;
 
-  const nextVersion = ((db.prepare('SELECT MAX(version) AS version FROM skill_versions WHERE skill_id = ?').get(data.skillId) as any)?.version || 0) + 1;
+  const nextVersion = (db.get('SELECT MAX(version) AS version FROM skill_versions WHERE skill_id = ?', data.skillId)?.version || 0) + 1;
   const id = `${data.skillId}_v${nextVersion}`;
   const status = data.status || 'draft';
-  db.prepare(`
+  db.run(`
     INSERT INTO skill_versions (
       id, skill_id, version, status, content, checksum, changelog, created_by, published_by, published_at
     )
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
+  `,
     id,
     data.skillId,
     nextVersion,
@@ -151,11 +151,11 @@ export function updateDraftSkillVersion(id: string, updates: { content?: string;
   if (version.status !== 'draft') throw new Error('Only draft skill versions can be edited');
   const nextContent = updates.content ?? version.content;
   const nextChecksum = checksumSkillContent(nextContent);
-  getDb().prepare(`
+  getDb().run(`
     UPDATE skill_versions
     SET content = ?, checksum = ?, changelog = ?
     WHERE id = ?
-  `).run(nextContent, nextChecksum, updates.changelog ?? version.changelog ?? '', id);
+  `, nextContent, nextChecksum, updates.changelog ?? version.changelog ?? '', id);
   return getSkillVersion(id);
 }
 
@@ -163,22 +163,22 @@ export function publishSkillVersion(id: string, actorId = 'system'): SkillVersio
   const version = getSkillVersion(id);
   if (!version) return undefined;
   if (version.status === 'archived') throw new Error('Archived skill versions cannot be published');
-  getDb().prepare(`
+  getDb().run(`
     UPDATE skill_versions
     SET status = 'published', published_by = ?, published_at = COALESCE(published_at, CURRENT_TIMESTAMP)
     WHERE id = ?
-  `).run(actorId, id);
+  `, actorId, id);
   return getSkillVersion(id);
 }
 
 export function archiveSkillVersion(id: string): SkillVersion | undefined {
   const version = getSkillVersion(id);
   if (!version) return undefined;
-  getDb().prepare(`
+  getDb().run(`
     UPDATE skill_versions
     SET status = 'archived', archived_at = CURRENT_TIMESTAMP
     WHERE id = ?
-  `).run(id);
+  `, id);
   return getSkillVersion(id);
 }
 
@@ -190,11 +190,11 @@ export function listSkillAssignments(filter?: { skillId?: string; agentId?: stri
   if (filter?.agentId) { conditions.push('agent_id = ?'); params.push(filter.agentId); }
   if (conditions.length) sql += ` WHERE ${conditions.join(' AND ')}`;
   sql += ' ORDER BY updated_at DESC';
-  return (getDb().prepare(sql).all(...params) as any[]).map(rowToAssignment);
+  return getDb().all(sql, ...params).map(rowToAssignment);
 }
 
 export function getSkillAssignmentForAgent(agentId: string): SkillAssignment | undefined {
-  const row = getDb().prepare('SELECT * FROM skill_assignments WHERE agent_id = ?').get(agentId) as any;
+  const row = getDb().get('SELECT * FROM skill_assignments WHERE agent_id = ?', agentId);
   return row ? rowToAssignment(row) : undefined;
 }
 
@@ -202,31 +202,31 @@ export function assignSkillVersionToAgent(agentId: string, skillVersionId: strin
   const version = getSkillVersion(skillVersionId);
   if (!version) throw new Error(`Skill version ${skillVersionId} not found`);
   if (version.status !== 'published') throw new Error('Only published skill versions can be assigned to agents');
-  getDb().prepare(`
+  getDb().run(`
     INSERT INTO skill_assignments (agent_id, skill_id, skill_version_id)
     VALUES (?, ?, ?)
     ON CONFLICT(agent_id) DO UPDATE SET
       skill_id = excluded.skill_id,
       skill_version_id = excluded.skill_version_id,
       updated_at = CURRENT_TIMESTAMP
-  `).run(agentId, version.skillId, version.id);
+  `, agentId, version.skillId, version.id);
   return getSkillAssignmentForAgent(agentId)!;
 }
 
 export function getLatestPublishedSkillVersion(skillId: string): SkillVersion | undefined {
-  const row = getDb().prepare(`
+  const row = getDb().get(`
     SELECT * FROM skill_versions
     WHERE skill_id = ? AND status = 'published'
     ORDER BY version DESC
     LIMIT 1
-  `).get(skillId) as any;
+  `, skillId);
   return row ? rowToVersion(row) : undefined;
 }
 
 export function getLatestPublishedSkillForSource(sourcePath: string): { skill: SkillDefinition; version: SkillVersion } | undefined {
-  const skillRow = getDb().prepare(`
+  const skillRow = getDb().get(`
     ${SKILL_SELECT} WHERE s.source_path = ? ORDER BY s.updated_at DESC LIMIT 1
-  `).get(sourcePath) as any;
+  `, sourcePath);
   if (!skillRow) return undefined;
   const skill = rowToSkill(skillRow);
   const version = getLatestPublishedSkillVersion(skill.id);

@@ -1,5 +1,6 @@
 import { getDb } from '../db/database.js';
 import type { ToolDefinition, ToolPermission, ToolRiskLevel } from '../types.js';
+import type { ParamConstraints } from './param-constraints.js';
 
 interface BuiltinToolDefinition {
   id: string;
@@ -12,6 +13,7 @@ interface BuiltinToolDefinition {
   inputSchema: Record<string, unknown>;
   outputSchema?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
+  paramConstraints?: Record<string, Record<string, unknown>>;
 }
 
 export const BUILTIN_TOOLS: BuiltinToolDefinition[] = [
@@ -46,6 +48,13 @@ export const BUILTIN_TOOLS: BuiltinToolDefinition[] = [
     },
     outputSchema: { type: 'string' },
     metadata: { network: true, readOnly: true, maxBytes: 512000 },
+    paramConstraints: {
+      url: {
+        allowedDomains: ['*'], // open by default, customize per-agent
+        pattern: '^https?://',
+        maxLength: 2048,
+      },
+    },
   },
   {
     id: 'crawler.extract_links',
@@ -62,6 +71,13 @@ export const BUILTIN_TOOLS: BuiltinToolDefinition[] = [
     },
     outputSchema: { type: 'array', items: { type: 'object' } },
     metadata: { network: true, readOnly: true, maxLinks: 50 },
+    paramConstraints: {
+      url: {
+        allowedDomains: ['*'],
+        pattern: '^https?://',
+        maxLength: 2048,
+      },
+    },
   },
   {
     id: 'content.wechat_layout',
@@ -151,9 +167,9 @@ function rowToPermission(row: any): ToolPermission {
 
 export function syncBuiltinTools(): void {
   const db = getDb();
-  const transaction = db.transaction(() => {
+  db.transaction(() => {
     for (const tool of BUILTIN_TOOLS) {
-      db.prepare(`
+      db.run(`
         INSERT INTO tools (
           id, name, description, category, risk_level, input_schema, output_schema, metadata
         )
@@ -167,7 +183,7 @@ export function syncBuiltinTools(): void {
           output_schema = excluded.output_schema,
           metadata = excluded.metadata,
           updated_at = CURRENT_TIMESTAMP
-      `).run(
+      `,
         tool.id,
         tool.name,
         tool.description,
@@ -175,10 +191,13 @@ export function syncBuiltinTools(): void {
         tool.riskLevel,
         JSON.stringify(tool.inputSchema),
         JSON.stringify(tool.outputSchema || {}),
-        JSON.stringify(tool.metadata || {}),
+        JSON.stringify({
+          ...(tool.metadata || {}),
+          ...(tool.paramConstraints ? { paramConstraints: tool.paramConstraints } : {}),
+        }),
       );
 
-      db.prepare(`
+      db.run(`
         INSERT INTO tool_versions (
           id, tool_id, version, description, input_schema, output_schema, implementation_ref, status
         )
@@ -189,7 +208,7 @@ export function syncBuiltinTools(): void {
           output_schema = excluded.output_schema,
           implementation_ref = excluded.implementation_ref,
           status = 'active'
-      `).run(
+      `,
         `${tool.id}@${tool.version}`,
         tool.id,
         tool.version,
@@ -200,7 +219,6 @@ export function syncBuiltinTools(): void {
       );
     }
   });
-  transaction();
 }
 
 export function listTools(filter?: { enabled?: boolean; category?: string }): ToolDefinition[] {
@@ -220,11 +238,11 @@ export function listTools(filter?: { enabled?: boolean; category?: string }): To
   if (conditions.length) sql += ` WHERE ${conditions.join(' AND ')}`;
   sql += ' ORDER BY category ASC, id ASC';
 
-  return (db.prepare(sql).all(...params) as any[]).map(rowToTool);
+  return (db.all(sql, ...params) as any[]).map(rowToTool);
 }
 
 export function getTool(id: string): ToolDefinition | undefined {
-  const row = getDb().prepare('SELECT * FROM tools WHERE id = ?').get(id) as any;
+  const row = getDb().get('SELECT * FROM tools WHERE id = ?', id) as any;
   return row ? rowToTool(row) : undefined;
 }
 
@@ -245,7 +263,7 @@ export function updateToolPolicy(id: string, updates: Partial<Pick<ToolDefinitio
 
   sets.push('updated_at = CURRENT_TIMESTAMP');
   params.push(id);
-  db.prepare(`UPDATE tools SET ${sets.join(', ')} WHERE id = ?`).run(...params);
+  db.run(`UPDATE tools SET ${sets.join(', ')} WHERE id = ?`, ...params);
   return getTool(id);
 }
 
@@ -266,7 +284,7 @@ export function listToolPermissions(filter?: { agentId?: string; toolId?: string
   if (conditions.length) sql += ` WHERE ${conditions.join(' AND ')}`;
   sql += ' ORDER BY tool_id ASC, agent_id ASC';
 
-  return (db.prepare(sql).all(...params) as any[]).map(rowToPermission);
+  return (db.all(sql, ...params) as any[]).map(rowToPermission);
 }
 
 export function setToolPermission(data: {
@@ -276,18 +294,30 @@ export function setToolPermission(data: {
   approvalRequired?: boolean;
 }): ToolPermission {
   const db = getDb();
-  db.prepare(`
+  db.run(`
     INSERT INTO tool_permissions (tool_id, agent_id, enabled, approval_required)
     VALUES (?, ?, ?, ?)
     ON CONFLICT(tool_id, agent_id) DO UPDATE SET
       enabled = excluded.enabled,
       approval_required = excluded.approval_required,
       updated_at = CURRENT_TIMESTAMP
-  `).run(
+  `,
     data.toolId,
     data.agentId,
     data.enabled ? 1 : 0,
     data.approvalRequired === undefined ? null : (data.approvalRequired ? 1 : 0),
   );
   return listToolPermissions({ toolId: data.toolId, agentId: data.agentId })[0];
+}
+
+/** Get parameter constraints for a tool from its metadata */
+export function getToolParamConstraints(toolId: string): ParamConstraints {
+  const tool = getTool(toolId);
+  if (!tool?.metadata) return {};
+
+  const constraints = tool.metadata.paramConstraints;
+  if (constraints && typeof constraints === 'object' && !Array.isArray(constraints)) {
+    return constraints as unknown as ParamConstraints;
+  }
+  return {};
 }

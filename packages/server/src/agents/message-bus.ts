@@ -15,10 +15,10 @@ export class AgentMessageBus {
   /** Send a message from one execution to another */
   send(fromExecution: string | null, toExecution: string, messageType: AgentMessageType, content: string): AgentMessage {
     const db = getDb();
-    const result = db.prepare(`
+    const result = db.run(`
       INSERT INTO agent_messages (from_execution, to_execution, message_type, content)
       VALUES (?, ?, ?, ?)
-    `).run(fromExecution, toExecution, messageType, content);
+    `, fromExecution, toExecution, messageType, content);
 
     const msg: AgentMessage = {
       id: Number(result.lastInsertRowid),
@@ -58,9 +58,10 @@ export class AgentMessageBus {
   /** Broadcast a message to all running executions */
   broadcast(fromExecution: string, messageType: AgentMessageType, content: string): void {
     const db = getDb();
-    const executions = db.prepare(
-      "SELECT id FROM task_executions WHERE status = 'running' AND id != ?"
-    ).all(fromExecution) as { id: string }[];
+    const executions = db.all(
+      "SELECT id FROM task_executions WHERE status = 'running' AND id != ?",
+      fromExecution
+    ) as { id: string }[];
 
     for (const exec of executions) {
       this.send(fromExecution, exec.id, messageType, content);
@@ -70,14 +71,16 @@ export class AgentMessageBus {
   /** Drain (consume) all pending messages for an execution */
   drain(executionId: string): AgentMessage[] {
     const db = getDb();
-    const rows = db.prepare(
-      'SELECT * FROM agent_messages WHERE to_execution = ? AND consumed = 0 ORDER BY id ASC'
-    ).all(executionId) as any[];
+    const rows = db.all(
+      'SELECT * FROM agent_messages WHERE to_execution = ? AND consumed = 0 ORDER BY id ASC',
+      executionId
+    ) as any[];
 
     if (rows.length > 0) {
-      db.prepare(
-        'UPDATE agent_messages SET consumed = 1 WHERE to_execution = ? AND consumed = 0'
-      ).run(executionId);
+      db.run(
+        'UPDATE agent_messages SET consumed = 1 WHERE to_execution = ? AND consumed = 0',
+        executionId
+      );
     }
 
     return rows.map(row => ({
@@ -94,18 +97,20 @@ export class AgentMessageBus {
   /** Get pending message count for an execution */
   pendingCount(executionId: string): number {
     const db = getDb();
-    const row = db.prepare(
-      'SELECT COUNT(*) as count FROM agent_messages WHERE to_execution = ? AND consumed = 0'
-    ).get(executionId) as any;
+    const row = db.get(
+      'SELECT COUNT(*) as count FROM agent_messages WHERE to_execution = ? AND consumed = 0',
+      executionId
+    ) as any;
     return row?.count || 0;
   }
 
   /** List all messages for an execution (both sent and received) */
   listForExecution(executionId: string): AgentMessage[] {
     const db = getDb();
-    const rows = db.prepare(
-      'SELECT * FROM agent_messages WHERE from_execution = ? OR to_execution = ? ORDER BY id ASC'
-    ).all(executionId, executionId) as any[];
+    const rows = db.all(
+      'SELECT * FROM agent_messages WHERE from_execution = ? OR to_execution = ? ORDER BY id ASC',
+      executionId, executionId
+    ) as any[];
 
     return rows.map(row => ({
       id: row.id,

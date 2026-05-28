@@ -9,7 +9,7 @@
     "build": "pnpm -r build",
     "dev:server": "pnpm --filter @agent-factory/server dev",
     "dev:dashboard": "pnpm --filter @agent-factory/dashboard dev",
-    "lint": "pnpm -r lint"
+    "lint": "pnpm -r --if-present lint"
   },
   "devDependencies": {
     "concurrently": "^9.1.2",

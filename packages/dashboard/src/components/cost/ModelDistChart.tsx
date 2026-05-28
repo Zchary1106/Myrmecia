@@ -8,6 +8,11 @@ interface ModelData {
 
 const COLORS = ['#8b5cf6', '#06b6d4', '#f59e0b', '#ef4444', '#10b981'];
 
+function formatCurrency(value: unknown): string {
+  const numeric = typeof value === 'number' ? value : Number(value ?? 0);
+  return `$${Number.isFinite(numeric) ? numeric.toFixed(3) : '0.000'}`;
+}
+
 function shortModelName(id: string): string {
   if (id.includes('opus')) return 'Opus';
   if (id.includes('sonnet')) return 'Sonnet';
@@ -36,13 +41,13 @@ export function ModelDistChart({ models }: { models: ModelData[] }) {
       <ResponsiveContainer width="100%" height={250}>
         <PieChart>
           <Pie data={data} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80}
-            label={({ name, percent }) => `${name} ${percent.toFixed(0)}%`}>
+            label={({ name, percent }) => `${name} ${(((percent ?? 0) as number) * 100).toFixed(0)}%`}>
             {data.map((_, i) => (
               <Cell key={i} fill={COLORS[i % COLORS.length]} />
             ))}
           </Pie>
           <Tooltip contentStyle={{ backgroundColor: '#1a1a2e', border: '1px solid #333', borderRadius: 8 }}
-            formatter={(value: number) => [`$${value.toFixed(3)}`, 'Cost']} />
+            formatter={(value) => [formatCurrency(value), 'Cost']} />
           <Legend />
         </PieChart>
       </ResponsiveContainer>

@@ -9,6 +9,11 @@ interface AgentData {
 
 const COLORS = ['#8b5cf6', '#06b6d4', '#f59e0b', '#ef4444', '#10b981', '#ec4899', '#6366f1', '#f97316'];
 
+function formatCurrency(value: unknown): string {
+  const numeric = typeof value === 'number' ? value : Number(value ?? 0);
+  return `$${Number.isFinite(numeric) ? numeric.toFixed(3) : '0.000'}`;
+}
+
 export function AgentCostChart({ agents }: { agents: AgentData[] }) {
   if (!agents.length) {
     return (
@@ -43,7 +48,7 @@ export function AgentCostChart({ agents }: { agents: AgentData[] }) {
           <YAxis tick={{ fontSize: 11, fill: '#888' }} tickFormatter={v => `$${v}`} />
           <Tooltip
             contentStyle={{ backgroundColor: '#1a1a2e', border: '1px solid #333', borderRadius: 8 }}
-            formatter={(value: number) => [`$${value.toFixed(3)}`, '']}
+            formatter={(value) => [formatCurrency(value), '']}
           />
           <Legend />
           {agents.map((a, i) => (

@@ -33,13 +33,13 @@ export function createOperatorAction(data: {
   metadata?: Record<string, unknown>;
 }): OperatorAction {
   const db = getDb();
-  const result = db.prepare(`
+  const result = db.run(`
     INSERT INTO operator_actions (
       action, actor_id, actor_role, actor_source, target_type, target_id,
       task_id, pipeline_id, inbox_entry_id, status, metadata
     )
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
+  `,
     data.action,
     data.actor.id,
     data.actor.role,
@@ -57,7 +57,7 @@ export function createOperatorAction(data: {
 
 export function getOperatorAction(id: number): OperatorAction | undefined {
   const db = getDb();
-  const row = db.prepare('SELECT * FROM operator_actions WHERE id = ?').get(id) as any;
+  const row = db.get('SELECT * FROM operator_actions WHERE id = ?', id);
   return row ? rowToOperatorAction(row) : undefined;
 }
 
@@ -85,5 +85,5 @@ export function listOperatorActions(filter?: {
   sql += ' ORDER BY id DESC LIMIT ?';
   params.push(filter?.limit || 100);
 
-  return (db.prepare(sql).all(...params) as any[]).map(rowToOperatorAction);
+  return db.all(sql, ...params).map(rowToOperatorAction);
 }

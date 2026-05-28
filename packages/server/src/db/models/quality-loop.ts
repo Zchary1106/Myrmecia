@@ -35,13 +35,13 @@ export function createQualityLoopAttempt(data: {
 }): QualityLoopAttempt {
   const db = getDb();
   const id = `ql_${uuid().slice(0, 8)}`;
-  db.prepare(`
+  db.run(`
     INSERT INTO quality_loop_attempts (
       id, task_id, iteration, status, review_task_id, fix_task_id, reviewer_agent_id,
       developer_agent_id, review_output, fix_output, error
     )
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
+  `,
     id,
     data.taskId,
     data.iteration,
@@ -59,7 +59,7 @@ export function createQualityLoopAttempt(data: {
 
 export function getQualityLoopAttempt(id: string): QualityLoopAttempt | undefined {
   const db = getDb();
-  const row = db.prepare('SELECT * FROM quality_loop_attempts WHERE id = ?').get(id) as any;
+  const row = db.get('SELECT * FROM quality_loop_attempts WHERE id = ?', id);
   return row ? rowToQualityLoopAttempt(row) : undefined;
 }
 
@@ -79,7 +79,7 @@ export function listQualityLoopAttempts(filter?: {
   sql += ' ORDER BY iteration ASC, created_at ASC';
   if (filter?.limit) { sql += ' LIMIT ?'; params.push(filter.limit); }
 
-  return (db.prepare(sql).all(...params) as any[]).map(rowToQualityLoopAttempt);
+  return db.all(sql, ...params).map(rowToQualityLoopAttempt);
 }
 
 export function updateQualityLoopAttempt(id: string, updates: Partial<{
@@ -108,6 +108,6 @@ export function updateQualityLoopAttempt(id: string, updates: Partial<{
   if (updates.completedAt !== undefined) { sets.push('completed_at = ?'); params.push(updates.completedAt); }
 
   params.push(id);
-  db.prepare(`UPDATE quality_loop_attempts SET ${sets.join(', ')} WHERE id = ?`).run(...params);
+  db.run(`UPDATE quality_loop_attempts SET ${sets.join(', ')} WHERE id = ?`, ...params);
   return getQualityLoopAttempt(id);
 }

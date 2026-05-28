@@ -409,22 +409,137 @@ export class TsAgentLoop {
 
     addTaskLog(task.id, 'info', `Skill Executor: ${parsedSkill.config.steps.length} steps`, 'system');
 
-    const llmCall = async (stepSystemPrompt: string, userPrompt: string): Promise<string> => {
+    // Build tool definitions for function calling
+    const allToolDefs = toolPolicy.allowedTools.map(toolId => ({
+      type: 'function' as const,
+      function: {
+        name: toolId,
+        description: `Tool: ${toolId}`,
+        parameters: { type: 'object' as const, properties: {}, additionalProperties: true },
+      },
+    }));
+
+    // Tool execution helper (same logic as main agent loop)
+    const executeTool = async (toolName: string, toolInput: Record<string, unknown>): Promise<{ output: string; status: 'done' | 'failed' }> => {
+      const { exec } = await import('child_process');
+      const { promisify } = await import('util');
+      const execAsync = promisify(exec);
+      const workdir = task.workdir || process.cwd();
+
+      // Route to actual tool implementations
+      if (toolName === 'shell_exec') {
+        try {
+          const cmd = String(toolInput.command || toolInput.cmd || '');
+          const { stdout, stderr } = await execAsync(cmd, { cwd: workdir, timeout: 60_000, encoding: 'utf-8' });
+          return { output: (stdout + (stderr ? `\nSTDERR: ${stderr}` : '')).slice(0, 8000), status: 'done' };
+        } catch (err: any) {
+          return { output: `Exit ${err.code}: ${(err.stdout || '') + (err.stderr || '')}`.slice(0, 4000), status: 'failed' };
+        }
+      }
+      if (toolName === 'file_write') {
+        try {
+          const { writeFileSync, mkdirSync } = await import('fs');
+          const { dirname, resolve } = await import('path');
+          const filePath = resolve(workdir, String(toolInput.path || toolInput.file_path || ''));
+          mkdirSync(dirname(filePath), { recursive: true });
+          writeFileSync(filePath, String(toolInput.content || ''), 'utf-8');
+          return { output: `Written: ${filePath}`, status: 'done' };
+        } catch (err: any) {
+          return { output: `Write failed: ${err.message}`, status: 'failed' };
+        }
+      }
+      if (toolName === 'file_read') {
+        try {
+          const { readFileSync } = await import('fs');
+          const { resolve } = await import('path');
+          const filePath = resolve(workdir, String(toolInput.path || toolInput.file_path || ''));
+          const content = readFileSync(filePath, 'utf-8');
+          return { output: content.slice(0, 8000), status: 'done' };
+        } catch (err: any) {
+          return { output: `Read failed: ${err.message}`, status: 'failed' };
+        }
+      }
+      if (toolName === 'grep' || toolName === 'search') {
+        try {
+          const pattern = String(toolInput.pattern || toolInput.query || '');
+          const { stdout } = await execAsync(`grep -rn "${pattern}" . --include="*.ts" --include="*.tsx" --include="*.js" | head -30`, { cwd: workdir, encoding: 'utf-8', timeout: 10_000 });
+          return { output: stdout.slice(0, 4000) || 'No matches', status: 'done' };
+        } catch (err: any) {
+          return { output: err.stdout?.slice(0, 2000) || 'No matches', status: err.code === 1 ? 'done' : 'failed' };
+        }
+      }
+      // Fallback for unimplemented tools
+      return { output: `Tool "${toolName}" is not available in skill executor sandbox.`, status: 'failed' };
+    };
+
+    // Multi-turn LLM call with tool-use support
+    const llmCall = async (stepSystemPrompt: string, userPrompt: string, allowedTools?: string[]): Promise<string> => {
       if (abortController.signal.aborted) throw new Error('Execution aborted');
 
-      const response = await client.chat.completions.create({
-        model: selectedModel,
-        messages: [
-          { role: 'system', content: stepSystemPrompt },
-          { role: 'user', content: userPrompt },
-        ],
-        max_tokens: 4096,
-      });
+      // Filter tools to only those allowed for this step
+      const stepToolDefs = allowedTools
+        ? allToolDefs.filter(t => allowedTools.includes(t.function.name))
+        : [];
 
-      const content = response.choices[0]?.message?.content || '';
-      tracker.cumulativeOutputTokens += response.usage?.completion_tokens || 0;
-      tracker.latestInputTokens = response.usage?.prompt_tokens || 0;
-      return content;
+      const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+        { role: 'system', content: stepSystemPrompt },
+        { role: 'user', content: userPrompt },
+      ];
+
+      let finalOutput = '';
+      const maxTurns = 20; // per-step max turns
+
+      for (let turn = 0; turn < maxTurns; turn++) {
+        if (abortController.signal.aborted) throw new Error('Execution aborted');
+
+        const completion = await client.chat.completions.create({
+          model: selectedModel,
+          messages,
+          tools: stepToolDefs.length > 0 ? stepToolDefs : undefined,
+          max_tokens: 4096,
+        });
+
+        const choice = completion.choices[0];
+        if (!choice) break;
+
+        tracker.cumulativeOutputTokens += completion.usage?.completion_tokens || 0;
+        tracker.latestInputTokens = completion.usage?.prompt_tokens || 0;
+
+        const assistantMsg = choice.message;
+        messages.push(assistantMsg);
+
+        // Capture text output
+        if (assistantMsg.content) {
+          finalOutput = assistantMsg.content;
+        }
+
+        // Handle tool calls
+        if (assistantMsg.tool_calls && assistantMsg.tool_calls.length > 0) {
+          for (const tc of assistantMsg.tool_calls) {
+            const toolName = tc.function.name;
+            let toolInput: Record<string, unknown> = {};
+            try { toolInput = JSON.parse(tc.function.arguments || '{}'); } catch {}
+
+            // Log tool use
+            addTaskLog(task.id, 'info', `  🔧 ${toolName}(${JSON.stringify(toolInput).slice(0, 100)})`, agent.id);
+            tracker.toolUseCount++;
+
+            // Execute tool
+            const result = await executeTool(toolName, toolInput);
+
+            messages.push({
+              role: 'tool',
+              tool_call_id: tc.id,
+              content: result.output,
+            });
+          }
+        } else {
+          // No tool calls — step complete
+          break;
+        }
+      }
+
+      return finalOutput;
     };
 
     const executor = new SkillExecutor({

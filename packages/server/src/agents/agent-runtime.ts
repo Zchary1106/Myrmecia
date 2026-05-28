@@ -13,6 +13,11 @@ import { resolveAllowedToolsForAgent } from '../tools/tool-policy.js';
 import { completeRunTrace, completeTraceSpan, createRunTrace, createTraceSpan } from '../db/models/trace.js';
 import { recordModelUsage, selectModelForAgent } from '../models/model-registry.js';
 import { resolveSkillForAgent } from '../db/models/skill.js';
+import { getExecutor, DEFAULT_LIMITS } from './executor.js';
+import { getTrajectoryStore } from '../memory/trajectory-store.js';
+import { messageBus } from './message-bus.js';
+import { tsAgentLoop } from './ts-agent-loop.js';
+import { metrics } from '../observability/telemetry.js';
 import type { SkillDefinition, SkillVersion } from '../types.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -20,6 +25,16 @@ const MAX_RECENT_ACTIVITIES = 5;
 
 // Path to CrewAI runner
 const CREW_RUNNER = join(__dirname, '../../../../packages/crew/crew_runner.py');
+
+function shouldUseTsLoop(agent: AgentDefinition): boolean {
+  const executor = process.env.AGENT_EXECUTOR;
+  if (executor === 'ts') return true;
+  if (executor === 'crewai') return false;
+
+  // Default: use TS loop when agent has no tools (no Python dependency)
+  const tools = agent.allowedTools || agent.config.allowedTools || [];
+  return tools.length === 0;
+}
 
 export interface TaskResult {
   output: string;
@@ -97,7 +112,12 @@ export class AgentRuntime {
       const budget = guardrails.checkBudget();
       if (!budget.allowed) throw new Error(`Budget exceeded: ${budget.reason}`);
 
-      const result = await this.executeWithCrewAI(agent, task, abortController, execution.id, trace.id, agentSpan.id, tracker, runtimeSkill);
+      const useTs = shouldUseTsLoop(agent);
+      addTaskLog(task.id, 'info', `Executor: ${useTs ? 'TS Agent Loop' : 'CrewAI (Python)'}`, 'system');
+
+      const result = useTs
+        ? await tsAgentLoop.execute(agent, task, abortController, execution.id, trace.id, agentSpan.id, tracker, runtimeSkill)
+        : await this.executeWithCrewAI(agent, task, abortController, execution.id, trace.id, agentSpan.id, tracker, runtimeSkill);
 
       guardrails.trackCost(task.id, result.costUSD);
 
@@ -133,6 +153,16 @@ export class AgentRuntime {
       eventBus.emit('task:done', { taskId: task.id, agentId: agent.id, output: result.output, cost: result.costUSD });
       eventBus.emit('execution:done', { executionId: execution.id, taskId: task.id, progress: finalProgress });
 
+      // Record trajectory for semantic routing learning
+      this.recordTrajectory(task, agent.id, true, result.durationMs, result.costUSD);
+
+      // Emit telemetry metrics
+      metrics.taskExecutions.add(1, { status: 'done' });
+      metrics.taskDuration.record(result.durationMs);
+      metrics.agentExecutions.add(1, { agentId: agent.id, status: 'done' });
+      metrics.tokenUsage.add(result.inputTokens + result.outputTokens);
+      metrics.costMicrodollars.add(Math.round(result.costUSD * 1_000_000));
+
       return result;
     } catch (err: any) {
       const errorMsg = err.message || 'Unknown error';
@@ -149,10 +179,36 @@ export class AgentRuntime {
       completeRunTrace(trace.id, { status: 'failed', summary: errorMsg });
       eventBus.emit('task:failed', { taskId: task.id, agentId: agent.id, error: errorMsg });
       eventBus.emit('execution:failed', { executionId: execution.id, taskId: task.id, error: errorMsg });
+
+      // Record failed trajectory too (for learning what doesn't work)
+      this.recordTrajectory(task, agent.id, false, Date.now() - (Date.parse(task.startedAt || '') || Date.now()), 0);
+
+      // Emit failure telemetry
+      metrics.taskExecutions.add(1, { status: 'failed' });
+      metrics.agentExecutions.add(1, { agentId: agent.id, status: 'failed' });
+
       throw err;
     } finally {
       this.abortControllers.delete(task.id);
     }
+  }
+
+  /** Record task trajectory for semantic learning (fire-and-forget) */
+  private recordTrajectory(task: Task, agentId: string, success: boolean, durationMs: number, costUSD: number): void {
+    // Quality score: success=0.8 base, penalize high cost, reward fast completion
+    const quality = success
+      ? Math.min(1, 0.8 + (durationMs < 60000 ? 0.1 : 0) + (costUSD < 0.01 ? 0.1 : 0))
+      : 0.2;
+
+    getTrajectoryStore().record({
+      taskInput: task.input,
+      agentId,
+      mode: task.mode,
+      templateId: task.pipelineId || undefined,
+      success,
+      quality,
+      durationMs,
+    }).catch(() => { /* non-critical, don't break execution */ });
   }
 
   private recordText(executionId: string, text: string) {
@@ -343,10 +399,23 @@ export class AgentRuntime {
     });
     completeTraceSpan(modelSpan.id, { status: 'done' });
 
+    // Inject pending messages from other agents into the prompt
+    let enrichedInput = task.input;
+    try {
+      const pendingMsgs = messageBus.drain(executionId);
+      if (pendingMsgs.length > 0) {
+        const msgContext = pendingMsgs
+          .map(m => `[${m.messageType}] ${m.content}`)
+          .join('\n');
+        enrichedInput = `${task.input}\n\n## Context from other agents:\n${msgContext}`;
+        addTaskLog(task.id, 'info', `Injected ${pendingMsgs.length} message(s) from other agents`, 'system');
+      }
+    } catch { /* non-critical */ }
+
     // Build config JSON for crew_runner.py
     const config = JSON.stringify({
       agentId: agent.id,
-      prompt: task.input,
+      prompt: enrichedInput,
       systemPrompt,
       model: selectedModel,
       agentMeta: {
@@ -379,10 +448,13 @@ export class AgentRuntime {
     };
 
     return new Promise((resolve, reject) => {
-      const proc = spawn('python3', [CREW_RUNNER, config], {
-        cwd: task.workdir || agent.config.workdir || process.cwd(),
+      const executor = getExecutor();
+      const proc = executor.spawn({
+        executionId,
+        command: 'python3',
+        args: [CREW_RUNNER, config],
+        workdir: task.workdir || agent.config.workdir || process.cwd(),
         env: {
-          ...process.env,
           CREWAI_BASE_URL: process.env.CREWAI_BASE_URL || 'https://morninglab.japaneast.cloudapp.azure.com/v1',
           CREWAI_API_KEY: process.env.CREWAI_API_KEY || process.env.ANTHROPIC_API_KEY || '',
           CREWAI_MODEL: process.env.CREWAI_MODEL || 'openai/gpt-5.4',
@@ -391,6 +463,10 @@ export class AgentRuntime {
           AGENT_FACTORY_AGENT_ID: agent.id,
         },
         signal: abortController.signal,
+        limits: {
+          ...DEFAULT_LIMITS,
+          timeoutSec: agent.config.timeout || 300,
+        },
       });
 
       let buffer = '', finalResult = '', costUSD = 0, inputTokens = 0, outputTokens = 0, numTurns = 0, stderrBuffer = '';

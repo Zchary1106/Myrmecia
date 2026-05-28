@@ -32,10 +32,10 @@ export function createInboxEntry(data: {
 }): InboxEntry {
   const db = getDb();
   const id = `inbox_${uuid().slice(0, 8)}`;
-  db.prepare(`
+  db.run(`
     INSERT INTO inbox_entries (id, type, title, message, options, task_id, pipeline_id, execution_id, created_by)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
+  `,
     id,
     data.type,
     data.title,
@@ -51,7 +51,7 @@ export function createInboxEntry(data: {
 
 export function getInboxEntry(id: string): InboxEntry | undefined {
   const db = getDb();
-  const row = db.prepare('SELECT * FROM inbox_entries WHERE id = ?').get(id) as any;
+  const row = db.get('SELECT * FROM inbox_entries WHERE id = ?', id);
   return row ? rowToInboxEntry(row) : undefined;
 }
 
@@ -75,7 +75,7 @@ export function listInboxEntries(filter?: {
   sql += ' ORDER BY created_at DESC';
   if (filter?.limit) { sql += ' LIMIT ?'; params.push(filter.limit); }
 
-  return (db.prepare(sql).all(...params) as any[]).map(rowToInboxEntry);
+  return db.all(sql, ...params).map(rowToInboxEntry);
 }
 
 export function respondToInboxEntry(id: string, data: {
@@ -83,10 +83,10 @@ export function respondToInboxEntry(id: string, data: {
   response?: string;
 }): InboxEntry | undefined {
   const db = getDb();
-  db.prepare(`
+  db.run(`
     UPDATE inbox_entries
     SET status = ?, response = ?, responded_at = ?
     WHERE id = ?
-  `).run(data.status, data.response || null, new Date().toISOString(), id);
+  `, data.status, data.response || null, new Date().toISOString(), id);
   return getInboxEntry(id);
 }

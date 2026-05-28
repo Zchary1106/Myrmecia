@@ -1,5 +1,7 @@
 import type { AgentDefinition } from '../types.js';
-import { getTool, listToolPermissions } from './tool-registry.js';
+import { getTool, listToolPermissions, getToolParamConstraints } from './tool-registry.js';
+import { validateParamConstraints } from './param-constraints.js';
+import type { ConstraintViolation } from './param-constraints.js';
 
 export interface ToolPolicyDecision {
   toolId: string;
@@ -54,3 +56,24 @@ export function resolveAllowedToolsForAgent(agent: AgentDefinition): AgentToolPo
 
   return { requestedTools, allowedTools, decisions };
 }
+
+/**
+ * Validate a tool call's parameters against tool constraints.
+ * Returns violations array — empty if all parameters are valid.
+ */
+export function validateToolParams(
+  toolId: string,
+  params: Record<string, unknown>,
+): ConstraintViolation[] {
+  const tool = getTool(toolId);
+  if (!tool) return [{ param: '', value: '', constraint: 'unknown_tool', message: `Tool "${toolId}" not found` }];
+
+  if (!tool.enabled) return [{ param: '', value: '', constraint: 'tool_disabled', message: `Tool "${toolId}" is disabled` }];
+
+  const constraints = getToolParamConstraints(toolId);
+  if (Object.keys(constraints).length === 0) return [];
+
+  return validateParamConstraints(params, constraints);
+}
+
+export type { ConstraintViolation };

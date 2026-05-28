@@ -45,10 +45,10 @@ export function createAgent(data: {
   const config = JSON.stringify(data.config || { maxConcurrent: 1, timeout: 300 });
   const stats = JSON.stringify({ tasksCompleted: 0, tasksFailed: 0, avgDurationMs: 0 });
 
-  db.prepare(`
+  db.run(`
     INSERT INTO agents (id, name, role, emoji, description, when_to_use, skill_path, config, capabilities, triggers, allowed_tools, disallowed_tools, model, max_turns, stats)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
+  `,
     id, data.name, data.role, data.emoji || '🤖',
     data.description || '', data.whenToUse || '', data.skillPath || '',
     config,
@@ -66,20 +66,21 @@ export function createAgent(data: {
 
 export function getAgent(id: string): AgentDefinition | undefined {
   const db = getDb();
-  const row = db.prepare('SELECT * FROM agents WHERE id = ?').get(id) as any;
+  const row = db.get('SELECT * FROM agents WHERE id = ?', id);
   return row ? rowToAgent(row) : undefined;
 }
 
-export function listAgents(filter?: { role?: string }): AgentDefinition[] {
+export function listAgents(filter?: { role?: string; workspaceId?: string }): AgentDefinition[] {
   const db = getDb();
   let sql = 'SELECT * FROM agents';
   const params: any[] = [];
   const conditions: string[] = [];
 
+  if (filter?.workspaceId) { conditions.push('workspace_id = ?'); params.push(filter.workspaceId); }
   if (filter?.role) { conditions.push('role = ?'); params.push(filter.role); }
   if (conditions.length) sql += ' WHERE ' + conditions.join(' AND ');
 
-  return (db.prepare(sql).all(...params) as any[]).map(rowToAgent);
+  return db.all(sql, ...params).map(rowToAgent);
 }
 
 export function updateAgent(id: string, updates: Partial<{
@@ -121,13 +122,13 @@ export function updateAgent(id: string, updates: Partial<{
   params.push(id);
 
   if (sets.length > 1) {
-    db.prepare(`UPDATE agents SET ${sets.join(', ')} WHERE id = ?`).run(...params);
+    db.run(`UPDATE agents SET ${sets.join(', ')} WHERE id = ?`, ...params);
   }
   return getAgent(id);
 }
 
 export function deleteAgent(id: string): boolean {
   const db = getDb();
-  const result = db.prepare('DELETE FROM agents WHERE id = ?').run(id);
+  const result = db.run('DELETE FROM agents WHERE id = ?', id);
   return result.changes > 0;
 }

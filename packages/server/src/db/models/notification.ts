@@ -11,10 +11,10 @@ export function createNotification(data: {
 }): Notification {
   const db = getDb();
   const id = `notif_${uuid().slice(0, 8)}`;
-  db.prepare(`
+  db.run(`
     INSERT INTO notifications (id, type, title, message, task_id, pipeline_id)
     VALUES (?, ?, ?, ?, ?, ?)
-  `).run(id, data.type, data.title, data.message, data.taskId || null, data.pipelineId || null);
+  `, id, data.type, data.title, data.message, data.taskId || null, data.pipelineId || null);
 
   return {
     id, type: data.type, title: data.title, message: data.message,
@@ -31,7 +31,7 @@ export function listNotifications(opts?: { unreadOnly?: boolean; limit?: number 
   sql += ' ORDER BY created_at DESC';
   if (opts?.limit) { sql += ' LIMIT ?'; params.push(opts.limit); }
 
-  return (db.prepare(sql).all(...params) as any[]).map(row => ({
+  return db.all(sql, ...params).map(row => ({
     ...row,
     read: !!row.read,
     taskId: row.task_id,
@@ -42,10 +42,10 @@ export function listNotifications(opts?: { unreadOnly?: boolean; limit?: number 
 
 export function markNotificationRead(id: string): void {
   const db = getDb();
-  db.prepare('UPDATE notifications SET read = 1 WHERE id = ?').run(id);
+  db.run('UPDATE notifications SET read = 1 WHERE id = ?', id);
 }
 
 export function markAllNotificationsRead(): void {
   const db = getDb();
-  db.prepare('UPDATE notifications SET read = 1 WHERE read = 0').run();
+  db.run('UPDATE notifications SET read = 1 WHERE read = 0');
 }

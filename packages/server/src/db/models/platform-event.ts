@@ -39,13 +39,13 @@ export function recordPlatformEvent(event: BusEvent): PlatformEvent {
   const db = getDb();
   const payload = event.payload as any;
   const refs = eventRefs(payload);
-  const result = db.prepare(`
+  const result = db.run(`
     INSERT INTO platform_events (
       event_type, severity, task_id, pipeline_id, agent_id, execution_id,
       inbox_entry_id, quality_attempt_id, payload, created_at
     )
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
+  `,
     event.type,
     eventSeverity(event.type, payload),
     refs.taskId || null,
@@ -62,7 +62,7 @@ export function recordPlatformEvent(event: BusEvent): PlatformEvent {
 
 export function getPlatformEvent(id: number): PlatformEvent | undefined {
   const db = getDb();
-  const row = db.prepare('SELECT * FROM platform_events WHERE id = ?').get(id) as any;
+  const row = db.get('SELECT * FROM platform_events WHERE id = ?', id);
   return row ? rowToPlatformEvent(row) : undefined;
 }
 
@@ -87,11 +87,11 @@ export function listPlatformEvents(filter?: {
   sql += ' LIMIT ?';
   params.push(filter?.limit || 100);
 
-  return (db.prepare(sql).all(...params) as any[]).map(rowToPlatformEvent);
+  return db.all(sql, ...params).map(rowToPlatformEvent);
 }
 
 export function countPlatformEvents(): number {
   const db = getDb();
-  const row = db.prepare('SELECT COUNT(*) AS count FROM platform_events').get() as any;
+  const row = db.get('SELECT COUNT(*) AS count FROM platform_events');
   return row?.count || 0;
 }

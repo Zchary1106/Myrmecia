@@ -81,7 +81,7 @@ describe('model registry and routing', () => {
       routeReason: 'test',
     });
 
-    const usage = getDb().prepare('SELECT * FROM model_usage_stats WHERE execution_id = ?').get(execution.id) as any;
+    const usage = getDb().get('SELECT * FROM model_usage_stats WHERE execution_id = ?', execution.id) as any;
     expect(checked?.healthStatus).toBe('healthy');
     expect(getModel('openai/claude-sonnet-4.6')?.lastCheckedAt).toBeTruthy();
     expect(usage.output_tokens).toBe(22);

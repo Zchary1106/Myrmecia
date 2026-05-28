@@ -22,10 +22,10 @@ export function getOperatorPreference(
   key: string,
 ): OperatorPreference | undefined {
   const db = getDb();
-  const row = db.prepare(`
+  const row = db.get(`
     SELECT * FROM operator_preferences
     WHERE actor_source = ? AND actor_role = ? AND actor_id = ? AND namespace = ? AND key = ?
-  `).get(actor.source, actor.role, actor.id, namespace, key) as any;
+  `, actor.source, actor.role, actor.id, namespace, key);
   return row ? mapRow(row) : undefined;
 }
 
@@ -41,7 +41,7 @@ export function listOperatorPreferences(actor: OperatorActor, namespace?: string
     params.push(namespace);
   }
   sql += ' ORDER BY namespace ASC, key ASC';
-  return (db.prepare(sql).all(...params) as any[]).map(mapRow);
+  return db.all(sql, ...params).map(mapRow);
 }
 
 export function upsertOperatorPreference(
@@ -52,12 +52,12 @@ export function upsertOperatorPreference(
 ): OperatorPreference {
   const db = getDb();
   const encoded = JSON.stringify(value);
-  db.prepare(`
+  db.run(`
     INSERT INTO operator_preferences (actor_id, actor_role, actor_source, namespace, key, value)
     VALUES (?, ?, ?, ?, ?, ?)
     ON CONFLICT(actor_source, actor_role, actor_id, namespace, key)
     DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
-  `).run(actor.id, actor.role, actor.source, namespace, key, encoded);
+  `, actor.id, actor.role, actor.source, namespace, key, encoded);
   const preference = getOperatorPreference(actor, namespace, key);
   if (!preference) throw new Error('Failed to persist operator preference');
   return preference;
@@ -65,9 +65,9 @@ export function upsertOperatorPreference(
 
 export function deleteOperatorPreference(actor: OperatorActor, namespace: string, key: string): boolean {
   const db = getDb();
-  const result = db.prepare(`
+  const result = db.run(`
     DELETE FROM operator_preferences
     WHERE actor_source = ? AND actor_role = ? AND actor_id = ? AND namespace = ? AND key = ?
-  `).run(actor.source, actor.role, actor.id, namespace, key);
+  `, actor.source, actor.role, actor.id, namespace, key);
   return result.changes > 0;
 }
