@@ -1,0 +1,47 @@
+# Agent Factory — Development Environment
+# Usage: docker compose up -d
+
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - NODE_ENV=development
+      - DB_PATH=/data/agent-factory.db
+      - REDIS_URL=redis://redis:6379
+      - VECTOR_BACKEND=memory
+      - EXECUTOR_MODE=local
+      - LOG_LEVEL=info
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./agents:/app/agents:ro
+      - ./templates:/app/templates:ro
+      - serverdata:/data
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: packages/dashboard/Dockerfile
+    ports:
+      - "5173:80"
+    depends_on:
+      - server
+
+volumes:
+  serverdata:

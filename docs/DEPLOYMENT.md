@@ -1,97 +1,256 @@
-# Deployment and Security
+# Deployment & Operations Guide
 
-Agent Factory defaults to local development mode. Remote access should be treated as an operator console: protect it with a token, TLS, and network controls.
+Agent Factory supports multiple deployment modes from local development to production Kubernetes clusters.
 
-## Runtime modes
+---
 
-| Mode | Server config | Dashboard config | Use case |
-|------|---------------|------------------|----------|
-| Local | no `API_AUTH_TOKEN` | no token needed | Development on `localhost`. |
-| Remote/private | `API_AUTH_TOKEN=<strong-token>` | `VITE_API_AUTH_TOKEN=<same-token>` or runtime localStorage token | Access behind VPN, Tailscale, SSH tunnel, or a private reverse proxy. |
-
-## API authentication
-
-Set `API_AUTH_TOKEN` on the server to enable Bearer-token protection for `/api/*` routes. `/api/health` remains public for health checks.
+## Quick Start (Docker Compose)
 
 ```bash
-API_AUTH_TOKEN="$(openssl rand -hex 32)" pnpm --filter @agent-factory/server start
+# Clone and start all services
+cp .env.example .env
+docker compose up -d
+
+# Services:
+#   - PostgreSQL (pgvector): localhost:5432
+#   - Redis: localhost:6379
+#   - Server API: localhost:3000
+#   - Dashboard: localhost:5173
 ```
 
-Clients must send:
+---
 
-```http
-Authorization: Bearer <token>
+## Deployment Modes
+
+| Mode | Config | Use case |
+|------|--------|----------|
+| **Local dev** | Default (no env vars) | Single machine, SQLite, no auth |
+| **Docker Compose** | `docker compose up` | Team dev, full stack |
+| **Production (single)** | `DATABASE_URL` + `REDIS_URL` | Small deployment |
+| **Production (K8s)** | Helm chart + HPA | Enterprise scale |
+
+---
+
+## Environment Variables
+
+See `.env.example` for the full list. Key groups:
+
+### Core
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PORT` | `3000` | HTTP server port |
+| `NODE_ENV` | `development` | `production` enables HSTS, stricter CORS |
+| `DATABASE_URL` | — | PostgreSQL connection string (enables PG mode) |
+| `DB_PATH` | `./data/agent-factory.db` | SQLite path (dev mode) |
+| `REDIS_URL` | — | Redis connection (enables distributed features) |
+
+### Authentication
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AUTH_MODE` | `local` | `local` (no auth) or `oidc` (SSO) |
+| `SESSION_SECRET` | `dev-secret...` | JWT signing secret (**change in production**) |
+| `API_AUTH_TOKEN` | — | Static Bearer token for API access |
+| `OIDC_ISSUER` | — | OpenID Connect discovery URL |
+| `OIDC_CLIENT_ID` | — | OAuth2 client ID |
+| `OIDC_CLIENT_SECRET` | — | OAuth2 client secret |
+
+### Execution
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `EXECUTOR_MODE` | `local` | `local` or `docker` (sandbox isolation) |
+| `AGENT_DOCKER_IMAGE` | `agent-factory/sandbox:latest` | Container image for agents |
+| `CONTAINER_POOL_SIZE` | `3` | Pre-warmed container count |
+| `WORKER_MODE` | `both` | `scheduler`, `worker`, or `both` |
+
+### Observability
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LOG_LEVEL` | `debug` (dev) / `info` (prod) | pino log level |
+| `OTEL_ENABLED` | `false` | Enable OpenTelemetry |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4318` | OTLP collector |
+
+### Security
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CORS_ORIGINS` | — | Comma-separated allowed origins |
+| `SECRET_PROVIDER` | `env` | `env`, `vault`, or `aws` |
+| `VAULT_ADDR` | `http://127.0.0.1:8200` | HashiCorp Vault address |
+
+---
+
+## Kubernetes Deployment
+
+### Architecture
+```
+                    ┌─────────────┐
+                    │   Ingress   │
+                    │  (TLS/CORS) │
+                    └──────┬──────┘
+                           │
+              ┌────────────┼────────────┐
+              │            │            │
+        ┌─────▼─────┐ ┌───▼────┐ ┌────▼─────┐
+        │ Dashboard  │ │  API   │ │  Worker  │
+        │  (nginx)   │ │Scheduler│ │  Nodes   │
+        └────────────┘ └───┬────┘ └────┬─────┘
+                           │            │
+                    ┌──────▼──────────▼──────┐
+                    │     Redis (pub/sub     │
+                    │     + BullMQ queues)    │
+                    └──────────┬─────────────┘
+                               │
+                    ┌──────────▼─────────────┐
+                    │    PostgreSQL + pgvector│
+                    └────────────────────────┘
 ```
 
-The dashboard sends this header when either `VITE_API_AUTH_TOKEN` is set or `localStorage["agentFactory.apiToken"]` contains a token. WebSocket connections also include the token as a `?token=` query parameter, so remote deployments should use HTTPS/WSS.
+### Scaling Strategy
 
-You can enter or rotate the runtime dashboard token from the dashboard Settings page. This writes `localStorage["agentFactory.apiToken"]`, runs a health check, and attempts to load sanitized diagnostics. Use this for remote/private deployments where you do not want to bake the token into the dashboard bundle.
+| Component | Scaling | Notes |
+|-----------|---------|-------|
+| API (scheduler) | HPA on CPU/requests | Stateless, scale freely |
+| Workers | HPA on queue depth | Each worker picks tasks from BullMQ |
+| Dashboard | Static files, CDN | No state |
+| PostgreSQL | Primary + read replicas | Connection pooling via PgBouncer |
+| Redis | Sentinel or Cluster | For HA |
 
-## Settings and diagnostics
+### Resource Recommendations
 
-The dashboard Settings page provides:
+| Component | CPU | Memory | Replicas |
+|-----------|-----|--------|----------|
+| API | 500m-2000m | 512Mi-2Gi | 2-5 |
+| Worker | 1000m-4000m | 1Gi-4Gi | 2-10 |
+| PostgreSQL | 2000m | 4Gi | 1 primary + 1 replica |
+| Redis | 500m | 1Gi | 3 (sentinel) |
 
-- API token save/clear controls;
-- a public `/api/health` reachability check;
-- authenticated `/api/diagnostics` loading;
-- deployment checks for API reachability, auth configuration, queue backend, and recorded migrations.
+---
 
-`GET /api/diagnostics` intentionally returns only sanitized information:
+## Monitoring & Alerting
 
-| Field | Contents |
-|-------|----------|
-| `auth` | whether token auth is enabled and whether the server is in `local` or `token` mode |
-| `operator` | current sanitized actor id/role/source plus runtime-control and task-delete permissions |
-| `queue` | `memory` or `redis`, plus whether Redis is configured |
-| `database` | DB path source (`default` or `env`), file-name hint, and applied migration IDs |
-| `runtime` | Node version, platform, pid, uptime, and environment |
+### Health Endpoints
 
-It does not expose `API_AUTH_TOKEN`, Redis URLs, full database paths, or other secrets. The dashboard uses the `operator` diagnostics to display the active identity and disable known-unavailable runtime controls for read-only viewers.
+| Endpoint | Auth | Purpose |
+|----------|------|---------|
+| `GET /health/live` | No | K8s liveness probe |
+| `GET /health/ready` | No | K8s readiness probe (checks DB, Redis, Docker) |
+| `GET /health/circuit` | No | Circuit breaker state |
+| `GET /metrics` | No | Prometheus-compatible metrics |
 
-## Reverse proxy guidance
+### Key Metrics to Alert On
 
-- Terminate TLS before exposing the dashboard/API outside localhost.
-- Prefer private networks or VPNs over public internet exposure.
-- Do not log full WebSocket URLs if auth is enabled, because the token appears in the query string.
-- Keep `API_AUTH_TOKEN` out of source control and commit history.
-- If the proxy authenticates individual users, pass `X-Operator-Id` and `X-Operator-Role` (`admin`, `operator`, or `viewer`) so control actions are attributed to the real operator.
-- Strip inbound `X-Operator-*` headers from clients before setting trusted proxy values.
+| Metric | Threshold | Action |
+|--------|-----------|--------|
+| `http.duration_ms` P99 | > 5000ms | Scale API pods |
+| `task.executions{status=failed}` rate | > 10% | Check agent logs |
+| `llm.cost_microdollars` daily | > budget | Budget alert fires |
+| Queue depth | > 100 pending | Scale workers |
+| Circuit breaker OPEN | Any | LLM provider down, check fallback |
 
-Without proxy identity headers, audit records use `local-admin` for local mode or `token-admin` for token-authenticated requests.
+### Logging
 
-Operator roles are enforced on control routes:
+Production logs are structured JSON (pino). Ship to your log aggregator:
 
-| Role | Permission |
-|------|------------|
-| `admin` | Full launch/runtime control, including task deletion. |
-| `operator` | Launch and runtime control such as task create/cancel/retry, pipeline create/approve/skip/cancel, and inbox responses. |
-| `viewer` | Read-only access; launch/control actions return `403 OPERATOR_FORBIDDEN`. |
+```yaml
+# Fluentd/Fluent Bit config snippet
+[FILTER]
+    Name   parser
+    Match  agent-factory.*
+    Key_Name log
+    Parser json
+```
 
-## SQLite persistence and migrations
+---
 
-SQLite schema changes are tracked in `schema_migrations`. On startup the server:
+## Backup & Restore
 
-1. creates base tables from `schema.sql`;
-2. reads structured migration blocks after `-- Migrations`;
-3. skips migrations already recorded in `schema_migrations`;
-4. records successfully applied migrations.
-
-Legacy databases that already contain a column from an older untracked migration are recorded after a duplicate-column warning, avoiding repeated startup failures while preserving visibility.
-
-Back up the database file before production upgrades:
-
+### PostgreSQL
 ```bash
-cp packages/server/data/agent-factory.db packages/server/data/agent-factory.db.bak
+# Backup
+pg_dump -Fc agent_factory > backup_$(date +%Y%m%d).dump
+
+# Restore
+pg_restore -d agent_factory backup_20260514.dump
 ```
 
-## Recovery and observability
+### SQLite (development)
+```bash
+cp packages/server/data/agent-factory.db agent-factory.db.bak
+```
 
-On startup, interrupted tasks are re-queued, blocked pipelines recreate retry timers, running pipelines inspect their current stage task, and interrupted quality-loop attempts are marked explicitly as `failed` or `skipped`.
+### Workspace Snapshots
+```bash
+# Export via API
+curl -H "Authorization: Bearer $TOKEN" http://localhost:3000/api/v1/workspace-snapshot > snapshot.json
 
-Use these endpoints for operations:
+# Restore preview
+curl -X POST -H "Content-Type: application/json" \
+  -d @snapshot.json http://localhost:3000/api/v1/workspace-snapshot/preview
+```
 
-- `GET /api/events` for durable platform event history;
-- `GET /api/operator-actions` for durable operator control audit history;
-- `GET /api/observability` for failure hotspots, retry hotspots, and pipeline health;
-- `GET /api/diagnostics` for sanitized runtime/deployment diagnostics;
-- `GET /api/tasks/:id/quality-attempts` for review/fix loop history.
+---
+
+## Upgrade Procedure
+
+### Standard Upgrade
+```bash
+# 1. Backup
+pg_dump -Fc agent_factory > pre_upgrade_backup.dump
+
+# 2. Pull new image
+docker compose pull
+
+# 3. Rolling restart (zero downtime with multiple replicas)
+docker compose up -d --no-deps server
+
+# 4. Verify health
+curl http://localhost:3000/health/ready
+
+# 5. Verify migrations applied
+curl http://localhost:3000/api/v1/diagnostics | jq .database.migrations
+```
+
+### Breaking Changes
+- Check release notes for migration instructions
+- Use `GET /api/v1/releases` to track deployed versions
+- Feature flags allow gradual rollout of breaking features
+
+### Rollback
+```bash
+# Quick rollback to previous image
+docker compose down server
+docker compose up -d --no-deps server  # with previous image tag
+
+# Or use release manager
+curl -X POST http://localhost:3000/api/v1/releases/{id}/rollback
+```
+
+---
+
+## Security Hardening Checklist
+
+- [ ] Set `NODE_ENV=production`
+- [ ] Set strong `SESSION_SECRET` (64+ random bytes)
+- [ ] Configure `CORS_ORIGINS` (no wildcard)
+- [ ] Enable `AUTH_MODE=oidc` with real IdP
+- [ ] Set `EXECUTOR_MODE=docker` for agent isolation
+- [ ] Configure `SECRET_PROVIDER=vault` or `aws`
+- [ ] Enable TLS at ingress/proxy level
+- [ ] Set `API_AUTH_TOKEN` for service-to-service calls
+- [ ] Review DLP rules per workspace
+- [ ] Enable audit log export to immutable storage
+- [ ] Rotate API keys on schedule (90 days max)
+- [ ] Set budget limits per workspace
+- [ ] Run `GET /audit/verify` weekly to check hash chain integrity
+
+---
+
+## Troubleshooting
+
+| Symptom | Likely Cause | Fix |
+|---------|-------------|-----|
+| `503` on all requests | DB connection failed | Check `DATABASE_URL`, run `/health/ready` |
+| Tasks stuck in `running` | Worker crashed | Tasks auto-recover on restart; check logs |
+| Circuit breaker OPEN | LLM API timeout/errors | Wait for auto-reset (30s) or check provider status |
+| High memory usage | Large vector store in memory | Switch to `VECTOR_BACKEND=pgvector` |
+| WebSocket disconnects | No Redis in multi-instance | Set `REDIS_URL` for pub/sub |
+| Auth failures after upgrade | Session secret changed | Keep `SESSION_SECRET` constant across deploys |

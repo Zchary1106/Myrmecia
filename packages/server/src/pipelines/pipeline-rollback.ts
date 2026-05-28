@@ -4,6 +4,7 @@ import { getPipeline, updatePipeline, listPipelines } from '../db/models/pipelin
 import { createNotification } from '../db/models/notification.js';
 import { workspaceManager } from '../workspace/workspace-manager.js';
 import { logger } from '../lib/logger.js';
+import type { StageCheckpoint } from './checkpoint.js';
 
 export class PipelineRollback {
   constructor() {
@@ -40,8 +41,11 @@ export class PipelineRollback {
   getCheckpoint(pipelineId: string, stageIndex: number): string | undefined {
     const pipeline = getPipeline(pipelineId);
     if (!pipeline) return undefined;
-    const checkpoints = JSON.parse((pipeline as any).stageCheckpoints || '{}');
-    return checkpoints[String(stageIndex)];
+    const raw = JSON.parse((pipeline as any).stageCheckpoints || '{}');
+    const entry = raw[String(stageIndex)];
+    if (!entry) return undefined;
+    // Support both unified checkpoint objects and legacy SHA strings
+    return typeof entry === 'string' ? entry : (entry as StageCheckpoint).gitSha;
   }
 
   private async gitRollback(pipelineId: string, stageIndex: number): Promise<void> {
@@ -84,12 +88,4 @@ export class PipelineRollback {
       pipelineId,
     });
   }
-}
-
-export function saveStageCheckpoint(pipelineId: string, stageIndex: number, sha: string): void {
-  const pipeline = getPipeline(pipelineId);
-  if (!pipeline) return;
-  const checkpoints = JSON.parse((pipeline as any).stageCheckpoints || '{}');
-  checkpoints[String(stageIndex)] = sha;
-  updatePipeline(pipelineId, { stageCheckpoints: JSON.stringify(checkpoints) } as any);
 }

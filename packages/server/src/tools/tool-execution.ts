@@ -54,13 +54,13 @@ export function createToolExecution(data: {
 }): ToolExecution {
   const db = getDb();
   const id = data.id || `tool_${uuid().slice(0, 8)}`;
-  db.prepare(`
+  db.run(`
     INSERT INTO tool_executions (
       id, tool_id, tool_version_id, task_id, execution_id, agent_id,
       status, input_summary, input_hash, started_at
     )
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
-  `).run(
+  `,
     id,
     data.toolId,
     data.toolVersionId || null,
@@ -84,7 +84,7 @@ export function completeToolExecution(id: string, updates: {
   completedAt?: string;
 }): ToolExecution | undefined {
   const db = getDb();
-  db.prepare(`
+  db.run(`
     UPDATE tool_executions
     SET status = ?,
         output_summary = ?,
@@ -92,7 +92,7 @@ export function completeToolExecution(id: string, updates: {
         duration_ms = ?,
         completed_at = COALESCE(?, CURRENT_TIMESTAMP)
     WHERE id = ?
-  `).run(
+  `,
     updates.status,
     updates.outputSummary || summarizeToolPayload(updates.output),
     updates.error || null,
@@ -104,7 +104,7 @@ export function completeToolExecution(id: string, updates: {
 }
 
 export function getToolExecution(id: string): ToolExecution | undefined {
-  const row = getDb().prepare('SELECT * FROM tool_executions WHERE id = ?').get(id) as any;
+  const row = getDb().get('SELECT * FROM tool_executions WHERE id = ?', id) as any;
   return row ? rowToToolExecution(row) : undefined;
 }
 
@@ -130,5 +130,5 @@ export function listToolExecutions(filter?: {
   sql += ' ORDER BY started_at DESC, id DESC LIMIT ?';
   params.push(filter?.limit || 100);
 
-  return (db.prepare(sql).all(...params) as any[]).map(rowToToolExecution);
+  return (db.all(sql, ...params) as any[]).map(rowToToolExecution);
 }

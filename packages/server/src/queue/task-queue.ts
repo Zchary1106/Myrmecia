@@ -3,6 +3,7 @@ import IORedis from 'ioredis';
 import { eventBus } from '../events/event-bus.js';
 import { createTask, getTask, updateTask, addTaskLog, listTasks } from '../db/models/task.js';
 import { AgentManager } from '../agents/agent-manager.js';
+import { metrics } from '../observability/telemetry.js';
 import type { Task, TaskMode, Priority } from '../types.js';
 
 const QUEUE_NAME = 'agent-factory-tasks';
@@ -97,6 +98,7 @@ export class TaskQueue {
 
     eventBus.emit('task:created', { taskId: task.id, task });
     addTaskLog(task.id, 'info', `Task created: ${task.title}`, 'system');
+    metrics.queueDepth.add(1, { direction: 'inc' });
 
     if (this.queue) {
       // Use BullMQ

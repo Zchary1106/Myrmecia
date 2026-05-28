@@ -3,13 +3,17 @@ import { CostSummaryCards } from '../components/cost/CostSummaryCards';
 import { AgentCostChart } from '../components/cost/AgentCostChart';
 import { ModelDistChart } from '../components/cost/ModelDistChart';
 import { TaskCostTable } from '../components/cost/TaskCostTable';
+import { getApiAuthToken } from '../lib/auth';
 
 const API = '/api/v1/cost-dashboard';
 
 type Period = 'day' | 'week' | 'month';
 
 async function fetchJson<T>(url: string): Promise<T> {
-  const res = await fetch(url);
+  const token = getApiAuthToken();
+  const res = await fetch(url, {
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+  });
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
 }

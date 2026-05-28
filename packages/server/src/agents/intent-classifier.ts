@@ -1,6 +1,7 @@
 import { listAgents } from '../db/models/agent.js';
 import { listTemplates } from '../db/models/pipeline.js';
 import { agentRuntime } from '../agents/agent-runtime.js';
+import { getTrajectoryStore } from '../memory/trajectory-store.js';
 import type { Task } from '../types.js';
 
 export interface TaskIntent {
@@ -9,21 +10,68 @@ export interface TaskIntent {
   suggestedMode: 'direct' | 'pipeline' | 'master';
   suggestedAgent?: string;      // agent id for direct mode
   suggestedTemplate?: string;   // template id for pipeline mode
+  confidence?: number;          // 0-1, from semantic routing
+  routingSource?: 'regex' | 'semantic' | 'llm';  // how the decision was made
 }
 
 /**
  * Intent Classifier for Supervisor Mode
  * Analyzes user input and determines the best execution strategy.
+ * Uses semantic routing (vector similarity) when historical data is available,
+ * falls back to keyword regex for trivial cases, then LLM for ambiguous ones.
  */
 export class IntentClassifier {
   /** Classify user input into execution intent */
   async classify(input: string): Promise<TaskIntent> {
-    // Fast keyword-based classification first
+    // 1. Fast-path: regex for high-confidence trivial cases only
     const fast = this.fastClassify(input);
-    if (fast) return fast;
+    if (fast && fast.complexity === 'trivial') {
+      return { ...fast, routingSource: 'regex' };
+    }
 
-    // Fall back to LLM classification for ambiguous inputs
-    return this.llmClassify(input);
+    // 2. Semantic routing: learn from historical trajectories
+    try {
+      const store = getTrajectoryStore();
+      const recommendation = await store.recommendRoute(input);
+      if (recommendation && recommendation.confidence > 0.75) {
+        return {
+          type: this.inferTypeFromMode(recommendation.suggestedMode),
+          complexity: this.inferComplexity(input),
+          suggestedMode: recommendation.suggestedMode as any,
+          suggestedAgent: recommendation.suggestedAgent,
+          suggestedTemplate: recommendation.suggestedTemplate,
+          confidence: recommendation.confidence,
+          routingSource: 'semantic',
+        };
+      }
+    } catch {
+      // Semantic routing not available yet, continue to fallback
+    }
+
+    // 3. Fallback: regex classification
+    if (fast) return { ...fast, routingSource: 'regex' };
+
+    // 4. LLM fallback
+    const llmResult = await this.llmClassify(input);
+    return { ...llmResult, routingSource: 'llm' };
+  }
+
+  /** Infer task type from mode */
+  private inferTypeFromMode(mode: string): TaskIntent['type'] {
+    switch (mode) {
+      case 'master': return 'new_product';
+      case 'pipeline': return 'feature';
+      default: return 'direct';
+    }
+  }
+
+  /** Infer complexity from input length and patterns */
+  private inferComplexity(input: string): TaskIntent['complexity'] {
+    const wordCount = input.split(/\s+/).length;
+    if (wordCount > 80) return 'epic';
+    if (wordCount > 40) return 'high';
+    if (wordCount > 15) return 'medium';
+    return 'trivial';
   }
 
   /** Keyword-based fast classification */

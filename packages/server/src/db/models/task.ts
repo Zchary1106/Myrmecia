@@ -39,11 +39,11 @@ export function createTask(data: {
   const db = getDb();
   const id = `task_${uuid().slice(0, 8)}`;
 
-  db.prepare(`
+  db.run(`
     INSERT INTO tasks (id, title, description, mode, priority, assignee_id, created_by,
       parent_task_id, pipeline_id, stage_index, input, workdir, workspace_path, depends_on, max_retries)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
+  `,
     id, data.title, data.description, data.mode,
     data.priority || 'normal', data.assigneeId || null, data.createdBy || 'user',
     data.parentTaskId || null, data.pipelineId || null, data.stageIndex ?? null,
@@ -56,7 +56,7 @@ export function createTask(data: {
 
 export function getTask(id: string): Task | undefined {
   const db = getDb();
-  const row = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id) as any;
+  const row = db.get('SELECT * FROM tasks WHERE id = ?', id);
   return row ? rowToTask(row) : undefined;
 }
 
@@ -66,6 +66,7 @@ export function listTasks(filter?: {
   assigneeId?: string;
   pipelineId?: string;
   parentTaskId?: string;
+  workspaceId?: string;
   limit?: number;
   offset?: number;
 }): Task[] {
@@ -74,6 +75,7 @@ export function listTasks(filter?: {
   const params: any[] = [];
   const conditions: string[] = [];
 
+  if (filter?.workspaceId) { conditions.push('workspace_id = ?'); params.push(filter.workspaceId); }
   if (filter?.status) { conditions.push('status = ?'); params.push(filter.status); }
   if (filter?.mode) { conditions.push('mode = ?'); params.push(filter.mode); }
   if (filter?.assigneeId) { conditions.push('assignee_id = ?'); params.push(filter.assigneeId); }
@@ -84,7 +86,7 @@ export function listTasks(filter?: {
   if (filter?.limit) { sql += ' LIMIT ?'; params.push(filter.limit); }
   if (filter?.offset) { sql += ' OFFSET ?'; params.push(filter.offset); }
 
-  return (db.prepare(sql).all(...params) as any[]).map(rowToTask);
+  return db.all(sql, ...params).map(rowToTask);
 }
 
 export function updateTask(id: string, updates: Partial<{
@@ -112,22 +114,23 @@ export function updateTask(id: string, updates: Partial<{
 
   if (sets.length === 0) return getTask(id);
   params.push(id);
-  db.prepare(`UPDATE tasks SET ${sets.join(', ')} WHERE id = ?`).run(...params);
+  db.run(`UPDATE tasks SET ${sets.join(', ')} WHERE id = ?`, ...params);
   return getTask(id);
 }
 
 export function deleteTask(id: string): boolean {
   const db = getDb();
-  const result = db.prepare('DELETE FROM tasks WHERE id = ?').run(id);
+  const result = db.run('DELETE FROM tasks WHERE id = ?', id);
   return result.changes > 0;
 }
 
 // Task Logs
 export function addTaskLog(taskId: string, level: string, message: string, source: string): LogEntry {
   const db = getDb();
-  const result = db.prepare(`
-    INSERT INTO task_logs (task_id, level, message, source) VALUES (?, ?, ?, ?)
-  `).run(taskId, level, message, source);
+  const result = db.run(
+    'INSERT INTO task_logs (task_id, level, message, source) VALUES (?, ?, ?, ?)',
+    taskId, level, message, source
+  );
 
   return {
     id: Number(result.lastInsertRowid),
@@ -145,7 +148,7 @@ export function getTaskLogs(taskId: string, opts?: { limit?: number; since?: str
   sql += ' ORDER BY created_at DESC';
   if (opts?.limit) { sql += ' LIMIT ?'; params.push(opts.limit); }
 
-  return (db.prepare(sql).all(...params) as any[]).map(row => ({
+  return db.all(sql, ...params).map((row: any) => ({
     ...row,
     taskId: row.task_id,
     createdAt: row.created_at,

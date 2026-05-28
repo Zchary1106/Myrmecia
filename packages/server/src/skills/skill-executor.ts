@@ -2,7 +2,7 @@ import { validateStep } from './step-validator.js';
 import { logger } from '../lib/logger.js';
 import type { SkillExecutorConfig, SkillStep } from '../types.js';
 
-export type LlmCallFn = (systemPrompt: string, userPrompt: string) => Promise<string>;
+export type LlmCallFn = (systemPrompt: string, userPrompt: string, allowedTools?: string[]) => Promise<string>;
 
 export interface SkillExecutorOptions {
   config: SkillExecutorConfig;
@@ -84,7 +84,7 @@ export class SkillExecutor {
           ? `Task: ${taskInput}\n\nStep "${step.name}": ${step.instruction}`
           : `Task: ${taskInput}\n\nStep "${step.name}" (retry ${attempt}): ${step.instruction}\n\nPrevious attempt failed: ${lastError}\nPlease fix the issue and try again.`;
 
-        lastOutput = await this.llmCall(systemPrompt, userPrompt);
+        lastOutput = await this.llmCall(systemPrompt, userPrompt, step.tools);
 
         if (step.validation) {
           const validationResult = await validateStep({

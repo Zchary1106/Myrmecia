@@ -1,6 +1,10 @@
 import { v4 as uuid } from 'uuid';
 import { getDb } from '../database.js';
 import type { RunTrace, RunTraceStatus, TraceSpan, TraceSpanStatus } from '../../types.js';
+import { otelSpanFromTrace, emitMetric } from '../../observability/telemetry.js';
+
+// Track active OTel spans for later completion
+const activeOTelSpans = new Map<string, ReturnType<typeof otelSpanFromTrace>>();
 
 function parseMetadata(value: string | null | undefined): Record<string, unknown> {
   if (!value) return {};
@@ -46,14 +50,14 @@ export function createRunTrace(data: {
 }): RunTrace {
   const db = getDb();
   const id = data.id || `trace_${uuid().slice(0, 8)}`;
-  db.prepare(`
+  db.run(`
     INSERT INTO run_traces (id, task_id, execution_id, agent_id)
     VALUES (?, ?, ?, ?)
     ON CONFLICT(execution_id) DO UPDATE SET
       status = 'running',
       summary = NULL,
       completed_at = NULL
-  `).run(id, data.taskId, data.executionId, data.agentId);
+  `, id, data.taskId, data.executionId, data.agentId);
   return getRunTraceByExecution(data.executionId)!;
 }
 
@@ -63,26 +67,36 @@ export function completeRunTrace(id: string, updates: {
   completedAt?: string;
 }): RunTrace | undefined {
   const db = getDb();
-  db.prepare(`
+  db.run(`
     UPDATE run_traces
     SET status = ?, summary = ?, completed_at = COALESCE(?, CURRENT_TIMESTAMP)
     WHERE id = ?
-  `).run(updates.status, updates.summary || null, updates.completedAt || null, id);
-  return getRunTrace(id);
+  `, updates.status, updates.summary || null, updates.completedAt || null, id);
+
+  // Emit telemetry for agent success rate
+  const trace = getRunTrace(id);
+  if (trace) {
+    emitMetric('agentSuccessRate', 1, {
+      status: updates.status,
+      agentId: trace.agentId,
+    });
+  }
+
+  return trace || getRunTrace(id);
 }
 
 export function getRunTrace(id: string): RunTrace | undefined {
-  const row = getDb().prepare('SELECT * FROM run_traces WHERE id = ?').get(id) as any;
+  const row = getDb().get('SELECT * FROM run_traces WHERE id = ?', id);
   return row ? rowToTrace(row, listTraceSpans(row.id)) : undefined;
 }
 
 export function getRunTraceByExecution(executionId: string): RunTrace | undefined {
-  const row = getDb().prepare('SELECT * FROM run_traces WHERE execution_id = ?').get(executionId) as any;
+  const row = getDb().get('SELECT * FROM run_traces WHERE execution_id = ?', executionId);
   return row ? rowToTrace(row, listTraceSpans(row.id)) : undefined;
 }
 
 export function getRunTraceByTask(taskId: string): RunTrace | undefined {
-  const row = getDb().prepare('SELECT * FROM run_traces WHERE task_id = ? ORDER BY started_at DESC LIMIT 1').get(taskId) as any;
+  const row = getDb().get('SELECT * FROM run_traces WHERE task_id = ? ORDER BY started_at DESC LIMIT 1', taskId);
   return row ? rowToTrace(row, listTraceSpans(row.id)) : undefined;
 }
 
@@ -98,12 +112,12 @@ export function createTraceSpan(data: {
 }): TraceSpan {
   const db = getDb();
   const id = data.id || `span_${uuid().slice(0, 8)}`;
-  db.prepare(`
+  db.run(`
     INSERT INTO trace_spans (
       id, trace_id, parent_span_id, type, name, status, metadata, started_at
     )
     VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
-  `).run(
+  `,
     id,
     data.traceId,
     data.parentSpanId || null,
@@ -113,6 +127,18 @@ export function createTraceSpan(data: {
     JSON.stringify(data.metadata || {}),
     data.startedAt || null,
   );
+  // Also emit as OTel span
+  try {
+    const otelSpan = otelSpanFromTrace(data.name, {
+      'trace.id': data.traceId,
+      'span.type': data.type,
+      ...Object.fromEntries(
+        Object.entries(data.metadata || {}).map(([k, v]) => [k, String(v)])
+      ),
+    });
+    activeOTelSpans.set(id, otelSpan);
+  } catch {}
+
   return getTraceSpan(id)!;
 }
 
@@ -131,7 +157,7 @@ export function completeTraceSpan(id: string, updates: {
       ? new Date(updates.completedAt).getTime() - new Date(existing.startedAt).getTime()
       : undefined
   );
-  getDb().prepare(`
+  getDb().run(`
     UPDATE trace_spans
     SET status = ?,
         metadata = ?,
@@ -139,7 +165,7 @@ export function completeTraceSpan(id: string, updates: {
         duration_ms = ?,
         completed_at = COALESCE(?, CURRENT_TIMESTAMP)
     WHERE id = ?
-  `).run(
+  `,
     updates.status,
     JSON.stringify(metadata),
     updates.error || null,
@@ -147,15 +173,35 @@ export function completeTraceSpan(id: string, updates: {
     updates.completedAt || null,
     id,
   );
+  // Complete matching OTel span
+  try {
+    const otelSpan = activeOTelSpans.get(id);
+    if (otelSpan) {
+      if (updates.error) {
+        otelSpan.setStatus({ code: 2, message: updates.error });
+        otelSpan.recordException(new Error(updates.error));
+      } else {
+        otelSpan.setStatus({ code: 1 });
+      }
+      if (updates.metadata) {
+        for (const [k, v] of Object.entries(updates.metadata)) {
+          otelSpan.setAttribute(k, String(v));
+        }
+      }
+      otelSpan.end();
+      activeOTelSpans.delete(id);
+    }
+  } catch {}
+
   return getTraceSpan(id);
 }
 
 export function getTraceSpan(id: string): TraceSpan | undefined {
-  const row = getDb().prepare('SELECT * FROM trace_spans WHERE id = ?').get(id) as any;
+  const row = getDb().get('SELECT * FROM trace_spans WHERE id = ?', id);
   return row ? rowToSpan(row) : undefined;
 }
 
 export function listTraceSpans(traceId: string): TraceSpan[] {
-  return (getDb().prepare('SELECT * FROM trace_spans WHERE trace_id = ? ORDER BY started_at ASC, id ASC').all(traceId) as any[])
+  return getDb().all('SELECT * FROM trace_spans WHERE trace_id = ? ORDER BY started_at ASC, id ASC', traceId)
     .map(rowToSpan);
 }

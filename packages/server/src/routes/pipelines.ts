@@ -111,6 +111,24 @@ export function createPipelineRoutes(pipelineEngine: PipelineEngine): Router {
     }
   });
 
+  router.post('/:id/resume', async (req, res) => {
+    try {
+      const actor = requireOperatorRole(req, 'pipeline.resume', ['admin', 'operator']);
+      const pipeline = await pipelineEngine.resume(req.params.id);
+      createOperatorAction({
+        action: 'pipeline.resume',
+        actor,
+        targetType: 'pipeline',
+        targetId: req.params.id,
+        pipelineId: req.params.id,
+        metadata: { stageCount: pipeline.stages.length },
+      });
+      res.json(pipeline);
+    } catch (err) {
+      sendError(res, err);
+    }
+  });
+
   router.post('/:id/stages/:index/retry', async (req, res) => {
     try {
       const stageIndex = parseInt(req.params.index, 10);

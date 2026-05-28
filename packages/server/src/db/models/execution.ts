@@ -32,16 +32,16 @@ export function createExecution(data: {
 }): TaskExecution {
   const db = getDb();
   const id = `exec_${uuid().slice(0, 8)}`;
-  db.prepare(`
-    INSERT INTO task_executions (id, task_id, agent_def_id, skill_version_id, parent_execution_id)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(id, data.taskId, data.agentDefId, data.skillVersionId || null, data.parentExecutionId || null);
+  db.run(
+    'INSERT INTO task_executions (id, task_id, agent_def_id, skill_version_id, parent_execution_id) VALUES (?, ?, ?, ?, ?)',
+    id, data.taskId, data.agentDefId, data.skillVersionId || null, data.parentExecutionId || null
+  );
   return getExecution(id)!;
 }
 
 export function getExecution(id: string): TaskExecution | undefined {
   const db = getDb();
-  const row = db.prepare('SELECT * FROM task_executions WHERE id = ?').get(id) as any;
+  const row = db.get('SELECT * FROM task_executions WHERE id = ?', id);
   return row ? rowToExecution(row) : undefined;
 }
 
@@ -63,7 +63,7 @@ export function listExecutions(filter?: {
   sql += ' ORDER BY started_at DESC';
   if (filter?.limit) { sql += ' LIMIT ?'; params.push(filter.limit); }
 
-  return (db.prepare(sql).all(...params) as any[]).map(rowToExecution);
+  return db.all(sql, ...params).map(rowToExecution);
 }
 
 export function updateExecution(id: string, updates: Partial<{
@@ -85,7 +85,7 @@ export function updateExecution(id: string, updates: Partial<{
 
   if (sets.length === 0) return getExecution(id);
   params.push(id);
-  db.prepare(`UPDATE task_executions SET ${sets.join(', ')} WHERE id = ?`).run(...params);
+  db.run(`UPDATE task_executions SET ${sets.join(', ')} WHERE id = ?`, ...params);
   return getExecution(id);
 }
 
@@ -97,10 +97,10 @@ export function addExecutionMessage(data: {
   toolName?: string;
 }): ExecutionMessage {
   const db = getDb();
-  const result = db.prepare(`
-    INSERT INTO execution_messages (execution_id, type, content, tool_name)
-    VALUES (?, ?, ?, ?)
-  `).run(data.executionId, data.type, data.content, data.toolName || null);
+  const result = db.run(
+    'INSERT INTO execution_messages (execution_id, type, content, tool_name) VALUES (?, ?, ?, ?)',
+    data.executionId, data.type, data.content, data.toolName || null
+  );
 
   return {
     id: Number(result.lastInsertRowid),
@@ -124,7 +124,7 @@ export function listExecutionMessages(executionId: string, opts?: {
   sql += ' ORDER BY id ASC';
   if (opts?.limit) { sql += ' LIMIT ?'; params.push(opts.limit); }
 
-  return (db.prepare(sql).all(...params) as any[]).map(row => ({
+  return db.all(sql, ...params).map((row: any) => ({
     id: row.id,
     executionId: row.execution_id,
     type: row.type,
@@ -137,8 +137,9 @@ export function listExecutionMessages(executionId: string, opts?: {
 // Active executions for an agent (running count)
 export function getActiveExecutionCount(agentDefId: string): number {
   const db = getDb();
-  const row = db.prepare(
-    'SELECT COUNT(*) as count FROM task_executions WHERE agent_def_id = ? AND status = ?'
-  ).get(agentDefId, 'running') as any;
-  return row?.count || 0;
+  const row = db.get(
+    'SELECT COUNT(*) as count FROM task_executions WHERE agent_def_id = ? AND status = ?',
+    agentDefId, 'running'
+  );
+  return (row as any)?.count || 0;
 }

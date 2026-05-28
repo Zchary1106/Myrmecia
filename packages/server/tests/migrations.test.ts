@@ -19,16 +19,16 @@ describe('database migrations', () => {
 
   it('tracks applied schema migrations', () => {
     const db = getDb();
-    const rows = db.prepare('SELECT id FROM schema_migrations ORDER BY id').all() as { id: string }[];
+    const rows = db.all('SELECT id FROM schema_migrations ORDER BY id') as { id: string }[];
     expect(rows.map(row => row.id)).toContain('202604260001_add_workspace_path_to_tasks');
     expect(rows.map(row => row.id)).toContain('202604270001_add_operator_preferences');
     expect(rows.map(row => row.id)).toContain('202605100001_expand_operator_action_targets');
 
-    const columns = db.prepare('PRAGMA table_info(tasks)').all() as { name: string }[];
+    const columns = db.all('PRAGMA table_info(tasks)') as { name: string }[];
     expect(columns.map(column => column.name)).toContain('workspace_path');
-    const preferenceTables = db.prepare(`
+    const preferenceTables = db.all(`
       SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'operator_preferences'
-    `).all();
+    `);
     expect(preferenceTables).toHaveLength(1);
   });
 
@@ -38,7 +38,7 @@ describe('database migrations', () => {
     process.env.DB_PATH = dbPath;
 
     const db = getDb();
-    const rows = db.prepare('SELECT id FROM schema_migrations').all() as { id: string }[];
+    const rows = db.all('SELECT id FROM schema_migrations') as { id: string }[];
     const ids = rows.map(row => row.id);
     expect(new Set(ids).size).toBe(ids.length);
     expect(ids).toContain('202604260001_add_workspace_path_to_tasks');

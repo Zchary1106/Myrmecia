@@ -1,19 +1,19 @@
 import { Router } from 'express';
 import { intentClassifier } from '../agents/intent-classifier.js';
-import { MasterAgent } from '../agents/master-agent.js';
 import { guardrails } from '../agents/safety-guardrails.js';
 import { TaskQueue } from '../queue/task-queue.js';
 import { PipelineEngine } from '../pipelines/pipeline-engine.js';
-import { createTask, getTask, addTaskLog } from '../db/models/task.js';
-import { eventBus } from '../events/event-bus.js';
+import { Orchestrator, listOrchestrations, getOrchestration } from '../agents/orchestrator.js';
+import { getDb } from '../db/database.js';
+import { listTasks, getTask } from '../db/models/task.js';
 
 export function createSupervisorRoutes(taskQueue: TaskQueue, pipelineEngine: PipelineEngine): Router {
   const router = Router();
-  const masterAgent = new MasterAgent(taskQueue);
+  const orchestrator = new Orchestrator(taskQueue, pipelineEngine);
 
   /**
    * POST /api/supervisor/dispatch
-   * Supervisor mode: single input, auto-classifies and dispatches
+   * Unified orchestration entry: classify → orchestrate → dispatch
    */
   router.post('/dispatch', async (req, res) => {
     try {
@@ -29,62 +29,16 @@ export function createSupervisorRoutes(taskQueue: TaskQueue, pipelineEngine: Pip
       // 2. Classify intent
       const intent = await intentClassifier.classify(input);
 
-      // 3. Dispatch based on intent
-      let result: any;
+      // 3. Orchestrate (unified entry — handles trivial, pipeline, and complex)
+      const result = await orchestrator.plan(input, intent);
 
-      switch (intent.suggestedMode) {
-        case 'direct': {
-          const task = await taskQueue.enqueue({
-            title: input.slice(0, 80),
-            description: input,
-            mode: 'direct',
-            assigneeId: intent.suggestedAgent,
-            input,
-            priority: 'normal',
-          });
-          result = { mode: 'direct', task, intent };
-          break;
-        }
-
-        case 'pipeline': {
-          if (intent.suggestedTemplate) {
-            const pipeline = await pipelineEngine.create({
-              name: input.slice(0, 60),
-              templateId: intent.suggestedTemplate,
-              input,
-              gateMode: 'auto',
-            });
-            result = { mode: 'pipeline', pipeline, intent };
-          } else {
-            // No template found, fall back to master mode
-            const task = await taskQueue.enqueue({
-              title: input.slice(0, 80),
-              description: input,
-              mode: 'master',
-              input,
-              priority: 'normal',
-            });
-            await masterAgent.decompose(task);
-            result = { mode: 'master', task, intent };
-          }
-          break;
-        }
-
-        case 'master': {
-          const task = await taskQueue.enqueue({
-            title: input.slice(0, 80),
-            description: input,
-            mode: 'master',
-            input,
-            priority: 'normal',
-          });
-          await masterAgent.decompose(task);
-          result = { mode: 'master', task, intent };
-          break;
-        }
-      }
-
-      res.status(201).json(result);
+      res.status(201).json({
+        orchestrationId: result.orchestration.id,
+        mode: intent.suggestedMode,
+        intent,
+        orchestration: result.orchestration,
+        tasks: result.tasks,
+      });
     } catch (err: any) {
       res.status(500).json({ error: { code: 'DISPATCH_FAILED', message: err.message } });
     }
@@ -114,6 +68,66 @@ export function createSupervisorRoutes(taskQueue: TaskQueue, pipelineEngine: Pip
   router.patch('/guardrails', (req, res) => {
     guardrails.updateConfig(req.body);
     res.json({ config: guardrails.getConfig() });
+  });
+
+  // ==================== Orchestration API ====================
+
+  /** GET /api/orchestrations — list all orchestrations */
+  router.get('/orchestrations', (req, res) => {
+    const limit = Number(req.query.limit) || 50;
+    const offset = Number(req.query.offset) || 0;
+    const orchestrations = listOrchestrations(limit, offset);
+    res.json(orchestrations);
+  });
+
+  /** GET /api/orchestrations/:id — orchestration detail with tasks */
+  router.get('/orchestrations/:id', (req, res) => {
+    const orch = getOrchestration(req.params.id);
+    if (!orch) return res.status(404).json({ error: { message: 'Orchestration not found' } });
+
+    const tasks = orch.taskIds.map(id => getTask(id)).filter(Boolean);
+    res.json({ ...orch, tasks });
+  });
+
+  /** GET /api/orchestrations/:id/messages — agent messages for this orchestration */
+  router.get('/orchestrations/:id/messages', (req, res) => {
+    const orch = getOrchestration(req.params.id);
+    if (!orch) return res.status(404).json({ error: { message: 'Orchestration not found' } });
+
+    const db = getDb();
+    // Get all messages between executions of tasks in this orchestration
+    const taskIds = orch.taskIds;
+    if (taskIds.length === 0) return res.json([]);
+
+    const placeholders = taskIds.map(() => '?').join(',');
+    const messages = db.all(`
+      SELECT m.*, te.task_id, te.agent_def_id
+      FROM agent_messages m
+      JOIN task_executions te ON (m.from_execution = te.id OR m.to_execution = te.id)
+      WHERE te.task_id IN (${placeholders})
+      ORDER BY m.id ASC
+    `, ...taskIds);
+
+    res.json(messages);
+  });
+
+  /** GET /api/orchestrations/:id/timeline — timeline events */
+  router.get('/orchestrations/:id/timeline', (req, res) => {
+    const orch = getOrchestration(req.params.id);
+    if (!orch) return res.status(404).json({ error: { message: 'Orchestration not found' } });
+
+    const db = getDb();
+    const taskIds = orch.taskIds;
+    if (taskIds.length === 0) return res.json([]);
+
+    const placeholders = taskIds.map(() => '?').join(',');
+    const logs = db.all(`
+      SELECT * FROM task_logs
+      WHERE task_id IN (${placeholders})
+      ORDER BY created_at ASC
+    `, ...taskIds);
+
+    res.json(logs);
   });
 
   return router;

@@ -1,0 +1,50 @@
+# Parallel Feature Pipeline
+# Demonstrates parallel execution: UI and Tests run concurrently after PM spec
+
+name: parallel-feature
+description: Feature development with parallel UI design and test writing
+
+stages:
+  - name: Write Spec
+    role: product-manager
+    prompt_template: |
+      Write a detailed product specification for:
+      {input}
+
+      Include: user stories, acceptance criteria, technical constraints.
+
+  - name: Design UI
+    role: designer
+    depends_on: [0]
+    prompt_template: |
+      Based on the product spec, design the UI:
+      {input}
+
+      Include: component hierarchy, layout, interactions, responsive strategy.
+
+  - name: Write Tests
+    role: tester
+    depends_on: [0]
+    prompt_template: |
+      Based on the product spec, write test cases:
+      {input}
+
+      Include: unit tests, integration tests, edge cases, acceptance test scripts.
+
+  - name: Implement
+    role: developer
+    depends_on: [1, 2]
+    prompt_template: |
+      Implement the feature based on the UI design and test specifications:
+      {input}
+
+      Follow TDD: make the tests pass. Match the UI design exactly.
+
+  - name: Deploy
+    role: devops
+    depends_on: [3]
+    prompt_template: |
+      Deploy the implemented feature:
+      {input}
+
+      Include: build verification, staging deployment, smoke tests.

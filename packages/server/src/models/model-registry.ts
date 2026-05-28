@@ -184,9 +184,9 @@ function rowToRoute(row: any): ModelRoute {
 
 export function syncBuiltinModels(): void {
   const db = getDb();
-  const transaction = db.transaction(() => {
+  db.transaction(() => {
     for (const model of BUILTIN_MODELS) {
-      db.prepare(`
+      db.run(`
         INSERT INTO model_registry (
           id, provider, display_name, description, capability_tags, cost_profile,
           max_tokens, priority, fallback_group
@@ -202,7 +202,7 @@ export function syncBuiltinModels(): void {
           priority = excluded.priority,
           fallback_group = excluded.fallback_group,
           updated_at = CURRENT_TIMESTAMP
-      `).run(
+      `,
         model.id,
         PROVIDER,
         model.displayName,
@@ -216,14 +216,13 @@ export function syncBuiltinModels(): void {
     }
 
     for (const route of BUILTIN_ROUTES) {
-      db.prepare(`
+      db.run(`
         INSERT INTO model_routes (route_key, default_model_id, fallback_group)
         VALUES (?, ?, ?)
         ON CONFLICT(route_key) DO NOTHING
-      `).run(route.routeKey, route.defaultModelId || null, route.fallbackGroup);
+      `, route.routeKey, route.defaultModelId || null, route.fallbackGroup);
     }
   });
-  transaction();
 }
 
 export function listModels(filter?: { enabled?: boolean }): ModelDefinition[] {
@@ -235,11 +234,11 @@ export function listModels(filter?: { enabled?: boolean }): ModelDefinition[] {
     params.push(filter.enabled ? 1 : 0);
   }
   sql += ' ORDER BY enabled DESC, fallback_group ASC, priority DESC, display_name ASC';
-  return (db.prepare(sql).all(...params) as any[]).map(rowToModel);
+  return (db.all(sql, ...params) as any[]).map(rowToModel);
 }
 
 export function getModel(id: string): ModelDefinition | undefined {
-  const row = getDb().prepare('SELECT * FROM model_registry WHERE id = ?').get(id) as any;
+  const row = getDb().get('SELECT * FROM model_registry WHERE id = ?', id) as any;
   return row ? rowToModel(row) : undefined;
 }
 
@@ -252,44 +251,44 @@ export function updateModel(id: string, updates: Partial<Pick<ModelDefinition, '
   if (sets.length === 0) return getModel(id);
   sets.push('updated_at = CURRENT_TIMESTAMP');
   params.push(id);
-  getDb().prepare(`UPDATE model_registry SET ${sets.join(', ')} WHERE id = ?`).run(...params);
+  getDb().run(`UPDATE model_registry SET ${sets.join(', ')} WHERE id = ?`, ...params);
   return getModel(id);
 }
 
 export function listModelRoutes(): ModelRoute[] {
-  return (getDb().prepare('SELECT * FROM model_routes ORDER BY route_key ASC').all() as any[]).map(rowToRoute);
+  return (getDb().all('SELECT * FROM model_routes ORDER BY route_key ASC') as any[]).map(rowToRoute);
 }
 
 export function upsertModelRoute(data: { routeKey: string; defaultModelId?: string; fallbackGroup: string }): ModelRoute {
-  getDb().prepare(`
+  getDb().run(`
     INSERT INTO model_routes (route_key, default_model_id, fallback_group)
     VALUES (?, ?, ?)
     ON CONFLICT(route_key) DO UPDATE SET
       default_model_id = excluded.default_model_id,
       fallback_group = excluded.fallback_group,
       updated_at = CURRENT_TIMESTAMP
-  `).run(data.routeKey, data.defaultModelId || null, data.fallbackGroup);
+  `, data.routeKey, data.defaultModelId || null, data.fallbackGroup);
   return getModelRoute(data.routeKey)!;
 }
 
 export function getModelRoute(routeKey: string): ModelRoute | undefined {
-  const row = getDb().prepare('SELECT * FROM model_routes WHERE route_key = ?').get(routeKey) as any;
+  const row = getDb().get('SELECT * FROM model_routes WHERE route_key = ?', routeKey) as any;
   return row ? rowToRoute(row) : undefined;
 }
 
 function bestEnabledModel(fallbackGroup?: string): ModelDefinition | undefined {
   const db = getDb();
   const row = fallbackGroup
-    ? db.prepare(`
+    ? db.get(`
         SELECT * FROM model_registry
         WHERE enabled = 1 AND fallback_group = ?
         ORDER BY priority DESC LIMIT 1
-      `).get(fallbackGroup) as any
-    : db.prepare(`
+      `, fallbackGroup) as any
+    : db.get(`
         SELECT * FROM model_registry
         WHERE enabled = 1
         ORDER BY priority DESC LIMIT 1
-      `).get() as any;
+      `) as any;
   return row ? rowToModel(row) : undefined;
 }
 
@@ -368,15 +367,15 @@ export function recordModelHealth(data: {
   error?: string;
 }): ModelDefinition | undefined {
   const db = getDb();
-  db.prepare(`
+  db.run(`
     INSERT INTO model_health_checks (model_id, status, latency_ms, error)
     VALUES (?, ?, ?, ?)
-  `).run(data.modelId, data.status, data.latencyMs ?? null, data.error || null);
-  db.prepare(`
+  `, data.modelId, data.status, data.latencyMs ?? null, data.error || null);
+  db.run(`
     UPDATE model_registry
     SET health_status = ?, last_checked_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
-  `).run(data.status, data.modelId);
+  `, data.status, data.modelId);
   return getModel(data.modelId);
 }
 
@@ -393,13 +392,13 @@ export function recordModelUsage(data: {
   routeReason?: string;
 }): void {
   if (!getModel(data.modelId)) return;
-  getDb().prepare(`
+  getDb().run(`
     INSERT INTO model_usage_stats (
       model_id, task_id, execution_id, agent_id, status,
       input_tokens, output_tokens, cost_usd, latency_ms, route_reason
     )
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
+  `,
     data.modelId,
     data.taskId || null,
     data.executionId || null,

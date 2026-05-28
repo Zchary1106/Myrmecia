@@ -10,7 +10,8 @@
     }
   },
   "scripts": {
-    "build": "tsc"
+    "build": "tsc",
+    "lint": "tsc --noEmit"
   },
   "devDependencies": {
     "typescript": "^5.7.3"

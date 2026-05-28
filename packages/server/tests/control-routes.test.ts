@@ -172,10 +172,10 @@ describe('control routes', () => {
       input: 'run',
       mode: 'pipeline',
     });
-    getDb().prepare(`
+    getDb().run(`
       INSERT INTO quality_loop_attempts (id, task_id, iteration, status, review_output)
       VALUES (?, ?, ?, ?, ?)
-    `).run('ql-route-1', task.id, 1, 'approved', 'APPROVED');
+    `, 'ql-route-1', task.id, 1, 'approved', 'APPROVED');
     const app = express();
     app.use(express.json());
     app.use('/tasks', createTaskRoutes({} as unknown as TaskQueue));
@@ -280,9 +280,9 @@ describe('control routes', () => {
       expect(updated.status).toBe(200);
       expect(updated.body.description).toBe('Updated in builder');
 
-      const actions = getDb().prepare(`
+      const actions = getDb().all(`
         SELECT action, target_type FROM operator_actions ORDER BY id ASC
-      `).all() as any[];
+      `) as any[];
       expect(actions.map(action => action.action)).toEqual(['template.create', 'template.update']);
       expect(actions.every(action => action.target_type === 'template')).toBe(true);
     });
@@ -429,9 +429,9 @@ describe('control routes', () => {
       expect(executed.status).toBe(200);
       expect(executed.body.taskId).toBe(queuedTask.id);
 
-      const actions = getDb().prepare(`
+      const actions = getDb().all(`
         SELECT action, target_type, target_id, task_id FROM operator_actions ORDER BY id ASC
-      `).all() as any[];
+      `) as any[];
       expect(actions.map(action => action.action)).toEqual(['agent.create', 'agent.update', 'agent.execute']);
       expect(actions.every(action => action.target_type === 'agent')).toBe(true);
       expect(actions[2].task_id).toBe(queuedTask.id);
@@ -469,9 +469,9 @@ describe('control routes', () => {
       expect(permission.status).toBe(200);
       expect(permission.body.agentId).toBe(agent.id);
 
-      const actions = getDb().prepare(`
+      const actions = getDb().all(`
         SELECT action, target_type, target_id, metadata FROM operator_actions ORDER BY id ASC
-      `).all() as any[];
+      `) as any[];
       expect(actions.map(action => action.action)).toEqual(['tool.update', 'tool.permission.update']);
       expect(actions.every(action => action.target_type === 'tool')).toBe(true);
       expect(JSON.parse(actions[1].metadata).agentId).toBe(agent.id);
@@ -513,9 +513,9 @@ describe('control routes', () => {
       expect(route.status).toBe(200);
       expect(route.body.defaultModelId).toBe('openai/gpt-5.2-codex');
 
-      const actions = getDb().prepare(`
+      const actions = getDb().all(`
         SELECT action, target_type, target_id FROM operator_actions ORDER BY id ASC
-      `).all() as any[];
+      `) as any[];
       expect(actions.map(action => action.action)).toEqual(['model.update', 'model.route.update']);
       expect(actions.every(action => action.target_type === 'model')).toBe(true);
     });
@@ -565,9 +565,9 @@ describe('control routes', () => {
       expect(assigned.status).toBe(200);
       expect(assigned.body.skillVersionId).toBe(published.body.id);
 
-      const actions = getDb().prepare(`
+      const actions = getDb().all(`
         SELECT action, target_type, target_id FROM operator_actions ORDER BY id ASC
-      `).all() as any[];
+      `) as any[];
       expect(actions.map(action => action.action)).toEqual([
         'skill.create',
         'skill.version.create',
@@ -605,10 +605,10 @@ describe('control routes', () => {
       mode: 'direct',
     });
     updateTask(task.id, { status: 'failed', retryCount: 2, error: 'boom' });
-    getDb().prepare(`
+    getDb().run(`
       INSERT INTO platform_events (event_type, severity, task_id, payload)
       VALUES (?, ?, ?, ?)
-    `).run('task:failed', 'error', task.id, '{"error":"boom"}');
+    `, 'task:failed', 'error', task.id, '{"error":"boom"}');
 
     const app = express();
     app.use(express.json());
@@ -791,7 +791,7 @@ describe('control routes', () => {
     app.use('/', createSystemRoutes());
 
     await withApp(app, async (baseUrl) => {
-      const before = getDb().prepare('SELECT COUNT(*) AS count FROM tasks').get() as any;
+      const before = getDb().get('SELECT COUNT(*) AS count FROM tasks') as any;
       const snapshot = {
         version: 1,
         generatedAt: new Date().toISOString(),
@@ -854,9 +854,9 @@ describe('control routes', () => {
         }),
       ]));
 
-      const after = getDb().prepare('SELECT COUNT(*) AS count FROM tasks').get() as any;
+      const after = getDb().get('SELECT COUNT(*) AS count FROM tasks') as any;
       expect(after.count).toBe(before.count);
-      expect(getDb().prepare('SELECT id FROM tasks WHERE id = ?').get('task_import_new')).toBeUndefined();
+      expect(getDb().get('SELECT id FROM tasks WHERE id = ?', 'task_import_new')).toBeUndefined();
     });
   });
 
@@ -932,20 +932,20 @@ describe('control routes', () => {
       expect(restored.body.failed).toBe(0);
       expect(restored.body.auditActionId).toBeGreaterThan(0);
 
-      const storedPreference = getDb().prepare(`
+      const storedPreference = getDb().get(`
         SELECT value FROM operator_preferences
         WHERE actor_id = ? AND actor_role = ? AND actor_source = ? AND namespace = ? AND key = ?
-      `).get('viewer1', 'viewer', 'proxy', 'savedViews', 'work-queue') as any;
+      `, 'viewer1', 'viewer', 'proxy', 'savedViews', 'work-queue') as any;
       expect(JSON.parse(storedPreference.value)[0].name).toBe('Imported');
 
-      const skippedSecret = getDb().prepare(`
+      const skippedSecret = getDb().get(`
         SELECT value FROM operator_preferences
         WHERE actor_id = ? AND actor_role = ? AND actor_source = ? AND namespace = ? AND key = ?
-      `).get('viewer1', 'viewer', 'proxy', 'secrets', 'token');
+      `, 'viewer1', 'viewer', 'proxy', 'secrets', 'token');
       expect(skippedSecret).toBeUndefined();
 
-      expect(getDb().prepare('SELECT id FROM tasks WHERE id = ?').get(existing.id)).toBeTruthy();
-      expect(getDb().prepare('SELECT id FROM tasks WHERE id = ?').get('task_should_not_restore')).toBeUndefined();
+      expect(getDb().get('SELECT id FROM tasks WHERE id = ?', existing.id)).toBeTruthy();
+      expect(getDb().get('SELECT id FROM tasks WHERE id = ?', 'task_should_not_restore')).toBeUndefined();
 
       const audit = await jsonFetch<any[]>(baseUrl, '/operator-actions?action=workspace.restore.preferences', {
         headers: { 'x-operator-id': 'viewer1', 'x-operator-role': 'viewer' },
@@ -978,7 +978,7 @@ describe('control routes', () => {
       expect(result.body.error.code).toBe('OPERATOR_FORBIDDEN');
       expect(result.body.error.details.actor).toMatchObject({ id: 'viewer1', role: 'viewer', source: 'proxy' });
       expect(cancelTask).not.toHaveBeenCalled();
-      const actions = getDb().prepare('SELECT COUNT(*) AS count FROM operator_actions').get() as any;
+      const actions = getDb().get('SELECT COUNT(*) AS count FROM operator_actions') as any;
       expect(actions.count).toBe(0);
     });
   });
@@ -1015,7 +1015,7 @@ describe('control routes', () => {
       });
       expect(deleted.status).toBe(403);
       expect(deleted.body.error.code).toBe('OPERATOR_FORBIDDEN');
-      expect(getDb().prepare('SELECT id FROM tasks WHERE id = ?').get(task.id)).toBeTruthy();
+      expect(getDb().get('SELECT id FROM tasks WHERE id = ?', task.id)).toBeTruthy();
     });
   });
 
@@ -1059,7 +1059,7 @@ describe('control routes', () => {
       });
       expect(result.status).toBe(403);
       expect(result.body.error.code).toBe('OPERATOR_FORBIDDEN');
-      const stored = getDb().prepare('SELECT status FROM inbox_entries WHERE id = ?').get(entry.id) as any;
+      const stored = getDb().get('SELECT status FROM inbox_entries WHERE id = ?', entry.id) as any;
       expect(stored.status).toBe('pending');
     });
   });
