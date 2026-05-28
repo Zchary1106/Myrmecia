@@ -83,6 +83,36 @@ export interface SkillDetail extends SkillDefinition {
   assignments: SkillAssignment[];
 }
 
+export interface SkillStepValidation {
+  /** Shell command to run. Supports ${workdir}, ${output}, ${stepName} variables */
+  command: string;
+  /** Message shown on validation failure */
+  failMessage?: string;
+}
+
+export interface SkillStep {
+  name: string;
+  instruction: string;
+  tools?: string[];
+  maxTurns?: number;
+  maxRetries?: number;
+  validation?: SkillStepValidation;
+}
+
+export interface SkillExecutorConfig {
+  executor: 'step-driven';
+  trigger?: {
+    keywords?: string[];
+    taskModes?: string[];
+    agentRoles?: string[];
+  };
+  steps: SkillStep[];
+  recovery?: {
+    onStepFailure?: 'retry_then_skip' | 'retry_then_fail' | 'skip' | 'fail';
+    maxTotalRetries?: number;
+  };
+}
+
 export type TaskMode = 'master' | 'direct' | 'pipeline';
 export type TaskStatus = 'pending' | 'queued' | 'assigned' | 'running' | 'review' | 'done' | 'failed' | 'cancelled';
 export type Priority = 'low' | 'normal' | 'high' | 'urgent';
