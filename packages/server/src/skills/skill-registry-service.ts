@@ -182,7 +182,7 @@ export async function syncSource(sourceId: string): Promise<{ added: number; upd
 
 // ─── Import ──────────────────────────────────────────────────────────────────
 
-export async function importSkill(catalogId: string): Promise<{ skillId: string; versionId: string }> {
+export async function importSkill(catalogId: string, options?: { transform?: boolean }): Promise<{ skillId: string; versionId: string }> {
   const entry = getDb().get('SELECT * FROM skill_registry_catalog WHERE id = ?', catalogId) as any;
   if (!entry) throw new Error(`Catalog entry ${catalogId} not found`);
 
@@ -191,7 +191,13 @@ export async function importSkill(catalogId: string): Promise<{ skillId: string;
 
   // Fetch latest content
   const downloadUrl = buildDownloadUrl(source, entry.path);
-  const content = await fetchFileContent(downloadUrl, source.authToken);
+  let content = await fetchFileContent(downloadUrl, source.authToken);
+
+  // Optionally transform plain markdown into step-driven format via LLM
+  const parsed = parseSkillContent(content);
+  if (options?.transform && !parsed.isStructured) {
+    content = await transformToStructured(content, entry.name);
+  }
 
   // Create local skill
   const skillId = entry.path.replace(/\.md$/, '').replace(/[/\\]/g, '-');
@@ -301,6 +307,51 @@ function extractTags(content: string, parsed: ReturnType<typeof parseSkillConten
   return [...new Set(tags)].slice(0, 8);
 }
 
+// ─── LLM Transform ───────────────────────────────────────────────────────────
+
+async function transformToStructured(content: string, skillName: string): Promise<string> {
+  try {
+    const OpenAI = (await import('openai')).default;
+    const client = new OpenAI({
+      baseURL: process.env.CREWAI_BASE_URL || 'https://your-model-endpoint.example.com/v1',
+      apiKey: process.env.CREWAI_API_KEY || process.env.ANTHROPIC_API_KEY || '',
+    });
+
+    const prompt = `You are a skill format converter. Given a markdown skill definition, generate YAML frontmatter that converts it into a step-driven executor format.
+
+## Input Skill:
+${content.slice(0, 3000)}
+
+## Instructions:
+1. Analyze the skill's purpose and workflow
+2. Break it into 2-5 logical steps
+3. For each step, define: name, instruction, tools (from: file_read, file_write, shell_exec, grep), maxTurns, and validation command
+4. Output ONLY the complete file: YAML frontmatter (---...---) followed by the original markdown content
+5. The validation commands should be simple shell checks (test -n, grep, exit codes)
+
+Output the complete converted skill file:`;
+
+    const response = await client.chat.completions.create({
+      model: process.env.CREWAI_MODEL || 'openai/gpt-4o-mini',
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0.2,
+      max_tokens: 4096,
+    });
+
+    const result = response.choices[0]?.message?.content || '';
+    // Validate it parses correctly
+    const parsed = parseSkillContent(result);
+    if (parsed.isStructured) return result;
+
+    // If LLM output doesn't parse, return original
+    logger.warn({ skillName }, 'LLM transform did not produce valid structured skill, using original');
+    return content;
+  } catch (err: any) {
+    logger.warn({ skillName, err: err.message }, 'LLM transform failed, using original content');
+    return content;
+  }
+}
+
 // ─── Default Sources Seeding ─────────────────────────────────────────────────
 
 export function seedDefaultSources(): void {
@@ -315,4 +366,31 @@ export function seedDefaultSources(): void {
     branch: 'main',
     pathPrefix: 'superpowers/skills',
   });
+}
+
+// ─── Auto-Sync Scheduler ─────────────────────────────────────────────────────
+
+const SYNC_INTERVAL_MS = 6 * 60 * 60 * 1000; // every 6 hours
+let autoSyncTimer: ReturnType<typeof setInterval> | null = null;
+
+export function startAutoSync(): void {
+  if (autoSyncTimer) return;
+  autoSyncTimer = setInterval(async () => {
+    const sources = listSources().filter(s => s.enabled);
+    for (const source of sources) {
+      try {
+        const result = await syncSource(source.id);
+        if (result.added > 0 || result.updated > 0) {
+          logger.info({ sourceId: source.id, ...result }, 'Auto-synced skill registry source');
+        }
+      } catch (err: any) {
+        logger.warn({ sourceId: source.id, err: err.message }, 'Auto-sync failed for source');
+      }
+    }
+  }, SYNC_INTERVAL_MS);
+  autoSyncTimer.unref();
+}
+
+export function stopAutoSync(): void {
+  if (autoSyncTimer) { clearInterval(autoSyncTimer); autoSyncTimer = null; }
 }
