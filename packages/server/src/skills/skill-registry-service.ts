@@ -140,17 +140,18 @@ export async function syncSource(sourceId: string): Promise<{ added: number; upd
   let added = 0, updated = 0;
   const now = new Date().toISOString();
 
-  for (const file of files) {
-    try {
+  // Process files in parallel batches (concurrency = 5)
+  const BATCH_SIZE = 5;
+  for (let i = 0; i < files.length; i += BATCH_SIZE) {
+    const batch = files.slice(i, i + BATCH_SIZE);
+    const results = await Promise.allSettled(batch.map(async (file) => {
       const content = await fetchFileContent(file.downloadUrl, source.authToken);
       const hash = createHash('sha256').update(content).digest('hex').slice(0, 16);
       const catalogId = `${sourceId}:${file.path}`;
 
-      // Check if already exists with same hash
       const existing = getDb().get('SELECT content_hash FROM skill_registry_catalog WHERE id = ?', catalogId) as any;
-      if (existing?.content_hash === hash) continue;
+      if (existing?.content_hash === hash) return 'unchanged' as const;
 
-      // Parse to extract metadata
       const parsed = parseSkillContent(content);
       const nameFromContent = extractTitle(content, file.path);
       const description = extractDescription(content);
@@ -168,9 +169,16 @@ export async function syncSource(sourceId: string): Promise<{ added: number; upd
           last_synced_at = excluded.last_synced_at
       `, catalogId, sourceId, nameFromContent, description, file.path, hash, JSON.stringify(tags), parsed.isStructured ? 1 : 0, now);
 
-      if (existing) updated++; else added++;
-    } catch (err: any) {
-      logger.warn({ path: file.path, err: err.message }, 'Failed to sync skill file');
+      return existing ? 'updated' as const : 'added' as const;
+    }));
+
+    for (const r of results) {
+      if (r.status === 'fulfilled') {
+        if (r.value === 'added') added++;
+        else if (r.value === 'updated') updated++;
+      } else {
+        logger.warn({ err: r.reason?.message }, 'Failed to sync skill file');
+      }
     }
   }
 

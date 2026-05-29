@@ -1,25 +1,27 @@
-import { useEffect } from 'react';
+import { lazy, Suspense, useEffect } from 'react';
 import { useStore } from '../../stores/store';
 import type { DashboardView } from '../../stores/store';
 import { useWebSocket } from '../../hooks/useWebSocket';
 import { AgentChatPanel } from '../agents/AgentChatPanel';
 import { CommandCenter } from '../common/CommandCenter';
-import { OrchestratorView } from '../orchestrator/OrchestratorView';
-import { OrchestrationBoard } from '../orchestrator/OrchestrationBoard';
-import { ExecutionTimeline } from '../timeline/ExecutionTimeline';
-import { InboxView } from '../inbox/InboxView';
-import { ObservabilityView } from '../observability/ObservabilityView';
-import { AuditView } from '../audit/AuditView';
-import { SettingsView } from '../settings/SettingsView';
 import { CommandBar } from '../common/CommandBar';
-import { TasksPage } from '../../pages/Tasks';
-import { CostDashboardPage } from '../../pages/CostDashboard';
-import { AgentsPage } from '../../pages/Agents';
-import { ToolsPage } from '../../pages/Tools';
-import { ModelsPage } from '../../pages/Models';
-import { SkillsPage } from '../../pages/Skills';
 import { cn } from '../../lib/utils';
 import { operatorRoleLabel, runtimeControlsAllowed } from '../../lib/permissions';
+
+// Lazy-loaded page components for code splitting
+const OrchestratorView = lazy(() => import('../orchestrator/OrchestratorView').then(m => ({ default: m.OrchestratorView })));
+const OrchestrationBoard = lazy(() => import('../orchestrator/OrchestrationBoard').then(m => ({ default: m.OrchestrationBoard })));
+const ExecutionTimeline = lazy(() => import('../timeline/ExecutionTimeline').then(m => ({ default: m.ExecutionTimeline })));
+const InboxView = lazy(() => import('../inbox/InboxView').then(m => ({ default: m.InboxView })));
+const ObservabilityView = lazy(() => import('../observability/ObservabilityView').then(m => ({ default: m.ObservabilityView })));
+const AuditView = lazy(() => import('../audit/AuditView').then(m => ({ default: m.AuditView })));
+const SettingsView = lazy(() => import('../settings/SettingsView').then(m => ({ default: m.SettingsView })));
+const TasksPage = lazy(() => import('../../pages/Tasks').then(m => ({ default: m.TasksPage })));
+const CostDashboardPage = lazy(() => import('../../pages/CostDashboard').then(m => ({ default: m.CostDashboardPage })));
+const AgentsPage = lazy(() => import('../../pages/Agents').then(m => ({ default: m.AgentsPage })));
+const ToolsPage = lazy(() => import('../../pages/Tools').then(m => ({ default: m.ToolsPage })));
+const ModelsPage = lazy(() => import('../../pages/Models').then(m => ({ default: m.ModelsPage })));
+const SkillsPage = lazy(() => import('../../pages/Skills').then(m => ({ default: m.SkillsPage })));
 
 function agentDotColor(agent: any): string {
   const active = agent.activeExecutions || 0;
@@ -166,7 +168,8 @@ function ViewToggle() {
 function MainContent() {
   const { activeView } = useStore();
 
-  switch (activeView) {
+  const content = (() => {
+    switch (activeView) {
     case 'command':
       return <CommandCenter />;
     case 'agents':
@@ -198,6 +201,13 @@ function MainContent() {
     default:
       return null;
   }
+  })();
+
+  return (
+    <Suspense fallback={<div className="flex items-center justify-center h-full"><div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" /></div>}>
+      {content}
+    </Suspense>
+  );
 }
 
 export function Layout() {
