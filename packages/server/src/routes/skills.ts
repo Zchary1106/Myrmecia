@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { getDb } from '../db/database.js';
 import { getAgent } from '../db/models/agent.js';
 import { createOperatorAction } from '../db/models/operator-action.js';
 import {
@@ -268,6 +269,33 @@ export function createSkillRoutes(): Router {
       });
 
       res.json(version);
+    } catch (err) {
+      sendError(res, err);
+    }
+  });
+
+  /** GET /skills/stats — skill execution statistics */
+  router.get('/stats', (_req, res) => {
+    try {
+      const db = getDb();
+      const stats = db.all(`
+        SELECT
+          s.id as skill_id,
+          s.name as skill_name,
+          COUNT(te.id) as total_executions,
+          SUM(CASE WHEN te.status = 'done' THEN 1 ELSE 0 END) as successes,
+          SUM(CASE WHEN te.status = 'failed' THEN 1 ELSE 0 END) as failures,
+          ROUND(AVG(CASE WHEN te.status = 'done' THEN
+            (julianday(te.completed_at) - julianday(te.started_at)) * 86400000
+          END)) as avg_duration_ms,
+          ROUND(SUM(te.cost_usd), 4) as total_cost_usd
+        FROM skills s
+        JOIN skill_versions sv ON sv.skill_id = s.id
+        JOIN task_executions te ON te.skill_version_id = sv.id
+        GROUP BY s.id, s.name
+        ORDER BY total_executions DESC
+      `);
+      res.json(stats);
     } catch (err) {
       sendError(res, err);
     }
