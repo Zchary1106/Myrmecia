@@ -1,0 +1,36 @@
+name: Release Compliance
+description: Release gate workflow using QA reports, security audit, GitOps review, and dependency/license checks
+stages:
+  - name: Issue Refinement
+    role: issue-refiner
+    prompt_template: |
+      Refine this release or change request into acceptance criteria and validation requirements:
+      {input}
+
+  - name: QA Report
+    role: qa-automation
+    depends_on: [0]
+    prompt_template: |
+      Produce or review the standardized test-report for:
+      {input}
+
+  - name: Security Audit
+    role: security-reviewer
+    depends_on: [0]
+    prompt_template: |
+      Review the release for blocking security, DLP, sandbox, auth, and tenant-isolation issues:
+      {input}
+
+  - name: GitOps Review
+    role: gitops
+    depends_on: [0]
+    prompt_template: |
+      Review GitHub Actions, secrets, dependency pinning, Docker/runtime readiness, rollback, and smoke tests:
+      {input}
+
+  - name: Release Gate
+    role: release-compliance
+    depends_on: [1, 2, 3]
+    prompt_template: |
+      Decide whether this release passes, warns, or blocks based on QA, security audit, GitOps, and dependency/license findings:
+      {input}

@@ -10,6 +10,7 @@ import type { TaskQueue } from '../queue/task-queue.js';
 import { createOperatorAction } from '../db/models/operator-action.js';
 import { eventBus } from '../events/event-bus.js';
 import { HttpError, notFound, parseBody, requireOperatorRole, sendError } from './http.js';
+import { workspaceIdFromRequest } from '../auth/tenant.js';
 
 const prioritySchema = z.enum(['low', 'normal', 'high', 'urgent']);
 const stringListSchema = z.array(z.string().trim().min(1));
@@ -146,6 +147,7 @@ export function createAgentRoutes(taskQueue?: TaskQueue): Router {
       const actor = requireOperatorRole(req, 'agent.execute', ['admin', 'operator']);
 
       const { prompt, workdir, priority, parentExecutionId } = parseBody(executeAgentSchema, req);
+      const workspaceId = workspaceIdFromRequest(req);
 
       // Check concurrency limit
       const activeCount = getActiveExecutionCount(agent.id);
@@ -167,6 +169,7 @@ export function createAgentRoutes(taskQueue?: TaskQueue): Router {
               input: prompt,
               parentTaskId: parentExecutionId,
               workdir,
+              workspaceId,
             })
           : Promise.resolve(createTask({
               title: prompt.slice(0, 80),
@@ -176,6 +179,7 @@ export function createAgentRoutes(taskQueue?: TaskQueue): Router {
               assigneeId: agent.id,
               input: prompt,
               workdir,
+              workspaceId,
               createdBy: 'user',
             }))
         );
@@ -198,7 +202,8 @@ export function createAgentRoutes(taskQueue?: TaskQueue): Router {
             priority: priority || 'normal',
             assigneeId: agent.id,
             input: prompt,
-              workdir,
+            workdir,
+            workspaceId,
           });
           taskId = task.id;
         } else {
@@ -211,9 +216,10 @@ export function createAgentRoutes(taskQueue?: TaskQueue): Router {
             assigneeId: agent.id,
             input: prompt,
             workdir,
+            workspaceId,
             createdBy: 'user',
           });
-          forkExecutor.spawn(agent.id, prompt, { workdir, priority }).catch(err => {
+          forkExecutor.spawn(agent.id, prompt, { workdir, priority, workspaceId }).catch(err => {
             console.error(`[execute] Spawn failed for ${agent.id}:`, err.message);
           });
           taskId = task.id;
@@ -239,6 +245,7 @@ export function createAgentRoutes(taskQueue?: TaskQueue): Router {
     const executions = listExecutions({
       agentDefId: req.params.id,
       status: status as any,
+      workspaceId: workspaceIdFromRequest(req),
       limit: limit ? Number(limit) : 20,
     });
     res.json(executions);

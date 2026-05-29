@@ -9,20 +9,59 @@ Usage:
     python crew_runner.py '{"agentId":"pm","prompt":"say hello","systemPrompt":"..."}'
 """
 import json
+import os
 import sys
 import time
 import traceback
-
-# Ensure this directory is on the path for local imports
-sys.path.insert(0, __import__("os").path.dirname(__file__))
-
-from crewai import Task, Crew
-from agents import build_agent
 
 
 def emit(event: dict):
     """Write a JSON event line to stdout (for Node.js parser)."""
     print(json.dumps(event, ensure_ascii=False), flush=True)
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        value = int(os.getenv(name, ""))
+        return value if value > 0 else default
+    except ValueError:
+        return default
+
+
+def apply_resource_limits():
+    """Apply best-effort POSIX resource limits before importing CrewAI."""
+    if os.name != "posix":
+        return
+    try:
+        import resource
+
+        cpu_seconds = _env_int("AGENT_FACTORY_CPU_TIME_SEC", 300)
+        memory_mb = _env_int("AGENT_FACTORY_MEMORY_MB", 2048)
+
+        resource.setrlimit(resource.RLIMIT_CPU, (cpu_seconds, cpu_seconds + 5))
+        memory_bytes = memory_mb * 1024 * 1024
+        resource.setrlimit(resource.RLIMIT_AS, (memory_bytes, memory_bytes))
+        resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+        if hasattr(resource, "RLIMIT_FSIZE"):
+            resource.setrlimit(resource.RLIMIT_FSIZE, (64 * 1024 * 1024, 64 * 1024 * 1024))
+    except Exception as exc:
+        print(f"[crew_runner] resource limit warning: {exc}", file=sys.stderr, flush=True)
+
+
+def enforce_output_limit(output: str) -> str:
+    max_chars = _env_int("AGENT_FACTORY_MAX_OUTPUT_CHARS", 120_000)
+    if len(output) > max_chars:
+        raise RuntimeError(f"CrewAI output exceeded max length ({len(output)}/{max_chars} chars)")
+    return output
+
+
+apply_resource_limits()
+
+# Ensure this directory is on the path for local imports
+sys.path.insert(0, os.path.dirname(__file__))
+
+from crewai import Task, Crew
+from agents import build_agent
 
 
 def main():
@@ -79,7 +118,7 @@ def main():
         result = crew.kickoff()
 
         duration_ms = int((time.time() - start_time) * 1000)
-        output = str(result)
+        output = enforce_output_limit(str(result))
 
         # Emit assistant message with result
         emit({

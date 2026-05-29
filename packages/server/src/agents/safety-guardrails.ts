@@ -67,6 +67,9 @@ class SafetyGuardrails {
     if (operation === 'force_push' && !this.config.canModifyGitHistory) {
       return { allowed: false, reason: 'Git history modification is disabled.' };
     }
+    if (operation === 'network_access' && !this.config.canAccessNetwork) {
+      return { allowed: false, reason: 'Network access is disabled.' };
+    }
 
     return { allowed: true };
   }

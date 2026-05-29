@@ -11,6 +11,7 @@ import { v4 as uuid } from 'uuid';
 import { createHash, randomBytes } from 'crypto';
 import { Router } from 'express';
 import { logger } from '../lib/logger.js';
+import { requestCanAccessWorkspace, workspaceIdFromRequest } from './tenant.js';
 
 // ---------- Schema ----------
 
@@ -168,58 +169,66 @@ export function createApiKeyRoutes(): Router {
 
   router.post('/', (req, res) => {
     try {
-      const workspaceId = (req as any).workspaceId || req.body.workspaceId || 'default';
+      const workspaceId = workspaceIdFromRequest(req) || req.body.workspaceId || 'default';
+      if (!requestCanAccessWorkspace(req, workspaceId)) {
+        res.status(403).json({ error: { code: 'WORKSPACE_FORBIDDEN', message: 'Workspace access denied' } });
+        return;
+      }
       const { name, scopes, expiresAt } = req.body;
       if (!name) {
-        res.status(400).json({ error: 'name is required' });
+        res.status(400).json({ error: { code: 'VALIDATION_FAILED', message: 'name is required' } });
         return;
       }
       const key = createApiKey({ workspaceId, name, scopes, expiresAt });
       res.status(201).json(key);
     } catch (err: any) {
       logger.error({ err }, 'Failed to create API key');
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ error: { code: 'INTERNAL', message: err.message } });
     }
   });
 
   router.get('/', (req, res) => {
     try {
-      const workspaceId = (req as any).workspaceId || (req.query.workspaceId as string) || 'default';
+      const workspaceId = workspaceIdFromRequest(req) || (req.query.workspaceId as string) || 'default';
+      if (!requestCanAccessWorkspace(req, workspaceId)) {
+        res.status(403).json({ error: { code: 'WORKSPACE_FORBIDDEN', message: 'Workspace access denied' } });
+        return;
+      }
       const keys = listApiKeys(workspaceId);
       res.json(keys);
     } catch (err: any) {
       logger.error({ err }, 'Failed to list API keys');
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ error: { code: 'INTERNAL', message: err.message } });
     }
   });
 
   router.delete('/:id', (req, res) => {
     try {
-      const workspaceId = (req as any).workspaceId || 'default';
+      const workspaceId = workspaceIdFromRequest(req) || 'default';
       const revoked = revokeApiKey(req.params.id, workspaceId);
       if (!revoked) {
-        res.status(404).json({ error: 'API key not found or already revoked' });
+        res.status(404).json({ error: { code: 'API_KEY_NOT_FOUND', message: 'API key not found or already revoked' } });
         return;
       }
       res.json({ ok: true });
     } catch (err: any) {
       logger.error({ err }, 'Failed to revoke API key');
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ error: { code: 'INTERNAL', message: err.message } });
     }
   });
 
   router.post('/:id/rotate', (req, res) => {
     try {
-      const workspaceId = (req as any).workspaceId || 'default';
+      const workspaceId = workspaceIdFromRequest(req) || 'default';
       const key = rotateApiKey(req.params.id, workspaceId);
       if (!key) {
-        res.status(404).json({ error: 'API key not found or already revoked' });
+        res.status(404).json({ error: { code: 'API_KEY_NOT_FOUND', message: 'API key not found or already revoked' } });
         return;
       }
       res.json(key);
     } catch (err: any) {
       logger.error({ err }, 'Failed to rotate API key');
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ error: { code: 'INTERNAL', message: err.message } });
     }
   });
 

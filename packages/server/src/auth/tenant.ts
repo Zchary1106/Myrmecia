@@ -172,30 +172,53 @@ export function requireRole(minRole: Role): RequestHandler {
  * For development, it uses X-Workspace-Id and X-User-Id headers.
  */
 export function tenantMiddleware(): RequestHandler {
-  return (req, _res, next) => {
-    // Development mode: headers-based
-    const userId = req.headers['x-user-id'] as string;
-    const workspaceId = req.headers['x-workspace-id'] as string;
+  return (req, res, next) => {
+    const authContext = (req as any).authContext as { kind?: string; userId?: string; workspaceId?: string; scopes?: string[] } | undefined;
+    const userId = req.header('x-user-id') || authContext?.userId || 'local-admin';
+    const requestedWorkspaceId = req.header('x-workspace-id') || authContext?.workspaceId || 'default';
 
-    if (userId && workspaceId) {
+    if (authContext?.kind === 'api-key' && authContext.workspaceId !== requestedWorkspaceId) {
+      return res.status(403).json({
+        error: {
+          code: 'WORKSPACE_FORBIDDEN',
+          message: 'API key is not authorized for the requested workspace',
+        },
+      });
+    }
+
+    if (userId && requestedWorkspaceId) {
       const db = getDb();
       const membership = db.get(
         'SELECT wm.role, w.org_id FROM workspace_memberships wm JOIN workspaces w ON w.id = wm.workspace_id WHERE wm.user_id = ? AND wm.workspace_id = ?',
-        userId, workspaceId
+        userId, requestedWorkspaceId
       ) as { role: Role; org_id: string } | undefined;
 
       if (membership) {
         (req as any).tenantContext = {
           userId,
-          workspaceId,
+          workspaceId: requestedWorkspaceId,
           orgId: membership.org_id,
           role: membership.role,
+        } as TenantContext;
+      } else if (authContext) {
+        (req as any).tenantContext = {
+          userId,
+          workspaceId: requestedWorkspaceId,
+          orgId: 'default',
+          role: roleFromScopes(authContext.scopes || []),
         } as TenantContext;
       }
     }
 
     next();
   };
+}
+
+function roleFromScopes(scopes: string[]): Role {
+  const normalized = scopes.map(scope => scope.toLowerCase());
+  if (normalized.some(scope => scope === 'admin' || scope === '*' || scope.endsWith(':admin'))) return 'admin';
+  if (normalized.some(scope => scope.includes(':write') || scope.startsWith('write:'))) return 'operator';
+  return 'viewer';
 }
 
 /**
@@ -206,4 +229,16 @@ export function workspaceFilter(req: any): { condition: string; param: string } 
   const ctx = (req as any).tenantContext as TenantContext | undefined;
   if (!ctx) return null;
   return { condition: 'workspace_id = ?', param: ctx.workspaceId };
+}
+
+export function workspaceIdFromRequest(req: any): string | undefined {
+  return (req as any).tenantContext?.workspaceId
+    || (req as any).authContext?.workspaceId
+    || undefined;
+}
+
+export function requestCanAccessWorkspace(req: any, workspaceId?: string | null): boolean {
+  const requestWorkspaceId = workspaceIdFromRequest(req);
+  if (!requestWorkspaceId) return true;
+  return (workspaceId || 'default') === requestWorkspaceId;
 }

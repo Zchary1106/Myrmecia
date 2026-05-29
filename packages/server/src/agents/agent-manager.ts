@@ -23,6 +23,16 @@ export class AgentManager {
         const existing = getAgent(def.id);
         const allowedTools = def.allowedTools || def.allowed_tools || [];
         const disallowedTools = def.disallowedTools || def.disallowed_tools || [];
+        const modelPolicy = def.model ? {
+          tier: def.model.tier,
+          preferredModel: def.model.model,
+          fallbackModel: def.model.fallbackModel,
+          maxTokens: def.model.maxTokens,
+          maxResponseTokens: def.model.maxResponseTokens,
+          maxToolCalls: def.model.maxToolCalls,
+          maxWallClockMs: def.model.maxWallClockMs,
+          escalateOn: def.model.escalateOn,
+        } : undefined;
         if (!existing) {
           createAgent({
             id: def.id,
@@ -40,6 +50,7 @@ export class AgentManager {
             maxTurns: 50,
             config: {
               model: def.model?.model,
+              modelPolicy,
               maxConcurrent: 1,
               timeout: 300,
               maxTurns: 50,
@@ -60,6 +71,7 @@ export class AgentManager {
             config: {
               ...existing.config,
               model: def.model?.model || existing.config.model,
+              modelPolicy: modelPolicy || existing.config.modelPolicy,
               allowedTools,
             },
           });

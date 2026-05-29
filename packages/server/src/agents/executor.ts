@@ -92,11 +92,14 @@ class DockerExecutor implements Executor {
       // Resource limits
       ...(limits.cpus ? ['--cpus', String(limits.cpus)] : ['--cpus', '2']),
       ...(limits.memoryMB ? ['--memory', `${limits.memoryMB}m`] : ['--memory', '2048m']),
+      '--pids-limit', '256',
       // Network isolation
       ...(limits.network === 'none' ? ['--network', 'none'] : []),
       ...(limits.network === 'bridge' ? ['--network', 'bridge'] : []),
       // Security
       '--security-opt', 'no-new-privileges',
+      ...(process.env.AGENT_DOCKER_APPARMOR_PROFILE ? ['--security-opt', `apparmor=${process.env.AGENT_DOCKER_APPARMOR_PROFILE}`] : []),
+      ...(process.env.AGENT_DOCKER_SECCOMP_PROFILE ? ['--security-opt', `seccomp=${process.env.AGENT_DOCKER_SECCOMP_PROFILE}`] : []),
       '--cap-drop', 'ALL',
       ...(limits.readonlyFs ? ['--read-only', '--tmpfs', '/tmp'] : []),
       // Working directory mount
@@ -133,18 +136,42 @@ class DockerExecutor implements Executor {
 
 let executor: Executor | undefined;
 
+function isProductionRuntime(): boolean {
+  return process.env.NODE_ENV === 'production';
+}
+
+function localExecutorAllowedInProduction(): boolean {
+  return ['1', 'true', 'yes'].includes((process.env.ALLOW_LOCAL_EXECUTOR_IN_PRODUCTION || '').toLowerCase());
+}
+
 export function getExecutor(): Executor {
   if (!executor) {
     const mode = process.env.EXECUTOR_MODE || 'local';
     if (mode === 'docker') {
       executor = new DockerExecutor();
       logger.info('Using Docker executor (container isolation enabled)');
-    } else {
+    } else if (mode === 'local') {
+      if (isProductionRuntime() && !localExecutorAllowedInProduction()) {
+        throw new Error(
+          'Local executor is not allowed in production because agent subprocesses would run with host privileges. ' +
+          'Set EXECUTOR_MODE=docker or explicitly set ALLOW_LOCAL_EXECUTOR_IN_PRODUCTION=true for a controlled exception.',
+        );
+      }
       executor = new LocalExecutor();
-      logger.info('Using local executor (no isolation)');
+      if (isProductionRuntime()) {
+        logger.warn('Using local executor in production because ALLOW_LOCAL_EXECUTOR_IN_PRODUCTION=true');
+      } else {
+        logger.info('Using local executor (runner resource limits enabled; set EXECUTOR_MODE=docker for container isolation)');
+      }
+    } else {
+      throw new Error(`Unsupported EXECUTOR_MODE "${mode}". Use "docker" or "local".`);
     }
   }
   return executor;
+}
+
+export function resetExecutorForTests(): void {
+  executor = undefined;
 }
 
 /** Default resource limits for agent execution */

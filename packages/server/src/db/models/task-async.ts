@@ -17,6 +17,7 @@ function rowToTask(row: any): Task {
     pipelineId: row.pipeline_id,
     stageIndex: row.stage_index,
     workspacePath: row.workspace_path,
+    workspaceId: row.workspace_id || 'default',
     retryCount: row.retry_count,
     maxRetries: row.max_retries,
     createdAt: row.created_at,

@@ -246,26 +246,34 @@ let syncDriver: DbDriver | undefined;
 let asyncDriver: AsyncDbDriver | undefined;
 let activeDbPath: string | undefined;
 
+function isPostgresConfigured(): boolean {
+  return !!process.env.DATABASE_URL?.startsWith('postgres');
+}
+
+function isExperimentalPostgresAllowed(): boolean {
+  return ['1', 'true', 'yes'].includes((process.env.ALLOW_EXPERIMENTAL_POSTGRES || '').toLowerCase());
+}
+
+function postgresBoundaryError(caller: string): Error {
+  return new Error(
+    `${caller} cannot run with DATABASE_URL because PostgreSQL support is still experimental and most models use the synchronous SQLite driver. ` +
+    'Unset DATABASE_URL to use SQLite, or complete the async model migration before enabling PostgreSQL.',
+  );
+}
+
 /**
  * Get synchronous DB driver (SQLite only — for backward compat and tests).
  * Throws if DATABASE_URL is set (use getAsyncDb() for PG).
  */
 export function getDb(): DbDriver {
+  if (isPostgresConfigured()) {
+    throw postgresBoundaryError('getDb()');
+  }
   if (!syncDriver) {
-    if (process.env.DATABASE_URL) {
-      // For backward compat: create SQLite as sync driver even with PG URL
-      // The sync interface is only used in dev/tests
-      // In production routes should use getAsyncDb()
-      const dbPath = process.env.DB_PATH || join(__dirname, '../../data/agent-factory.db');
-      activeDbPath = dbPath;
-      logger.info({ path: basename(dbPath) }, 'Using SQLite (sync) database');
-      syncDriver = new SqliteDriver(dbPath);
-    } else {
-      const dbPath = process.env.DB_PATH || join(__dirname, '../../data/agent-factory.db');
-      activeDbPath = dbPath;
-      logger.info({ path: basename(dbPath) }, 'Using SQLite database');
-      syncDriver = new SqliteDriver(dbPath);
-    }
+    const dbPath = process.env.DB_PATH || join(__dirname, '../../data/agent-factory.db');
+    activeDbPath = dbPath;
+    logger.info({ path: basename(dbPath) }, 'Using SQLite database');
+    syncDriver = new SqliteDriver(dbPath);
     initSchema(syncDriver);
   }
   return syncDriver;
@@ -279,6 +287,9 @@ export function getAsyncDb(): AsyncDbDriver {
   if (!asyncDriver) {
     const databaseUrl = process.env.DATABASE_URL;
     if (databaseUrl && databaseUrl.startsWith('postgres')) {
+      if (!isExperimentalPostgresAllowed()) {
+        throw new Error('DATABASE_URL was set, but PostgreSQL support is experimental. Set ALLOW_EXPERIMENTAL_POSTGRES=true only after migrating all synchronous models to getAsyncDb().');
+      }
       logger.info('Connecting to PostgreSQL (async)...');
       asyncDriver = new PostgresAsyncDriver(databaseUrl);
       activeDbPath = databaseUrl.split('@')[1]?.split('/')[1] || 'postgres';

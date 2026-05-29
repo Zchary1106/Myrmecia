@@ -13,6 +13,8 @@ import { createModelRoutes } from '../src/routes/models.js';
 import { createSkillRoutes } from '../src/routes/skills.js';
 import { createTemplateRoutes } from '../src/routes/templates.js';
 import { createApiAuthMiddleware } from '../src/auth/token-auth.js';
+import { createApiKey } from '../src/auth/api-keys.js';
+import { addWorkspaceMember, createOrganization, createUser, createWorkspace, tenantMiddleware } from '../src/auth/tenant.js';
 import { createTask, updateTask } from '../src/db/models/task.js';
 import { createInboxEntry } from '../src/db/models/inbox.js';
 import { createAgent } from '../src/db/models/agent.js';
@@ -51,10 +53,16 @@ afterEach(() => {
     DELETE FROM tasks;
     DELETE FROM pipeline_templates;
     DELETE FROM agents;
+    DELETE FROM api_keys;
+    DELETE FROM workspace_memberships;
+    DELETE FROM users;
+    DELETE FROM workspaces;
+    DELETE FROM organizations;
     UPDATE tools SET enabled = 1, approval_required = 0;
   `);
   vi.restoreAllMocks();
   delete process.env.API_AUTH_TOKEN;
+  delete process.env.API_AUTH_ENABLED;
 });
 
 async function withApp<T>(app: express.Express, fn: (baseUrl: string) => Promise<T>): Promise<T> {
@@ -85,6 +93,7 @@ describe('control routes', () => {
       input: 'run',
       mode: 'direct',
     });
+
     const cancelTask = vi.fn(async (taskId: string) => updateTask(taskId, {
       status: 'cancelled',
       completedAt: new Date().toISOString(),
@@ -101,6 +110,49 @@ describe('control routes', () => {
       expect(status).toBe(200);
       expect(body.status).toBe('cancelled');
       expect(cancelTask).toHaveBeenCalledWith(task.id);
+    });
+  });
+
+  it('scopes task routes to the active tenant workspace', async () => {
+    const org = createOrganization('Tenant Org');
+    const user = createUser({ orgId: org.id, email: 'tenant@example.test', name: 'Tenant User', role: 'operator' });
+    const workspaceA = createWorkspace(org.id, 'Workspace A');
+    const workspaceB = createWorkspace(org.id, 'Workspace B');
+    addWorkspaceMember(user.id, workspaceA.id, 'operator');
+    addWorkspaceMember(user.id, workspaceB.id, 'operator');
+
+    const visibleTask = createTask({
+      title: 'Visible',
+      description: 'Visible',
+      input: 'visible',
+      mode: 'direct',
+      workspaceId: workspaceA.id,
+    });
+    const hiddenTask = createTask({
+      title: 'Hidden',
+      description: 'Hidden',
+      input: 'hidden',
+      mode: 'direct',
+      workspaceId: workspaceB.id,
+    });
+
+    const app = express();
+    app.use(express.json());
+    app.use(tenantMiddleware());
+    app.use('/tasks', createTaskRoutes({} as unknown as TaskQueue));
+
+    const headers = { 'x-user-id': user.id, 'x-workspace-id': workspaceA.id };
+    await withApp(app, async (baseUrl) => {
+      const list = await jsonFetch<any[]>(baseUrl, '/tasks', { headers });
+      expect(list.status).toBe(200);
+      expect(list.body.map(task => task.id)).toEqual([visibleTask.id]);
+
+      const visible = await jsonFetch<any>(baseUrl, `/tasks/${visibleTask.id}`, { headers });
+      expect(visible.status).toBe(200);
+      expect(visible.body.id).toBe(visibleTask.id);
+
+      const hidden = await jsonFetch<any>(baseUrl, `/tasks/${hiddenTask.id}`, { headers });
+      expect(hidden.status).toBe(404);
     });
   });
 
@@ -1091,6 +1143,37 @@ describe('control routes', () => {
       });
       expect(valid.status).toBe(200);
       expect(valid.body).toEqual([]);
+    });
+  });
+
+  it('authenticates API keys and enforces route scopes', async () => {
+    process.env.API_AUTH_ENABLED = 'true';
+    const key = createApiKey({
+      workspaceId: 'default',
+      name: 'read-only',
+      scopes: ['tasks:read'],
+    });
+    const enqueue = vi.fn();
+
+    const app = express();
+    app.use(express.json());
+    app.use('/api', createApiAuthMiddleware());
+    app.use('/api/tasks', createTaskRoutes({ enqueue } as unknown as TaskQueue));
+
+    await withApp(app, async (baseUrl) => {
+      const readable = await jsonFetch<any[]>(baseUrl, '/api/tasks', {
+        headers: { Authorization: `Bearer ${key.plaintext}` },
+      });
+      expect(readable.status).toBe(200);
+
+      const forbidden = await jsonFetch<any>(baseUrl, '/api/tasks', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${key.plaintext}` },
+        body: JSON.stringify({ title: 'Denied', mode: 'direct', input: 'denied' }),
+      });
+      expect(forbidden.status).toBe(403);
+      expect(forbidden.body.error.code).toBe('AUTH_FORBIDDEN');
+      expect(enqueue).not.toHaveBeenCalled();
     });
   });
 });

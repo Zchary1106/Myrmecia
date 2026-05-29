@@ -1,0 +1,29 @@
+name: Product Quality
+description: Dashboard/product quality workflow for accessibility, React correctness, performance, and release notes
+stages:
+  - name: Accessibility Review
+    role: accessibility-tester
+    prompt_template: |
+      Review accessibility and interaction quality for:
+      {input}
+
+  - name: React Dashboard Audit
+    role: react-dashboard-auditor
+    depends_on: [0]
+    prompt_template: |
+      Audit dashboard components, API contracts, state, and loading/error states for:
+      {input}
+
+  - name: Performance Investigation
+    role: performance-investigator
+    depends_on: [1]
+    prompt_template: |
+      Identify performance, token-cost, tool-call, cache, DB, or dashboard latency risks for:
+      {input}
+
+  - name: Release Notes
+    role: release-notes
+    depends_on: [0, 1, 2]
+    prompt_template: |
+      Produce sanitized user-facing release notes from the product quality findings:
+      {input}

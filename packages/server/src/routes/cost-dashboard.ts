@@ -70,6 +70,23 @@ export function buildByModelQuery(opts: { period: string; since?: string; until?
   return { sql, params: [since, until] };
 }
 
+export function buildByStageQuery(opts: { since?: string; until?: string }) {
+  const since = opts.since || sinceDefault('week');
+  const until = opts.until || new Date().toISOString();
+  const sql = `
+    SELECT pipeline_id, stage_index, agent_id, model_tier, model_id,
+      COALESCE(SUM(input_tokens), 0) as input_tokens,
+      COALESCE(SUM(output_tokens), 0) as output_tokens,
+      COALESCE(SUM(cost_usd), 0) as cost_usd,
+      COUNT(*) as request_count
+    FROM model_usage_stats
+    WHERE created_at >= ? AND created_at < ? AND pipeline_id IS NOT NULL
+    GROUP BY pipeline_id, stage_index, agent_id, model_tier, model_id
+    ORDER BY pipeline_id ASC, stage_index ASC
+  `;
+  return { sql, params: [since, until] };
+}
+
 export function createCostDashboardRoutes(): Router {
   const router = Router();
 
@@ -141,6 +158,24 @@ export function createCostDashboardRoutes(): Router {
       modelId, ...data, percentOfTotal: grandTotal > 0 ? (data.totalCostUSD / grandTotal) * 100 : 0,
     }));
     res.json({ models });
+  });
+
+  router.get('/by-stage', (req, res) => {
+    const { sql, params } = buildByStageQuery({ since: req.query.since as string, until: req.query.until as string });
+    const rows = getDb().all(sql, ...params) as any[];
+    res.json({
+      stages: rows.map(r => ({
+        pipelineId: r.pipeline_id,
+        stageIndex: r.stage_index,
+        agentId: r.agent_id,
+        modelTier: r.model_tier,
+        modelId: r.model_id,
+        inputTokens: r.input_tokens,
+        outputTokens: r.output_tokens,
+        costUSD: r.cost_usd,
+        requestCount: r.request_count,
+      })),
+    });
   });
 
   return router;

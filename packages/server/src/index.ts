@@ -56,6 +56,7 @@ import { createDLPRoutes } from './security/dlp-rules.js';
 import { createChannelRoutes } from './notifications/channels.js';
 import { createHealthRoutes } from './observability/health.js';
 import { createCostDashboardRoutes } from './routes/cost-dashboard.js';
+import { createExecutionAuditRoutes } from './routes/execution-audit.js';
 import { pubsub, INSTANCE_ID } from './scaling/redis-pubsub.js';
 import { createDistributedWSHub } from './scaling/distributed-ws.js';
 import { workerPool } from './scaling/worker-pool.js';
@@ -216,6 +217,7 @@ async function main() {
   app.use('/api/v1/dlp-rules', createDLPRoutes());
   app.use('/api/v1/notification-channels', createChannelRoutes());
   app.use('/api/v1/cost-dashboard', createCostDashboardRoutes());
+  app.use('/api/v1/execution-audit', createExecutionAuditRoutes());
   app.use('/api/v1/capabilities', createCapabilityRoutes(capabilityRegistry));
   app.use('/api/v1/agent-comms', createAgentCommsRoutes(agentComms));
   app.use('/api/v1/artifacts', createArtifactRoutes(artifactStore));
@@ -236,6 +238,7 @@ async function main() {
   app.use('/api/executions', deprecationNotice, executionRoutes);
   app.use('/api/pipelines', deprecationNotice, createPipelineRoutes(pipelineEngine));
   app.use('/api/templates', deprecationNotice, createTemplateRoutes());
+  app.use('/api/execution-audit', deprecationNotice, createExecutionAuditRoutes());
   app.use('/api', deprecationNotice, createSystemRoutes());
   app.use('/api/supervisor', deprecationNotice, createSupervisorRoutes(taskQueue, pipelineEngine));
 

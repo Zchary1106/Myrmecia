@@ -90,13 +90,14 @@ export class TaskQueue {
     dependsOn?: string[];
     workdir?: string;
     workspacePath?: string;
+    workspaceId?: string;
   }): Promise<Task> {
     const task = createTask({
       ...data,
       createdBy: data.parentTaskId ? 'master' : 'user',
     });
 
-    eventBus.emit('task:created', { taskId: task.id, task });
+    eventBus.emit('task:created', { taskId: task.id, task, workspaceId: task.workspaceId });
     addTaskLog(task.id, 'info', `Task created: ${task.title}`, 'system');
     metrics.queueDepth.add(1, { direction: 'inc' });
 
@@ -153,7 +154,7 @@ export class TaskQueue {
     }
 
     updateTask(taskId, { status: 'assigned', assigneeId: agentId });
-    eventBus.emit('task:assigned', { taskId, agentId });
+    eventBus.emit('task:assigned', { taskId, agentId, workspaceId: getTask(taskId)?.workspaceId });
 
     await this.agentManager.executeTask(agentId, getTask(taskId)!);
   }
@@ -184,7 +185,7 @@ export class TaskQueue {
     }
 
     updateTask(task.id, { status: 'assigned', assigneeId: agentId });
-    eventBus.emit('task:assigned', { taskId: task.id, agentId });
+    eventBus.emit('task:assigned', { taskId: task.id, agentId, workspaceId: task.workspaceId });
 
     // Execute asynchronously
     this.agentManager.executeTask(agentId, getTask(task.id)!).catch(err => {
@@ -240,7 +241,7 @@ export class TaskQueue {
       completedAt: new Date().toISOString(),
     })!;
     addTaskLog(taskId, 'warn', 'Task cancelled by user', 'system');
-    eventBus.emit('task:cancelled', { taskId, task: cancelled });
+    eventBus.emit('task:cancelled', { taskId, task: cancelled, workspaceId: cancelled.workspaceId });
     return cancelled;
   }
 
@@ -275,7 +276,7 @@ export class TaskQueue {
     }
 
     const retried = getTask(taskId)!;
-    eventBus.emit('task:updated', { taskId, task: retried });
+    eventBus.emit('task:updated', { taskId, task: retried, workspaceId: retried.workspaceId });
     return retried;
   }
 

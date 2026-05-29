@@ -6,7 +6,7 @@ import type { ConstraintViolation } from './param-constraints.js';
 export interface ToolPolicyDecision {
   toolId: string;
   allowed: boolean;
-  reason: 'allowed' | 'unknown_tool' | 'agent_disallowed' | 'tool_disabled' | 'agent_permission_disabled' | 'approval_required';
+  reason: 'allowed' | 'unknown_tool' | 'agent_disallowed' | 'tool_disabled' | 'agent_permission_disabled' | 'approval_required' | 'tool_prompt_injection' | 'network_disallowed';
   approvalRequired?: boolean;
 }
 
@@ -14,6 +14,29 @@ export interface AgentToolPolicy {
   requestedTools: string[];
   allowedTools: string[];
   decisions: ToolPolicyDecision[];
+}
+
+const TOOL_PROMPT_INJECTION_PATTERNS = [
+  /\b(ignore|bypass|override)\b.{0,80}\b(previous|above|system|developer|safety|guardrail)\b.{0,40}\binstructions?\b/i,
+  /\b(reveal|print|dump|show|expose)\b.{0,80}\b(system prompt|developer message|hidden instructions|secrets?)\b/i,
+  /\b(you are now|act as system|developer mode|jailbreak)\b/i,
+];
+
+function boolMetadata(metadata: Record<string, unknown>, key: string): boolean {
+  return metadata[key] === true;
+}
+
+function hasToolPromptInjection(tool: ReturnType<typeof getTool>): boolean {
+  if (!tool) return false;
+  const content = `${tool.name}\n${tool.description}\n${JSON.stringify(tool.metadata || {})}`;
+  return TOOL_PROMPT_INJECTION_PATTERNS.some(pattern => pattern.test(content));
+}
+
+function metadataRequiresApproval(tool: NonNullable<ReturnType<typeof getTool>>): boolean {
+  const metadata = tool.metadata || {};
+  return tool.riskLevel === 'high'
+    || boolMetadata(metadata, 'destructive')
+    || boolMetadata(metadata, 'writesOutsideWorkspace');
 }
 
 export function resolveAllowedToolsForAgent(agent: AgentDefinition): AgentToolPolicy {
@@ -39,12 +62,20 @@ export function resolveAllowedToolsForAgent(agent: AgentDefinition): AgentToolPo
       decisions.push({ toolId, allowed: false, reason: 'tool_disabled' });
       continue;
     }
+    if (hasToolPromptInjection(tool)) {
+      decisions.push({ toolId, allowed: false, reason: 'tool_prompt_injection' });
+      continue;
+    }
+    if (boolMetadata(tool.metadata || {}, 'network') && agent.config.allowNetwork === false) {
+      decisions.push({ toolId, allowed: false, reason: 'network_disallowed' });
+      continue;
+    }
     if (permission && !permission.enabled) {
       decisions.push({ toolId, allowed: false, reason: 'agent_permission_disabled' });
       continue;
     }
 
-    const approvalRequired = permission?.approvalRequired ?? tool.approvalRequired;
+    const approvalRequired = permission?.approvalRequired ?? (tool.approvalRequired || metadataRequiresApproval(tool));
     if (approvalRequired) {
       decisions.push({ toolId, allowed: false, reason: 'approval_required', approvalRequired: true });
       continue;

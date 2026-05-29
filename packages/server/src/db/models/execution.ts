@@ -19,6 +19,11 @@ function rowToExecution(row: any): TaskExecution {
     costUSD: row.cost_usd,
     tokenCount: row.token_count,
     parentExecutionId: row.parent_execution_id || undefined,
+    workspaceId: row.workspace_id || 'default',
+    modelId: row.model_id || undefined,
+    modelTier: row.model_tier || undefined,
+    modelRouteSource: row.model_route_source || undefined,
+    modelRouteReason: row.model_route_reason || undefined,
     startedAt: row.started_at,
     completedAt: row.completed_at || undefined,
   };
@@ -29,12 +34,13 @@ export function createExecution(data: {
   agentDefId: string;
   skillVersionId?: string;
   parentExecutionId?: string;
+  workspaceId?: string;
 }): TaskExecution {
   const db = getDb();
   const id = `exec_${uuid().slice(0, 8)}`;
   db.run(
-    'INSERT INTO task_executions (id, task_id, agent_def_id, skill_version_id, parent_execution_id) VALUES (?, ?, ?, ?, ?)',
-    id, data.taskId, data.agentDefId, data.skillVersionId || null, data.parentExecutionId || null
+    'INSERT INTO task_executions (id, task_id, agent_def_id, skill_version_id, parent_execution_id, workspace_id) VALUES (?, ?, ?, ?, ?, ?)',
+    id, data.taskId, data.agentDefId, data.skillVersionId || null, data.parentExecutionId || null, data.workspaceId || 'default'
   );
   return getExecution(id)!;
 }
@@ -49,6 +55,7 @@ export function listExecutions(filter?: {
   taskId?: string;
   agentDefId?: string;
   status?: ExecutionStatus;
+  workspaceId?: string;
   limit?: number;
 }): TaskExecution[] {
   const db = getDb();
@@ -59,6 +66,7 @@ export function listExecutions(filter?: {
   if (filter?.taskId) { conditions.push('task_id = ?'); params.push(filter.taskId); }
   if (filter?.agentDefId) { conditions.push('agent_def_id = ?'); params.push(filter.agentDefId); }
   if (filter?.status) { conditions.push('status = ?'); params.push(filter.status); }
+  if (filter?.workspaceId) { conditions.push('workspace_id = ?'); params.push(filter.workspaceId); }
   if (conditions.length) sql += ' WHERE ' + conditions.join(' AND ');
   sql += ' ORDER BY started_at DESC';
   if (filter?.limit) { sql += ' LIMIT ?'; params.push(filter.limit); }
@@ -72,6 +80,10 @@ export function updateExecution(id: string, updates: Partial<{
   costUSD: number;
   tokenCount: number;
   completedAt: string;
+  modelId: string;
+  modelTier: string;
+  modelRouteSource: string;
+  modelRouteReason: string;
 }>): TaskExecution | undefined {
   const db = getDb();
   const sets: string[] = [];
@@ -82,6 +94,10 @@ export function updateExecution(id: string, updates: Partial<{
   if (updates.costUSD !== undefined) { sets.push('cost_usd = ?'); params.push(updates.costUSD); }
   if (updates.tokenCount !== undefined) { sets.push('token_count = ?'); params.push(updates.tokenCount); }
   if (updates.completedAt !== undefined) { sets.push('completed_at = ?'); params.push(updates.completedAt); }
+  if (updates.modelId !== undefined) { sets.push('model_id = ?'); params.push(updates.modelId); }
+  if (updates.modelTier !== undefined) { sets.push('model_tier = ?'); params.push(updates.modelTier); }
+  if (updates.modelRouteSource !== undefined) { sets.push('model_route_source = ?'); params.push(updates.modelRouteSource); }
+  if (updates.modelRouteReason !== undefined) { sets.push('model_route_reason = ?'); params.push(updates.modelRouteReason); }
 
   if (sets.length === 0) return getExecution(id);
   params.push(id);
