@@ -4,6 +4,8 @@ import { listPipelines, getPipeline } from '../db/models/pipeline.js';
 import { PipelineEngine } from '../pipelines/pipeline-engine.js';
 import { createOperatorAction } from '../db/models/operator-action.js';
 import { notFound, parseBody, parseQuery, requireConfirmation, requireOperatorRole, sendError } from './http.js';
+import { requestCanAccessWorkspace, workspaceIdFromRequest } from '../auth/tenant.js';
+import type { Pipeline } from '../types.js';
 
 const pipelineStatusSchema = z.enum(['running', 'paused', 'blocked', 'done', 'failed']);
 const createPipelineSchema = z.object({
@@ -16,6 +18,19 @@ const listPipelinesQuerySchema = z.object({
   status: pipelineStatusSchema.optional(),
 });
 
+function getAccessiblePipeline(req: any, pipelineId: string): Pipeline {
+  const pipeline = getPipeline(pipelineId);
+  if (!pipeline || !requestCanAccessWorkspace(req, pipeline.workspaceId)) {
+    notFound('PIPELINE_NOT_FOUND', 'Pipeline not found');
+  }
+  return pipeline;
+}
+
+function assertPipelineAccess(req: any, pipelineId: string): Pipeline | undefined {
+  if (!workspaceIdFromRequest(req)) return getPipeline(pipelineId);
+  return getAccessiblePipeline(req, pipelineId);
+}
+
 export function createPipelineRoutes(pipelineEngine: PipelineEngine): Router {
   const router = Router();
 
@@ -23,7 +38,7 @@ export function createPipelineRoutes(pipelineEngine: PipelineEngine): Router {
     try {
       const actor = requireOperatorRole(req, 'pipeline.create', ['admin', 'operator']);
       const { name, templateId, input, gateMode } = parseBody(createPipelineSchema, req);
-      const pipeline = await pipelineEngine.create({ name, templateId, input, gateMode });
+      const pipeline = await pipelineEngine.create({ name, templateId, input, gateMode, workspaceId: workspaceIdFromRequest(req) });
       createOperatorAction({
         action: 'pipeline.create',
         actor,
@@ -41,7 +56,7 @@ export function createPipelineRoutes(pipelineEngine: PipelineEngine): Router {
   router.get('/', (req, res) => {
     try {
       const { status } = parseQuery(listPipelinesQuerySchema, req);
-      res.json(listPipelines({ status }));
+      res.json(listPipelines({ status, workspaceId: workspaceIdFromRequest(req) }));
     } catch (err) {
       sendError(res, err);
     }
@@ -49,8 +64,7 @@ export function createPipelineRoutes(pipelineEngine: PipelineEngine): Router {
 
   router.get('/:id', (req, res) => {
     try {
-      const pipeline = getPipeline(req.params.id);
-      if (!pipeline) notFound('PIPELINE_NOT_FOUND', 'Pipeline not found');
+      const pipeline = getAccessiblePipeline(req, req.params.id);
       res.json(pipeline);
     } catch (err) {
       sendError(res, err);
@@ -60,6 +74,7 @@ export function createPipelineRoutes(pipelineEngine: PipelineEngine): Router {
   router.post('/:id/approve', async (req, res) => {
     try {
       const actor = requireOperatorRole(req, 'pipeline.approve', ['admin', 'operator']);
+      assertPipelineAccess(req, req.params.id);
       await pipelineEngine.approveGate(req.params.id);
       createOperatorAction({
         action: 'pipeline.approve',
@@ -77,6 +92,7 @@ export function createPipelineRoutes(pipelineEngine: PipelineEngine): Router {
   router.post('/:id/skip', async (req, res) => {
     try {
       const actor = requireOperatorRole(req, 'pipeline.skip', ['admin', 'operator']);
+      assertPipelineAccess(req, req.params.id);
       await pipelineEngine.skipStage(req.params.id);
       createOperatorAction({
         action: 'pipeline.skip',
@@ -95,7 +111,7 @@ export function createPipelineRoutes(pipelineEngine: PipelineEngine): Router {
     try {
       const actor = requireOperatorRole(req, 'pipeline.cancel', ['admin', 'operator']);
       requireConfirmation(req, 'pipeline.cancel');
-      const pipeline = getPipeline(req.params.id);
+      const pipeline = assertPipelineAccess(req, req.params.id);
       await pipelineEngine.cancel(req.params.id);
       createOperatorAction({
         action: 'pipeline.cancel',
@@ -114,6 +130,7 @@ export function createPipelineRoutes(pipelineEngine: PipelineEngine): Router {
   router.post('/:id/resume', async (req, res) => {
     try {
       const actor = requireOperatorRole(req, 'pipeline.resume', ['admin', 'operator']);
+      assertPipelineAccess(req, req.params.id);
       const pipeline = await pipelineEngine.resume(req.params.id);
       createOperatorAction({
         action: 'pipeline.resume',
@@ -132,6 +149,7 @@ export function createPipelineRoutes(pipelineEngine: PipelineEngine): Router {
   router.post('/:id/stages/:index/retry', async (req, res) => {
     try {
       const stageIndex = parseInt(req.params.index, 10);
+      assertPipelineAccess(req, req.params.id);
       await pipelineEngine.retryStage(req.params.id, stageIndex);
       res.json({ success: true, message: `Stage ${stageIndex} retry initiated` });
     } catch (err: any) {

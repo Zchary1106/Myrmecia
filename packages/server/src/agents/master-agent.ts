@@ -25,7 +25,7 @@ export class MasterAgent {
     if (!masterAgent) throw new Error('Master agent not found');
 
     addTaskLog(parentTask.id, 'info', 'Master Agent analyzing and decomposing task...', 'master');
-    eventBus.emit('task:log', { taskId: parentTask.id, agentId: 'master', message: 'Decomposing task...' });
+    eventBus.emit('task:log', { taskId: parentTask.id, agentId: 'master', workspaceId: parentTask.workspaceId, message: 'Decomposing task...' });
 
     const prompt = `You are a project manager AI. Analyze the following task and break it down into atomic subtasks.
 
@@ -86,6 +86,7 @@ Example output:
           parentTaskId: parentTask.id,
           dependsOn: depTaskIds,
           workdir: parentTask.workdir,
+          workspaceId: parentTask.workspaceId,
         });
 
         createdTasks.push(task);
@@ -100,6 +101,7 @@ Example output:
       eventBus.emit('task:log', {
         taskId: parentTask.id,
         agentId: 'master',
+        workspaceId: parentTask.workspaceId,
         message: `Created ${createdTasks.length} subtasks`,
       });
 
@@ -132,7 +134,7 @@ Example output:
           completedAt: new Date().toISOString(),
         });
         addTaskLog(parentTaskId, 'info', 'All subtasks completed. Task done!', 'master');
-        eventBus.emit('task:done', { taskId: parentTaskId, agentId: 'master', output });
+        eventBus.emit('task:done', { taskId: parentTaskId, agentId: 'master', workspaceId: getTask(parentTaskId)?.workspaceId, output });
         return;
       }
 

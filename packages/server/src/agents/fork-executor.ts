@@ -23,6 +23,7 @@ export interface SpawnOptions {
   workdir?: string;
   priority?: 'low' | 'normal' | 'high' | 'urgent';
   mode?: 'direct' | 'master';
+  workspaceId?: string;
 }
 
 export class ForkExecutor {
@@ -61,6 +62,7 @@ export class ForkExecutor {
       assigneeId: agentId,
       parentTaskId: parentExec.taskId,
       workdir: parentTask?.workdir,
+      workspaceId: parentTask?.workspaceId,
       createdBy: 'master',
     });
 
@@ -90,6 +92,7 @@ export class ForkExecutor {
       input: prompt,
       assigneeId: agentDefId,
       workdir: opts?.workdir,
+      workspaceId: opts?.workspaceId,
       createdBy: 'master',
     });
 

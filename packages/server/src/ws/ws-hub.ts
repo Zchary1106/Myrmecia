@@ -1,12 +1,17 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import type { Server } from 'http';
 import { eventBus, type BusEvent } from '../events/event-bus.js';
-import type { WSCommand, WSEventType } from '../types.js';
-import { isApiAuthEnabled, isTokenAuthorized, tokenFromAuthorizationHeader } from '../auth/token-auth.js';
+import type { WSCommand } from '../types.js';
+import { resolveApiAuthContext, tokenFromAuthorizationHeader, type ApiAuthContext } from '../auth/token-auth.js';
+import { getTask } from '../db/models/task.js';
+import { getPipeline } from '../db/models/pipeline.js';
+import { getExecution } from '../db/models/execution.js';
 
 interface ClientState {
   ws: WebSocket;
   channels: Set<string>;
+  auth: ApiAuthContext;
+  workspaceId: string;
 }
 
 export class WSHub {
@@ -17,24 +22,37 @@ export class WSHub {
     this.wss = new WebSocketServer({ server, path: '/ws' });
 
     this.wss.on('connection', (ws, req) => {
-      if (isApiAuthEnabled()) {
-        const requestUrl = new URL(req.url || '/ws', 'http://localhost');
-        const token = requestUrl.searchParams.get('token') || tokenFromAuthorizationHeader(req.headers.authorization);
-        if (!isTokenAuthorized(token || undefined)) {
-          ws.close(1008, 'AUTH_REQUIRED');
-          return;
-        }
+      const requestUrl = new URL(req.url || '/ws', 'http://localhost');
+      const token = requestUrl.searchParams.get('token') || tokenFromAuthorizationHeader(req.headers.authorization);
+      const auth = resolveApiAuthContext(token || undefined);
+      if (!auth) {
+        ws.close(1008, 'AUTH_REQUIRED');
+        return;
       }
 
-      const state: ClientState = { ws, channels: new Set() };
+      const requestedWorkspaceId = requestUrl.searchParams.get('workspaceId') || auth.workspaceId;
+      if (auth.kind === 'api-key' && requestedWorkspaceId !== auth.workspaceId) {
+        ws.close(1008, 'WORKSPACE_FORBIDDEN');
+        return;
+      }
+
+      const state: ClientState = { ws, channels: new Set(), auth, workspaceId: requestedWorkspaceId || 'default' };
       this.clients.set(ws, state);
 
       ws.on('message', (raw) => {
         try {
           const cmd: WSCommand = JSON.parse(raw.toString());
-          if (cmd.type === 'subscribe') state.channels.add(cmd.channel);
+          if (cmd.type === 'subscribe') {
+            if (!this.canSubscribe(state, cmd.channel)) {
+              ws.close(1008, 'CHANNEL_FORBIDDEN');
+              return;
+            }
+            state.channels.add(cmd.channel);
+          }
           else if (cmd.type === 'unsubscribe') state.channels.delete(cmd.channel);
-        } catch {}
+        } catch {
+          ws.close(1003, 'INVALID_COMMAND');
+        }
       });
 
       ws.on('close', () => this.clients.delete(ws));
@@ -46,7 +64,7 @@ export class WSHub {
       for (const [, client] of this.clients) {
         if (client.ws.readyState !== WebSocket.OPEN) continue;
         const subscribed = channels.some(ch => client.channels.has(ch));
-        if (subscribed) {
+        if (subscribed && this.canReceiveEvent(client, event)) {
           client.ws.send(JSON.stringify(event));
         }
       }
@@ -109,11 +127,65 @@ export class WSHub {
     return channels;
   }
 
+  private canSubscribe(client: ClientState, channel: string): boolean {
+    const [kind, id] = channel.split(':', 2);
+    if (!id) return true;
+    if (!['task', 'pipeline', 'execution'].includes(kind)) return true;
+
+    const workspaceId = this.workspaceIdForChannel(kind, id);
+    if (!workspaceId) return false;
+    return workspaceId === client.workspaceId;
+  }
+
+  private workspaceIdForChannel(kind: string, id: string): string | undefined {
+    if (kind === 'task') return getTask(id)?.workspaceId || 'default';
+    if (kind === 'pipeline') return getPipeline(id)?.workspaceId || 'default';
+    if (kind === 'execution') {
+      const execution = getExecution(id);
+      if (!execution) return undefined;
+      return execution.workspaceId || getTask(execution.taskId)?.workspaceId || 'default';
+    }
+    return 'default';
+  }
+
+  private canReceiveEvent(client: ClientState, event: BusEvent): boolean {
+    const workspaceId = this.workspaceIdForEvent(event);
+    if (!workspaceId) return !this.isWorkspaceScopedEvent(event);
+    return workspaceId === client.workspaceId;
+  }
+
+  private workspaceIdForEvent(event: BusEvent): string | undefined {
+    const p = event.payload as any;
+    if (p?.workspaceId) return p.workspaceId;
+    if (p?.task?.workspaceId) return p.task.workspaceId;
+    if (p?.pipeline?.workspaceId) return p.pipeline.workspaceId;
+    if (p?.taskId) return getTask(p.taskId)?.workspaceId || 'default';
+    if (p?.pipelineId) return getPipeline(p.pipelineId)?.workspaceId || 'default';
+    if (p?.executionId) {
+      const execution = getExecution(p.executionId);
+      if (!execution) return undefined;
+      return execution.workspaceId || getTask(execution.taskId)?.workspaceId || 'default';
+    }
+    if (p?.entry?.workspaceId) return p.entry.workspaceId;
+    if (p?.notification?.workspaceId) return p.notification.workspaceId;
+    return undefined;
+  }
+
+  private isWorkspaceScopedEvent(event: BusEvent): boolean {
+    return event.type.startsWith('task:')
+      || event.type.startsWith('pipeline:')
+      || event.type.startsWith('execution:')
+      || event.type.startsWith('tool:')
+      || event.type.startsWith('quality:')
+      || event.type.startsWith('inbox:')
+      || event.type === 'notification'
+      || event.type === 'agent:message';
+  }
+
   broadcast(event: BusEvent) {
-    const msg = JSON.stringify(event);
     for (const [, client] of this.clients) {
-      if (client.ws.readyState === WebSocket.OPEN) {
-        client.ws.send(msg);
+      if (client.ws.readyState === WebSocket.OPEN && this.canReceiveEvent(client, event)) {
+        client.ws.send(JSON.stringify(event));
       }
     }
   }

@@ -12,6 +12,7 @@ function rowToTask(row: any): Task {
     pipelineId: row.pipeline_id,
     stageIndex: row.stage_index,
     workspacePath: row.workspace_path,
+    workspaceId: row.workspace_id || 'default',
     retryCount: row.retry_count,
     maxRetries: row.max_retries,
     createdAt: row.created_at,
@@ -33,6 +34,7 @@ export function createTask(data: {
   input: string;
   workdir?: string;
   workspacePath?: string;
+  workspaceId?: string;
   dependsOn?: string[];
   maxRetries?: number;
 }): Task {
@@ -41,13 +43,14 @@ export function createTask(data: {
 
   db.run(`
     INSERT INTO tasks (id, title, description, mode, priority, assignee_id, created_by,
-      parent_task_id, pipeline_id, stage_index, input, workdir, workspace_path, depends_on, max_retries)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      parent_task_id, pipeline_id, stage_index, input, workdir, workspace_path, workspace_id, depends_on, max_retries)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
     id, data.title, data.description, data.mode,
     data.priority || 'normal', data.assigneeId || null, data.createdBy || 'user',
     data.parentTaskId || null, data.pipelineId || null, data.stageIndex ?? null,
     data.input, data.workdir || null, data.workspacePath || null,
+    data.workspaceId || 'default',
     JSON.stringify(data.dependsOn || []), data.maxRetries ?? 2
   );
 

@@ -1,5 +1,6 @@
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import { assertShellCommandAllowed } from './tool-sandbox.js';
 
 const execAsync = promisify(exec);
 
@@ -37,6 +38,7 @@ export async function validateStep(input: ValidateStepInput): Promise<ValidateSt
   });
 
   try {
+    assertShellCommandAllowed(command);
     const { stdout, stderr } = await execAsync(command, {
       cwd: input.workdir,
       timeout: timeoutMs,

@@ -5,6 +5,8 @@ import { listQualityLoopAttempts } from '../db/models/quality-loop.js';
 import { createOperatorAction } from '../db/models/operator-action.js';
 import { TaskQueue } from '../queue/task-queue.js';
 import { HttpError, notFound, parseBody, parseQuery, requireConfirmation, requireOperatorRole, sendError } from './http.js';
+import { requestCanAccessWorkspace, workspaceIdFromRequest } from '../auth/tenant.js';
+import type { Task } from '../types.js';
 
 const taskStatusSchema = z.enum(['pending', 'queued', 'assigned', 'running', 'review', 'done', 'failed', 'cancelled']);
 const taskModeSchema = z.enum(['master', 'direct', 'pipeline']);
@@ -43,6 +45,14 @@ const logsQuerySchema = z.object({
   since: z.string().optional(),
 });
 
+function getAccessibleTask(req: any, taskId: string): Task {
+  const task = getTask(taskId);
+  if (!task || !requestCanAccessWorkspace(req, task.workspaceId)) {
+    notFound('TASK_NOT_FOUND', 'Task not found');
+  }
+  return task;
+}
+
 export function createTaskRoutes(taskQueue: TaskQueue): Router {
   const router = Router();
 
@@ -51,6 +61,7 @@ export function createTaskRoutes(taskQueue: TaskQueue): Router {
     try {
       const { title, description, mode, priority, assigneeId, input } = parseBody(createTaskSchema, req);
       const actor = requireOperatorRole(req, 'task.create', ['admin', 'operator']);
+      const workspaceId = workspaceIdFromRequest(req);
       const task = await taskQueue.enqueue({
         title,
         description: description || title,
@@ -58,6 +69,7 @@ export function createTaskRoutes(taskQueue: TaskQueue): Router {
         priority,
         assigneeId,
         input: input || description || title,
+        workspaceId,
       });
       createOperatorAction({
         action: 'task.create',
@@ -77,7 +89,7 @@ export function createTaskRoutes(taskQueue: TaskQueue): Router {
   router.get('/', (req, res) => {
     try {
       const { status, mode, assignee, limit, offset } = parseQuery(listTasksQuerySchema, req);
-      const tasks = listTasks({ status, mode, assigneeId: assignee, limit, offset });
+      const tasks = listTasks({ status, mode, assigneeId: assignee, workspaceId: workspaceIdFromRequest(req), limit, offset });
       res.json(tasks);
     } catch (err) {
       sendError(res, err);
@@ -87,8 +99,7 @@ export function createTaskRoutes(taskQueue: TaskQueue): Router {
   // Get task detail
   router.get('/:id', (req, res) => {
     try {
-      const task = getTask(req.params.id);
-      if (!task) notFound('TASK_NOT_FOUND', 'Task not found');
+      const task = getAccessibleTask(req, req.params.id);
       res.json(task);
     } catch (err) {
       sendError(res, err);
@@ -98,8 +109,7 @@ export function createTaskRoutes(taskQueue: TaskQueue): Router {
   // Update task
   router.patch('/:id', (req, res) => {
     try {
-      const task = getTask(req.params.id);
-      if (!task) notFound('TASK_NOT_FOUND', 'Task not found');
+      getAccessibleTask(req, req.params.id);
       const updated = updateTask(req.params.id, parseBody(updateTaskSchema, req));
       res.json(updated);
     } catch (err) {
@@ -110,8 +120,7 @@ export function createTaskRoutes(taskQueue: TaskQueue): Router {
   // Cancel task
   router.post('/:id/cancel', async (req, res) => {
     try {
-      const task = getTask(req.params.id);
-      if (!task) notFound('TASK_NOT_FOUND', 'Task not found');
+      const task = getAccessibleTask(req, req.params.id);
       const actor = requireOperatorRole(req, 'task.cancel', ['admin', 'operator']);
       requireConfirmation(req, 'task.cancel');
       const cancelled = await taskQueue.cancelTask(req.params.id);
@@ -132,8 +141,7 @@ export function createTaskRoutes(taskQueue: TaskQueue): Router {
   // Retry task
   router.post('/:id/retry', async (req, res) => {
     try {
-      const task = getTask(req.params.id);
-      if (!task) notFound('TASK_NOT_FOUND', 'Task not found');
+      const task = getAccessibleTask(req, req.params.id);
       const actor = requireOperatorRole(req, 'task.retry', ['admin', 'operator']);
       const retried = await taskQueue.retryTask(req.params.id);
       createOperatorAction({
@@ -157,7 +165,7 @@ export function createTaskRoutes(taskQueue: TaskQueue): Router {
     try {
       const actor = requireOperatorRole(req, 'task.delete', ['admin']);
       requireConfirmation(req, 'task.delete');
-      const task = getTask(req.params.id);
+      const task = getAccessibleTask(req, req.params.id);
       const deleted = deleteTask(req.params.id);
       if (!deleted) notFound('TASK_NOT_FOUND', 'Task not found');
       createOperatorAction({
@@ -178,6 +186,7 @@ export function createTaskRoutes(taskQueue: TaskQueue): Router {
   router.get('/:id/logs', (req, res) => {
     try {
       const { limit, since } = parseQuery(logsQuerySchema, req);
+      getAccessibleTask(req, req.params.id);
       const logs = getTaskLogs(req.params.id, { limit, since });
       res.json(logs);
     } catch (err) {
@@ -188,8 +197,7 @@ export function createTaskRoutes(taskQueue: TaskQueue): Router {
   // Get quality-loop review/fix attempt history
   router.get('/:id/quality-attempts', (req, res) => {
     try {
-      const task = getTask(req.params.id);
-      if (!task) notFound('TASK_NOT_FOUND', 'Task not found');
+      getAccessibleTask(req, req.params.id);
       res.json(listQualityLoopAttempts({ taskId: req.params.id }));
     } catch (err) {
       sendError(res, err);

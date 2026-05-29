@@ -31,7 +31,7 @@ export const BUILTIN_TOOLS: BuiltinToolDefinition[] = [
       properties: { query: { type: 'string', minLength: 1 } },
     },
     outputSchema: { type: 'array', items: { type: 'object' } },
-    metadata: { network: true, readOnly: true },
+    metadata: { network: true, readOnly: true, allowedDomains: ['*'], destructive: false, writesWorkspace: false, writesOutsideWorkspace: false },
   },
   {
     id: 'web.fetch',
@@ -47,7 +47,7 @@ export const BUILTIN_TOOLS: BuiltinToolDefinition[] = [
       properties: { url: { type: 'string', format: 'uri' } },
     },
     outputSchema: { type: 'string' },
-    metadata: { network: true, readOnly: true, maxBytes: 512000 },
+    metadata: { network: true, readOnly: true, maxBytes: 512000, allowedDomains: ['*'], destructive: false, writesWorkspace: false, writesOutsideWorkspace: false },
     paramConstraints: {
       url: {
         allowedDomains: ['*'], // open by default, customize per-agent
@@ -70,7 +70,7 @@ export const BUILTIN_TOOLS: BuiltinToolDefinition[] = [
       properties: { url: { type: 'string', format: 'uri' } },
     },
     outputSchema: { type: 'array', items: { type: 'object' } },
-    metadata: { network: true, readOnly: true, maxLinks: 50 },
+    metadata: { network: true, readOnly: true, maxLinks: 50, allowedDomains: ['*'], destructive: false, writesWorkspace: false, writesOutsideWorkspace: false },
     paramConstraints: {
       url: {
         allowedDomains: ['*'],
@@ -93,7 +93,7 @@ export const BUILTIN_TOOLS: BuiltinToolDefinition[] = [
       properties: { markdown: { type: 'string', minLength: 1 } },
     },
     outputSchema: { type: 'object' },
-    metadata: { readOnly: true },
+    metadata: { readOnly: true, network: false, destructive: false, writesWorkspace: false, writesOutsideWorkspace: false },
   },
   {
     id: 'content.hashtag_plan',
@@ -109,7 +109,7 @@ export const BUILTIN_TOOLS: BuiltinToolDefinition[] = [
       properties: { topic: { type: 'string', minLength: 1 } },
     },
     outputSchema: { type: 'object' },
-    metadata: { readOnly: true },
+    metadata: { readOnly: true, network: false, destructive: false, writesWorkspace: false, writesOutsideWorkspace: false },
   },
   {
     id: 'image.generate_svg',
@@ -125,7 +125,7 @@ export const BUILTIN_TOOLS: BuiltinToolDefinition[] = [
       properties: { spec: { type: 'string', minLength: 1 } },
     },
     outputSchema: { type: 'object' },
-    metadata: { writesWorkspace: true, outputFormat: 'svg' },
+    metadata: { readOnly: false, network: false, writesWorkspace: true, writesOutsideWorkspace: false, destructive: false, outputFormat: 'svg' },
   },
 ];
 

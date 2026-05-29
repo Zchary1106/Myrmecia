@@ -32,6 +32,8 @@ DEFAULT_TIMEOUT = 12
 
 
 def _safe_url(url: str) -> str:
+    if os.getenv("AGENT_FACTORY_NETWORK_ALLOWED", "true").lower() != "true":
+        raise ValueError("Network access is disabled by guardrails")
     parsed = urllib.parse.urlparse(url.strip())
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise ValueError("Only absolute http/https URLs are allowed")

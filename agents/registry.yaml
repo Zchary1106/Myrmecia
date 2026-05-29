@@ -12,7 +12,12 @@ agents:
     model:
       provider: openai
       model: openai/claude-opus-4.7
+      tier: strong
+      fallbackModel: openai/claude-sonnet-4.6
       maxTokens: 16384
+      maxResponseTokens: 8192
+      maxToolCalls: 40
+      maxWallClockMs: 300000
     capabilities: [planning, decomposition, coordination, review, web-research]
     allowed_tools: [web.search, web.fetch]
     triggers: [自动分配, 帮我做, build me, create a]
@@ -26,7 +31,12 @@ agents:
     model:
       provider: openai
       model: openai/claude-sonnet-4.6
+      tier: strong
+      fallbackModel: openai/claude-haiku-4.5
       maxTokens: 8192
+      maxResponseTokens: 4096
+      maxToolCalls: 24
+      maxWallClockMs: 240000
     capabilities: [spec, user-stories, requirements, acceptance-criteria, web-research]
     allowed_tools: [web.search, web.fetch, content.hashtag_plan]
     triggers: [需求, spec, PRD, 用户故事, requirement]
@@ -40,7 +50,12 @@ agents:
     model:
       provider: openai
       model: openai/claude-sonnet-4.6
+      tier: balanced
+      fallbackModel: openai/claude-haiku-4.5
       maxTokens: 8192
+      maxResponseTokens: 4096
+      maxToolCalls: 20
+      maxWallClockMs: 240000
     capabilities: [design, wireframe, component, responsive, accessibility, image-generation]
     allowed_tools: [image.generate_svg]
     triggers: [设计, UI, 界面, wireframe, design]
@@ -54,7 +69,12 @@ agents:
     model:
       provider: openai
       model: openai/gpt-5.3-codex
+      tier: balanced
+      fallbackModel: openai/gpt-5.2-codex
       maxTokens: 8192
+      maxResponseTokens: 4096
+      maxToolCalls: 48
+      maxWallClockMs: 300000
     capabilities: [typescript, react, express, database, api, frontend, backend, web-research]
     allowed_tools: [web.search, web.fetch]
     triggers: [写代码, 实现, 开发, implement, code, fix]
@@ -68,7 +88,12 @@ agents:
     model:
       provider: openai
       model: openai/claude-haiku-4.5
+      tier: cheap
+      fallbackModel: openai/gpt-5.4-mini
       maxTokens: 8192
+      maxResponseTokens: 3072
+      maxToolCalls: 24
+      maxWallClockMs: 180000
     capabilities: [testing, unit-test, integration-test, coverage, edge-cases, web-research]
     allowed_tools: [web.search, web.fetch]
     triggers: [测试, test, QA, 验证, coverage]
@@ -81,8 +106,13 @@ agents:
     skill: agents/ops.md
     model:
       provider: openai
-      model: openai/claude-sonnet-4.6
+      model: openai/claude-haiku-4.5
+      tier: cheap
+      fallbackModel: openai/gpt-5.4-mini
       maxTokens: 8192
+      maxResponseTokens: 3072
+      maxToolCalls: 20
+      maxWallClockMs: 180000
     capabilities: [docker, cicd, deploy, monitoring, nginx, systemd, web-research]
     allowed_tools: [web.search, web.fetch]
     triggers: [部署, deploy, CI/CD, Docker, 运维]
@@ -96,10 +126,205 @@ agents:
     model:
       provider: openai
       model: openai/claude-sonnet-4.6
+      tier: strong
+      fallbackModel: openai/claude-haiku-4.5
       maxTokens: 8192
+      maxResponseTokens: 4096
+      maxToolCalls: 24
+      maxWallClockMs: 240000
     capabilities: [code-review, security, best-practices, architecture, web-research]
     allowed_tools: [web.search, web.fetch]
     triggers: [review, 审查, 代码审核, security scan]
+
+  - id: security-reviewer
+    name: Security Reviewer
+    emoji: 🛡️
+    role: security-reviewer
+    description: LLM/runtime security review for sandboxing, DLP, prompt injection, auth, tenant isolation, and supply-chain risk
+    skill: agents/security-reviewer.md
+    model:
+      provider: openai
+      model: openai/claude-sonnet-4.6
+      tier: strong
+      fallbackModel: openai/claude-haiku-4.5
+      maxTokens: 8192
+      maxResponseTokens: 4096
+      maxToolCalls: 24
+      maxWallClockMs: 240000
+    capabilities: [security-review, threat-modeling, dlp, prompt-injection, sandbox, authz, supply-chain]
+    allowed_tools: [web.search, web.fetch]
+    triggers: [security, 安全, guardrails, sandbox, DLP, prompt injection]
+
+  - id: architecture-planner
+    name: Architecture Planner
+    emoji: 🏗️
+    role: architect
+    description: Architecture planning, ADR-quality tradeoff analysis, workflow decomposition, and model-cost tiering
+    skill: agents/architecture-planner.md
+    model:
+      provider: openai
+      model: openai/claude-sonnet-4.6
+      tier: strong
+      fallbackModel: openai/claude-haiku-4.5
+      maxTokens: 8192
+      maxResponseTokens: 4096
+      maxToolCalls: 20
+      maxWallClockMs: 240000
+    capabilities: [architecture, planning, adr, decomposition, model-routing, workflow-design]
+    allowed_tools: [web.search, web.fetch]
+    triggers: [architecture, 架构, design plan, ADR, 技术方案]
+
+  - id: qa-automation
+    name: QA Automation Agent
+    emoji: 🧪
+    role: qa-automation
+    description: Focused test planning and execution using existing test commands with concise failure analysis
+    skill: agents/qa-automation.md
+    model:
+      provider: openai
+      model: openai/claude-haiku-4.5
+      tier: cheap
+      fallbackModel: openai/gpt-5.4-mini
+      maxTokens: 4096
+      maxResponseTokens: 2048
+      maxToolCalls: 12
+      maxWallClockMs: 120000
+    capabilities: [qa, testing, vitest, playwright, regression, coverage]
+    allowed_tools: [web.fetch]
+    triggers: [qa automation, 自动化测试, regression, vitest, playwright]
+
+  - id: gitops-reviewer
+    name: GitOps Reviewer
+    emoji: 🚦
+    role: gitops
+    description: CI/CD, Docker, release, rollback, dependency/license, and production readiness review
+    skill: agents/gitops-reviewer.md
+    model:
+      provider: openai
+      model: openai/claude-haiku-4.5
+      tier: cheap
+      fallbackModel: openai/gpt-5.4-mini
+      maxTokens: 4096
+      maxResponseTokens: 2048
+      maxToolCalls: 12
+      maxWallClockMs: 120000
+    capabilities: [gitops, cicd, docker, release, rollback, dependency-license, production-readiness]
+    allowed_tools: [web.fetch]
+    triggers: [gitops, release, 发布, CI, Docker, license]
+
+  - id: issue-refiner
+    name: Issue Refiner
+    emoji: 🧾
+    role: issue-refiner
+    description: Refines vague issues into GitHub-ready PRDs, specs, acceptance criteria, and validation checklists
+    skill: agents/issue-refiner.md
+    model:
+      provider: openai
+      model: openai/claude-haiku-4.5
+      tier: cheap
+      fallbackModel: openai/gpt-5.4-mini
+      maxTokens: 4096
+      maxResponseTokens: 2048
+      maxToolCalls: 6
+      maxWallClockMs: 90000
+    capabilities: [issue-triage, prd, specification, acceptance-criteria, release-notes]
+    allowed_tools: []
+    triggers: [issue, triage, refine, PRD, specification]
+
+  - id: release-compliance
+    name: Release Compliance Agent
+    emoji: ✅
+    role: release-compliance
+    description: Evaluates QA, security audit, GitOps, dependency/license, rollback, and release readiness gates
+    skill: agents/release-compliance.md
+    model:
+      provider: openai
+      model: openai/claude-haiku-4.5
+      tier: cheap
+      fallbackModel: openai/gpt-5.4-mini
+      maxTokens: 4096
+      maxResponseTokens: 2048
+      maxToolCalls: 10
+      maxWallClockMs: 120000
+    capabilities: [release-compliance, github-actions-review, dependency-license, rollback, smoke-test]
+    allowed_tools: [web.fetch]
+    triggers: [release gate, compliance, 发布检查, ship]
+
+  - id: accessibility-tester
+    name: Accessibility Tester
+    emoji: ♿
+    role: accessibility-tester
+    description: Reviews dashboard UI for keyboard, ARIA, focus, error recovery, and accessibility blockers
+    skill: agents/accessibility-tester.md
+    model:
+      provider: openai
+      model: openai/claude-haiku-4.5
+      tier: cheap
+      fallbackModel: openai/gpt-5.4-mini
+      maxTokens: 4096
+      maxResponseTokens: 2048
+      maxToolCalls: 10
+      maxWallClockMs: 120000
+    capabilities: [accessibility, a11y, keyboard, aria, dashboard-ux]
+    allowed_tools: []
+    triggers: [accessibility, a11y, ARIA, keyboard, 可访问性]
+
+  - id: react-dashboard-auditor
+    name: React Dashboard Auditor
+    emoji: ⚛️
+    role: react-dashboard-auditor
+    description: Audits React dashboard components, API contracts, loading/error states, and Zustand flows
+    skill: agents/react-dashboard-auditor.md
+    model:
+      provider: openai
+      model: openai/claude-haiku-4.5
+      tier: cheap
+      fallbackModel: openai/gpt-5.4-mini
+      maxTokens: 4096
+      maxResponseTokens: 2048
+      maxToolCalls: 12
+      maxWallClockMs: 120000
+    capabilities: [react, dashboard, api-contracts, zustand, loading-states]
+    allowed_tools: []
+    triggers: [react dashboard, frontend audit, loading state, error state]
+
+  - id: performance-investigator
+    name: Performance Investigator
+    emoji: ⚡
+    role: performance-investigator
+    description: Finds slow paths, excessive token/tool usage, cache misses, DB hotspots, and dashboard latency
+    skill: agents/performance-investigator.md
+    model:
+      provider: openai
+      model: openai/claude-haiku-4.5
+      tier: cheap
+      fallbackModel: openai/gpt-5.4-mini
+      maxTokens: 4096
+      maxResponseTokens: 2048
+      maxToolCalls: 10
+      maxWallClockMs: 120000
+    capabilities: [performance, cost, token-budget, cache, latency, database]
+    allowed_tools: []
+    triggers: [performance, slow, latency, token cost, 性能]
+
+  - id: release-notes-writer
+    name: Release Notes Writer
+    emoji: 🗒️
+    role: release-notes
+    description: Produces user-facing release notes and changelog summaries from execution artifacts
+    skill: agents/release-notes-writer.md
+    model:
+      provider: openai
+      model: openai/claude-haiku-4.5
+      tier: cheap
+      fallbackModel: openai/gpt-5.4-mini
+      maxTokens: 4096
+      maxResponseTokens: 2048
+      maxToolCalls: 6
+      maxWallClockMs: 90000
+    capabilities: [release-notes, changelog, documentation, user-facing-summary]
+    allowed_tools: []
+    triggers: [release notes, changelog, docs summary, 发布说明]
 
   # ===== 内容创作 Agent =====
   - id: wechat-writer
@@ -111,7 +336,12 @@ agents:
     model:
       provider: openai
       model: openai/claude-sonnet-4.6
+      tier: balanced
+      fallbackModel: openai/claude-haiku-4.5
       maxTokens: 8192
+      maxResponseTokens: 4096
+      maxToolCalls: 24
+      maxWallClockMs: 240000
     capabilities: [wechat, article, copywriting, seo, chinese-content, web-research, wechat-layout, image-generation]
     allowed_tools: [web.search, web.fetch, crawler.extract_links, content.wechat_layout, content.hashtag_plan, image.generate_svg]
     triggers: [公众号, 写文章, 推文, 微信文章, wechat article]
@@ -125,7 +355,12 @@ agents:
     model:
       provider: openai
       model: openai/claude-sonnet-4.6
+      tier: balanced
+      fallbackModel: openai/claude-haiku-4.5
       maxTokens: 4096
+      maxResponseTokens: 2048
+      maxToolCalls: 16
+      maxWallClockMs: 180000
     capabilities: [xiaohongshu, rednote, social-media, chinese-content, lifestyle, web-research, hashtag-planning, image-generation]
     allowed_tools: [web.search, web.fetch, content.hashtag_plan, image.generate_svg]
     triggers: [小红书, 笔记, 种草, 小红书文案, rednote]
@@ -140,7 +375,12 @@ agents:
     model:
       provider: openai
       model: openai/claude-haiku-4.5
+      tier: cheap
+      fallbackModel: openai/gpt-5.4-mini
       maxTokens: 8192
+      maxResponseTokens: 3072
+      maxToolCalls: 12
+      maxWallClockMs: 120000
     capabilities: [translation, i18n, l10n, locale, multilingual, web-fetch]
     allowed_tools: [web.fetch]
     triggers: [翻译, 国际化, i18n, translate, localization]
@@ -154,7 +394,12 @@ agents:
     model:
       provider: openai
       model: openai/claude-sonnet-4.6
+      tier: balanced
+      fallbackModel: openai/claude-haiku-4.5
       maxTokens: 8192
+      maxResponseTokens: 4096
+      maxToolCalls: 24
+      maxWallClockMs: 240000
     capabilities: [database, migration, schema, sql, prisma, drizzle, web-research]
     allowed_tools: [web.search, web.fetch]
     triggers: [数据库, 迁移, migration, schema, 建表]
@@ -168,7 +413,12 @@ agents:
     model:
       provider: openai
       model: openai/claude-sonnet-4.6
+      tier: balanced
+      fallbackModel: openai/claude-haiku-4.5
       maxTokens: 8192
+      maxResponseTokens: 4096
+      maxToolCalls: 20
+      maxWallClockMs: 240000
     capabilities: [api, rest, graphql, openapi, swagger, web-research]
     allowed_tools: [web.search, web.fetch]
     triggers: [API, 接口设计, endpoint, swagger, openapi]
@@ -181,8 +431,13 @@ agents:
     skill: agents/doc-writer.md
     model:
       provider: openai
-      model: openai/claude-sonnet-4.6
+      model: openai/claude-haiku-4.5
+      tier: cheap
+      fallbackModel: openai/gpt-5.4-mini
       maxTokens: 8192
+      maxResponseTokens: 3072
+      maxToolCalls: 12
+      maxWallClockMs: 120000
     capabilities: [documentation, readme, changelog, guide, adr, web-research, crawler]
     allowed_tools: [web.search, web.fetch, crawler.extract_links]
     triggers: [文档, README, docs, 使用指南, changelog]

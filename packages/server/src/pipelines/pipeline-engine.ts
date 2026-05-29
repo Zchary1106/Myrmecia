@@ -11,6 +11,7 @@ import { TaskQueue } from '../queue/task-queue.js';
 import { AgentManager } from '../agents/agent-manager.js';
 import { contextManager } from './context-manager.js';
 import { workspaceManager } from '../workspace/workspace-manager.js';
+import { createTestReportFromOutput, isTestingStage } from '../testing/test-report.js';
 import { saveCheckpoint, getCompletedStageIndices } from './checkpoint.js';
 import type { Pipeline, PipelineStage } from '../types.js';
 
@@ -63,7 +64,7 @@ export class PipelineEngine {
   }
 
   /** Create a new pipeline from a template */
-  async create(data: { name: string; templateId: string; input: string; gateMode?: 'auto' | 'manual' }): Promise<Pipeline> {
+  async create(data: { name: string; templateId: string; input: string; gateMode?: 'auto' | 'manual'; workspaceId?: string }): Promise<Pipeline> {
     const template = getTemplate(data.templateId);
     if (!template) throw new Error(`Template ${data.templateId} not found`);
 
@@ -82,6 +83,7 @@ export class PipelineEngine {
       stages,
       gateMode: data.gateMode,
       input: data.input,
+      workspaceId: data.workspaceId,
     });
 
     // Create isolated workspace for this pipeline
@@ -157,7 +159,7 @@ export class PipelineEngine {
     if (!agent) {
       stages[stageIndex] = { ...stage, status: 'pending' };
       updatePipeline(pipelineId, { stages, status: 'blocked' });
-      eventBus.emit('pipeline:stage:started', { pipelineId, stageIndex, status: 'blocked' });
+      eventBus.emit('pipeline:stage:started', { pipelineId, stageIndex, status: 'blocked', workspaceId: pipeline.workspaceId });
 
       // Retry after delay — an agent may become available
       setTimeout(() => this.retryBlockedStage(pipelineId, stageIndex), 10000);
@@ -175,13 +177,14 @@ export class PipelineEngine {
       stageIndex,
       workdir,
       workspacePath,
+      workspaceId: pipeline.workspaceId,
     });
 
     stages[stageIndex] = { ...stage, status: 'running', taskId: task.id, input: prompt };
     updatePipeline(pipelineId, { stages, currentStageIndex: stageIndex });
     this.taskToPipeline.set(task.id, { pipelineId, stageIndex });
 
-    eventBus.emit('pipeline:stage:started', { pipelineId, stageIndex, taskId: task.id });
+    eventBus.emit('pipeline:stage:started', { pipelineId, stageIndex, taskId: task.id, workspaceId: pipeline.workspaceId });
   }
 
   /** Retry a blocked stage (when agent becomes available) */
@@ -237,11 +240,16 @@ export class PipelineEngine {
     if (ws && task.output) {
       const stageDir = workspaceManager.createStageDir(ws.path, stageIdx, stages[stageIdx].name);
       workspaceManager.writeStageArtifact(stageDir, task.output, 'output.md');
+      if (isTestingStage(stages[stageIdx].name, stages[stageIdx].agentRole)) {
+        const testReport = createTestReportFromOutput(task.output, `${stages[stageIdx].name} completed`);
+        workspaceManager.writeStageArtifact(stageDir, JSON.stringify(testReport, null, 2), 'test-report.json');
+      }
     }
 
     eventBus.emit('pipeline:stage:done', {
       pipelineId: pipeline.id,
       stageIndex: stageIdx,
+      workspaceId: pipeline.workspaceId,
       output: task.output,
     });
 
@@ -250,7 +258,7 @@ export class PipelineEngine {
     const allDone = updatedPipeline.stages.every(s => s.status === 'done' || s.status === 'skipped');
     if (allDone) {
       updatePipeline(pipeline.id, { status: 'done', completedAt: new Date().toISOString() });
-      eventBus.emit('pipeline:done', { pipelineId: pipeline.id });
+      eventBus.emit('pipeline:done', { pipelineId: pipeline.id, workspaceId: pipeline.workspaceId });
 
       // Merge workspace back if git worktree
       if (ws?.isGitWorktree) {
@@ -304,6 +312,7 @@ export class PipelineEngine {
         eventBus.emit('pipeline:stage:started', {
           pipelineId: pipeline.id,
           stageIndex: pipeline.currentStageIndex,
+          workspaceId: pipeline.workspaceId,
           status: 'blocked',
           recovered: true,
         });
@@ -332,6 +341,7 @@ export class PipelineEngine {
             pipelineId: pipeline.id,
             stageIndex: pipeline.currentStageIndex,
             taskId: current.taskId,
+            workspaceId: pipeline.workspaceId,
             error: task?.error || `Stage task ${current.taskId} is not recoverable`,
             recovered: true,
           });
@@ -443,7 +453,7 @@ export class PipelineEngine {
     stages[stageIndex] = { ...stages[stageIndex], status: 'pending', taskId: undefined, output: undefined };
     updatePipeline(pipelineId, { stages, status: 'running' });
 
-    eventBus.emit('pipeline:awaiting_retry', { pipelineId, stageIndex, action: 'retry' });
+    eventBus.emit('pipeline:awaiting_retry', { pipelineId, stageIndex, action: 'retry', workspaceId: pipeline.workspaceId });
 
     this.startReadyStages(pipelineId);
   }

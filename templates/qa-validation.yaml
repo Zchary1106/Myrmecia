@@ -1,0 +1,28 @@
+name: QA Validation
+description: Focused validation workflow that produces a standardized test-report artifact
+stages:
+  - name: Test Plan
+    role: qa-automation
+    prompt_template: |
+      Identify the smallest useful validation plan for:
+      {input}
+
+      Prefer existing test scripts and avoid installing tools.
+
+  - name: Run Focused Validation
+    role: qa-automation
+    depends_on: [0]
+    prompt_template: |
+      Execute or describe the narrowest safe validation for:
+      {input}
+
+      Produce the required test-report JSON block.
+
+  - name: Regression Summary
+    role: reviewer
+    depends_on: [1]
+    prompt_template: |
+      Review the QA test-report and decide whether the implementation is ready:
+      {input}
+
+      Highlight only blocking regressions and required fixes.

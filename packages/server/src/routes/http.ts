@@ -64,6 +64,25 @@ export function actorFromRequest(req: Request): OperatorActor {
     return { id: proxyActor, role, source: 'proxy' };
   }
 
+  const tenant = (req as any).tenantContext as { userId?: string; role?: OperatorRole } | undefined;
+  if (tenant?.userId) {
+    const role: OperatorRole = tenant.role && ['admin', 'operator', 'viewer'].includes(tenant.role)
+      ? tenant.role
+      : 'viewer';
+    return { id: tenant.userId, role, source: 'proxy' };
+  }
+
+  const auth = (req as any).authContext as { userId?: string; scopes?: string[] } | undefined;
+  if (auth?.userId) {
+    const scopes = (auth.scopes || []).map(scope => scope.toLowerCase());
+    const role: OperatorRole = scopes.some(scope => scope === 'admin' || scope === '*' || scope.endsWith(':admin'))
+      ? 'admin'
+      : scopes.some(scope => scope.includes(':write') || scope.startsWith('write:'))
+        ? 'operator'
+        : 'viewer';
+    return { id: auth.userId, role, source: 'token' };
+  }
+
   const hasToken = !!req.header('authorization');
   return {
     id: hasToken ? 'token-admin' : 'local-admin',

@@ -367,6 +367,17 @@ CREATE TABLE IF NOT EXISTS operator_actions (
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS execution_audit_reports (
+  execution_id TEXT PRIMARY KEY REFERENCES task_executions(id) ON DELETE CASCADE,
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  agent_id TEXT NOT NULL,
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  policy_snapshot JSON NOT NULL DEFAULT '{}',
+  events JSON NOT NULL DEFAULT '[]',
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Server-backed per-operator dashboard/preferences state
 CREATE TABLE IF NOT EXISTS operator_preferences (
   actor_id TEXT NOT NULL,
@@ -427,6 +438,9 @@ CREATE INDEX IF NOT EXISTS idx_operator_actions_pipeline ON operator_actions(pip
 CREATE INDEX IF NOT EXISTS idx_operator_actions_created ON operator_actions(created_at);
 CREATE INDEX IF NOT EXISTS idx_operator_preferences_actor ON operator_preferences(actor_source, actor_role, actor_id);
 CREATE INDEX IF NOT EXISTS idx_operator_preferences_namespace ON operator_preferences(namespace);
+CREATE INDEX IF NOT EXISTS idx_execution_audit_task ON execution_audit_reports(task_id);
+CREATE INDEX IF NOT EXISTS idx_execution_audit_agent ON execution_audit_reports(agent_id);
+CREATE INDEX IF NOT EXISTS idx_execution_audit_workspace ON execution_audit_reports(workspace_id);
 
 -- Migrations (safe to re-run)
 -- v3: Add workspace_path to tasks
@@ -568,3 +582,18 @@ CREATE TABLE IF NOT EXISTS skill_registry_catalog (
   created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_catalog_source ON skill_registry_catalog(source_id);
+
+-- Migration: 202605300001_add_model_routing_tiers
+ALTER TABLE model_registry ADD COLUMN model_tier TEXT NOT NULL DEFAULT 'balanced';
+ALTER TABLE model_routes ADD COLUMN model_tier TEXT;
+ALTER TABLE task_executions ADD COLUMN model_id TEXT;
+ALTER TABLE task_executions ADD COLUMN model_tier TEXT;
+ALTER TABLE task_executions ADD COLUMN model_route_source TEXT;
+ALTER TABLE task_executions ADD COLUMN model_route_reason TEXT;
+ALTER TABLE model_usage_stats ADD COLUMN model_tier TEXT;
+ALTER TABLE model_usage_stats ADD COLUMN route_source TEXT;
+ALTER TABLE model_usage_stats ADD COLUMN workspace_id TEXT DEFAULT 'default';
+ALTER TABLE model_usage_stats ADD COLUMN pipeline_id TEXT;
+ALTER TABLE model_usage_stats ADD COLUMN stage_index INTEGER;
+CREATE INDEX IF NOT EXISTS idx_model_usage_workspace ON model_usage_stats(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_model_usage_pipeline ON model_usage_stats(pipeline_id, stage_index);

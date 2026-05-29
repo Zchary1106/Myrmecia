@@ -9,10 +9,12 @@ export interface AgentStats {
 
 export interface AgentConfig {
   model?: string;
+  modelPolicy?: AgentModelPolicy;
   maxConcurrent?: number;
   timeout?: number;
   workdir?: string;
   maxTurns?: number;
+  allowNetwork?: boolean;
   allowedTools?: string[];
 }
 
@@ -133,6 +135,7 @@ export interface Task {
   output?: string;
   workdir?: string;
   workspacePath?: string;
+  workspaceId?: string;
   error?: string;
   retryCount: number;
   maxRetries: number;
@@ -236,6 +239,18 @@ export interface RunTrace {
 }
 
 export type ModelHealthStatus = 'unknown' | 'healthy' | 'degraded' | 'disabled';
+export type ModelTier = 'strong' | 'balanced' | 'cheap' | 'fallback';
+
+export interface AgentModelPolicy {
+  tier?: ModelTier;
+  preferredModel?: string;
+  fallbackModel?: string;
+  maxTokens?: number;
+  maxResponseTokens?: number;
+  maxToolCalls?: number;
+  maxWallClockMs?: number;
+  escalateOn?: string[];
+}
 
 export interface ModelDefinition {
   id: string;
@@ -248,6 +263,7 @@ export interface ModelDefinition {
   enabled: boolean;
   priority: number;
   fallbackGroup: string;
+  tier: ModelTier;
   healthStatus: ModelHealthStatus;
   lastCheckedAt?: string;
   createdAt: string;
@@ -258,6 +274,7 @@ export interface ModelRoute {
   routeKey: string;
   defaultModelId?: string;
   fallbackGroup: string;
+  modelTier?: ModelTier;
   createdAt: string;
   updatedAt: string;
 }
@@ -265,9 +282,13 @@ export interface ModelRoute {
 export interface ModelSelection {
   modelId: string;
   reason: string;
-  source: 'agent.model' | 'agent.config.model' | 'role.route' | 'global.route' | 'env.default' | 'runtime.default' | 'fallback';
+  source: 'agent.model' | 'agent.config.model' | 'agent.config.modelPolicy' | 'role.route' | 'global.route' | 'env.default' | 'runtime.default' | 'fallback';
   requestedModelId?: string;
   fallbackGroup?: string;
+  fallbackModelId?: string;
+  modelTier?: ModelTier;
+  routeKey?: string;
+  budget?: AgentModelPolicy;
 }
 
 export interface AgentProgress {
@@ -295,6 +316,11 @@ export interface TaskExecution {
   costUSD: number;
   tokenCount: number;
   parentExecutionId?: string;
+  workspaceId?: string;
+  modelId?: string;
+  modelTier?: ModelTier;
+  modelRouteSource?: ModelSelection['source'];
+  modelRouteReason?: string;
   startedAt: string;
   completedAt?: string;
 }
@@ -346,6 +372,7 @@ export interface Pipeline {
   currentStageIndex: number;
   gateMode: 'auto' | 'manual';
   input: string;
+  workspaceId?: string;
   createdAt: string;
   completedAt?: string;
 }
@@ -355,6 +382,19 @@ export interface PipelineTemplate {
   name: string;
   description?: string;
   stages: { name: string; role: AgentRole; promptTemplate: string }[];
+}
+
+export type TestReportStatus = 'passed' | 'failed' | 'skipped' | 'unknown';
+
+export interface TestReport {
+  schemaVersion: 1;
+  status: TestReportStatus;
+  commands: string[];
+  failures: string[];
+  changedFiles: string[];
+  coverageNotes?: string;
+  summary: string;
+  nextFix?: string;
   createdAt: string;
 }
 
@@ -688,6 +728,7 @@ export interface TaskEventPayload {
   taskId: string;
   task?: Task;
   agentId?: string;
+  workspaceId?: string;
   output?: string;
   error?: string;
   message?: string;
@@ -697,6 +738,7 @@ export interface PipelineEventPayload {
   pipelineId: string;
   stageIndex?: number;
   taskId?: string;
+  workspaceId?: string;
   output?: string;
 }
 
@@ -704,6 +746,7 @@ export interface ExecutionEventPayload {
   executionId: string;
   taskId?: string;
   agentDefId?: string;
+  workspaceId?: string;
   progress?: AgentProgress;
   type?: ExecutionMessageType;
   content?: string;

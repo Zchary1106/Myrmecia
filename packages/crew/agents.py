@@ -75,6 +75,8 @@ def build_agent(
         tool_names = ", ".join(allowed_tools or agent_def.get("allowed_tools", []))
         backstory = f"{backstory}\n\nAvailable tools: {tool_names}. Use tools only when they improve accuracy, research quality, formatting, or asset generation."
 
+    max_iter = int((agent_meta or {}).get("maxTurns") or os.getenv("AGENT_FACTORY_MAX_TURNS", "20"))
+
     return Agent(
         role=agent_def.get("role", agent_id),
         goal=agent_def.get("description", "Complete the assigned task thoroughly."),
@@ -82,4 +84,5 @@ def build_agent(
         llm=get_llm(model),
         tools=selected_tools,
         verbose=False,
+        max_iter=max_iter,
     )

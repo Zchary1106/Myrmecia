@@ -3,6 +3,7 @@ import { getDb } from '../db/database.js';
 import { parseSkillContent } from './skill-parser.js';
 import { upsertSkill, createSkillVersion, publishSkillVersion } from '../db/models/skill.js';
 import { logger } from '../lib/logger.js';
+import { reviewImportedSkillContent } from './skill-review.js';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -207,6 +208,11 @@ export async function importSkill(catalogId: string, options?: { transform?: boo
     content = await transformToStructured(content, entry.name);
   }
 
+  const review = reviewImportedSkillContent(content);
+  if (!review.approved) {
+    throw new Error(`Imported skill failed safety review: ${review.issues.map(issue => `${issue.code}: ${issue.message}`).join('; ')}`);
+  }
+
   // Create local skill
   const skillId = entry.path.replace(/\.md$/, '').replace(/[/\\]/g, '-');
   const skill = upsertSkill({
@@ -220,7 +226,10 @@ export async function importSkill(catalogId: string, options?: { transform?: boo
     skillId: skill.id,
     content,
     status: 'published',
-    changelog: `Imported from ${source.name} (${entry.path})`,
+    changelog: [
+      `Imported from ${source.name} (${entry.path})`,
+      ...review.issues.map(issue => `Review ${issue.severity}: ${issue.message}`),
+    ].join('\n'),
     createdBy: 'registry',
     publishedBy: 'registry',
   });

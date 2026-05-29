@@ -1,0 +1,44 @@
+name: Structured Autonomy
+description: Plan with a strong model, implement with a coding agent, then gate with QA, security, and GitOps review
+stages:
+  - name: Architecture Plan
+    role: architect
+    prompt_template: |
+      Create an incremental architecture and execution plan for:
+      {input}
+
+      Include model routing guidance: which stages need a strong model and which can use a cheaper model.
+
+  - name: Implement
+    role: developer
+    depends_on: [0]
+    prompt_template: |
+      Implement the approved plan with minimal, production-safe changes:
+      {input}
+
+      Follow existing repository conventions and avoid unrelated changes.
+
+  - name: QA Automation
+    role: qa-automation
+    depends_on: [1]
+    prompt_template: |
+      Build and run the narrowest useful validation for the implementation:
+      {input}
+
+      Report exact failures and required fixes.
+
+  - name: Security Review
+    role: security-reviewer
+    depends_on: [1, 2]
+    prompt_template: |
+      Review the implementation for exploitable security, tenant isolation, DLP, sandbox, and supply-chain issues:
+      {input}
+
+      Block only on issues that are actionable and material.
+
+  - name: GitOps Release Check
+    role: gitops
+    depends_on: [2, 3]
+    prompt_template: |
+      Review release readiness, CI/CD, Docker/runtime settings, dependency/license concerns, rollback, and smoke tests:
+      {input}

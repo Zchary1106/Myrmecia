@@ -9,6 +9,7 @@ function rowToPipeline(row: any): Pipeline {
     currentStageIndex: row.current_stage_index,
     gateMode: row.gate_mode,
     templateId: row.template_id,
+    workspaceId: row.workspace_id || 'default',
     createdAt: row.created_at,
     completedAt: row.completed_at,
     stageCheckpoints: row.stage_checkpoints,
@@ -21,14 +22,15 @@ export function createPipeline(data: {
   stages: PipelineStage[];
   gateMode?: 'auto' | 'manual';
   input: string;
+  workspaceId?: string;
 }): Pipeline {
   const db = getDb();
   const id = `pipe_${uuid().slice(0, 8)}`;
 
   db.run(`
-    INSERT INTO pipelines (id, name, template_id, stages, gate_mode, input)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `, id, data.name, data.templateId || null, JSON.stringify(data.stages), data.gateMode || 'auto', data.input);
+    INSERT INTO pipelines (id, name, template_id, stages, gate_mode, input, workspace_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `, id, data.name, data.templateId || null, JSON.stringify(data.stages), data.gateMode || 'auto', data.input, data.workspaceId || 'default');
 
   return getPipeline(id)!;
 }
@@ -39,11 +41,14 @@ export function getPipeline(id: string): Pipeline | undefined {
   return row ? rowToPipeline(row) : undefined;
 }
 
-export function listPipelines(filter?: { status?: PipelineStatus }): Pipeline[] {
+export function listPipelines(filter?: { status?: PipelineStatus; workspaceId?: string }): Pipeline[] {
   const db = getDb();
   let sql = 'SELECT * FROM pipelines';
   const params: any[] = [];
-  if (filter?.status) { sql += ' WHERE status = ?'; params.push(filter.status); }
+  const conditions: string[] = [];
+  if (filter?.workspaceId) { conditions.push('workspace_id = ?'); params.push(filter.workspaceId); }
+  if (filter?.status) { conditions.push('status = ?'); params.push(filter.status); }
+  if (conditions.length) sql += ' WHERE ' + conditions.join(' AND ');
   sql += ' ORDER BY created_at DESC';
   return db.all(sql, ...params).map(rowToPipeline);
 }
