@@ -32,7 +32,7 @@ import { createApiAuthMiddleware, isApiAuthEnabled } from './auth/token-auth.js'
 import { syncBuiltinTools } from './tools/tool-registry.js';
 import { syncBuiltinModels } from './models/model-registry.js';
 import { syncBuiltinSkills } from './skills/skill-registry.js';
-import { seedDefaultSources } from './skills/skill-registry-service.js';
+import { seedDefaultSources, startAutoSync } from './skills/skill-registry-service.js';
 import { SkillWatcher } from './skills/skill-watcher.js';
 import { setSkillWatcher } from './skills/skill-watcher-instance.js';
 import { logger } from './lib/logger.js';
@@ -106,6 +106,7 @@ async function main() {
   logger.info('Syncing skill registry...');
   syncBuiltinSkills(join(__dirname, '../../../agents'));
   seedDefaultSources();
+  startAutoSync();
   const skillWatcher = new SkillWatcher(join(__dirname, '../../../agents'));
   setSkillWatcher(skillWatcher);
   skillWatcher.start();

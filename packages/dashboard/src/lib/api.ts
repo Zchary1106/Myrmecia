@@ -152,8 +152,8 @@ export const api = {
         request<{ added: number; updated: number }>(`/skills/registry/sources/${encodeURIComponent(sourceId)}/sync`, { method: 'POST' }),
       browse: (params?: { search?: string; sourceId?: string; structured?: string }) =>
         request<any[]>(`/skills/registry/browse${params ? '?' + new URLSearchParams(params as any) : ''}`),
-      import: (catalogId: string) =>
-        request<{ skillId: string; versionId: string }>('/skills/registry/import', { method: 'POST', body: JSON.stringify({ catalogId }) }),
+      import: (catalogId: string, transform?: boolean) =>
+        request<{ skillId: string; versionId: string }>('/skills/registry/import', { method: 'POST', body: JSON.stringify({ catalogId, transform }) }),
     },
   },
   executions: {

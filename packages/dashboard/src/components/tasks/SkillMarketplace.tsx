@@ -73,13 +73,13 @@ export function SkillMarketplace() {
     }
   };
 
-  const handleImport = async (catalogId: string) => {
+  const handleImport = async (catalogId: string, transform = false) => {
     setImporting(catalogId);
     setError('');
     setSuccess('');
     try {
-      const result = await api.skills.registry.import(catalogId);
-      setSuccess(`Imported skill "${result.skillId}" (version: ${result.versionId})`);
+      const result = await api.skills.registry.import(catalogId, transform || undefined);
+      setSuccess(`Imported skill "${result.skillId}"${transform ? ' (transformed to step-driven)' : ''}`);
     } catch (err: any) {
       setError(err.message || 'Import failed');
     } finally {
@@ -215,18 +215,30 @@ export function SkillMarketplace() {
                     <span key={tag} className="rounded-full bg-surface-hover px-2 py-0.5 text-[9px] text-gray-400">{tag}</span>
                   ))}
                 </div>
-                <button
-                  onClick={() => handleImport(entry.id)}
-                  disabled={importing === entry.id}
-                  className={cn(
-                    'w-full rounded-lg py-2 text-xs font-medium transition',
-                    importing === entry.id
-                      ? 'bg-gray-500/20 text-gray-500'
-                      : 'bg-accent/20 text-accent-light hover:bg-accent/30',
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => handleImport(entry.id)}
+                    disabled={importing === entry.id}
+                    className={cn(
+                      'flex-1 rounded-lg py-2 text-xs font-medium transition',
+                      importing === entry.id
+                        ? 'bg-gray-500/20 text-gray-500'
+                        : 'bg-accent/20 text-accent-light hover:bg-accent/30',
+                    )}
+                  >
+                    {importing === entry.id ? 'Importing...' : 'Import'}
+                  </button>
+                  {!entry.isStructured && (
+                    <button
+                      onClick={() => handleImport(entry.id, true)}
+                      disabled={importing === entry.id}
+                      className="flex-1 rounded-lg py-2 text-xs font-medium bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30 transition disabled:opacity-50"
+                      title="Import and auto-convert to step-driven format using LLM"
+                    >
+                      + Transform
+                    </button>
                   )}
-                >
-                  {importing === entry.id ? 'Importing...' : 'Import'}
-                </button>
+                </div>
               </div>
             ))}
           </div>

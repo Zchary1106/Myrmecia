@@ -3,8 +3,21 @@ import { getDb } from '../database.js';
 import type { RunTrace, RunTraceStatus, TraceSpan, TraceSpanStatus } from '../../types.js';
 import { otelSpanFromTrace, emitMetric } from '../../observability/telemetry.js';
 
-// Track active OTel spans for later completion
-const activeOTelSpans = new Map<string, ReturnType<typeof otelSpanFromTrace>>();
+// Track active OTel spans for later completion (with TTL cleanup)
+const activeOTelSpans = new Map<string, { span: ReturnType<typeof otelSpanFromTrace>; createdAt: number }>();
+const SPAN_TTL_MS = 60 * 60 * 1000; // 1 hour
+
+function cleanupStaleSpans() {
+  const now = Date.now();
+  for (const [id, entry] of activeOTelSpans) {
+    if (now - entry.createdAt > SPAN_TTL_MS) {
+      try { entry.span.setStatus({ code: 2, message: 'Stale span cleanup' }); entry.span.end(); } catch {}
+      activeOTelSpans.delete(id);
+    }
+  }
+}
+// Run cleanup every 10 minutes
+setInterval(cleanupStaleSpans, 10 * 60 * 1000).unref();
 
 function parseMetadata(value: string | null | undefined): Record<string, unknown> {
   if (!value) return {};
@@ -136,7 +149,7 @@ export function createTraceSpan(data: {
         Object.entries(data.metadata || {}).map(([k, v]) => [k, String(v)])
       ),
     });
-    activeOTelSpans.set(id, otelSpan);
+    activeOTelSpans.set(id, { span: otelSpan, createdAt: Date.now() });
   } catch {}
 
   return getTraceSpan(id)!;
@@ -175,8 +188,9 @@ export function completeTraceSpan(id: string, updates: {
   );
   // Complete matching OTel span
   try {
-    const otelSpan = activeOTelSpans.get(id);
-    if (otelSpan) {
+    const entry = activeOTelSpans.get(id);
+    if (entry) {
+      const otelSpan = entry.span;
       if (updates.error) {
         otelSpan.setStatus({ code: 2, message: updates.error });
         otelSpan.recordException(new Error(updates.error));

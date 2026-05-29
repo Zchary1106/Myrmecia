@@ -23,6 +23,7 @@ const addSourceSchema = z.object({
 
 const importSchema = z.object({
   catalogId: z.string().trim().min(1),
+  transform: z.boolean().optional(),
 });
 
 export function createSkillRegistryRoutes(): Router {
@@ -74,8 +75,8 @@ export function createSkillRegistryRoutes(): Router {
   /** POST /registry/import */
   router.post('/import', async (req, res) => {
     try {
-      const { catalogId } = parseBody(importSchema, req);
-      const result = await importSkill(catalogId);
+      const { catalogId, transform } = parseBody(importSchema, req);
+      const result = await importSkill(catalogId, { transform });
       res.status(201).json(result);
     } catch (err) {
       sendError(res, err);
