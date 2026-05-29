@@ -125,6 +125,7 @@ export const api = {
   },
   skills: {
     list: () => request<SkillDefinition[]>('/skills'),
+    stats: () => request<any[]>('/skills/stats'),
     get: (id: string) => request<SkillDetail>(`/skills/${encodeURIComponent(id)}`),
     assignments: () => request<SkillAssignment[]>('/skills/assignments'),
     create: (data: { id?: string; name: string; description?: string; sourcePath?: string }) =>
