@@ -442,13 +442,30 @@ export class TsAgentLoop {
     const executeTool = async (toolName: string, toolInput: Record<string, unknown>): Promise<{ output: string; status: 'done' | 'failed' }> => {
       const { exec } = await import('child_process');
       const { promisify } = await import('util');
+      const { resolve, normalize } = await import('path');
       const execAsync = promisify(exec);
       const workdir = task.workdir || process.cwd();
+
+      // Security: validate that a path is within the workspace
+      const assertSafePath = (inputPath: string): string => {
+        const resolved = resolve(workdir, inputPath);
+        const normalized = normalize(resolved);
+        if (!normalized.startsWith(normalize(workdir))) {
+          throw new Error(`Path traversal blocked: "${inputPath}" resolves outside workspace`);
+        }
+        return resolved;
+      };
+
+      // Security: block dangerous shell commands
+      const BLOCKED_COMMANDS = /\b(rm\s+-rf\s+\/|sudo|chmod\s+777|curl.*\|\s*sh|wget.*\|\s*sh|eval|exec\s)/i;
 
       // Route to actual tool implementations
       if (toolName === 'shell_exec') {
         try {
           const cmd = String(toolInput.command || toolInput.cmd || '');
+          if (BLOCKED_COMMANDS.test(cmd)) {
+            return { output: `Blocked: dangerous command pattern detected`, status: 'failed' };
+          }
           const { stdout, stderr } = await execAsync(cmd, { cwd: workdir, timeout: 60_000, encoding: 'utf-8' });
           return { output: (stdout + (stderr ? `\nSTDERR: ${stderr}` : '')).slice(0, 8000), status: 'done' };
         } catch (err: any) {
@@ -458,8 +475,8 @@ export class TsAgentLoop {
       if (toolName === 'file_write') {
         try {
           const { writeFileSync, mkdirSync } = await import('fs');
-          const { dirname, resolve } = await import('path');
-          const filePath = resolve(workdir, String(toolInput.path || toolInput.file_path || ''));
+          const { dirname } = await import('path');
+          const filePath = assertSafePath(String(toolInput.path || toolInput.file_path || ''));
           mkdirSync(dirname(filePath), { recursive: true });
           writeFileSync(filePath, String(toolInput.content || ''), 'utf-8');
           return { output: `Written: ${filePath}`, status: 'done' };
@@ -470,8 +487,7 @@ export class TsAgentLoop {
       if (toolName === 'file_read') {
         try {
           const { readFileSync } = await import('fs');
-          const { resolve } = await import('path');
-          const filePath = resolve(workdir, String(toolInput.path || toolInput.file_path || ''));
+          const filePath = assertSafePath(String(toolInput.path || toolInput.file_path || ''));
           const content = readFileSync(filePath, 'utf-8');
           return { output: content.slice(0, 8000), status: 'done' };
         } catch (err: any) {
@@ -481,7 +497,9 @@ export class TsAgentLoop {
       if (toolName === 'grep' || toolName === 'search') {
         try {
           const pattern = String(toolInput.pattern || toolInput.query || '');
-          const { stdout } = await execAsync(`grep -rn "${pattern}" . --include="*.ts" --include="*.tsx" --include="*.js" | head -30`, { cwd: workdir, encoding: 'utf-8', timeout: 10_000 });
+          // Sanitize pattern to prevent command injection
+          const safePattern = pattern.replace(/["`$\\]/g, '');
+          const { stdout } = await execAsync(`grep -rn "${safePattern}" . --include="*.ts" --include="*.tsx" --include="*.js" | head -30`, { cwd: workdir, encoding: 'utf-8', timeout: 10_000 });
           return { output: stdout.slice(0, 4000) || 'No matches', status: 'done' };
         } catch (err: any) {
           return { output: err.stdout?.slice(0, 2000) || 'No matches', status: err.code === 1 ? 'done' : 'failed' };
