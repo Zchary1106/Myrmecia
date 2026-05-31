@@ -17,10 +17,10 @@ export interface RuntimeLimits {
   maxAgentExecutionsPerWindow: number;
   agentRateWindowMs: number;
   maxExecutionWallClockMs: number;
-  crewMemoryMB: number;
-  crewCpuSeconds: number;
-  crewMaxStdoutBytes: number;
-  crewMaxStderrBytes: number;
+  pythonRuntimeMemoryMB: number;
+  pythonRuntimeCpuSeconds: number;
+  pythonRuntimeMaxStdoutBytes: number;
+  pythonRuntimeMaxStderrBytes: number;
 }
 
 export function getRuntimeLimits(): RuntimeLimits {
@@ -35,10 +35,10 @@ export function getRuntimeLimits(): RuntimeLimits {
     maxAgentExecutionsPerWindow: parsePositiveInt(process.env.AGENT_RATE_LIMIT_MAX, 30),
     agentRateWindowMs: parsePositiveInt(process.env.AGENT_RATE_LIMIT_WINDOW_MS, 60_000),
     maxExecutionWallClockMs: parsePositiveInt(process.env.AGENT_MAX_WALL_CLOCK_MS, 300_000),
-    crewMemoryMB: parsePositiveInt(process.env.AGENT_CREW_MEMORY_MB, 2_048),
-    crewCpuSeconds: parsePositiveInt(process.env.AGENT_CREW_CPU_SECONDS, 300),
-    crewMaxStdoutBytes: parsePositiveInt(process.env.AGENT_CREW_MAX_STDOUT_BYTES, 1_048_576),
-    crewMaxStderrBytes: parsePositiveInt(process.env.AGENT_CREW_MAX_STDERR_BYTES, 262_144),
+    pythonRuntimeMemoryMB: parsePositiveInt(process.env.AGENT_FACTORY_PYTHON_MEMORY_MB, 2_048),
+    pythonRuntimeCpuSeconds: parsePositiveInt(process.env.AGENT_FACTORY_PYTHON_CPU_SECONDS, 300),
+    pythonRuntimeMaxStdoutBytes: parsePositiveInt(process.env.AGENT_FACTORY_PYTHON_MAX_STDOUT_BYTES, 1_048_576),
+    pythonRuntimeMaxStderrBytes: parsePositiveInt(process.env.AGENT_FACTORY_PYTHON_MAX_STDERR_BYTES, 262_144),
   };
 }
 

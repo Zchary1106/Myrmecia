@@ -286,7 +286,7 @@ Returns a `RunTrace` with ordered spans. New executions include spans for:
 | `agent.start` | Root Agent execution span |
 | `prompt.build` | Runtime prompt composition and tool policy summary |
 | `model.route` | Selected model and selection source |
-| `llm.call` | CrewAI subprocess / LLM call duration and result metadata |
+| `llm.call` | Agent runtime / LLM call duration and result metadata |
 | `permission.check` | Tool policy decisions, including blocked tools |
 | `tool.call` | Actual tool invocation emitted by Python tool runtime |
 
@@ -331,7 +331,7 @@ Content-Type: application/json
 }
 ```
 
-Agent runtime resolves tools in this order: Agent `allowedTools` → registry exists → tool enabled → per-Agent permission → approval requirement. Blocked tools are not passed to CrewAI.
+Agent runtime resolves tools in this order: Agent `allowedTools` → registry exists → tool enabled → per-Agent permission → approval requirement. Blocked tools are not passed to agent execution.
 
 ### Tool Executions
 

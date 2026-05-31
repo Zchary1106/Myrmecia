@@ -9,7 +9,7 @@ All commands use pnpm from the repo root. Node >=20, pnpm >=9 required.
 | Task | Command |
 |------|---------|
 | Install all deps | `pnpm install` |
-| Install Python runtime deps | `pip install -r packages/crew/requirements.txt` |
+| Install Python runtime deps | `pip install -r packages/python-runtime/requirements.txt` |
 | Dev server + dashboard | `pnpm dev` |
 | Dev server only | `pnpm dev:server` |
 | Dev dashboard only | `pnpm dev:dashboard` |
@@ -35,7 +35,7 @@ This is a **pnpm monorepo** for an autonomous multi-agent orchestration platform
 
 - **`packages/server`** — Express 5 + TypeScript orchestrator. Entry point: `src/index.ts`. Wires up SQLite, agent registry, task queue (BullMQ with Redis, or in-memory fallback), pipeline engine, WebSocket hub, and ~30 REST route modules under `/api/v1/`.
 - **`packages/dashboard`** — React 19 + Vite + Tailwind + shadcn/ui. State managed via Zustand stores (`src/stores/`), API calls through `src/lib/api.ts`. Vite proxies `/api` and `/ws` to the server.
-- **`packages/crew`** — Python CrewAI bridge. `agent-runtime.ts` spawns `python3 packages/crew/crew_runner.py` as a subprocess, reading JSON-line events from stdout.
+- **`packages/python-runtime`** — Agent Factory Python Runtime. `agent-runtime.ts` spawns `python3 packages/python-runtime/runtime_runner.py` as a subprocess, reading JSON-line events from stdout.
 - **`packages/shared`** — TypeScript type definitions shared between server and dashboard. ESM package.
 - **`agents/`** — Agent definition YAML (`registry.yaml`) and skill markdown files (`pm.md`, `dev.md`, etc.).
 - **`templates/`** — Pipeline template YAML files (`full-product.yaml`, `bugfix.yaml`, `feature.yaml`).
@@ -44,7 +44,7 @@ This is a **pnpm monorepo** for an autonomous multi-agent orchestration platform
 
 1. `TaskQueue.enqueue()` creates a task row, emits `task:created`, and either enqueues in BullMQ (Redis) or runs in-memory.
 2. `AgentManager.executeTask()` checks concurrent execution capacity, delegates to `AgentRuntime`.
-3. `AgentRuntime.execute()` creates an execution row, spawns the CrewAI Python subprocess, tracks progress/cost/tokens, records trace spans, and emits events.
+3. `AgentRuntime.execute()` creates an execution row, runs the TypeScript loop or Agent Factory Python Runtime, tracks progress/cost/tokens, records trace spans, and emits events.
 4. `PipelineEngine` listens for `task:done`, writes stage artifacts, and advances to the next ready stage(s). Supports parallel stages via `dependsOn`, manual gating, and rollback.
 5. `EventBus` (singleton `eventBus` in `events/event-bus.ts`) emits typed events + a wildcard `*` copy. The WebSocket hub maps events to channels (`tasks`, `task:{id}`, `agents`, `agent:{id}`, `pipelines`, `pipeline:{id}`, `executions`, `execution:{id}`).
 
@@ -64,7 +64,7 @@ This is a **pnpm monorepo** for an autonomous multi-agent orchestration platform
 - **Pipeline context**: `ContextManager` compresses older completed stages into summaries; only the immediate predecessor's output is included in full.
 - **Workspaces**: Created under `.agent-factory/workspaces` by `WorkspaceManager`. These are ephemeral git worktrees or directories — do not treat them as source of truth.
 - **Queue fallback**: If `REDIS_URL`/`REDIS_HOST` are absent, `TaskQueue` uses an in-memory execution path. With Redis, BullMQ uses the `agent-factory-tasks` queue.
-- **CrewAI config**: `CREWAI_BASE_URL`, `CREWAI_API_KEY`, `CREWAI_MODEL` env vars. `ANTHROPIC_API_KEY` is a fallback for the CrewAI API key.
+- **Model runtime config**: `AGENT_FACTORY_BASE_URL`, `AGENT_FACTORY_API_KEY`, `AGENT_FACTORY_MODEL` env vars. `ANTHROPIC_API_KEY` is an optional fallback API key.
 - **Logging**: Pino logger singleton from `src/lib/logger.ts`. Dev mode uses `pino-pretty`.
 
 ### Key services initialized at startup

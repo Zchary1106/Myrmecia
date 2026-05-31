@@ -539,9 +539,9 @@ describe('control routes', () => {
     await withApp(app, async (baseUrl) => {
       const listed = await jsonFetch<any[]>(baseUrl, '/models?enabled=true');
       expect(listed.status).toBe(200);
-      expect(listed.body.some(model => model.id === 'openai/claude-sonnet-4.6')).toBe(true);
+      expect(listed.body.some(model => model.id === 'gpt-5.4-mini')).toBe(true);
 
-      const sonnetId = encodeURIComponent('openai/claude-sonnet-4.6');
+      const sonnetId = encodeURIComponent('gpt-5.4-mini');
       const denied = await jsonFetch<any>(baseUrl, `/models/${sonnetId}`, {
         method: 'PATCH',
         body: JSON.stringify({ enabled: false }),
@@ -559,11 +559,11 @@ describe('control routes', () => {
 
       const route = await jsonFetch<any>(baseUrl, '/models/routes', {
         method: 'PATCH',
-        body: JSON.stringify({ routeKey: 'role:developer', defaultModelId: 'openai/gpt-5.2-codex', fallbackGroup: 'coding' }),
+        body: JSON.stringify({ routeKey: 'role:developer', defaultModelId: 'gpt-5.4', fallbackGroup: 'coding' }),
         headers: { 'x-operator-id': 'ops1', 'x-operator-role': 'operator' },
       });
       expect(route.status).toBe(200);
-      expect(route.body.defaultModelId).toBe('openai/gpt-5.2-codex');
+      expect(route.body.defaultModelId).toBe('gpt-5.4');
 
       const actions = getDb().all(`
         SELECT action, target_type, target_id FROM operator_actions ORDER BY id ASC

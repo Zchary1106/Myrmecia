@@ -330,8 +330,8 @@ async function transformToStructured(content: string, skillName: string): Promis
   try {
     const OpenAI = (await import('openai')).default;
     const client = new OpenAI({
-      baseURL: process.env.CREWAI_BASE_URL || 'https://your-model-endpoint.example.com/v1',
-      apiKey: process.env.CREWAI_API_KEY || process.env.ANTHROPIC_API_KEY || '',
+      baseURL: process.env.AGENT_FACTORY_BASE_URL || 'https://your-model-endpoint.example.com/v1',
+      apiKey: process.env.AGENT_FACTORY_API_KEY || process.env.ANTHROPIC_API_KEY || '',
     });
 
     const prompt = `You are a skill format converter. Given a markdown skill definition, generate YAML frontmatter that converts it into a step-driven executor format.
@@ -349,7 +349,7 @@ ${content.slice(0, 3000)}
 Output the complete converted skill file:`;
 
     const response = await client.chat.completions.create({
-      model: process.env.CREWAI_MODEL || 'openai/gpt-4o-mini',
+      model: process.env.AGENT_FACTORY_MODEL || 'gpt-5.4-mini',
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.2,
       max_tokens: 4096,

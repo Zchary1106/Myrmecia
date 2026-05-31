@@ -24,7 +24,7 @@ export const BUILTIN_TOOLS: BuiltinToolDefinition[] = [
     category: 'research',
     riskLevel: 'medium',
     version: '1.0.0',
-    implementationRef: 'packages/crew/agent_tools.py:web_search',
+    implementationRef: 'packages/python-runtime/agent_tools.py:web_search',
     inputSchema: {
       type: 'object',
       required: ['query'],
@@ -40,7 +40,7 @@ export const BUILTIN_TOOLS: BuiltinToolDefinition[] = [
     category: 'research',
     riskLevel: 'medium',
     version: '1.0.0',
-    implementationRef: 'packages/crew/agent_tools.py:web_fetch',
+    implementationRef: 'packages/python-runtime/agent_tools.py:web_fetch',
     inputSchema: {
       type: 'object',
       required: ['url'],
@@ -63,7 +63,7 @@ export const BUILTIN_TOOLS: BuiltinToolDefinition[] = [
     category: 'crawler',
     riskLevel: 'medium',
     version: '1.0.0',
-    implementationRef: 'packages/crew/agent_tools.py:crawler_extract_links',
+    implementationRef: 'packages/python-runtime/agent_tools.py:crawler_extract_links',
     inputSchema: {
       type: 'object',
       required: ['url'],
@@ -86,7 +86,7 @@ export const BUILTIN_TOOLS: BuiltinToolDefinition[] = [
     category: 'content',
     riskLevel: 'low',
     version: '1.0.0',
-    implementationRef: 'packages/crew/agent_tools.py:content_wechat_layout',
+    implementationRef: 'packages/python-runtime/agent_tools.py:content_wechat_layout',
     inputSchema: {
       type: 'object',
       required: ['markdown'],
@@ -102,7 +102,7 @@ export const BUILTIN_TOOLS: BuiltinToolDefinition[] = [
     category: 'content',
     riskLevel: 'low',
     version: '1.0.0',
-    implementationRef: 'packages/crew/agent_tools.py:content_hashtag_plan',
+    implementationRef: 'packages/python-runtime/agent_tools.py:content_hashtag_plan',
     inputSchema: {
       type: 'object',
       required: ['topic'],
@@ -118,7 +118,7 @@ export const BUILTIN_TOOLS: BuiltinToolDefinition[] = [
     category: 'asset',
     riskLevel: 'medium',
     version: '1.0.0',
-    implementationRef: 'packages/crew/agent_tools.py:image_generate_svg',
+    implementationRef: 'packages/python-runtime/agent_tools.py:image_generate_svg',
     inputSchema: {
       type: 'object',
       required: ['spec'],

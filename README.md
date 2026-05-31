@@ -6,25 +6,25 @@ Autonomous multi-agent orchestration platform. Manage a pool of AI agents that e
 
 ![Architecture Overview](docs/diagrams/architecture-overview.png)
 
-Agent Factory is a **pnpm monorepo** that combines a TypeScript backend (Express 5), a React dashboard, and a Python CrewAI runtime. Agents are spawned as CrewAI subprocesses, orchestrated through a BullMQ/Redis task queue, with real-time WebSocket events streamed to the dashboard.
+Agent Factory is a **pnpm monorepo** that combines a TypeScript backend (Express 5), a React dashboard, and an Agent Factory Python runtime. Agents run in managed subprocesses, orchestrated through a BullMQ/Redis task queue, with real-time WebSocket events streamed to the dashboard.
 
 | Layer | Technology |
 |-------|-----------|
 | Frontend | React 19 + TypeScript + Tailwind CSS + shadcn/ui |
 | Backend | Express 5 + TypeScript |
 | Queue | BullMQ (Redis) with in-memory fallback |
-| Agent Runtime | Python CrewAI (subprocess) |
+| Agent Runtime | TypeScript loop + Agent Factory Python Runtime |
 | Database | SQLite (dev) / PostgreSQL (prod) |
 | Real-time | WebSocket pub/sub per resource |
 | Containerization | Docker Compose (server + dashboard + Redis) |
 
 ## Quick Start
 
-**Prerequisites:** Node.js >= 20, pnpm >= 9, Python 3 (for CrewAI runtime)
+**Prerequisites:** Node.js >= 20, pnpm >= 9, Python 3 (for the optional Python runtime)
 
 ```bash
 pnpm install
-pip install -r packages/crew/requirements.txt
+pip install -r packages/python-runtime/requirements.txt
 
 # Start dev server + dashboard
 pnpm dev
@@ -37,7 +37,7 @@ Startup options via `./start.sh`:
 
 ```bash
 ./start.sh --clean-db        # fresh SQLite database
-./start.sh --install-python  # install CrewAI deps automatically
+./start.sh --install-python  # install Python runtime deps automatically
 ./start.sh --server-only     # API server only (port 3000)
 ./start.sh --dashboard-only  # dashboard only (port 5173)
 ```
@@ -57,7 +57,7 @@ agent-factory/
 ├── packages/
 │   ├── server/       # Express 5 orchestrator — agents, pipelines, queue, routes, WebSocket
 │   ├── dashboard/    # React 19 SPA — task/agent/pipeline monitoring, cost analytics
-│   ├── crew/         # Python CrewAI bridge — agent subprocess runtime
+│   ├── python-runtime/ # Agent Factory Python Runtime — agent subprocess runtime
 │   ├── cli/          # CLI tool for interacting with the platform
 │   └── shared/       # TypeScript type definitions shared across packages
 ├── agents/           # Agent definitions (registry.yaml + 23 skill .md files)
@@ -71,7 +71,7 @@ agent-factory/
 
 1. **Task Queue** — `TaskQueue.enqueue()` creates a task, emits `task:created`, and enqueues in BullMQ (or runs in-memory when Redis is unavailable).
 2. **Agent Manager** — checks concurrent capacity, delegates to `AgentRuntime`.
-3. **Agent Runtime** — spawns a CrewAI Python subprocess, tracks progress/cost/tokens, records trace spans, emits events.
+3. **Agent Runtime** — runs the TypeScript loop or Agent Factory Python Runtime, tracks progress/cost/tokens, records trace spans, emits events.
 4. **Pipeline Engine** — listens for `task:done`, writes stage artifacts, advances to the next ready stage(s). Supports parallel stages (`dependsOn`), manual gating, loop stages, and rollback.
 5. **WebSocket Hub** — maps internal events to pub/sub channels (`tasks`, `task:{id}`, `agents`, `agent:{id}`, `pipelines`, `pipeline:{id}`, `executions`, `execution:{id}`).
 
@@ -144,10 +144,10 @@ WebSocket push notifications when tasks complete or require input. Optional WeCo
 
 | Variable | Purpose |
 |----------|---------|
-| `CREWAI_BASE_URL` | CrewAI API endpoint |
-| `CREWAI_API_KEY` | CrewAI API key |
-| `CREWAI_MODEL` | Default model for CrewAI |
-| `ANTHROPIC_API_KEY` | Fallback for CrewAI API key |
+| `AGENT_FACTORY_BASE_URL` | OpenAI-compatible model endpoint |
+| `AGENT_FACTORY_API_KEY` | Model endpoint API key |
+| `AGENT_FACTORY_MODEL` | Default fallback model |
+| `ANTHROPIC_API_KEY` | Optional fallback API key |
 | `REDIS_URL` / `REDIS_HOST` | Redis connection (in-memory queue fallback if unset) |
 | `DATABASE_URL` | PostgreSQL connection string (SQLite when unset) |
 | `PORT` | Server port (default 3000) |

@@ -12,9 +12,9 @@ flowchart LR
   Server --> SQLite[(SQLite)]
   Server --> Queue[TaskQueue<br/>In-memory or BullMQ]
   Queue --> Runtime[Agent Runtime]
-  Runtime --> CrewRunner[Python CrewAI Runner]
-  CrewRunner --> Proxy[Copilot API Reverse Proxy<br/>OpenAI-compatible]
-  CrewRunner --> Tools[Built-in Tools]
+  Runtime --> PythonRuntime[Agent Factory Python Runtime]
+  PythonRuntime --> Proxy[Model Endpoint<br/>OpenAI-compatible]
+  PythonRuntime --> Tools[Built-in Tools]
   Runtime --> Workspaces[(Task Workspaces)]
   Server --> Notifications[Notifications / Inbox]
 ```
@@ -26,9 +26,9 @@ flowchart LR
 | Dashboard | Agent 管理、任务发起、Pipeline 控制、实时状态、Inbox、观测和设置 |
 | Express API | REST API、鉴权、任务/Agent/Pipeline/模板/系统路由 |
 | TaskQueue | 任务入队、优先级、Redis/BullMQ 或本地内存执行路径 |
-| Agent Runtime | 创建 execution、组装 skill prompt、启动 CrewAI、记录消息/成本/状态 |
+| Agent Runtime | 创建 execution、组装 skill prompt、运行 TS loop 或 Python Runtime、记录消息/成本/状态 |
 | Model Router | 选择实际模型、应用 role/global fallback、记录健康状态和使用量 |
-| CrewAI Runner | 根据 Agent 配置构建 CrewAI Agent，调用模型与工具 |
+| Python Runtime | 根据 Agent 配置构建运行时 Agent，调用模型与工具 |
 | SQLite | Agent 定义、任务、执行记录、消息、Pipeline、通知、审计事件 |
 | WebSocket Hub | 把内部事件广播到 Dashboard 对应 channel |
 
@@ -71,8 +71,8 @@ flowchart TB
     Workspace[.agent-factory/workspaces]
   end
 
-  subgraph Python["packages/crew"]
-    Runner[crew_runner.py]
+  subgraph Python["packages/python-runtime"]
+    Runner[runtime_runner.py]
     Builder[agents.py]
     ToolRegistry[agent_tools.py]
   end
@@ -167,7 +167,7 @@ sequenceDiagram
   participant Queue as TaskQueue
   participant RT as AgentRuntime
   participant DB as SQLite
-  participant Py as crew_runner.py
+  participant Py as runtime_runner.py
   participant LLM as Copilot API Proxy
   participant Tool as Built-in Tools
   participant WS as WebSocket Hub
@@ -179,8 +179,8 @@ sequenceDiagram
   RT->>DB: create task_execution
   RT->>WS: task:started / execution:started
   RT->>RT: build system prompt<br/>skill file + runtime profile overlay
-  RT->>Py: spawn python3 crew_runner.py config
-  Py->>Py: build CrewAI Agent
+  RT->>Py: spawn python3 runtime_runner.py config
+  Py->>Py: build runtime Agent
   Py->>Tool: optional tool calls
   Py->>LLM: chat via OpenAI-compatible proxy
   Py-->>RT: JSONL assistant/result events
@@ -208,7 +208,7 @@ This keeps file-based skills versionable while allowing Dashboard edits to take 
 
 ## 5. Tools and Skills Architecture
 
-Tools are governed by a server-side Tool Runtime and implemented in `packages/crew/agent_tools.py`. An Agent can request tools through `allowedTools`, but the server filters that list through the tool catalog, enabled flags, per-Agent permissions, disallowed tools, and approval requirements before passing tools to CrewAI.
+Tools are governed by a server-side Tool Runtime and implemented in `packages/python-runtime/agent_tools.py`. An Agent can request tools through `allowedTools`, but the server filters that list through the tool catalog, enabled flags, per-Agent permissions, disallowed tools, and approval requirements before passing tools to execution.
 
 ```mermaid
 flowchart LR
@@ -216,8 +216,8 @@ flowchart LR
   Allowed --> Policy[Tool Policy Filter]
   Catalog[(tools / tool_permissions)] --> Policy
   Policy --> RuntimeConfig[Runtime Config JSON]
-  RuntimeConfig --> CrewRunner[crew_runner.py]
-  CrewRunner --> Builder[build_agent]
+  RuntimeConfig --> PythonRuntime[runtime_runner.py]
+  PythonRuntime --> Builder[build_agent]
   Builder --> ToolRegistry[TOOL_REGISTRY]
   ToolRegistry --> WebSearch[web.search]
   ToolRegistry --> WebFetch[web.fetch]
@@ -273,7 +273,7 @@ The Dashboard **Skills** page supports draft creation, published-version immutab
 
 ## 6. Model Registry and Routing
 
-The model selector is backed by the server-side Model Registry and constrained to models exposed through the configured copilot-api reverse proxy. CrewAI uses LiteLLM with an OpenAI-compatible client, so both GPT and Claude models are passed with the `openai/` prefix.
+The model selector is backed by the server-side Model Registry and constrained to models exposed through the configured OpenAI-compatible endpoint. Agent Factory uses the endpoint's native model IDs, such as `gpt-5.4-mini` and `claude-haiku-4.5`.
 
 ```mermaid
 flowchart LR
@@ -284,9 +284,9 @@ flowchart LR
   Router --> Trace[model.route span]
   Router --> Runtime[AgentRuntime config]
   Runtime --> Usage[(model_usage_stats)]
-  Runtime --> Runner[crew_runner.py]
+  Runtime --> Runner[runtime_runner.py]
   Runner --> LiteLLM[LiteLLM OpenAI-compatible client]
-  LiteLLM --> Proxy[CREWAI_BASE_URL<br/>copilot-api reverse proxy]
+  LiteLLM --> Proxy[AGENT_FACTORY_BASE_URL<br/>OpenAI-compatible endpoint]
   Proxy --> Model[GPT / Claude / Codex]
 ```
 
@@ -297,7 +297,7 @@ Routing order:
 3. Enabled `role:<agent.role>` route.
 4. Enabled `global` route.
 5. Highest-priority enabled model in the requested fallback group.
-6. Highest-priority enabled model, then `CREWAI_MODEL` as the final runtime fallback.
+6. Highest-priority enabled model, then `AGENT_FACTORY_MODEL` as the final runtime fallback.
 
 Each execution writes a `model.route` trace span and a `model_usage_stats` row with selected model, tokens/cost when available, latency, and route reason. `/api/models` exposes the catalog, enabled flags, health checks, and route updates; model config changes are audited as `model.update` / `model.route.update`.
 
@@ -305,27 +305,22 @@ Each execution writes a `model.route` trace span and a `model_usage_stats` row w
 
 | Model ID | Best for |
 | --- | --- |
-| `openai/claude-opus-4.7` | Master planning, deep architecture, high-risk review |
-| `openai/claude-opus-4.6` | Complex planning, long-context analysis |
-| `openai/claude-sonnet-4.6` | Balanced default for PM, review, content, docs |
-| `openai/claude-sonnet-4.5` | Stable Claude fallback |
-| `openai/claude-haiku-4.5` | Fast/low-cost QA, i18n, simple processing |
-| `openai/claude-sonnet-4` | Claude Sonnet fallback |
-| `openai/gpt-5.5` | Strong GPT reasoning and orchestration |
-| `openai/gpt-5.4` | Balanced GPT default |
-| `openai/gpt-5.4-mini` | Fast/low-cost GPT tasks |
-| `openai/gpt-5.3-codex` | Coding and refactoring |
-| `openai/gpt-5.2-codex` | Coding fallback |
-| `openai/gpt-5.2` | General fallback |
-| `openai/gpt-5-mini` | Lightweight tasks |
-| `openai/gpt-4.1` | Compatibility fallback |
+| `gpt-5.5` | Strong reasoning, orchestration, security, architecture |
+| `gpt-5.4` | Long-context fallback and large analysis |
+| `gpt-5.3-codex` | Coding and refactoring |
+| `gpt-5.4-mini` | Default low-cost model for simple tasks |
+| `claude-opus-4.8` | Strong fallback for review/planning |
+| `claude-opus-4.7` | Strong Claude fallback |
+| `claude-haiku-4.5` | Fast/low-cost summaries, docs, i18n |
+| `gemini-3.1-pro-preview` | Multimodal or web-heavy analysis |
+| `gemini-3-flash-preview` | Lightweight multimodal fallback |
 
 Environment variables:
 
 ```bash
-CREWAI_BASE_URL=https://your-copilot-api.example.com/v1
-CREWAI_API_KEY=...
-CREWAI_MODEL=openai/claude-sonnet-4.6
+AGENT_FACTORY_BASE_URL=https://your-model-endpoint.example.com/v1
+AGENT_FACTORY_API_KEY=...
+AGENT_FACTORY_MODEL=gpt-5.4-mini
 ```
 
 Per-agent model config takes precedence when the selected model is enabled in the registry; disabled models are skipped and routed through the configured role/global fallback.
@@ -622,7 +617,7 @@ flowchart TB
   Vite -->|proxy /api /ws| Node[Node Express :3000]
   Node --> SQLite[(SQLite file)]
   Node --> Redis[(Redis optional)]
-  Node --> Python[python3 crew_runner.py]
+  Node --> Python[python3 runtime_runner.py]
   Python --> Copilot[Copilot API reverse proxy]
   Python --> Internet[Optional web tools]
   Node --> Workspace[Workspace files]
@@ -657,7 +652,7 @@ pnpm dev:dashboard
 
 | Area | Current design | Extension |
 | --- | --- | --- |
-| Tools | Built-in Python CrewAI tools | Add provider-backed image generation, browser automation, MCP tools |
+| Tools | Built-in Agent Factory Python tools | Add provider-backed image generation, browser automation, MCP tools |
 | Model list | Static dashboard dropdown | Fetch model list from copilot-api if endpoint is available |
 | Agent skills | Markdown + dashboard overlay | Versioned skill registry and diff/rollback |
 | Queue | Redis optional, memory fallback | Distributed workers and per-Agent concurrency pools |

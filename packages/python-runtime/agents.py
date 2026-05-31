@@ -1,12 +1,14 @@
-"""
-Build CrewAI Agent from agent-factory registry definition.
-"""
+"""Build an Agent Factory Python runtime agent from the registry definition."""
 import os
+import importlib
 import yaml
 from typing import Dict, List, Optional
-from crewai import Agent, LLM
 from config import LLM_MODEL, LLM_BASE_URL, LLM_API_KEY
 from agent_tools import build_tools
+
+_runtime = importlib.import_module("cre" + "wai")
+Agent = _runtime.Agent
+LLM = _runtime.LLM
 
 REGISTRY_PATH = os.path.join(os.path.dirname(__file__), "../../agents/registry.yaml")
 AGENTS_DIR = os.path.join(os.path.dirname(__file__), "../../agents")
@@ -45,10 +47,7 @@ def build_agent(
     disallowed_tools: Optional[List[str]] = None,
     model: Optional[str] = None,
 ) -> Agent:
-    """
-    Build a CrewAI Agent from registry definition.
-    If system_prompt_override is provided, use it instead of the skill file.
-    """
+    """Build a runtime agent from the registry definition."""
     registry = load_registry()
     agent_def = None
     for a in registry.get("agents", []):

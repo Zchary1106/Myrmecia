@@ -524,13 +524,13 @@ export async function matchSkillForTask(
   // Call LLM to select
   try {
     const client = new OpenAI({
-      baseURL: process.env.CREWAI_BASE_URL || 'https://your-model-endpoint.example.com/v1',
-      apiKey: process.env.CREWAI_API_KEY || process.env.ANTHROPIC_API_KEY || '',
+      baseURL: process.env.AGENT_FACTORY_BASE_URL || 'https://your-model-endpoint.example.com/v1',
+      apiKey: process.env.AGENT_FACTORY_API_KEY || process.env.ANTHROPIC_API_KEY || '',
     });
 
     const prompt = buildMatcherPrompt(taskInput, candidates);
     const response = await client.chat.completions.create({
-      model: process.env.CREWAI_MODEL || 'openai/gpt-4o-mini',
+      model: process.env.AGENT_FACTORY_MODEL || 'gpt-5.4-mini',
       messages: [{ role: 'user', content: prompt }],
       temperature: 0,
       max_tokens: 200,

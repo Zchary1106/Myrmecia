@@ -7,7 +7,7 @@ Use pnpm from the repository root. Node >=20 and pnpm >=9 are expected.
 | Task | Command |
 | --- | --- |
 | Install JS dependencies | `pnpm install` |
-| Install Python agent runtime deps | `pip install -r packages/crew/requirements.txt` |
+| Install Python agent runtime deps | `pip install -r packages/python-runtime/requirements.txt` |
 | Run server + dashboard in dev | `pnpm dev` |
 | Run only server | `pnpm dev:server` |
 | Run only dashboard | `pnpm dev:dashboard` |
@@ -35,7 +35,7 @@ This is a pnpm monorepo for an autonomous multi-agent orchestration app:
 
 - `packages/server` is an Express 5 + TypeScript orchestrator. `src/index.ts` wires SQLite, agent registry loading, queueing, pipeline templates, notification/self-healing/quality services, REST routes, and the WebSocket hub.
 - `packages/dashboard` is a React 19 + Vite dashboard. Vite proxies `/api` and `/ws` to the server on port 3000 during local development.
-- `packages/crew` is the Python CrewAI bridge used by the server runtime. `agent-runtime.ts` spawns `python3 packages/crew/crew_runner.py` and parses JSON-line events from stdout.
+- `packages/python-runtime` is the Agent Factory Python Runtime used by the server runtime. `agent-runtime.ts` spawns `python3 packages/python-runtime/runtime_runner.py` and parses JSON-line events from stdout.
 - `agents/registry.yaml` defines agent capability templates and points to skill markdown files in `agents/*.md`.
 - `templates/*.yaml` defines pipeline stage sequences. `PipelineEngine.loadTemplates()` reads `prompt_template` fields and persists them as `promptTemplate` in SQLite.
 
@@ -43,7 +43,7 @@ Runtime flow:
 
 1. `TaskQueue.enqueue()` creates a task row, emits `task:created`, and either queues it in BullMQ when Redis is configured or runs the in-memory path.
 2. `AgentManager.executeTask()` checks active execution capacity and delegates to `AgentRuntime`.
-3. `AgentRuntime.execute()` creates a task execution row, starts CrewAI, updates task/execution state, records logs/messages, tracks cost through guardrails, and emits task/execution events.
+3. `AgentRuntime.execute()` creates a task execution row, runs the TypeScript loop or Agent Factory Python Runtime, updates task/execution state, records logs/messages, tracks cost through guardrails, and emits task/execution events.
 4. `PipelineEngine` listens for `task:done`, writes stage artifacts, and advances stages. Manual gate mode pauses between stages; auto mode starts the next stage immediately.
 5. `eventBus` emits typed events and a wildcard copy. `WSHub` maps events to channels such as `tasks`, `task:{id}`, `agents`, `agent:{id}`, `pipelines`, `pipeline:{id}`, `executions`, and `execution:{id}`.
 
@@ -65,5 +65,5 @@ Data model:
 - Pipeline context is intentionally compressed by `ContextManager`: older completed stages are summarized, while the immediate predecessor output is included in full.
 - Workspaces and stage artifacts are generated under `.agent-factory/workspaces` by `WorkspaceManager`; do not treat those directories as source of truth when searching or editing. They may contain stale copies of repo files.
 - If Redis env vars (`REDIS_URL` or `REDIS_HOST`/`REDIS_PORT`) are absent, `TaskQueue` uses the in-memory execution path. With Redis, BullMQ uses the `agent-factory-tasks` queue.
-- CrewAI runtime configuration comes from `CREWAI_BASE_URL`, `CREWAI_API_KEY`, and `CREWAI_MODEL`; `ANTHROPIC_API_KEY` is used only as a fallback for the CrewAI API key in `agent-runtime.ts`.
+- Model runtime configuration comes from `AGENT_FACTORY_BASE_URL`, `AGENT_FACTORY_API_KEY`, and `AGENT_FACTORY_MODEL`; `ANTHROPIC_API_KEY` is used only as an optional fallback API key.
 - The server exposes supervisor mode at `/api/supervisor/*`; `IntentClassifier` first uses keyword rules, then a simple fallback classifier.

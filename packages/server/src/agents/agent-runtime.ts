@@ -26,13 +26,13 @@ import { appendExecutionAuditEvent, recordExecutionPolicySnapshot } from '../aud
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MAX_RECENT_ACTIVITIES = 5;
 
-// Path to CrewAI runner
-const CREW_RUNNER = join(__dirname, '../../../../packages/crew/crew_runner.py');
+// Path to Agent Factory Python runtime.
+const PYTHON_RUNTIME_RUNNER = join(__dirname, '../../../../packages/python-runtime/runtime_runner.py');
 
 function shouldUseTsLoop(agent: AgentDefinition): boolean {
   const executor = process.env.AGENT_EXECUTOR;
   if (executor === 'ts') return true;
-  if (executor === 'crewai') return false;
+  if (executor === 'python') return false;
 
   // Default: use TS loop when agent has no tools (no Python dependency)
   const tools = agent.allowedTools || agent.config.allowedTools || [];
@@ -124,11 +124,11 @@ export class AgentRuntime {
       if (!budget.allowed) throw new Error(`Budget exceeded: ${budget.reason}`);
 
       const useTs = shouldUseTsLoop(agent);
-      addTaskLog(task.id, 'info', `Executor: ${useTs ? 'TS Agent Loop' : 'CrewAI (Python)'}`, 'system');
+      addTaskLog(task.id, 'info', `Executor: ${useTs ? 'TS Agent Loop' : 'Agent Factory Python Runtime'}`, 'system');
 
       const result = useTs
         ? await tsAgentLoop.execute(agent, task, abortController, execution.id, trace.id, agentSpan.id, tracker, runtimeSkill)
-        : await this.executeWithCrewAI(agent, task, abortController, execution.id, trace.id, agentSpan.id, tracker, runtimeSkill);
+        : await this.executeWithPythonRuntime(agent, task, abortController, execution.id, trace.id, agentSpan.id, tracker, runtimeSkill);
       const safeOutput = sanitizeAgentOutput(result.output, {
         agentId: agent.id,
         taskId: task.id,
@@ -363,10 +363,10 @@ export class AgentRuntime {
   }
 
   /**
-   * Execute agent task via CrewAI (Python subprocess).
-   * Spawns crew_runner.py which outputs JSON events to stdout.
+   * Execute agent task via the Agent Factory Python runtime subprocess.
+   * Spawns the Python runtime runner which outputs JSON events to stdout.
    */
-  private async executeWithCrewAI(
+  private async executeWithPythonRuntime(
     agent: AgentDefinition, task: Task, abortController: AbortController,
     executionId: string, traceId: string, rootSpanId: string, tracker: ProgressTracker,
     runtimeSkill?: { skill: SkillDefinition; version: SkillVersion; source: 'assignment' | 'skillPath' },
@@ -443,7 +443,20 @@ export class AgentRuntime {
       },
     });
 
-    const modelSelection = selectModelForAgent(agent);
+    // Inject pending messages before model routing so long-context escalation sees the real prompt size.
+    let enrichedInput = task.input;
+    try {
+      const pendingMsgs = messageBus.drain(executionId);
+      if (pendingMsgs.length > 0) {
+        const msgContext = pendingMsgs
+          .map(m => `[${m.messageType}] ${m.content}`)
+          .join('\n');
+        enrichedInput = `${task.input}\n\n## Context from other agents:\n${msgContext}`;
+        addTaskLog(task.id, 'info', `Injected ${pendingMsgs.length} message(s) from other agents`, 'system');
+      }
+    } catch { /* non-critical */ }
+
+    const modelSelection = selectModelForAgent(agent, task, { promptText: `${systemPrompt}\n\n${enrichedInput}` });
     const selectedModel = modelSelection.modelId;
     const limits = resolveAgentRuntimeLimits(agent, modelSelection);
     updateExecution(executionId, {
@@ -458,7 +471,7 @@ export class AgentRuntime {
       agentId: agent.id,
       workspaceId: task.workspaceId,
       policySnapshot: {
-        runner: 'crew_runner.py',
+        runner: 'agent-factory-python-runtime',
         modelSelection,
         runtimeLimits: limits,
         toolPolicy,
@@ -484,20 +497,7 @@ export class AgentRuntime {
     });
     completeTraceSpan(modelSpan.id, { status: 'done' });
 
-    // Inject pending messages from other agents into the prompt
-    let enrichedInput = task.input;
-    try {
-      const pendingMsgs = messageBus.drain(executionId);
-      if (pendingMsgs.length > 0) {
-        const msgContext = pendingMsgs
-          .map(m => `[${m.messageType}] ${m.content}`)
-          .join('\n');
-        enrichedInput = `${task.input}\n\n## Context from other agents:\n${msgContext}`;
-        addTaskLog(task.id, 'info', `Injected ${pendingMsgs.length} message(s) from other agents`, 'system');
-      }
-    } catch { /* non-critical */ }
-
-    // Build config JSON for crew_runner.py
+    // Build config JSON for the Python runtime runner.
     const config = JSON.stringify({
       agentId: agent.id,
       prompt: enrichedInput,
@@ -517,8 +517,8 @@ export class AgentRuntime {
       traceId,
       parentSpanId: rootSpanId,
       type: 'llm.call',
-      name: 'CrewAI kickoff',
-      metadata: { model: selectedModel, runner: 'crew_runner.py' },
+      name: 'Python runtime kickoff',
+      metadata: { model: selectedModel, runner: 'agent-factory-python-runtime' },
     });
     let llmSpanCompleted = false;
     const finishLlmSpan = (status: 'done' | 'failed', metadata?: Record<string, unknown>, error?: string) => {
@@ -536,17 +536,17 @@ export class AgentRuntime {
       const proc = executor.spawn({
         executionId,
         command: 'python3',
-        args: [CREW_RUNNER, config],
+        args: [PYTHON_RUNTIME_RUNNER, config],
         workdir: task.workdir || agent.config.workdir || process.cwd(),
         env: {
-          CREWAI_BASE_URL: process.env.CREWAI_BASE_URL || 'https://your-model-endpoint.example.com/v1',
-          CREWAI_API_KEY: process.env.CREWAI_API_KEY || process.env.ANTHROPIC_API_KEY || '',
-          CREWAI_MODEL: process.env.CREWAI_MODEL || 'openai/gpt-5.4',
+          AGENT_FACTORY_BASE_URL: process.env.AGENT_FACTORY_BASE_URL || 'https://your-model-endpoint.example.com/v1',
+          AGENT_FACTORY_API_KEY: process.env.AGENT_FACTORY_API_KEY || process.env.ANTHROPIC_API_KEY || '',
+          AGENT_FACTORY_MODEL: process.env.AGENT_FACTORY_MODEL || 'gpt-5.4-mini',
           AGENT_FACTORY_EXECUTION_ID: executionId,
           AGENT_FACTORY_TASK_ID: task.id,
           AGENT_FACTORY_AGENT_ID: agent.id,
-          AGENT_FACTORY_CPU_TIME_SEC: String(Math.min(limits.crewCpuSeconds, agent.config.timeout || 300)),
-          AGENT_FACTORY_MEMORY_MB: String(limits.crewMemoryMB),
+          AGENT_FACTORY_CPU_TIME_SEC: String(Math.min(limits.pythonRuntimeCpuSeconds, agent.config.timeout || 300)),
+          AGENT_FACTORY_MEMORY_MB: String(limits.pythonRuntimeMemoryMB),
           AGENT_FACTORY_MAX_OUTPUT_CHARS: String(limits.maxOutputChars),
           AGENT_FACTORY_MAX_EXECUTION_TOKENS: String(limits.maxExecutionTokens),
           AGENT_FACTORY_MAX_RESPONSE_TOKENS: String(limits.maxModelResponseTokens),
@@ -558,7 +558,7 @@ export class AgentRuntime {
         limits: {
           ...DEFAULT_LIMITS,
           timeoutSec: Math.ceil(Math.min((agent.config.timeout || 300) * 1000, limits.maxExecutionWallClockMs) / 1000),
-          memoryMB: limits.crewMemoryMB,
+          memoryMB: limits.pythonRuntimeMemoryMB,
         },
       });
 
@@ -592,7 +592,7 @@ export class AgentRuntime {
         reject(err);
       };
 
-      const sanitizeCrewOutput = (text: string, purpose: string): string => sanitizeAgentOutput(text, {
+      const sanitizePythonRuntimeOutput = (text: string, purpose: string): string => sanitizeAgentOutput(text, {
         agentId: agent.id,
         taskId: task.id,
         workspaceId: task.workspaceId,
@@ -602,15 +602,15 @@ export class AgentRuntime {
 
       const handleNonJsonLine = (line: string) => {
         if (!line.trim()) return;
-        finalResult = sanitizeCrewOutput(`${finalResult}${line}\n`, 'crew stdout');
+        finalResult = sanitizePythonRuntimeOutput(`${finalResult}${line}\n`, 'python runtime stdout');
       };
 
-      const handleCrewEvent = (ev: any) => {
-        // Handle assistant messages (text output from CrewAI)
+      const handlePythonRuntimeEvent = (ev: any) => {
+        // Handle assistant messages (text output from the Python runtime)
         if (ev.type === 'assistant' && ev.message?.content) {
           for (const block of ev.message.content) {
             if (block.type === 'text' && block.text) {
-              const safeText = sanitizeCrewOutput(String(block.text), 'agent text');
+              const safeText = sanitizePythonRuntimeOutput(String(block.text), 'agent text');
               finalResult = safeText;
               this.recordText(executionId, safeText, { agentId: agent.id, taskId: task.id, workspaceId: task.workspaceId });
               addTaskLog(task.id, 'info', safeText.slice(0, 800), agent.id);
@@ -620,12 +620,12 @@ export class AgentRuntime {
 
         // Handle result event
         if (ev.type === 'result') {
-          finalResult = sanitizeCrewOutput(String(ev.result || finalResult), 'crew result');
+          finalResult = sanitizePythonRuntimeOutput(String(ev.result || finalResult), 'python runtime result');
           costUSD = ev.total_cost_usd || 0;
           inputTokens = ev.usage?.input_tokens || inputTokens;
           outputTokens = ev.usage?.output_tokens || outputTokens || estimateTokenCount(finalResult);
           numTurns = ev.num_turns || 0;
-          assertExecutionTokenBudget(inputTokens, outputTokens, finalResult, 'CrewAI execution', limits);
+          assertExecutionTokenBudget(inputTokens, outputTokens, finalResult, 'Python runtime execution', limits);
         }
 
         if (ev.type === 'tool_use') {
@@ -638,7 +638,7 @@ export class AgentRuntime {
 
         // Handle error event
         if (ev.type === 'error') {
-          addTaskLog(task.id, 'error', ev.message || 'Unknown CrewAI error', agent.id);
+          addTaskLog(task.id, 'error', ev.message || 'Unknown Python runtime error', agent.id);
         }
       };
 
@@ -646,8 +646,8 @@ export class AgentRuntime {
         if (settled) return;
         try {
           stdoutBytes += data.byteLength;
-          if (stdoutBytes > limits.crewMaxStdoutBytes) {
-            throw new Error(`CrewAI stdout exceeded limit (${stdoutBytes}/${limits.crewMaxStdoutBytes} bytes)`);
+          if (stdoutBytes > limits.pythonRuntimeMaxStdoutBytes) {
+            throw new Error(`Python runtime stdout exceeded limit (${stdoutBytes}/${limits.pythonRuntimeMaxStdoutBytes} bytes)`);
           }
           buffer += data.toString();
           const lines = buffer.split('\n');
@@ -661,36 +661,36 @@ export class AgentRuntime {
               handleNonJsonLine(line);
               continue;
             }
-            handleCrewEvent(ev);
+            handlePythonRuntimeEvent(ev);
           }
         } catch (err: any) {
-          fail(new Error(err.message || 'CrewAI output processing failed'), { reason: 'output_processing' });
+          fail(new Error(err.message || 'Python runtime output processing failed'), { reason: 'output_processing' });
         }
       });
 
       proc.stderr?.on('data', (data: Buffer) => {
         if (settled) return;
         try {
-          const t = sanitizeCrewOutput(data.toString(), 'crew stderr');
+          const t = sanitizePythonRuntimeOutput(data.toString(), 'python runtime stderr');
           stderrBytes += data.byteLength;
-          if (stderrBytes > limits.crewMaxStderrBytes) {
-            fail(new Error(`CrewAI stderr exceeded limit (${stderrBytes}/${limits.crewMaxStderrBytes} bytes)`), { reason: 'stderr_limit' });
+          if (stderrBytes > limits.pythonRuntimeMaxStderrBytes) {
+            fail(new Error(`Python runtime stderr exceeded limit (${stderrBytes}/${limits.pythonRuntimeMaxStderrBytes} bytes)`), { reason: 'stderr_limit' });
             return;
           }
           stderrBuffer += t;
           // Only log meaningful stderr (skip Python warnings/noise)
           if (t.trim() && !t.includes('UserWarning') && !t.includes('DeprecationWarning')) {
-            console.error(`[CrewAI stderr] ${t.slice(0, 500)}`);
+            console.error(`[Python runtime stderr] ${t.slice(0, 500)}`);
             addTaskLog(task.id, 'warn', `stderr: ${t.slice(0, 300)}`, agent.id);
           }
         } catch (err: any) {
-          fail(new Error(err.message || 'CrewAI stderr processing failed'), { reason: 'stderr_processing' });
+          fail(new Error(err.message || 'Python runtime stderr processing failed'), { reason: 'stderr_processing' });
         }
       });
 
       const timeoutMs = Math.min((agent.config.timeout || 300) * 1000, limits.maxExecutionWallClockMs);
       timeout = setTimeout(() => {
-        fail(new Error(`CrewAI timeout after ${Math.ceil(timeoutMs / 1000)}s`), { reason: 'timeout' });
+        fail(new Error(`Python runtime timeout after ${Math.ceil(timeoutMs / 1000)}s`), { reason: 'timeout' });
       }, timeoutMs);
 
       proc.on('close', (code) => {
@@ -700,9 +700,9 @@ export class AgentRuntime {
         try {
           if (buffer.trim()) handleNonJsonLine(buffer);
           if (code === 0) {
-            finalResult = sanitizeCrewOutput(finalResult, 'final task output');
+            finalResult = sanitizePythonRuntimeOutput(finalResult, 'final task output');
             outputTokens = outputTokens || estimateTokenCount(finalResult);
-            assertExecutionTokenBudget(inputTokens, outputTokens, finalResult, 'CrewAI execution', limits);
+            assertExecutionTokenBudget(inputTokens, outputTokens, finalResult, 'Python runtime execution', limits);
             finishLlmSpan('done', { exitCode: code, costUSD, inputTokens, outputTokens, numTurns });
             recordModelUsage({
               modelId: selectedModel,
@@ -726,7 +726,7 @@ export class AgentRuntime {
               executionId,
             });
           } else {
-            const message = `CrewAI exit ${code}: ${stderrBuffer.slice(0, 500) || 'no output'}`;
+            const message = `Python runtime exit ${code}: ${stderrBuffer.slice(0, 500) || 'no output'}`;
             finishLlmSpan('failed', { exitCode: code }, message);
             recordFailure(modelSelection.reason);
             reject(new Error(message));
@@ -739,7 +739,7 @@ export class AgentRuntime {
       });
 
       proc.on('error', (err) => {
-        fail(new Error(`CrewAI spawn failed: ${err.message}`), { reason: 'spawn_error' });
+        fail(new Error(`Python runtime spawn failed: ${err.message}`), { reason: 'spawn_error' });
       });
     });
   }

@@ -54,9 +54,15 @@ export class SmartRouter {
   private loadModels(): void {
     // Load model configurations from database or defaults
     this.models = [
-      { id: 'gpt-4o', name: 'GPT-4o', costPer1kTokens: 0.005, avgLatencyMs: 800, maxTokens: 128000, healthy: true, capabilities: ['reasoning', 'code', 'vision'] },
-      { id: 'gpt-4o-mini', name: 'GPT-4o Mini', costPer1kTokens: 0.00015, avgLatencyMs: 400, maxTokens: 128000, healthy: true, capabilities: ['reasoning', 'code'] },
-      { id: 'claude-sonnet', name: 'Claude Sonnet', costPer1kTokens: 0.003, avgLatencyMs: 600, maxTokens: 200000, healthy: true, capabilities: ['reasoning', 'code', 'analysis'] },
+      { id: 'gpt-5.5', name: 'GPT-5.5', costPer1kTokens: 0.006, avgLatencyMs: 900, maxTokens: 1050000, healthy: true, capabilities: ['reasoning', 'analysis', 'long-context'] },
+      { id: 'gpt-5.4', name: 'GPT-5.4', costPer1kTokens: 0.004, avgLatencyMs: 800, maxTokens: 1050000, healthy: true, capabilities: ['reasoning', 'analysis', 'long-context'] },
+      { id: 'gpt-5.3-codex', name: 'GPT-5.3 Codex', costPer1kTokens: 0.004, avgLatencyMs: 850, maxTokens: 400000, healthy: true, capabilities: ['reasoning', 'code', 'analysis'] },
+      { id: 'claude-opus-4.8', name: 'Claude Opus 4.8', costPer1kTokens: 0.005, avgLatencyMs: 900, maxTokens: 200000, healthy: true, capabilities: ['reasoning', 'analysis', 'vision'] },
+      { id: 'claude-opus-4.7', name: 'Claude Opus 4.7', costPer1kTokens: 0.005, avgLatencyMs: 900, maxTokens: 200000, healthy: true, capabilities: ['reasoning', 'analysis', 'vision'] },
+      { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro Preview', costPer1kTokens: 0.003, avgLatencyMs: 750, maxTokens: 200000, healthy: true, capabilities: ['reasoning', 'analysis', 'vision'] },
+      { id: 'gpt-5.4-mini', name: 'GPT-5.4 mini', costPer1kTokens: 0.0005, avgLatencyMs: 450, maxTokens: 400000, healthy: true, capabilities: ['reasoning', 'code', 'cheap'] },
+      { id: 'claude-haiku-4.5', name: 'Claude Haiku 4.5', costPer1kTokens: 0.0008, avgLatencyMs: 450, maxTokens: 200000, healthy: true, capabilities: ['reasoning', 'cheap', 'vision'] },
+      { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash Preview', costPer1kTokens: 0.0004, avgLatencyMs: 400, maxTokens: 128000, healthy: true, capabilities: ['reasoning', 'cheap', 'vision'] },
     ];
     logger.info({ count: this.models.length }, 'Smart router models loaded');
   }

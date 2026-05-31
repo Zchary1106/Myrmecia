@@ -5,13 +5,13 @@ RUN corepack enable pnpm
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages/shared/package.json packages/shared/
 COPY packages/server/package.json packages/server/
-COPY packages/crew/requirements.txt packages/crew/
+COPY packages/python-runtime/requirements.txt packages/python-runtime/
 
 RUN pnpm install --frozen-lockfile
 
 COPY packages/shared packages/shared
 COPY packages/server packages/server
-COPY packages/crew packages/crew
+COPY packages/python-runtime packages/python-runtime
 COPY tsconfig.base.json .
 
 RUN pnpm --filter @agent-factory/shared build && pnpm --filter @agent-factory/server build
@@ -26,10 +26,10 @@ RUN apt-get update \
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/packages/shared ./packages/shared
 COPY --from=builder /app/packages/server ./packages/server
-COPY --from=builder /app/packages/crew ./packages/crew
+COPY --from=builder /app/packages/python-runtime ./packages/python-runtime
 COPY --from=builder /app/package.json .
 
-RUN pip3 install --no-cache-dir --break-system-packages -r packages/crew/requirements.txt
+RUN pip3 install --no-cache-dir --break-system-packages -r packages/python-runtime/requirements.txt
 
 EXPOSE 3000
 CMD ["node", "packages/server/dist/index.js"]

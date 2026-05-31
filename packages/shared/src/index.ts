@@ -282,13 +282,14 @@ export interface ModelRoute {
 export interface ModelSelection {
   modelId: string;
   reason: string;
-  source: 'agent.model' | 'agent.config.model' | 'agent.config.modelPolicy' | 'role.route' | 'global.route' | 'env.default' | 'runtime.default' | 'fallback';
+  source: 'task.route' | 'agent.model' | 'agent.config.model' | 'agent.config.modelPolicy' | 'role.route' | 'global.route' | 'env.default' | 'runtime.default' | 'fallback';
   requestedModelId?: string;
   fallbackGroup?: string;
   fallbackModelId?: string;
   modelTier?: ModelTier;
   routeKey?: string;
   budget?: AgentModelPolicy;
+  taskProfile?: string;
 }
 
 export interface AgentProgress {

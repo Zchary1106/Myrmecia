@@ -11,9 +11,9 @@ agents:
     skill: agents/master.md
     model:
       provider: openai
-      model: openai/claude-opus-4.7
+      model: gpt-5.5
       tier: strong
-      fallbackModel: openai/claude-sonnet-4.6
+      fallbackModel: gpt-5.4
       maxTokens: 16384
       maxResponseTokens: 8192
       maxToolCalls: 40
@@ -30,9 +30,9 @@ agents:
     skill: agents/pm.md
     model:
       provider: openai
-      model: openai/claude-sonnet-4.6
-      tier: strong
-      fallbackModel: openai/claude-haiku-4.5
+      model: gpt-5.4-mini
+      tier: cheap
+      fallbackModel: claude-haiku-4.5
       maxTokens: 8192
       maxResponseTokens: 4096
       maxToolCalls: 24
@@ -49,9 +49,9 @@ agents:
     skill: agents/ui.md
     model:
       provider: openai
-      model: openai/claude-sonnet-4.6
-      tier: balanced
-      fallbackModel: openai/claude-haiku-4.5
+      model: gpt-5.4-mini
+      tier: cheap
+      fallbackModel: claude-haiku-4.5
       maxTokens: 8192
       maxResponseTokens: 4096
       maxToolCalls: 20
@@ -68,9 +68,9 @@ agents:
     skill: agents/dev.md
     model:
       provider: openai
-      model: openai/gpt-5.3-codex
+      model: gpt-5.3-codex
       tier: balanced
-      fallbackModel: openai/gpt-5.2-codex
+      fallbackModel: gpt-5.4
       maxTokens: 8192
       maxResponseTokens: 4096
       maxToolCalls: 48
@@ -87,9 +87,9 @@ agents:
     skill: agents/qa.md
     model:
       provider: openai
-      model: openai/claude-haiku-4.5
+      model: claude-haiku-4.5
       tier: cheap
-      fallbackModel: openai/gpt-5.4-mini
+      fallbackModel: gpt-5.4-mini
       maxTokens: 8192
       maxResponseTokens: 3072
       maxToolCalls: 24
@@ -106,9 +106,9 @@ agents:
     skill: agents/ops.md
     model:
       provider: openai
-      model: openai/claude-haiku-4.5
+      model: claude-haiku-4.5
       tier: cheap
-      fallbackModel: openai/gpt-5.4-mini
+      fallbackModel: gpt-5.4-mini
       maxTokens: 8192
       maxResponseTokens: 3072
       maxToolCalls: 20
@@ -125,9 +125,9 @@ agents:
     skill: agents/review.md
     model:
       provider: openai
-      model: openai/claude-sonnet-4.6
+      model: gpt-5.5
       tier: strong
-      fallbackModel: openai/claude-haiku-4.5
+      fallbackModel: claude-opus-4.8
       maxTokens: 8192
       maxResponseTokens: 4096
       maxToolCalls: 24
@@ -144,9 +144,9 @@ agents:
     skill: agents/security-reviewer.md
     model:
       provider: openai
-      model: openai/claude-sonnet-4.6
+      model: gpt-5.5
       tier: strong
-      fallbackModel: openai/claude-haiku-4.5
+      fallbackModel: claude-opus-4.8
       maxTokens: 8192
       maxResponseTokens: 4096
       maxToolCalls: 24
@@ -163,9 +163,9 @@ agents:
     skill: agents/architecture-planner.md
     model:
       provider: openai
-      model: openai/claude-sonnet-4.6
+      model: gpt-5.5
       tier: strong
-      fallbackModel: openai/claude-haiku-4.5
+      fallbackModel: claude-opus-4.8
       maxTokens: 8192
       maxResponseTokens: 4096
       maxToolCalls: 20
@@ -182,9 +182,9 @@ agents:
     skill: agents/qa-automation.md
     model:
       provider: openai
-      model: openai/claude-haiku-4.5
+      model: claude-haiku-4.5
       tier: cheap
-      fallbackModel: openai/gpt-5.4-mini
+      fallbackModel: gpt-5.4-mini
       maxTokens: 4096
       maxResponseTokens: 2048
       maxToolCalls: 12
@@ -201,9 +201,9 @@ agents:
     skill: agents/gitops-reviewer.md
     model:
       provider: openai
-      model: openai/claude-haiku-4.5
+      model: claude-haiku-4.5
       tier: cheap
-      fallbackModel: openai/gpt-5.4-mini
+      fallbackModel: gpt-5.4-mini
       maxTokens: 4096
       maxResponseTokens: 2048
       maxToolCalls: 12
@@ -220,9 +220,9 @@ agents:
     skill: agents/issue-refiner.md
     model:
       provider: openai
-      model: openai/claude-haiku-4.5
+      model: claude-haiku-4.5
       tier: cheap
-      fallbackModel: openai/gpt-5.4-mini
+      fallbackModel: gpt-5.4-mini
       maxTokens: 4096
       maxResponseTokens: 2048
       maxToolCalls: 6
@@ -239,9 +239,9 @@ agents:
     skill: agents/release-compliance.md
     model:
       provider: openai
-      model: openai/claude-haiku-4.5
+      model: claude-haiku-4.5
       tier: cheap
-      fallbackModel: openai/gpt-5.4-mini
+      fallbackModel: gpt-5.4-mini
       maxTokens: 4096
       maxResponseTokens: 2048
       maxToolCalls: 10
@@ -258,9 +258,9 @@ agents:
     skill: agents/accessibility-tester.md
     model:
       provider: openai
-      model: openai/claude-haiku-4.5
+      model: claude-haiku-4.5
       tier: cheap
-      fallbackModel: openai/gpt-5.4-mini
+      fallbackModel: gpt-5.4-mini
       maxTokens: 4096
       maxResponseTokens: 2048
       maxToolCalls: 10
@@ -277,9 +277,9 @@ agents:
     skill: agents/react-dashboard-auditor.md
     model:
       provider: openai
-      model: openai/claude-haiku-4.5
+      model: claude-haiku-4.5
       tier: cheap
-      fallbackModel: openai/gpt-5.4-mini
+      fallbackModel: gpt-5.4-mini
       maxTokens: 4096
       maxResponseTokens: 2048
       maxToolCalls: 12
@@ -296,9 +296,9 @@ agents:
     skill: agents/performance-investigator.md
     model:
       provider: openai
-      model: openai/claude-haiku-4.5
+      model: claude-haiku-4.5
       tier: cheap
-      fallbackModel: openai/gpt-5.4-mini
+      fallbackModel: gpt-5.4-mini
       maxTokens: 4096
       maxResponseTokens: 2048
       maxToolCalls: 10
@@ -315,9 +315,9 @@ agents:
     skill: agents/release-notes-writer.md
     model:
       provider: openai
-      model: openai/claude-haiku-4.5
+      model: claude-haiku-4.5
       tier: cheap
-      fallbackModel: openai/gpt-5.4-mini
+      fallbackModel: gpt-5.4-mini
       maxTokens: 4096
       maxResponseTokens: 2048
       maxToolCalls: 6
@@ -335,9 +335,9 @@ agents:
     skill: agents/wechat-writer.md
     model:
       provider: openai
-      model: openai/claude-sonnet-4.6
+      model: gpt-5.3-codex
       tier: balanced
-      fallbackModel: openai/claude-haiku-4.5
+      fallbackModel: gpt-5.4
       maxTokens: 8192
       maxResponseTokens: 4096
       maxToolCalls: 24
@@ -354,9 +354,9 @@ agents:
     skill: agents/xiaohongshu-writer.md
     model:
       provider: openai
-      model: openai/claude-sonnet-4.6
+      model: gpt-5.3-codex
       tier: balanced
-      fallbackModel: openai/claude-haiku-4.5
+      fallbackModel: gpt-5.4
       maxTokens: 4096
       maxResponseTokens: 2048
       maxToolCalls: 16
@@ -374,9 +374,9 @@ agents:
     skill: agents/i18n.md
     model:
       provider: openai
-      model: openai/claude-haiku-4.5
+      model: claude-haiku-4.5
       tier: cheap
-      fallbackModel: openai/gpt-5.4-mini
+      fallbackModel: gpt-5.4-mini
       maxTokens: 8192
       maxResponseTokens: 3072
       maxToolCalls: 12
@@ -393,9 +393,9 @@ agents:
     skill: agents/db-migration.md
     model:
       provider: openai
-      model: openai/claude-sonnet-4.6
+      model: gpt-5.4-mini
       tier: balanced
-      fallbackModel: openai/claude-haiku-4.5
+      fallbackModel: claude-haiku-4.5
       maxTokens: 8192
       maxResponseTokens: 4096
       maxToolCalls: 24
@@ -412,9 +412,9 @@ agents:
     skill: agents/api-design.md
     model:
       provider: openai
-      model: openai/claude-sonnet-4.6
+      model: gpt-5.4-mini
       tier: balanced
-      fallbackModel: openai/claude-haiku-4.5
+      fallbackModel: claude-haiku-4.5
       maxTokens: 8192
       maxResponseTokens: 4096
       maxToolCalls: 20
@@ -431,9 +431,9 @@ agents:
     skill: agents/doc-writer.md
     model:
       provider: openai
-      model: openai/claude-haiku-4.5
+      model: claude-haiku-4.5
       tier: cheap
-      fallbackModel: openai/gpt-5.4-mini
+      fallbackModel: gpt-5.4-mini
       maxTokens: 8192
       maxResponseTokens: 3072
       maxToolCalls: 12
