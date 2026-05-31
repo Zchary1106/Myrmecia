@@ -229,6 +229,24 @@ flowchart LR
   Events --> Executions[(tool_executions)]
 ```
 
+  ## 5.1 Dynamic Workflow Runtime
+
+  Dynamic workflows are generated at runtime instead of loaded from a fixed YAML template. The runtime creates an executable plan, fans steps out through the normal `TaskQueue`, and listens for task terminal events to validate and summarize the run.
+
+  ```mermaid
+  flowchart LR
+    UserGoal[Goal] --> Planner[Workflow Planner]
+    Planner --> Plan[(dynamic_workflows.plan)]
+    Plan --> FanOut[Fan-out Dispatcher]
+    FanOut --> TaskQueue
+    TaskQueue --> Agents[Specialized Agents]
+    Agents --> Results[Task Outputs]
+    Results --> Validator[Validation Summary]
+    Validator --> WorkflowResult[(dynamic_workflows.result)]
+  ```
+
+  Each plan contains `steps[]` with `id`, `agentRole`, `input`, and `dependsOn`. The dispatcher converts step dependencies into task dependencies, so independent steps can run in parallel while QA/security/release gates wait for upstream outputs.
+
 `/api/tools` exposes the catalog, policy updates, per-Agent permissions, and execution history. The Dashboard **Tools** page shows enabled status, approval requirement, risk level, and recent tool calls.
 
 Skills are governed through a server-side Skill Registry. Startup imports `agents/*.md` as published versions, and Agent execution resolves the prompt from an explicit `skill_assignments` row before falling back to the Agent `skillPath`.

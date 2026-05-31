@@ -3,13 +3,22 @@ import { intentClassifier } from '../agents/intent-classifier.js';
 import { guardrails } from '../agents/safety-guardrails.js';
 import { TaskQueue } from '../queue/task-queue.js';
 import { PipelineEngine } from '../pipelines/pipeline-engine.js';
+import type { AgentManager } from '../agents/agent-manager.js';
 import { Orchestrator, listOrchestrations, getOrchestration } from '../agents/orchestrator.js';
+import {
+  DynamicWorkflowRuntime,
+  getDynamicWorkflow,
+  listDynamicWorkflows,
+  validateWorkflowPlan,
+} from '../agents/dynamic-workflow.js';
 import { getDb } from '../db/database.js';
 import { listTasks, getTask } from '../db/models/task.js';
+import { requestCanAccessWorkspace, workspaceIdFromRequest } from '../auth/tenant.js';
 
-export function createSupervisorRoutes(taskQueue: TaskQueue, pipelineEngine: PipelineEngine): Router {
+export function createSupervisorRoutes(taskQueue: TaskQueue, pipelineEngine: PipelineEngine, agentManager: AgentManager): Router {
   const router = Router();
   const orchestrator = new Orchestrator(taskQueue, pipelineEngine);
+  const dynamicWorkflowRuntime = new DynamicWorkflowRuntime(taskQueue, agentManager);
 
   /**
    * POST /api/supervisor/dispatch
@@ -38,6 +47,68 @@ export function createSupervisorRoutes(taskQueue: TaskQueue, pipelineEngine: Pip
         intent,
         orchestration: result.orchestration,
         tasks: result.tasks,
+      });
+
+      /**
+       * POST /api/supervisor/workflows
+       * Dynamic Workflow Runtime: planner → fan-out tasks → validate/summarize.
+       */
+      router.post('/workflows', async (req, res) => {
+        try {
+          const { goal, input, plan, workspaceId } = req.body || {};
+          const workflowGoal = String(goal || input || '').trim();
+          if (!workflowGoal) return res.status(400).json({ error: { message: 'goal or input is required' } });
+          const effectiveWorkspaceId = workspaceId || workspaceIdFromRequest(req) || 'default';
+          if (!requestCanAccessWorkspace(req, effectiveWorkspaceId)) {
+            return res.status(403).json({ error: { code: 'WORKSPACE_FORBIDDEN', message: 'Workspace access denied' } });
+          }
+
+          const budget = guardrails.checkBudget();
+          if (!budget.allowed) {
+            return res.status(429).json({ error: { code: 'BUDGET_EXCEEDED', message: budget.reason } });
+          }
+
+          const workflow = await dynamicWorkflowRuntime.start({
+            goal: workflowGoal,
+            plan: plan ? validateWorkflowPlan(plan) : undefined,
+            workspaceId: effectiveWorkspaceId,
+          });
+          res.status(201).json(workflow);
+        } catch (err: any) {
+          res.status(500).json({ error: { code: 'WORKFLOW_FAILED', message: err.message } });
+        }
+      });
+
+      router.get('/workflows', (req, res) => {
+        const workspaceId = (req.query.workspaceId as string | undefined) || workspaceIdFromRequest(req);
+        if (workspaceId && !requestCanAccessWorkspace(req, workspaceId)) {
+          return res.status(403).json({ error: { code: 'WORKSPACE_FORBIDDEN', message: 'Workspace access denied' } });
+        }
+        const workflows = listDynamicWorkflows({
+          workspaceId,
+          limit: Number(req.query.limit) || 50,
+          offset: Number(req.query.offset) || 0,
+        });
+        res.json(workflows);
+      });
+
+      router.get('/workflows/:id', (req, res) => {
+        const workflow = getDynamicWorkflow(req.params.id);
+        if (!workflow) return res.status(404).json({ error: { message: 'Workflow not found' } });
+        if (!requestCanAccessWorkspace(req, workflow.workspaceId)) {
+          return res.status(403).json({ error: { code: 'WORKSPACE_FORBIDDEN', message: 'Workspace access denied' } });
+        }
+        const tasks = workflow.taskIds.map(id => getTask(id)).filter(Boolean);
+        res.json({ ...workflow, tasks });
+      });
+
+      router.post('/workflows/:id/cancel', (req, res) => {
+        const workflow = getDynamicWorkflow(req.params.id);
+        if (!workflow) return res.status(404).json({ error: { message: 'Workflow not found' } });
+        if (!requestCanAccessWorkspace(req, workflow.workspaceId)) {
+          return res.status(403).json({ error: { code: 'WORKSPACE_FORBIDDEN', message: 'Workspace access denied' } });
+        }
+        res.json(dynamicWorkflowRuntime.cancel(req.params.id));
       });
     } catch (err: any) {
       res.status(500).json({ error: { code: 'DISPATCH_FAILED', message: err.message } });
