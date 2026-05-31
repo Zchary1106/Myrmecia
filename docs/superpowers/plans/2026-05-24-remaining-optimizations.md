@@ -4,7 +4,7 @@
 
 **Goal:** Complete remaining P1 and P2 optimization items from the architecture review.
 
-**Architecture:** CLI package for quick entry, pure TS agent loop to replace Python CrewAI subprocess, OpenTelemetry export from existing trace spans, execution checkpoints for recovery, and per-tool parameter constraints.
+**Architecture:** CLI package for quick entry, pure TS agent loop to complement the Python runtime, OpenTelemetry export from existing trace spans, execution checkpoints for recovery, and per-tool parameter constraints.
 
 **Tech Stack:** TypeScript, Commander.js (CLI), OpenTelemetry SDK, SQLite checkpoints
 
@@ -39,10 +39,10 @@
 - Modify: `packages/server/src/agents/agent-runtime.ts` (add TS execution path)
 - Modify: `packages/server/package.json` (add `@anthropic-ai/sdk` if not present)
 
-**Goal:** For agents that don't need CrewAI-specific tools, execute directly via Anthropic SDK in TypeScript — eliminates Python cold start (~2s per task).
+**Goal:** For agents that don't need Python runtime tools, execute directly in TypeScript — eliminates Python cold start (~2s per task).
 
 - [ ] Implement `TsAgentLoop` class: builds messages, calls Anthropic SDK, handles tool use loop
-- [ ] Add `AGENT_EXECUTOR=ts|crewai` env var (default: ts for agents without Python-only tools)
+- [ ] Add `AGENT_EXECUTOR=ts|python` env var (default: ts for agents without Python-only tools)
 - [ ] Route selection logic in agent-runtime: use TS loop when agent's tools are all JS-native
 - [ ] Tests: mock SDK, verify message construction and tool loop
 - [ ] Commit

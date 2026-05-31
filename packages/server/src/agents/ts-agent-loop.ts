@@ -6,7 +6,7 @@ import { updateExecution, addExecutionMessage } from '../db/models/execution.js'
 import { completeTraceSpan, createTraceSpan } from '../db/models/trace.js';
 import { resolveAllowedToolsForAgent, validateToolParams } from '../tools/tool-policy.js';
 import { createToolExecution, completeToolExecution, summarizeToolPayload } from '../tools/tool-execution.js';
-import { recordModelUsage, selectModelForAgent } from '../models/model-registry.js';
+import { estimateModelCost, recordModelUsage, selectModelForAgent } from '../models/model-registry.js';
 import { messageBus } from './message-bus.js';
 import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
@@ -69,15 +69,8 @@ function getProgressSnapshot(tracker: ProgressTracker, summary?: string): AgentP
   };
 }
 
-/** Estimate cost in USD from token counts. Conservative pricing defaults. */
 function estimateCost(model: string, inputTokens: number, outputTokens: number): number {
-  // Per-1K-token pricing (conservative estimate)
-  const modelLower = model.toLowerCase();
-  let inputPrice = 0.003, outputPrice = 0.006; // default balanced pricing
-  if (modelLower.includes('opus')) { inputPrice = 0.015; outputPrice = 0.075; }
-  else if (modelLower.includes('haiku')) { inputPrice = 0.001; outputPrice = 0.005; }
-  else if (modelLower.includes('mini')) { inputPrice = 0.0005; outputPrice = 0.002; }
-  return (inputTokens / 1000) * inputPrice + (outputTokens / 1000) * outputPrice;
+  return estimateModelCost(model, inputTokens, outputTokens);
 }
 
 function buildSystemPrompt(
@@ -112,8 +105,8 @@ function buildSystemPrompt(
 
 export class TsAgentLoop {
   private getClient(): OpenAI {
-    const baseURL = process.env.CREWAI_BASE_URL || 'https://morninglab.japaneast.cloudapp.azure.com/v1';
-    const apiKey = process.env.CREWAI_API_KEY || process.env.ANTHROPIC_API_KEY || '';
+    const baseURL = process.env.AGENT_FACTORY_BASE_URL || 'https://morninglab.japaneast.cloudapp.azure.com/v1';
+    const apiKey = process.env.AGENT_FACTORY_API_KEY || process.env.ANTHROPIC_API_KEY || '';
     return new OpenAI({ baseURL, apiKey });
   }
 
@@ -131,7 +124,7 @@ export class TsAgentLoop {
     const client = this.getClient();
     const toolPolicy = resolveAllowedToolsForAgent(agent);
 
-    // Block disallowed tools (same as CrewAI path)
+    // Block disallowed tools (same as Python runtime path)
     for (const decision of toolPolicy.decisions.filter(d => !d.allowed)) {
       const message = `Tool ${decision.toolId} blocked by policy: ${decision.reason}`;
       const span = createTraceSpan({
@@ -187,8 +180,19 @@ export class TsAgentLoop {
     });
     completeTraceSpan(promptSpan.id, { status: 'done', metadata: { allowedTools: toolPolicy.allowedTools, promptChars: task.input.length, systemPromptChars: systemPrompt.length } });
 
+    // Inject messages before model routing so long-context escalation sees the real prompt size.
+    let enrichedInput = task.input;
+    try {
+      const pendingMsgs = messageBus.drain(executionId);
+      if (pendingMsgs.length > 0) {
+        const msgContext = pendingMsgs.map(m => `[${m.messageType}] ${m.content}`).join('\n');
+        enrichedInput = `${task.input}\n\n## Context from other agents:\n${msgContext}`;
+        addTaskLog(task.id, 'info', `Injected ${pendingMsgs.length} message(s) from other agents`, 'system');
+      }
+    } catch {}
+
     // Model selection
-    const modelSelection = selectModelForAgent(agent);
+    const modelSelection = selectModelForAgent(agent, task, { promptText: `${systemPrompt}\n\n${enrichedInput}` });
     const selectedModel = modelSelection.modelId;
     const limits = resolveAgentRuntimeLimits(agent, modelSelection);
     updateExecution(executionId, {
@@ -225,17 +229,6 @@ export class TsAgentLoop {
       metadata: modelSelection as unknown as Record<string, unknown>,
     });
     completeTraceSpan(modelSpan.id, { status: 'done' });
-
-    // Inject messages from other agents
-    let enrichedInput = task.input;
-    try {
-      const pendingMsgs = messageBus.drain(executionId);
-      if (pendingMsgs.length > 0) {
-        const msgContext = pendingMsgs.map(m => `[${m.messageType}] ${m.content}`).join('\n');
-        enrichedInput = `${task.input}\n\n## Context from other agents:\n${msgContext}`;
-        addTaskLog(task.id, 'info', `Injected ${pendingMsgs.length} message(s) from other agents`, 'system');
-      }
-    } catch {}
 
     // LLM call span
     const llmSpan = createTraceSpan({
@@ -536,7 +529,9 @@ export class TsAgentLoop {
   ): Promise<TaskResult> {
     const startTime = Date.now();
     const client = this.getClient();
-    const modelSelection = selectModelForAgent(agent);
+    const modelSelection = selectModelForAgent(agent, task, {
+      promptText: `${systemPrompt}\n\n${parsedSkill.promptContent}\n\n${task.input}`,
+    });
     const selectedModel = modelSelection.modelId;
     const limits = resolveAgentRuntimeLimits(agent, modelSelection);
     updateExecution(executionId, {

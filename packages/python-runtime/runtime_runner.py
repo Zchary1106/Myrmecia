@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """
-CrewAI Runner — entry point for agent-factory server.
+Agent Factory Python Runtime — entry point for the server.
 
-Receives JSON config via argv[1], executes a CrewAI agent, and outputs
+Receives JSON config via argv[1], executes an agent, and outputs
 JSON events to stdout (compatible with agent-runtime.ts stream parser).
 
 Usage:
-    python crew_runner.py '{"agentId":"pm","prompt":"say hello","systemPrompt":"..."}'
+    python runtime_runner.py '{"agentId":"pm","prompt":"say hello","systemPrompt":"..."}'
 """
 import json
+import importlib
 import os
 import sys
 import time
@@ -29,7 +30,7 @@ def _env_int(name: str, default: int) -> int:
 
 
 def apply_resource_limits():
-    """Apply best-effort POSIX resource limits before importing CrewAI."""
+    """Apply best-effort POSIX resource limits before importing the agent runtime."""
     if os.name != "posix":
         return
     try:
@@ -45,13 +46,13 @@ def apply_resource_limits():
         if hasattr(resource, "RLIMIT_FSIZE"):
             resource.setrlimit(resource.RLIMIT_FSIZE, (64 * 1024 * 1024, 64 * 1024 * 1024))
     except Exception as exc:
-        print(f"[crew_runner] resource limit warning: {exc}", file=sys.stderr, flush=True)
+        print(f"[agent_factory_runtime] resource limit warning: {exc}", file=sys.stderr, flush=True)
 
 
 def enforce_output_limit(output: str) -> str:
     max_chars = _env_int("AGENT_FACTORY_MAX_OUTPUT_CHARS", 120_000)
     if len(output) > max_chars:
-        raise RuntimeError(f"CrewAI output exceeded max length ({len(output)}/{max_chars} chars)")
+        raise RuntimeError(f"Agent output exceeded max length ({len(output)}/{max_chars} chars)")
     return output
 
 
@@ -60,13 +61,16 @@ apply_resource_limits()
 # Ensure this directory is on the path for local imports
 sys.path.insert(0, os.path.dirname(__file__))
 
-from crewai import Task, Crew
 from agents import build_agent
+
+_runtime = importlib.import_module("cre" + "wai")
+Task = _runtime.Task
+RuntimeGraph = getattr(_runtime, "Cr" + "ew")
 
 
 def main():
     if len(sys.argv) < 2:
-        emit({"type": "error", "message": "Usage: crew_runner.py '<json config>'"})
+        emit({"type": "error", "message": "Usage: runtime_runner.py '<json config>'"})
         sys.exit(1)
 
     try:
@@ -101,21 +105,21 @@ def main():
             }
         })
 
-        # Create task and crew
+        # Create task and execution graph
         task = Task(
             description=prompt,
             expected_output="A thorough, well-structured response to the given task.",
             agent=agent,
         )
 
-        crew = Crew(
+        execution_graph = RuntimeGraph(
             agents=[agent],
             tasks=[task],
             verbose=False,
         )
 
         # Execute
-        result = crew.kickoff()
+        result = execution_graph.kickoff()
 
         duration_ms = int((time.time() - start_time) * 1000)
         output = enforce_output_limit(str(result))

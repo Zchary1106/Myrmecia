@@ -6,7 +6,7 @@ FROM python:3.12-slim
 # Security: run as non-root user
 RUN groupadd -r agent && useradd -r -g agent -d /workspace -s /bin/bash agent
 
-# Install minimal dependencies for crew_runner
+# Install minimal dependencies for the Agent Factory Python runtime
 RUN pip install --no-cache-dir crewai anthropic openai && \
     rm -rf /root/.cache
 

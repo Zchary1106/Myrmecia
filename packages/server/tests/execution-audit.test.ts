@@ -35,7 +35,7 @@ describe('execution audit reports', () => {
       agentId: agent.id,
       workspaceId: 'ws-audit',
       policySnapshot: {
-        modelSelection: { modelId: 'openai/claude-haiku-4.5', source: 'role.route' },
+        modelSelection: { modelId: 'claude-haiku-4.5', source: 'role.route' },
         toolPolicy: { allowedTools: ['web.fetch'], decisions: [] },
       },
     });

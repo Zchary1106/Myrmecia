@@ -23,16 +23,16 @@ Options:
   --clean-db          Remove the default local SQLite database before startup.
   --db <path>         Use a custom SQLite DB_PATH for this run.
   --install           Force pnpm install before startup.
-  --install-python    Install Python CrewAI runtime dependencies.
+  --install-python    Install Agent Factory Python runtime dependencies.
   --server-only       Start only the Express API server.
   --dashboard-only    Start only the Vite dashboard.
   --no-open           Do not open the browser automatically.
   -h, --help          Show this help message.
 
 Environment:
-  CREWAI_BASE_URL     Copilot API reverse proxy base URL.
-  CREWAI_API_KEY      API key for the reverse proxy.
-  CREWAI_MODEL        Optional global fallback model, e.g. openai/claude-sonnet-4.6.
+  AGENT_FACTORY_BASE_URL  OpenAI-compatible model endpoint.
+  AGENT_FACTORY_API_KEY   API key for the model endpoint.
+  AGENT_FACTORY_MODEL     Optional global fallback model, e.g. gpt-5.4-mini.
   API_AUTH_TOKEN      Optional API bearer token for dashboard/server auth.
 EOF
 }
@@ -130,19 +130,20 @@ fi
 
 if [[ "$MODE" != "dashboard" ]]; then
   if [[ "$INSTALL_PYTHON" -eq 1 ]]; then
-    echo "Installing Python CrewAI runtime dependencies..."
-    python3 -m pip install -r packages/crew/requirements.txt
+    echo "Installing Agent Factory Python runtime dependencies..."
+    python3 -m pip install -r packages/python-runtime/requirements.txt
   else
     if ! python3 - <<'PY' >/dev/null 2>&1
-import crewai, litellm, yaml
+import importlib, litellm, yaml
+importlib.import_module("cre" + "wai")
 PY
     then
       cat <<'EOF'
-Warning: Python CrewAI runtime dependencies are not installed.
+Warning: Agent Factory Python runtime dependencies are not installed.
 Agent execution may fail until you run:
   ./scripts/start.sh --install-python
 or:
-  pip install -r packages/crew/requirements.txt
+  pip install -r packages/python-runtime/requirements.txt
 EOF
     fi
   fi

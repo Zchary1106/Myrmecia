@@ -1,5 +1,5 @@
 import { getDb } from '../db/database.js';
-import type { AgentDefinition, ModelDefinition, ModelHealthStatus, ModelRoute, ModelSelection, ModelTier } from '../types.js';
+import type { AgentDefinition, ModelDefinition, ModelHealthStatus, ModelRoute, ModelSelection, ModelTier, Task } from '../types.js';
 
 interface BuiltinModel {
   id: string;
@@ -10,156 +10,169 @@ interface BuiltinModel {
   fallbackGroup: string;
   tier: ModelTier;
   maxTokens?: number;
+  inputCostPer1k: number;
+  outputCostPer1k: number;
 }
 
 const PROVIDER = 'copilot-api';
 
 export const BUILTIN_MODELS: BuiltinModel[] = [
   {
-    id: 'openai/claude-opus-4.7',
+    id: 'gpt-5.5',
+    displayName: 'GPT-5.5',
+    description: 'Primary strong model for orchestration, security, architecture, and difficult cross-file reasoning.',
+    capabilityTags: ['reasoning', 'planning', 'review', 'tool-calls', 'structured-output', 'long-context'],
+    priority: 110,
+    fallbackGroup: 'premium-reasoning',
+    tier: 'strong',
+    maxTokens: 1_050_000,
+    inputCostPer1k: 0.006,
+    outputCostPer1k: 0.018,
+  },
+  {
+    id: 'claude-opus-4.8',
+    displayName: 'Claude Opus 4.8',
+    description: 'Strong Claude fallback for planning, writing quality, and high-risk review.',
+    capabilityTags: ['reasoning', 'architecture', 'review', 'vision', 'tool-calls', 'structured-output'],
+    priority: 105,
+    fallbackGroup: 'premium-reasoning',
+    tier: 'strong',
+    maxTokens: 200_000,
+    inputCostPer1k: 0.005,
+    outputCostPer1k: 0.015,
+  },
+  {
+    id: 'claude-opus-4.7',
     displayName: 'Claude Opus 4.7',
-    description: 'Strongest Claude reasoning for master planning, architecture, and high-risk review.',
-    capabilityTags: ['reasoning', 'architecture', 'review', 'long-context'],
+    description: 'Strong Claude model for architecture and security review.',
+    capabilityTags: ['reasoning', 'architecture', 'review', 'vision', 'tool-calls', 'structured-output'],
     priority: 100,
     fallbackGroup: 'premium-reasoning',
     tier: 'strong',
+    maxTokens: 200_000,
+    inputCostPer1k: 0.005,
+    outputCostPer1k: 0.015,
   },
   {
-    id: 'openai/claude-opus-4.6',
-    displayName: 'Claude Opus 4.6',
-    description: 'Complex planning and long-context analysis.',
-    capabilityTags: ['reasoning', 'planning', 'long-context'],
-    priority: 95,
-    fallbackGroup: 'premium-reasoning',
-    tier: 'strong',
-  },
-  {
-    id: 'openai/gpt-5.5',
-    displayName: 'GPT-5.5',
-    description: 'Strong general reasoning for orchestration, review, and planning.',
-    capabilityTags: ['reasoning', 'planning', 'review'],
-    priority: 92,
-    fallbackGroup: 'premium-reasoning',
-    tier: 'strong',
-  },
-  {
-    id: 'openai/claude-sonnet-4.6',
-    displayName: 'Claude Sonnet 4.6',
-    description: 'High-quality balanced Claude model for PM, review, content, and docs.',
-    capabilityTags: ['balanced', 'reasoning', 'content', 'review'],
-    priority: 90,
-    fallbackGroup: 'balanced',
-    tier: 'balanced',
-  },
-  {
-    id: 'openai/claude-sonnet-4.5',
-    displayName: 'Claude Sonnet 4.5',
-    description: 'Stable balanced Claude fallback.',
-    capabilityTags: ['balanced', 'reasoning'],
-    priority: 84,
-    fallbackGroup: 'balanced',
-    tier: 'balanced',
-  },
-  {
-    id: 'openai/gpt-5.4',
+    id: 'gpt-5.4',
     displayName: 'GPT-5.4',
-    description: 'Default balanced GPT model for most agents.',
-    capabilityTags: ['balanced', 'reasoning', 'content'],
-    priority: 82,
+    description: 'Long-context general model for large tasks, fallback, and broad analysis.',
+    capabilityTags: ['reasoning', 'planning', 'review', 'tool-calls', 'structured-output', 'long-context'],
+    priority: 96,
     fallbackGroup: 'balanced',
     tier: 'balanced',
+    maxTokens: 1_050_000,
+    inputCostPer1k: 0.004,
+    outputCostPer1k: 0.012,
   },
   {
-    id: 'openai/claude-sonnet-4',
-    displayName: 'Claude Sonnet 4',
-    description: 'Claude Sonnet compatibility fallback.',
-    capabilityTags: ['balanced'],
-    priority: 78,
-    fallbackGroup: 'balanced',
-    tier: 'balanced',
-  },
-  {
-    id: 'openai/gpt-5.3-codex',
-    displayName: 'GPT-5.3 Codex',
-    description: 'Coding, refactoring, and engineering work.',
-    capabilityTags: ['coding', 'engineering', 'refactor'],
+    id: 'gemini-3.1-pro-preview',
+    displayName: 'Gemini 3.1 Pro Preview',
+    description: 'Powerful Gemini alternative for planning and multimodal/web-heavy review.',
+    capabilityTags: ['reasoning', 'planning', 'vision', 'tool-calls'],
     priority: 88,
-    fallbackGroup: 'coding',
+    fallbackGroup: 'balanced',
     tier: 'balanced',
+    maxTokens: 200_000,
+    inputCostPer1k: 0.003,
+    outputCostPer1k: 0.009,
   },
   {
-    id: 'openai/gpt-5.2-codex',
-    displayName: 'GPT-5.2 Codex',
-    description: 'Coding fallback.',
-    capabilityTags: ['coding', 'engineering'],
-    priority: 80,
+    id: 'gpt-5.3-codex',
+    displayName: 'GPT-5.3 Codex',
+    description: 'Primary coding, refactoring, and engineering model.',
+    capabilityTags: ['coding', 'engineering', 'refactor', 'tool-calls', 'structured-output'],
+    priority: 94,
     fallbackGroup: 'coding',
     tier: 'balanced',
+    maxTokens: 400_000,
+    inputCostPer1k: 0.004,
+    outputCostPer1k: 0.012,
   },
   {
-    id: 'openai/claude-haiku-4.5',
+    id: 'gpt-5.4-mini',
+    displayName: 'GPT-5.4 mini',
+    description: 'Default cheap model for routing, QA, docs, GitOps, and simple structured work.',
+    capabilityTags: ['fast', 'cheap', 'qa', 'docs', 'tool-calls', 'structured-output'],
+    priority: 90,
+    fallbackGroup: 'fast',
+    tier: 'cheap',
+    maxTokens: 400_000,
+    inputCostPer1k: 0.0005,
+    outputCostPer1k: 0.0015,
+  },
+  {
+    id: 'claude-haiku-4.5',
     displayName: 'Claude Haiku 4.5',
-    description: 'Fast/low-cost Claude model for QA, i18n, and simple processing.',
-    capabilityTags: ['fast', 'cheap', 'qa', 'i18n'],
+    description: 'Fast Claude model for lightweight review, summaries, QA, and i18n.',
+    capabilityTags: ['fast', 'cheap', 'qa', 'i18n', 'vision', 'tool-calls'],
+    priority: 82,
+    fallbackGroup: 'fast',
+    tier: 'cheap',
+    maxTokens: 200_000,
+    inputCostPer1k: 0.0008,
+    outputCostPer1k: 0.0024,
+  },
+  {
+    id: 'gemini-3-flash-preview',
+    displayName: 'Gemini 3 Flash Preview',
+    description: 'Lightweight Gemini fallback for cheap multimodal or web-heavy tasks.',
+    capabilityTags: ['fast', 'cheap', 'vision', 'tool-calls'],
     priority: 76,
     fallbackGroup: 'fast',
     tier: 'cheap',
-  },
-  {
-    id: 'openai/gpt-5.4-mini',
-    displayName: 'GPT-5.4 mini',
-    description: 'Fast/low-cost QA, i18n, and simple docs.',
-    capabilityTags: ['fast', 'cheap', 'qa', 'docs'],
-    priority: 74,
-    fallbackGroup: 'fast',
-    tier: 'cheap',
-  },
-  {
-    id: 'openai/gpt-5.2',
-    displayName: 'GPT-5.2',
-    description: 'General fallback.',
-    capabilityTags: ['general'],
-    priority: 70,
-    fallbackGroup: 'balanced',
-    tier: 'fallback',
-  },
-  {
-    id: 'openai/gpt-5-mini',
-    displayName: 'GPT-5 mini',
-    description: 'Lightweight tasks.',
-    capabilityTags: ['fast', 'cheap'],
-    priority: 68,
-    fallbackGroup: 'fast',
-    tier: 'cheap',
-  },
-  {
-    id: 'openai/gpt-4.1',
-    displayName: 'GPT-4.1',
-    description: 'Compatibility and fast fallback.',
-    capabilityTags: ['fast', 'compatibility'],
-    priority: 60,
-    fallbackGroup: 'fast',
-    tier: 'fallback',
+    maxTokens: 128_000,
+    inputCostPer1k: 0.0004,
+    outputCostPer1k: 0.0012,
   },
 ];
 
+const LEGACY_BUILTIN_MODEL_IDS = [
+  'openai/claude-opus-4.7',
+  'openai/claude-opus-4.6',
+  'openai/gpt-5.5',
+  'openai/claude-sonnet-4.6',
+  'openai/claude-sonnet-4.5',
+  'openai/gpt-5.4',
+  'openai/claude-sonnet-4',
+  'openai/gpt-5.3-codex',
+  'openai/gpt-5.2-codex',
+  'openai/claude-haiku-4.5',
+  'openai/gpt-5.4-mini',
+  'openai/gpt-5.2',
+  'openai/gpt-5-mini',
+  'openai/gpt-4.1',
+];
+
 const BUILTIN_ROUTES: ModelRoute[] = [
-  { routeKey: 'global', defaultModelId: 'openai/claude-sonnet-4.6', fallbackGroup: 'balanced', modelTier: 'balanced', createdAt: '', updatedAt: '' },
-  { routeKey: 'role:orchestrator', defaultModelId: 'openai/claude-opus-4.7', fallbackGroup: 'premium-reasoning', modelTier: 'strong', createdAt: '', updatedAt: '' },
-  { routeKey: 'role:architect', defaultModelId: 'openai/claude-sonnet-4.6', fallbackGroup: 'balanced', modelTier: 'strong', createdAt: '', updatedAt: '' },
-  { routeKey: 'role:security-reviewer', defaultModelId: 'openai/claude-sonnet-4.6', fallbackGroup: 'balanced', modelTier: 'strong', createdAt: '', updatedAt: '' },
-  { routeKey: 'role:product-manager', defaultModelId: 'openai/claude-sonnet-4.6', fallbackGroup: 'balanced', modelTier: 'strong', createdAt: '', updatedAt: '' },
-  { routeKey: 'role:designer', defaultModelId: 'openai/claude-sonnet-4.6', fallbackGroup: 'balanced', modelTier: 'balanced', createdAt: '', updatedAt: '' },
-  { routeKey: 'role:developer', defaultModelId: 'openai/gpt-5.3-codex', fallbackGroup: 'coding', modelTier: 'balanced', createdAt: '', updatedAt: '' },
-  { routeKey: 'role:tester', defaultModelId: 'openai/claude-haiku-4.5', fallbackGroup: 'fast', modelTier: 'cheap', createdAt: '', updatedAt: '' },
-  { routeKey: 'role:qa-automation', defaultModelId: 'openai/claude-haiku-4.5', fallbackGroup: 'fast', modelTier: 'cheap', createdAt: '', updatedAt: '' },
-  { routeKey: 'role:devops', defaultModelId: 'openai/claude-haiku-4.5', fallbackGroup: 'fast', modelTier: 'cheap', createdAt: '', updatedAt: '' },
-  { routeKey: 'role:gitops', defaultModelId: 'openai/claude-haiku-4.5', fallbackGroup: 'fast', modelTier: 'cheap', createdAt: '', updatedAt: '' },
-  { routeKey: 'role:reviewer', defaultModelId: 'openai/claude-sonnet-4.6', fallbackGroup: 'balanced', modelTier: 'strong', createdAt: '', updatedAt: '' },
-  { routeKey: 'role:documentation', defaultModelId: 'openai/claude-haiku-4.5', fallbackGroup: 'fast', modelTier: 'cheap', createdAt: '', updatedAt: '' },
-  { routeKey: 'role:internationalization', defaultModelId: 'openai/claude-haiku-4.5', fallbackGroup: 'fast', modelTier: 'cheap', createdAt: '', updatedAt: '' },
-  { routeKey: 'role:content-writer', defaultModelId: 'openai/claude-sonnet-4.6', fallbackGroup: 'balanced', modelTier: 'balanced', createdAt: '', updatedAt: '' },
-  { routeKey: 'role:researcher', defaultModelId: 'openai/claude-sonnet-4.6', fallbackGroup: 'balanced', modelTier: 'balanced', createdAt: '', updatedAt: '' },
+  { routeKey: 'global', defaultModelId: 'gpt-5.4-mini', fallbackGroup: 'fast', modelTier: 'cheap', createdAt: '', updatedAt: '' },
+  { routeKey: 'task:simple', defaultModelId: 'gpt-5.4-mini', fallbackGroup: 'fast', modelTier: 'cheap', createdAt: '', updatedAt: '' },
+  { routeKey: 'task:long-context', defaultModelId: 'gpt-5.4', fallbackGroup: 'balanced', modelTier: 'balanced', createdAt: '', updatedAt: '' },
+  { routeKey: 'task:coding', defaultModelId: 'gpt-5.3-codex', fallbackGroup: 'balanced', modelTier: 'balanced', createdAt: '', updatedAt: '' },
+  { routeKey: 'task:high-risk', defaultModelId: 'gpt-5.5', fallbackGroup: 'premium-reasoning', modelTier: 'strong', createdAt: '', updatedAt: '' },
+  { routeKey: 'role:orchestrator', defaultModelId: 'gpt-5.5', fallbackGroup: 'premium-reasoning', modelTier: 'strong', createdAt: '', updatedAt: '' },
+  { routeKey: 'role:architect', defaultModelId: 'gpt-5.5', fallbackGroup: 'premium-reasoning', modelTier: 'strong', createdAt: '', updatedAt: '' },
+  { routeKey: 'role:security-reviewer', defaultModelId: 'gpt-5.5', fallbackGroup: 'premium-reasoning', modelTier: 'strong', createdAt: '', updatedAt: '' },
+  { routeKey: 'role:product-manager', defaultModelId: 'gpt-5.4-mini', fallbackGroup: 'fast', modelTier: 'cheap', createdAt: '', updatedAt: '' },
+  { routeKey: 'role:designer', defaultModelId: 'gpt-5.4-mini', fallbackGroup: 'fast', modelTier: 'cheap', createdAt: '', updatedAt: '' },
+  { routeKey: 'role:developer', defaultModelId: 'gpt-5.3-codex', fallbackGroup: 'balanced', modelTier: 'balanced', createdAt: '', updatedAt: '' },
+  { routeKey: 'role:database', defaultModelId: 'gpt-5.3-codex', fallbackGroup: 'balanced', modelTier: 'balanced', createdAt: '', updatedAt: '' },
+  { routeKey: 'role:api-architect', defaultModelId: 'gpt-5.3-codex', fallbackGroup: 'balanced', modelTier: 'balanced', createdAt: '', updatedAt: '' },
+  { routeKey: 'role:tester', defaultModelId: 'gpt-5.4-mini', fallbackGroup: 'fast', modelTier: 'cheap', createdAt: '', updatedAt: '' },
+  { routeKey: 'role:qa-automation', defaultModelId: 'gpt-5.4-mini', fallbackGroup: 'fast', modelTier: 'cheap', createdAt: '', updatedAt: '' },
+  { routeKey: 'role:devops', defaultModelId: 'gpt-5.4-mini', fallbackGroup: 'fast', modelTier: 'cheap', createdAt: '', updatedAt: '' },
+  { routeKey: 'role:gitops', defaultModelId: 'gpt-5.4-mini', fallbackGroup: 'fast', modelTier: 'cheap', createdAt: '', updatedAt: '' },
+  { routeKey: 'role:reviewer', defaultModelId: 'gpt-5.5', fallbackGroup: 'premium-reasoning', modelTier: 'strong', createdAt: '', updatedAt: '' },
+  { routeKey: 'role:documentation', defaultModelId: 'gpt-5.4-mini', fallbackGroup: 'fast', modelTier: 'cheap', createdAt: '', updatedAt: '' },
+  { routeKey: 'role:internationalization', defaultModelId: 'claude-haiku-4.5', fallbackGroup: 'fast', modelTier: 'cheap', createdAt: '', updatedAt: '' },
+  { routeKey: 'role:content-writer', defaultModelId: 'claude-haiku-4.5', fallbackGroup: 'fast', modelTier: 'cheap', createdAt: '', updatedAt: '' },
+  { routeKey: 'role:issue-refiner', defaultModelId: 'gpt-5.4-mini', fallbackGroup: 'fast', modelTier: 'cheap', createdAt: '', updatedAt: '' },
+  { routeKey: 'role:release-compliance', defaultModelId: 'gpt-5.4-mini', fallbackGroup: 'fast', modelTier: 'cheap', createdAt: '', updatedAt: '' },
+  { routeKey: 'role:accessibility-tester', defaultModelId: 'gpt-5.4-mini', fallbackGroup: 'fast', modelTier: 'cheap', createdAt: '', updatedAt: '' },
+  { routeKey: 'role:react-dashboard-auditor', defaultModelId: 'gpt-5.4-mini', fallbackGroup: 'fast', modelTier: 'cheap', createdAt: '', updatedAt: '' },
+  { routeKey: 'role:performance-investigator', defaultModelId: 'gpt-5.4-mini', fallbackGroup: 'fast', modelTier: 'cheap', createdAt: '', updatedAt: '' },
+  { routeKey: 'role:release-notes', defaultModelId: 'claude-haiku-4.5', fallbackGroup: 'fast', modelTier: 'cheap', createdAt: '', updatedAt: '' },
+  { routeKey: 'role:researcher', defaultModelId: 'gpt-5.4-mini', fallbackGroup: 'fast', modelTier: 'cheap', createdAt: '', updatedAt: '' },
 ];
 
 function parseArray(value: string | null | undefined): string[] {
@@ -175,18 +188,19 @@ function parseObject(value: string | null | undefined): Record<string, unknown> 
 }
 
 function rowToModel(row: any): ModelDefinition {
+  const costProfile = parseObject(row.cost_profile);
   return {
     id: row.id,
     provider: row.provider,
     displayName: row.display_name,
     description: row.description || '',
     capabilityTags: parseArray(row.capability_tags),
-    costProfile: parseObject(row.cost_profile),
+    costProfile,
     maxTokens: row.max_tokens ?? undefined,
     enabled: Boolean(row.enabled),
     priority: row.priority,
     fallbackGroup: row.fallback_group,
-    tier: row.model_tier || row.cost_profile?.tier || 'balanced',
+    tier: (row.model_tier || costProfile.tier || 'balanced') as ModelTier,
     healthStatus: row.health_status,
     lastCheckedAt: row.last_checked_at || undefined,
     createdAt: row.created_at,
@@ -208,6 +222,14 @@ function rowToRoute(row: any): ModelRoute {
 export function syncBuiltinModels(): void {
   const db = getDb();
   db.transaction(() => {
+    if (LEGACY_BUILTIN_MODEL_IDS.length > 0) {
+      db.run(
+        `UPDATE model_registry SET enabled = 0, updated_at = CURRENT_TIMESTAMP
+         WHERE provider = ? AND id IN (${LEGACY_BUILTIN_MODEL_IDS.map(() => '?').join(',')})`,
+        PROVIDER,
+        ...LEGACY_BUILTIN_MODEL_IDS,
+      );
+    }
     for (const model of BUILTIN_MODELS) {
       db.run(`
         INSERT INTO model_registry (
@@ -225,6 +247,7 @@ export function syncBuiltinModels(): void {
           priority = excluded.priority,
           fallback_group = excluded.fallback_group,
           model_tier = excluded.model_tier,
+          enabled = 1,
           updated_at = CURRENT_TIMESTAMP
       `,
         model.id,
@@ -232,7 +255,15 @@ export function syncBuiltinModels(): void {
         model.displayName,
         model.description,
         JSON.stringify(model.capabilityTags),
-        JSON.stringify({ tier: model.tier, fallbackGroup: model.fallbackGroup }),
+        JSON.stringify({
+          source: 'builtin',
+          tier: model.tier,
+          fallbackGroup: model.fallbackGroup,
+          pricing: {
+            inputPer1k: model.inputCostPer1k,
+            outputPer1k: model.outputCostPer1k,
+          },
+        }),
         model.maxTokens || null,
         model.priority,
         model.fallbackGroup,
@@ -244,7 +275,11 @@ export function syncBuiltinModels(): void {
       db.run(`
         INSERT INTO model_routes (route_key, default_model_id, fallback_group, model_tier)
         VALUES (?, ?, ?, ?)
-        ON CONFLICT(route_key) DO NOTHING
+        ON CONFLICT(route_key) DO UPDATE SET
+          default_model_id = excluded.default_model_id,
+          fallback_group = excluded.fallback_group,
+          model_tier = excluded.model_tier,
+          updated_at = CURRENT_TIMESTAMP
       `, route.routeKey, route.defaultModelId || null, route.fallbackGroup, route.modelTier || null);
     }
   });
@@ -334,11 +369,99 @@ function enabledModel(id: string | undefined): ModelDefinition | undefined {
   return model?.enabled ? model : undefined;
 }
 
-export function selectModelForAgent(agent: AgentDefinition): ModelSelection {
+function estimateTokens(text: string): number {
+  return Math.ceil(text.length / 4);
+}
+
+type ModelRouteTask = Partial<Pick<Task, 'title' | 'description' | 'input' | 'mode' | 'retryCount'>>;
+
+function routeFromTask(agent: AgentDefinition, task?: ModelRouteTask, promptText?: string): {
+  routeKey: string;
+  profile: string;
+  reason: string;
+} | undefined {
+  if (!task && !promptText) return undefined;
+  const text = `${task?.title || ''}\n${task?.description || ''}\n${task?.input || ''}\n${promptText || ''}`.toLowerCase();
+  const tokenEstimate = estimateTokens(text);
+  const role = agent.role.toLowerCase();
+  const retryCount = task?.retryCount || 0;
+
+  if (tokenEstimate > 160_000 || /\b(large context|long context|entire repo|whole repository|全量|整个仓库|长上下文)\b/i.test(text)) {
+    return { routeKey: 'task:long-context', profile: 'long-context', reason: `task needs long context (~${tokenEstimate} tokens)` };
+  }
+
+  if (retryCount >= 2) {
+    return { routeKey: 'task:high-risk', profile: 'retry-escalation-strong', reason: `task has ${retryCount} failed attempt(s); escalating to strong model` };
+  }
+
+  const codingIntent = /\b(implement|fix|refactor|code|typescript|react|express|api|database|sql|test failure|bug|实现|修复|代码|重构)\b/i.test(text)
+    || ['developer', 'database', 'api-architect'].includes(role);
+  const explicitRiskReview = /\b(security review|security audit|threat model|vulnerability|exploit|prompt injection|sandbox escape|tenant isolation|dlp leak|secret leak|production rollback|release gate|合规审查|安全审查|漏洞|越权|租户隔离)\b/i.test(text)
+    || ['orchestrator', 'architect', 'security-reviewer', 'reviewer'].includes(role);
+
+  if (explicitRiskReview) {
+    return { routeKey: 'task:high-risk', profile: 'high-risk', reason: 'task is high-risk or requires strong review' };
+  }
+
+  if (codingIntent) {
+    return { routeKey: 'task:coding', profile: 'coding', reason: 'task requires code generation or engineering changes' };
+  }
+
+  if (retryCount >= 1) {
+    return { routeKey: 'task:long-context', profile: 'retry-escalation-balanced', reason: 'cheap route failed once; escalating to balanced model' };
+  }
+
+  if (tokenEstimate < 12_000
+    && /\b(summary|summarize|translate|docs|changelog|qa|test plan|triage|release notes|总结|翻译|文档|测试计划)\b/i.test(text)) {
+    return { routeKey: 'task:simple', profile: 'simple', reason: 'task is small and low-risk' };
+  }
+
+  return undefined;
+}
+
+function selectionFromRoute(
+  route: ModelRoute | undefined,
+  source: ModelSelection['source'],
+  reason: string,
+  requestedModelId: string | undefined,
+  budget: ModelSelection['budget'],
+  taskProfile?: string,
+): ModelSelection | undefined {
+  const routeFallback = route?.fallbackGroup ? bestEnabledModel(route.fallbackGroup) : undefined;
+  const model = enabledModel(route?.defaultModelId) || routeFallback;
+  if (!model) return undefined;
+  return {
+    modelId: model.id,
+    source,
+    requestedModelId,
+    fallbackGroup: route?.fallbackGroup || model.fallbackGroup,
+    fallbackModelId: model.id !== route?.defaultModelId ? model.id : undefined,
+    modelTier: route?.modelTier || model.tier,
+    routeKey: route?.routeKey,
+    budget,
+    taskProfile,
+    reason: model.id === route?.defaultModelId ? reason : `${reason}; route default unavailable, using ${route?.fallbackGroup || model.fallbackGroup} fallback ${model.id}`,
+  };
+}
+
+export function selectModelForAgent(agent: AgentDefinition, task?: ModelRouteTask, options?: { promptText?: string }): ModelSelection {
   const policy = agent.config.modelPolicy || {};
   const explicit = agent.model || agent.config.model || policy.preferredModel;
   const explicitSource = agent.model ? 'agent.model' : agent.config.model ? 'agent.config.model' : policy.preferredModel ? 'agent.config.modelPolicy' : undefined;
   const budget = Object.keys(policy).length > 0 ? policy : undefined;
+  const taskRoute = routeFromTask(agent, task, options?.promptText);
+  if (taskRoute) {
+    const selection = selectionFromRoute(
+      getModelRoute(taskRoute.routeKey),
+      'task.route',
+      taskRoute.reason,
+      explicit,
+      budget,
+      taskRoute.profile,
+    );
+    if (selection) return selection;
+  }
+
   const fallbackModel = enabledModel(policy.fallbackModel);
   const explicitModel = enabledModel(explicit);
   if (explicitModel && explicitSource) {
@@ -383,38 +506,18 @@ export function selectModelForAgent(agent: AgentDefinition): ModelSelection {
   }
 
   const roleRoute = getModelRoute(`role:${agent.role}`);
-  const roleModel = enabledModel(roleRoute?.defaultModelId);
-  if (roleModel) {
-    return {
-      modelId: roleModel.id,
-      source: 'role.route',
-      requestedModelId: explicit,
-      fallbackGroup: roleRoute?.fallbackGroup || roleModel.fallbackGroup,
-      fallbackModelId: policy.fallbackModel,
-      modelTier: roleRoute?.modelTier || roleModel.tier,
-      routeKey: roleRoute?.routeKey,
-      budget,
-      reason: explicit
-        ? `requested model unavailable; using role route ${agent.role}`
-        : `using role route ${agent.role}`,
-    };
-  }
+  const roleSelection = selectionFromRoute(
+    roleRoute,
+    'role.route',
+    explicit ? `requested model unavailable; using role route ${agent.role}` : `using role route ${agent.role}`,
+    explicit,
+    budget,
+  );
+  if (roleSelection) return roleSelection;
 
   const globalRoute = getModelRoute('global');
-  const globalModel = enabledModel(globalRoute?.defaultModelId);
-  if (globalModel) {
-    return {
-      modelId: globalModel.id,
-      source: 'global.route',
-      requestedModelId: explicit,
-      fallbackGroup: globalRoute?.fallbackGroup || globalModel.fallbackGroup,
-      fallbackModelId: policy.fallbackModel,
-      modelTier: globalRoute?.modelTier || globalModel.tier,
-      routeKey: globalRoute?.routeKey,
-      budget,
-      reason: 'using global route',
-    };
-  }
+  const globalSelection = selectionFromRoute(globalRoute, 'global.route', 'using global route', explicit, budget);
+  if (globalSelection) return globalSelection;
 
   const fallback = bestEnabledModel(requestedModel?.fallbackGroup || roleRoute?.fallbackGroup || globalRoute?.fallbackGroup)
     || bestEnabledModel();
@@ -431,15 +534,15 @@ export function selectModelForAgent(agent: AgentDefinition): ModelSelection {
     };
   }
 
-  const envModel = process.env.CREWAI_MODEL;
+  const envModel = process.env.AGENT_FACTORY_MODEL;
   return {
-    modelId: envModel || 'openai/gpt-5.4',
+    modelId: envModel || 'gpt-5.4-mini',
     source: envModel ? 'env.default' : 'runtime.default',
     requestedModelId: explicit,
     fallbackModelId: policy.fallbackModel,
     modelTier: 'fallback',
     budget,
-    reason: envModel ? 'using CREWAI_MODEL env default' : 'using runtime hard default',
+    reason: envModel ? 'using AGENT_FACTORY_MODEL env default' : 'using runtime hard default',
   };
 }
 
@@ -498,7 +601,7 @@ export function recordModelUsage(data: {
     data.status,
     data.inputTokens || 0,
     data.outputTokens || 0,
-    data.costUSD || 0,
+    data.costUSD && data.costUSD > 0 ? data.costUSD : estimateModelCost(data.modelId, data.inputTokens || 0, data.outputTokens || 0),
     data.modelTier || getModel(data.modelId)?.tier || null,
     data.routeSource || null,
     data.latencyMs ?? null,
@@ -507,4 +610,23 @@ export function recordModelUsage(data: {
     data.pipelineId || taskRow?.pipeline_id || null,
     data.stageIndex ?? taskRow?.stage_index ?? null,
   );
+}
+
+export function estimateModelCost(modelId: string, inputTokens: number, outputTokens: number): number {
+  const model = getModel(modelId);
+  const pricing = model?.costProfile?.pricing;
+  if (pricing && typeof pricing === 'object' && !Array.isArray(pricing)) {
+    const inputPer1k = Number((pricing as Record<string, unknown>).inputPer1k);
+    const outputPer1k = Number((pricing as Record<string, unknown>).outputPer1k);
+    if (Number.isFinite(inputPer1k) && Number.isFinite(outputPer1k)) {
+      return (inputTokens / 1000) * inputPer1k + (outputTokens / 1000) * outputPer1k;
+    }
+  }
+
+  const modelLower = modelId.toLowerCase();
+  let inputPrice = 0.003, outputPrice = 0.006;
+  if (modelLower.includes('opus') || modelLower.includes('gpt-5.5')) { inputPrice = 0.006; outputPrice = 0.018; }
+  else if (modelLower.includes('haiku') || modelLower.includes('mini') || modelLower.includes('flash')) { inputPrice = 0.0008; outputPrice = 0.0024; }
+  else if (modelLower.includes('codex') || modelLower.includes('gpt-5.4')) { inputPrice = 0.004; outputPrice = 0.012; }
+  return (inputTokens / 1000) * inputPrice + (outputTokens / 1000) * outputPrice;
 }

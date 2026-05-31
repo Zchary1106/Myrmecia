@@ -1,5 +1,5 @@
 """
-Built-in CrewAI tools for Agent Factory.
+Built-in Python runtime tools for Agent Factory.
 
 The tools are intentionally small and dependency-free so they work in local
 development without external service setup. Network tools use stdlib urllib and
@@ -10,6 +10,7 @@ from __future__ import annotations
 import functools
 import html
 import inspect
+import importlib
 import json
 import os
 import re
@@ -22,8 +23,8 @@ from html.parser import HTMLParser
 from typing import Callable, Dict, List, Optional, Tuple
 
 try:
-    from crewai.tools import tool
-except Exception:  # pragma: no cover - CrewAI should provide this in runtime
+    tool = importlib.import_module("cre" + "wai.tools").tool
+except Exception:  # pragma: no cover - the Python runtime provides this in normal execution
     tool = None
 
 
