@@ -1,189 +1,172 @@
-# 🏭 Agent Factory
+# Agent Factory
 
-**Autonomous Agent Orchestration System**
-
-A multi-agent task management platform powered by Claude Code CLI. Manage a pool of AI agents that can work independently or as a coordinated pipeline — from product spec to deployment.
-
-## Features
-
-- 🎯 **Three Operation Modes**: Master dispatch, direct assign, or full pipeline
-- 👀 **Real-time Dashboard**: Monitor all agents, tasks, and pipelines via web UI
-- 🔗 **Pipeline Workflows**: Automated stage-by-stage execution (PM → UI → Dev → QA → Deploy)
-- 🤖 **Agent Pool**: Specialized agents with distinct roles and capabilities
-- 🧰 **Tool Runtime**: Govern built-in tools with enable/approval policy, execution history, and Dashboard catalog
-- 🧭 **Run Trace**: Inspect structured spans for prompt build, model selection, LLM calls, tool calls, and policy blocks
-- 🧠 **Model Registry & Routing**: Manage Copilot proxy GPT/Claude models, role defaults, health badges, and fallbacks
-- 📚 **Skill Versioning**: Import Markdown skills, draft/publish versions, assign/rollback per Agent, and trace execution checksums
-- 🔧 **Visual Pipeline Builder**: Create/edit multi-stage templates, validate roles/prompts, and run them from the dashboard
-- 🧾 **Permission Audit**: Role-gate runtime/config controls and record Agent/Tool/Task/Pipeline operator actions
-- 📢 **Smart Notifications**: Get notified when tasks complete or need your input
-- ⚡ **Parallel Execution**: Multiple agents working simultaneously
+Autonomous multi-agent orchestration platform. Manage a pool of AI agents that execute tasks independently or in coordinated pipelines — from product spec to deployment.
 
 ## Architecture
 
-### System Overview
+![Architecture Overview](docs/diagrams/architecture-overview.png)
 
-![System Architecture](docs/diagrams/architecture-overview.png)
+Agent Factory is a **pnpm monorepo** that combines a TypeScript backend (Express 5), a React dashboard, and a Python CrewAI runtime. Agents are spawned as CrewAI subprocesses, orchestrated through a BullMQ/Redis task queue, with real-time WebSocket events streamed to the dashboard.
 
-### Pipeline Flow
-
-![Pipeline Flow](docs/diagrams/pipeline-flow.png)
-
-### Agent Pool
-
-![Agent Pool](docs/diagrams/agent-pool.png)
-
-### Tech Stack
-
-![Tech Stack](docs/diagrams/tech-stack.png)
+| Layer | Technology |
+|-------|-----------|
+| Frontend | React 19 + TypeScript + Tailwind CSS + shadcn/ui |
+| Backend | Express 5 + TypeScript |
+| Queue | BullMQ (Redis) with in-memory fallback |
+| Agent Runtime | Python CrewAI (subprocess) |
+| Database | SQLite (dev) / PostgreSQL (prod) |
+| Real-time | WebSocket pub/sub per resource |
+| Containerization | Docker Compose (server + dashboard + Redis) |
 
 ## Quick Start
 
-```bash
-# One-click local startup
-./scripts/start.sh
+**Prerequisites:** Node.js >= 20, pnpm >= 9, Python 3 (for CrewAI runtime)
 
-# Or through pnpm
-pnpm start:local
+```bash
+pnpm install
+pip install -r packages/crew/requirements.txt
+
+# Start dev server + dashboard
+pnpm dev
 
 # Open dashboard
 open http://localhost:5173
 ```
 
-Useful startup options:
+Startup options via `./start.sh`:
 
 ```bash
-./scripts/start.sh --clean-db        # start with a fresh local SQLite DB
-./scripts/start.sh --install-python  # install CrewAI runtime dependencies
-./scripts/start.sh --server-only     # start only the API server
-./scripts/start.sh --dashboard-only  # start only the dashboard
-DB_PATH=/tmp/agent-factory.db ./scripts/start.sh
+./start.sh --clean-db        # fresh SQLite database
+./start.sh --install-python  # install CrewAI deps automatically
+./start.sh --server-only     # API server only (port 3000)
+./start.sh --dashboard-only  # dashboard only (port 5173)
 ```
 
-## Tech Stack
+Or via Docker:
 
-| Layer | Technology |
-|-------|-----------|
-| Frontend | React 19 + TypeScript + Tailwind CSS + shadcn/ui |
-| Backend | Express + TypeScript + BullMQ |
-| Agent Runtime | Claude Code CLI (subprocess) |
-| Queue | Redis + BullMQ |
-| Database | SQLite (better-sqlite3) |
-| Real-time | WebSocket (ws) |
-| Notifications | WebSocket push + WeCom (optional) |
+```bash
+docker compose up -d
+# Server: http://localhost:3000
+# Dashboard: http://localhost:5173
+```
 
 ## Project Structure
 
 ```
 agent-factory/
-├── docs/                    # Design docs & specs
-│   ├── SPEC.md              # Product specification
-│   ├── ARCHITECTURE.md      # Technical architecture
-│   ├── API.md               # API reference
-│   ├── DEPLOYMENT.md        # Deployment and security notes
-│   └── diagrams/            # Architecture diagrams
 ├── packages/
-│   ├── server/              # Backend API + Orchestrator
-│   │   ├── src/
-│   │   │   ├── agents/      # Agent management & lifecycle
-│   │   │   ├── pipelines/   # Pipeline engine
-│   │   │   ├── queue/       # Task queue (BullMQ)
-│   │   │   ├── routes/      # Express routes
-│   │   │   ├── ws/          # WebSocket handlers
-│   │   │   └── db/          # SQLite models
-│   │   └── package.json
-│   └── dashboard/           # Frontend React app
-│       ├── src/
-│       │   ├── components/  # UI components
-│       │   ├── hooks/       # Custom hooks
-│       │   ├── pages/       # Route pages
-│       │   └── stores/      # State management
-│       └── package.json
-├── agents/                  # Agent definitions
-│   ├── pm.md                # PM Agent skill
-│   ├── ui.md                # UI Agent skill
-│   ├── dev.md               # Dev Agent skill
-│   ├── qa.md                # QA Agent skill
-│   ├── ops.md               # DevOps Agent skill
-│   └── review.md            # Review Agent skill
-├── templates/               # Pipeline templates
-│   ├── full-product.yaml    # Spec → Design → Code → Test → Deploy
-│   ├── bugfix.yaml          # Triage → Fix → Test → Deploy
-│   └── feature.yaml         # Spec → Code → Test → Review
-└── package.json             # Monorepo root
+│   ├── server/       # Express 5 orchestrator — agents, pipelines, queue, routes, WebSocket
+│   ├── dashboard/    # React 19 SPA — task/agent/pipeline monitoring, cost analytics
+│   ├── crew/         # Python CrewAI bridge — agent subprocess runtime
+│   ├── cli/          # CLI tool for interacting with the platform
+│   └── shared/       # TypeScript type definitions shared across packages
+├── agents/           # Agent definitions (registry.yaml + 23 skill .md files)
+├── templates/        # Pipeline templates (11 YAML workflow definitions)
+├── docs/             # Design specs, architecture docs, diagrams
+├── docker-compose.yml
+└── Dockerfile
 ```
 
-## Modes of Operation
+## How It Works
 
-### Mode A: Master Dispatch
-You give a high-level task to the Master Agent. It breaks it down and delegates to worker agents automatically.
+1. **Task Queue** — `TaskQueue.enqueue()` creates a task, emits `task:created`, and enqueues in BullMQ (or runs in-memory when Redis is unavailable).
+2. **Agent Manager** — checks concurrent capacity, delegates to `AgentRuntime`.
+3. **Agent Runtime** — spawns a CrewAI Python subprocess, tracks progress/cost/tokens, records trace spans, emits events.
+4. **Pipeline Engine** — listens for `task:done`, writes stage artifacts, advances to the next ready stage(s). Supports parallel stages (`dependsOn`), manual gating, loop stages, and rollback.
+5. **WebSocket Hub** — maps internal events to pub/sub channels (`tasks`, `task:{id}`, `agents`, `agent:{id}`, `pipelines`, `pipeline:{id}`, `executions`, `execution:{id}`).
 
-### Mode B: Direct Assign
-You assign tasks directly to specific agents from the dashboard.
+## Features
 
-### Mode C: Pipeline Flow
-A predefined pipeline runs stage-by-stage. Each agent's output feeds the next stage's input.
+### Agent Pool
 
-Open **Pipelines** to use the visual builder: add/reorder stages, select an Agent role for each stage, edit prompt templates, choose auto/manual gates, validate missing roles or prompts, save the template, and run it immediately.
+23 specialized agents defined in `agents/registry.yaml`: Master, PM, UI Designer, Developer, QA, DevOps, Reviewer, Security Reviewer, API Designer, DB Migration, Doc Writer, i18n, Issue Refiner, Release Notes, Release Compliance, Performance Investigator, GitOps Reviewer, React Dashboard Auditor, Accessibility Tester, QA Automation, Architecture Planner, WeChat Writer, Xiaohongshu Writer.
 
-## Custom Agents and Tools
+Custom agents can be created from the dashboard or API. Each agent has configurable model, max turns, timeout, tool whitelist, and skill assignment.
 
-Agent Factory supports custom Agent creation from both the API and dashboard. Open the **Agents** page and use **Create Custom Agent** to define:
+### Pipeline Workflows
 
-- name, emoji, role, description/skill prompt
-- capabilities and trigger keywords
-- model, max turns, timeout
-- allowed tool whitelist
+11 pipeline templates for automated stage-by-stage execution:
 
-The server also exposes `POST /api/agents` for programmatic registration. Dynamically-created agents are stored in SQLite and can execute even when they are not present in `agents/registry.yaml`.
+| Template | Flow |
+|----------|------|
+| `full-product.yaml` | Spec → Design → Code → Test → Deploy |
+| `bugfix.yaml` | Triage → Fix → Test → Deploy |
+| `feature.yaml` | Spec → Code → Test → Review |
+| `feature-with-qa-loop.yaml` | Feature with automated QA feedback loop |
+| `product-quality.yaml` | Full product pipeline with quality gates |
+| `parallel-feature.yaml` | Parallel stage execution via `dependsOn` |
+| `qa-validation.yaml` | Dedicated QA validation workflow |
+| `release-compliance.yaml` | Compliance-checked release process |
+| `structured-autonomy.yaml` | Autonomous agent workflow with structured outputs |
+| `wechat-article.yaml` | WeChat article generation pipeline |
+| `xiaohongshu-note.yaml` | Xiaohongshu note generation pipeline |
 
-Built-in CrewAI tools are dependency-light and governed by the server-side Tool Runtime. Open the **Tools** page to enable/disable tools, require approval, and inspect recent tool executions. Runtime filters each Agent's `allowedTools` through the platform policy before passing tools to CrewAI, and Python tool calls emit `tool_use` / `tool_result` events that are persisted in SQLite.
+Use the visual pipeline builder in the dashboard to create, edit, validate, and run custom templates.
 
-| Tool | Purpose | Good fit |
-| --- | --- | --- |
-| `web.search` | Search web results for current research | PM, doc writer, content writer, review |
-| `web.fetch` | Fetch compact page text from http/https URLs | PM, doc writer, i18n, dev, content writer |
-| `crawler.extract_links` | Extract visible links from a page | doc writer, research, WeChat article planning |
-| `content.wechat_layout` | Generate mobile-friendly WeChat HTML layout blocks | WeChat writer |
-| `content.hashtag_plan` | Generate Chinese keyword/tag clusters | WeChat/Xiaohongshu writer, PM |
-| `image.generate_svg` | Generate a simple SVG cover asset in `generated-assets/cover.svg` | UI, WeChat/Xiaohongshu writer |
+### Agent Federation (Batch C)
 
-Preset agents in `agents/registry.yaml` already include appropriate `allowed_tools`. On startup, registry metadata refreshes existing preset agents so newly added tool permissions are applied without recreating the database.
+Inter-agent communication protocol enabling agents to discover each other, share artifacts, and coordinate work. Includes capability registry, shared artifact store with access control, and sync/async messaging between agents.
 
-Recommended custom agent presets:
+### Skill Registry
 
-- **Research Assistant**: `web.search`, `web.fetch`, `crawler.extract_links`
-- **WeChat Operator**: `web.search`, `web.fetch`, `content.wechat_layout`, `content.hashtag_plan`, `image.generate_svg`
-- **Visual Content Assistant**: `image.generate_svg`
+Markdown-based skills with YAML frontmatter, versioned drafts/published states, assignment per agent, hot-reload via file watcher, and checksum-verified execution traces.
 
-Skills are now governed resources too. Startup imports `agents/*.md` into the Skill Registry as published versions and assigns them to matching preset Agents. Open the **Skills** page to create draft prompt versions, publish them, diff against the current published version, and assign or roll back any Agent to a published skill version. New executions persist `skillVersionId` and include the skill checksum in the `prompt.build` trace span.
+### Model Registry & Routing
 
-Agent model selection is loaded from the server-side Model Registry instead of a hardcoded UI list. The registry is intentionally limited to configured copilot-api reverse proxy models, and the dashboard dropdown shows only enabled models. Runtime routing uses explicit Agent model first, then role default routes, then fallback groups/global defaults. Because CrewAI talks to the copilot-api reverse proxy through an OpenAI-compatible client, Claude models are also configured with the `openai/` LiteLLM prefix.
+Centralized model catalog with per-agent defaults, role-based routing, health badges, and automatic fallback chains. Supports GPT and Claude models via a Copilot-compatible proxy.
 
-| Model ID | Recommended use |
-| --- | --- |
-| `openai/claude-opus-4.7` | strongest Claude reasoning for master planning, architecture, high-risk review |
-| `openai/claude-opus-4.6` | complex planning and long-context analysis |
-| `openai/claude-sonnet-4.6` | high-quality balanced Claude model for PM, review, content, docs |
-| `openai/claude-sonnet-4.5` | stable balanced Claude fallback |
-| `openai/claude-haiku-4.5` | fast/low-cost Claude model for QA, i18n, simple processing |
-| `openai/claude-sonnet-4` | Claude Sonnet fallback |
-| `openai/gpt-5.5` | strongest planning, review, orchestration |
-| `openai/gpt-5.4` | default balanced model for most agents |
-| `openai/gpt-5.4-mini` | fast/low-cost QA, i18n, simple docs |
-| `openai/gpt-5.3-codex` | coding, refactoring, engineering work |
-| `openai/gpt-5.2-codex` | coding fallback |
-| `openai/gpt-5.2` | general fallback |
-| `openai/gpt-5-mini` | lightweight tasks |
-| `openai/gpt-4.1` | compatibility/fast fallback |
+### Cost Dashboard
 
-## Demo Walkthroughs
+Real-time cost tracking with per-agent and per-model breakdowns, token usage charts, cost trend analysis, and summary cards.
 
-1. **Custom Research Agent**: open **Agents**, create a Research Assistant with `web.search` and `web.fetch`, choose an enabled model, run it, then inspect **Timeline** for model/tool trace spans.
-2. **Skill rollback**: open **Skills**, create a draft version for an Agent skill, publish it, assign it to the Agent, then roll back by assigning an older published version.
-3. **Model fallback**: disable a model through `/api/models/:id` or the model API, run an Agent that requested it, and inspect the `model.route` span for the fallback reason.
-4. **Tool governance**: open **Tools**, require approval or disable a tool, run an Agent that requested it, and review blocked tool policy spans plus Audit records.
-5. **Visual pipeline**: open **Pipelines**, build a multi-stage template, validate roles/prompts, save it, run with auto or manual gates, and monitor stage progress.
+### Execution Trace
+
+Structured span inspection for prompt build, model selection, LLM calls, tool calls, and policy blocks. Full visibility into every agent execution.
+
+### Tool Governance
+
+Built-in tool runtime with enable/disable toggles, approval requirements, execution history, and per-agent tool whitelists. Blocks and approvals are recorded in the audit log.
+
+### Quality & Governance
+
+- **Self-healing** — automatic retry and recovery for failed executions
+- **Quality loops** — feedback-driven improvement cycles
+- **Execution scoring** — LLM judge evaluates output quality with sliding window averages
+- **Coverage checking** — triggered on task completion
+- **Pipeline rollback** — checkpoint-based stage rollback with retry
+- **Operator audit** — all admin actions recorded
+
+### Smart Notifications
+
+WebSocket push notifications when tasks complete or require input. Optional WeCom integration.
+
+## Environment Variables
+
+| Variable | Purpose |
+|----------|---------|
+| `CREWAI_BASE_URL` | CrewAI API endpoint |
+| `CREWAI_API_KEY` | CrewAI API key |
+| `CREWAI_MODEL` | Default model for CrewAI |
+| `ANTHROPIC_API_KEY` | Fallback for CrewAI API key |
+| `REDIS_URL` / `REDIS_HOST` | Redis connection (in-memory queue fallback if unset) |
+| `DATABASE_URL` | PostgreSQL connection string (SQLite when unset) |
+| `PORT` | Server port (default 3000) |
+| `NODE_ENV` | `development` / `production` |
+
+## Commands
+
+| Task | Command |
+|------|---------|
+| Install all deps | `pnpm install` |
+| Dev server + dashboard | `pnpm dev` |
+| Dev server only | `pnpm dev:server` |
+| Dev dashboard only | `pnpm dev:dashboard` |
+| Build all packages | `pnpm build` |
+| Type-check | `pnpm lint` |
+| Server tests | `pnpm --filter @agent-factory/server test` |
+| Single test file | `pnpm --filter @agent-factory/server exec vitest run tests/<file>.test.ts` |
+| Dashboard tests | `pnpm --filter @agent-factory/dashboard test` |
+| Dashboard e2e | `pnpm --filter @agent-factory/dashboard test:e2e` |
 
 ## License
 
