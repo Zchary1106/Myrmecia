@@ -378,6 +378,20 @@ CREATE TABLE IF NOT EXISTS execution_audit_reports (
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS dynamic_workflows (
+  id TEXT PRIMARY KEY,
+  goal TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'planning' CHECK(status IN ('planning','dispatching','running','validating','done','failed','cancelled')),
+  plan JSON NOT NULL DEFAULT '{}',
+  task_ids JSON NOT NULL DEFAULT '[]',
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  result TEXT,
+  validation_summary TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  completed_at DATETIME
+);
+
 -- Server-backed per-operator dashboard/preferences state
 CREATE TABLE IF NOT EXISTS operator_preferences (
   actor_id TEXT NOT NULL,
@@ -441,6 +455,8 @@ CREATE INDEX IF NOT EXISTS idx_operator_preferences_namespace ON operator_prefer
 CREATE INDEX IF NOT EXISTS idx_execution_audit_task ON execution_audit_reports(task_id);
 CREATE INDEX IF NOT EXISTS idx_execution_audit_agent ON execution_audit_reports(agent_id);
 CREATE INDEX IF NOT EXISTS idx_execution_audit_workspace ON execution_audit_reports(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_dynamic_workflows_status ON dynamic_workflows(status);
+CREATE INDEX IF NOT EXISTS idx_dynamic_workflows_workspace ON dynamic_workflows(workspace_id);
 
 -- Migrations (safe to re-run)
 -- v3: Add workspace_path to tasks

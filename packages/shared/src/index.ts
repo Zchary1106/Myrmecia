@@ -632,6 +632,44 @@ export interface WorkspacePreferenceRestoreResult {
   auditActionId?: number;
 }
 
+export type DynamicWorkflowStatus = 'planning' | 'dispatching' | 'running' | 'validating' | 'done' | 'failed' | 'cancelled';
+
+export interface DynamicWorkflowStep {
+  id: string;
+  title: string;
+  description: string;
+  agentRole: AgentRole;
+  input: string;
+  dependsOn?: string[];
+  priority?: Priority;
+  taskId?: string;
+}
+
+export interface DynamicWorkflowPlan {
+  goal: string;
+  strategy: string;
+  maxParallel?: number;
+  steps: DynamicWorkflowStep[];
+  validation?: {
+    requiredStepIds?: string[];
+    summaryPrompt?: string;
+  };
+}
+
+export interface DynamicWorkflowRun {
+  id: string;
+  goal: string;
+  status: DynamicWorkflowStatus;
+  plan: DynamicWorkflowPlan;
+  taskIds: string[];
+  workspaceId?: string;
+  result?: string;
+  validationSummary?: string;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+}
+
 export type WSEventType =
   | 'task:created' | 'task:updated' | 'task:assigned' | 'task:started' | 'task:log'
   | 'task:done' | 'task:failed' | 'task:cancelled'
@@ -651,6 +689,8 @@ export type WSEventType =
   | 'orchestration:created' | 'orchestration:task_dispatched' | 'orchestration:task_completed'
   | 'orchestration:task_failed' | 'orchestration:agent_message' | 'orchestration:done'
   | 'orchestration:failed'
+  | 'workflow:created' | 'workflow:planned' | 'workflow:task_dispatched'
+  | 'workflow:task_completed' | 'workflow:task_failed' | 'workflow:done' | 'workflow:failed'
   | 'agent:comm:request' | 'agent:comm:response' | 'agent:comm:message'
   | 'artifact:published' | 'artifact:read';
 

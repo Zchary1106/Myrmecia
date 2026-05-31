@@ -205,7 +205,6 @@ async function main() {
   app.use('/api/v1/pipelines', createPipelineRoutes(pipelineEngine));
   app.use('/api/v1/templates', createTemplateRoutes());
   app.use('/api/v1', createSystemRoutes());
-  app.use('/api/v1/supervisor', createSupervisorRoutes(taskQueue, pipelineEngine));
   app.use('/api/v1/knowledge', createKnowledgeRoutes());
   app.use('/api/v1/audit', createAuditRoutes());
   app.use('/api/v1/usage', createUsageRoutes());
@@ -222,6 +221,8 @@ async function main() {
   app.use('/api/v1/agent-comms', createAgentCommsRoutes(agentComms));
   app.use('/api/v1/artifacts', createArtifactRoutes(artifactStore));
   app.get('/api/v1/openapi.json', openApiHandler);
+  const supervisorRoutes = createSupervisorRoutes(taskQueue, pipelineEngine, agentManager);
+  app.use('/api/v1/supervisor', supervisorRoutes);
 
   // Legacy /api routes (deprecated alias → same handlers, adds deprecation header)
   const deprecationNotice: import('express').RequestHandler = (_req, res, next) => {
@@ -240,7 +241,7 @@ async function main() {
   app.use('/api/templates', deprecationNotice, createTemplateRoutes());
   app.use('/api/execution-audit', deprecationNotice, createExecutionAuditRoutes());
   app.use('/api', deprecationNotice, createSystemRoutes());
-  app.use('/api/supervisor', deprecationNotice, createSupervisorRoutes(taskQueue, pipelineEngine));
+  app.use('/api/supervisor', deprecationNotice, supervisorRoutes);
 
   // Global error handler (must be after all routes)
   app.use(globalErrorHandler);

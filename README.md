@@ -103,6 +103,19 @@ Custom agents can be created from the dashboard or API. Each agent has configura
 
 Use the visual pipeline builder in the dashboard to create, edit, validate, and run custom templates.
 
+### Dynamic Workflow Runtime
+
+For large or ambiguous engineering requests, Agent Factory can now generate an executable workflow plan at runtime, fan out work across many specialized agents, and aggregate/validate the results. This is separate from fixed YAML templates: the runtime creates a `dynamic_workflows` run with step dependencies, dispatches each step as a task through the existing queue, tracks completion events, and emits a final validation summary.
+
+API entry points:
+
+| Endpoint | Purpose |
+| --- | --- |
+| `POST /api/v1/supervisor/workflows` | Create and dispatch a dynamic workflow from `{ goal }` or a supplied executable `{ plan }` |
+| `GET /api/v1/supervisor/workflows` | List workflow runs |
+| `GET /api/v1/supervisor/workflows/:id` | Inspect workflow plan, tasks, result, and validation summary |
+| `POST /api/v1/supervisor/workflows/:id/cancel` | Cancel a workflow run |
+
 ### Agent Federation (Batch C)
 
 Inter-agent communication protocol enabling agents to discover each other, share artifacts, and coordinate work. Includes capability registry, shared artifact store with access control, and sync/async messaging between agents.
