@@ -1,7 +1,8 @@
 import { v4 as uuid } from 'uuid';
 import { getDb } from '../db/database.js';
 import { eventBus } from '../events/event-bus.js';
-import { getTask } from '../db/models/task.js';
+import { getTask, updateTask } from '../db/models/task.js';
+import { getAgent } from '../db/models/agent.js';
 import type { AgentManager } from './agent-manager.js';
 import type { TaskQueue } from '../queue/task-queue.js';
 import type { DynamicWorkflowPlan, DynamicWorkflowRun, DynamicWorkflowStatus, DynamicWorkflowStep, Priority, Task } from '../types.js';
@@ -240,26 +241,67 @@ export class DynamicWorkflowRuntime {
     });
   }
 
+  async controlStep(workflowId: string, stepId: string, data: {
+    action: 'rerun' | 'skip' | 'replace_agent' | 'force_unblock';
+    agentId?: string;
+    reason?: string;
+  }): Promise<DynamicWorkflowRun> {
+    const workflow = getDynamicWorkflow(workflowId);
+    if (!workflow) throw new Error(`Workflow ${workflowId} not found`);
+    const step = workflow.plan.steps.find(item => item.id === stepId);
+    if (!step) throw new Error(`Workflow step ${stepId} not found`);
+    const task = step.taskId ? getTask(step.taskId) : undefined;
+
+    if (data.action === 'skip') {
+      if (!task) throw new Error(`Workflow step ${stepId} has no task to skip`);
+      updateTask(task.id, {
+        status: 'done',
+        output: `Skipped by operator.${data.reason ? ` Reason: ${data.reason}` : ''}`,
+        completedAt: new Date().toISOString(),
+      });
+      eventBus.emit('workflow:task_completed', { workflowId, workspaceId: workflow.workspaceId, taskId: task.id, stepId, skipped: true });
+      this.checkCompletion(workflowId);
+      return getDynamicWorkflow(workflowId)!;
+    }
+
+    if (data.action === 'replace_agent') {
+      if (!task) throw new Error(`Workflow step ${stepId} has no task to reassign`);
+      if (!data.agentId) throw new Error('agentId is required to replace an agent');
+      const agent = getAgent(data.agentId);
+      if (!agent) throw new Error(`Agent ${data.agentId} not found`);
+      updateTask(task.id, { assigneeId: data.agentId });
+      step.agentRole = agent.role;
+      workflow.plan.steps = workflow.plan.steps.map(item => item.id === step.id ? { ...step, taskId: task.id } : item);
+      updateDynamicWorkflow(workflowId, { plan: workflow.plan });
+      eventBus.emit('workflow:task_dispatched', { workflowId, workspaceId: workflow.workspaceId, taskId: task.id, stepId, agentId: data.agentId, reassigned: true });
+      return getDynamicWorkflow(workflowId)!;
+    }
+
+    const replacement = await this.enqueueStep(workflow, step, {
+      ignoreDependencies: data.action === 'force_unblock',
+      preferredAgentId: data.agentId,
+      reason: data.reason,
+    });
+    const taskIds = Array.from(new Set([...workflow.taskIds.filter(id => id !== task?.id), replacement.id]));
+    step.taskId = replacement.id;
+    workflow.plan.steps = workflow.plan.steps.map(item => item.id === step.id ? { ...step } : item);
+    updateDynamicWorkflow(workflowId, { status: 'running', plan: workflow.plan, taskIds, completedAt: null, validationSummary: null, result: null });
+    eventBus.emit('workflow:task_dispatched', {
+      workflowId,
+      workspaceId: workflow.workspaceId,
+      stepId,
+      taskId: replacement.id,
+      agentId: replacement.assigneeId,
+      action: data.action,
+    });
+    return getDynamicWorkflow(workflowId)!;
+  }
+
   private async dispatchSteps(workflow: DynamicWorkflowRun): Promise<string[]> {
     const stepToTask = new Map<string, string>();
     const taskIds: string[] = [];
     for (const step of workflow.plan.steps) {
-      const agent = this.agentManager.findAvailableAgent(step.agentRole)
-        || this.agentManager.findAvailableAgent(step.agentRole === 'developer' ? 'dev' : 'developer')
-        || this.agentManager.findAvailableAgent('reviewer');
-      if (!agent) throw new Error(`No available agent for workflow step ${step.id} (${step.agentRole})`);
-
-      const dependsOn = (step.dependsOn || []).map(dep => stepToTask.get(dep)).filter(Boolean) as string[];
-      const task = await this.taskQueue.enqueue({
-        title: `${workflow.goal.slice(0, 48)} — ${step.title}`,
-        description: step.description,
-        mode: 'direct',
-        priority: (step.priority || 'normal') as Priority,
-        assigneeId: agent.id,
-        input: this.buildStepInput(workflow, step),
-        dependsOn,
-        workspaceId: workflow.workspaceId,
-      });
+      const task = await this.enqueueStep(workflow, step, { stepToTask });
       step.taskId = task.id;
       stepToTask.set(step.id, task.id);
       taskIds.push(task.id);
@@ -268,12 +310,43 @@ export class DynamicWorkflowRuntime {
         workspaceId: workflow.workspaceId,
         stepId: step.id,
         taskId: task.id,
-        agentId: agent.id,
-        dependsOn,
+        agentId: task.assigneeId,
+        dependsOn: task.dependsOn,
       });
     }
     updateDynamicWorkflow(workflow.id, { plan: workflow.plan, taskIds });
     return taskIds;
+  }
+
+  private async enqueueStep(workflow: DynamicWorkflowRun, step: DynamicWorkflowStep, options?: {
+    stepToTask?: Map<string, string>;
+    ignoreDependencies?: boolean;
+    preferredAgentId?: string;
+    reason?: string;
+  }): Promise<Task> {
+    const preferred = options?.preferredAgentId ? getAgent(options.preferredAgentId) : undefined;
+    const agent = preferred
+      || this.agentManager.findAvailableAgent(step.agentRole)
+      || this.agentManager.findAvailableAgent(step.agentRole === 'developer' ? 'dev' : 'developer')
+      || this.agentManager.findAvailableAgent('reviewer');
+    if (!agent) throw new Error(`No available agent for workflow step ${step.id} (${step.agentRole})`);
+
+    const dependsOn = options?.ignoreDependencies
+      ? []
+      : (step.dependsOn || []).map(dep => options?.stepToTask?.get(dep) || workflow.plan.steps.find(s => s.id === dep)?.taskId).filter(Boolean) as string[];
+    const input = options?.reason
+      ? `${this.buildStepInput(workflow, step)}\n\nOperator note: ${options.reason}`
+      : this.buildStepInput(workflow, step);
+    return this.taskQueue.enqueue({
+      title: `${workflow.goal.slice(0, 48)} — ${step.title}`,
+      description: step.description,
+      mode: 'direct',
+      priority: (step.priority || 'normal') as Priority,
+      assigneeId: agent.id,
+      input,
+      dependsOn,
+      workspaceId: workflow.workspaceId,
+    });
   }
 
   private buildStepInput(workflow: DynamicWorkflowRun, step: DynamicWorkflowStep): string {

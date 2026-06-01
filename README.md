@@ -8,15 +8,28 @@ Autonomous multi-agent orchestration platform. Manage a pool of AI agents that e
 
 Agent Factory is a **pnpm monorepo** that combines a TypeScript backend (Express 5), a React dashboard, and an Agent Factory Python runtime. Agents run in managed subprocesses, orchestrated through a BullMQ/Redis task queue, with real-time WebSocket events streamed to the dashboard.
 
-| Layer | Technology |
-|-------|-----------|
-| Frontend | React 19 + TypeScript + Tailwind CSS + shadcn/ui |
-| Backend | Express 5 + TypeScript |
-| Queue | BullMQ (Redis) with in-memory fallback |
-| Agent Runtime | TypeScript loop + Agent Factory Python Runtime |
-| Database | SQLite (dev) / PostgreSQL (prod) |
-| Real-time | WebSocket pub/sub per resource |
-| Containerization | Docker Compose (server + dashboard + Redis) |
+| Layer | Main modules | Responsibility |
+|-------|--------------|----------------|
+| Frontend | `packages/dashboard` | React 19 dashboard for command center, agents, tasks, pipelines, skills, timeline, inbox, audit, and settings |
+| API / Orchestrator | `packages/server/src/index.ts`, `routes/*` | Express API, auth/tenant middleware, REST resources, and WebSocket upgrade handling |
+| Execution | `agents/agent-runtime.ts`, `agents/ts-agent-loop.ts`, `packages/python-runtime` | TypeScript agent loop plus optional Python runtime for tool-enabled agent execution |
+| Planning | `agents/orchestrator.ts`, `agents/dynamic-workflow.ts`, `pipelines/pipeline-engine.ts` | Fixed templates, supervisor orchestration, and dynamic fan-out workflows |
+| Queue | `queue/task-queue.ts` | BullMQ when Redis is configured; in-memory execution path for local/dev |
+| Governance | `skills/tool-sandbox.ts`, `tools/tool-policy.ts`, `audit/execution-audit.ts`, `security/*` | Tool allowlists, guardian checks, DLP redaction/blocking, policy snapshots, audit reports |
+| Persistence | SQLite schema in `packages/server/src/db/schema.sql` | Tasks, agents, executions, messages, pipelines, skills, tools, models, workflows, audit data |
+| Real-time | `events/event-bus.ts`, `ws/ws-hub.ts` | Typed internal events mapped to tenant-aware WebSocket channels |
+
+### Core runtime flow
+
+1. A user creates a task, pipeline, or dynamic workflow through the dashboard/API.
+2. Auth and tenant middleware resolve workspace access and API/token scope.
+3. `TaskQueue` creates task rows and either enqueues BullMQ jobs or runs the in-memory path.
+4. `AgentManager` selects an available agent by role/capacity.
+5. `AgentRuntime` builds the prompt, selects a model, records a policy snapshot, and runs either the TypeScript loop or Python runtime.
+6. Tool calls pass through registry policy, approval requirements, guardrails, sandbox checks, and DLP processing before results are returned.
+7. Outputs, messages, model usage, traces, audit events, and workflow/pipeline artifacts are persisted and emitted to WebSocket subscribers.
+
+For the full system design, data model, event map, and workflow diagrams, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Quick Start
 
@@ -83,6 +96,19 @@ agent-factory/
 
 Custom agents can be created from the dashboard or API. Each agent has configurable model, max turns, timeout, tool whitelist, and skill assignment.
 
+### Agent Interaction Console
+
+The dashboard includes an **Interaction Console** for making agent work easier to understand. It brings workflow/task structure, live agent messages, model routing, tool activity, audit events, and next-step recommendations into one view.
+
+| Panel | Purpose |
+| --- | --- |
+| Workflow / task map | Select dynamic workflows or recent tasks and inspect task dependencies |
+| Agent conversation | Read recent structured messages, tool uses, progress, and errors |
+| Transparency panel | See selected agent, model/tier, route reason, tool status, audit blockers, and recommended next action |
+| Control bar | Create dynamic workflows, retry/upgrade failed work, cancel tasks, and cancel active workflows |
+
+This turns agent execution from a black box into an observable team workflow: who is acting, why they were selected, what evidence they produced, and what should happen next.
+
 ### Pipeline Workflows
 
 11 pipeline templates for automated stage-by-stage execution:
@@ -126,7 +152,7 @@ Markdown-based skills with YAML frontmatter, versioned drafts/published states, 
 
 ### Model Registry & Routing
 
-Centralized model catalog with per-agent defaults, role-based routing, health badges, and automatic fallback chains. Supports GPT and Claude models via a Copilot-compatible proxy.
+Centralized model catalog with task-aware routing, per-agent defaults, role fallback, health badges, retry escalation, long-context routing, and automatic fallback chains through an OpenAI-compatible endpoint.
 
 ### Cost Dashboard
 

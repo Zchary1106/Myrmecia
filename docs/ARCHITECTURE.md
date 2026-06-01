@@ -32,6 +32,20 @@ flowchart LR
 | SQLite | Agent 定义、任务、执行记录、消息、Pipeline、通知、审计事件 |
 | WebSocket Hub | 把内部事件广播到 Dashboard 对应 channel |
 
+### Module Map
+
+| Area | Primary files | Notes |
+| --- | --- | --- |
+| Startup wiring | `packages/server/src/index.ts` | Initializes telemetry, DB, registries, task queue, pipeline engine, dynamic/supervisor routes, WebSocket hub, and background services |
+| Agent registry | `agents/registry.yaml`, `agents/*.md`, `agents/agent-manager.ts` | Registry YAML defines default agents; markdown files define prompt/skill behavior; DB rows are the runtime source |
+| Runtime execution | `agents/agent-runtime.ts`, `agents/ts-agent-loop.ts`, `packages/python-runtime/runtime_runner.py` | Runs tasks, emits events, records traces, applies DLP, tracks cost/tokens, and enforces runtime budgets |
+| Dynamic workflow | `agents/dynamic-workflow.ts`, `routes/supervisor.ts` | Generates executable plans, dispatches fan-out tasks, watches task events, validates and summarizes runs |
+| Pipeline engine | `pipelines/pipeline-engine.ts`, `templates/*.yaml` | Fixed workflow templates with stage dependencies, artifacts, manual gates, QA loops, and rollback |
+| Model routing | `models/model-registry.ts`, `models/smart-router.ts` | Task-aware routing, fallback groups, retry escalation, long-context selection, health/usage tracking |
+| Tool governance | `tools/tool-policy.ts`, `skills/tool-sandbox.ts`, `skills/tool-guardian.ts` | Tool enablement, approval gates, high-risk metadata, command blocking, secret/unsafe input checks |
+| Audit and security | `audit/execution-audit.ts`, `auth/*`, `security/*` | API auth, tenant scoping, DLP rules, policy snapshots, audit reports, event recording |
+| Dashboard state | `packages/dashboard/src/stores/store.ts`, `packages/dashboard/src/lib/api.ts` | Zustand state, REST client, WebSocket updates, preview-friendly fallback loaders |
+
 ## 2. High-level Runtime Architecture
 
 ```mermaid
@@ -96,7 +110,7 @@ flowchart TB
   Runtime --> Runner
   Runner --> Builder
   Builder --> ToolRegistry
-  Builder --> Copilot[Copilot API Reverse Proxy]
+  Builder --> ModelEndpoint[OpenAI-compatible Model Endpoint]
   DBModels --> SQLite
   EventBus --> WSHub
   Runtime --> EventBus
@@ -229,23 +243,46 @@ flowchart LR
   Events --> Executions[(tool_executions)]
 ```
 
-  ## 5.1 Dynamic Workflow Runtime
+## 5.1 Dynamic Workflow Runtime
 
-  Dynamic workflows are generated at runtime instead of loaded from a fixed YAML template. The runtime creates an executable plan, fans steps out through the normal `TaskQueue`, and listens for task terminal events to validate and summarize the run.
+Dynamic workflows are generated at runtime instead of loaded from a fixed YAML template. The runtime creates an executable plan, fans steps out through the normal `TaskQueue`, and listens for task terminal events to validate and summarize the run.
 
-  ```mermaid
-  flowchart LR
-    UserGoal[Goal] --> Planner[Workflow Planner]
-    Planner --> Plan[(dynamic_workflows.plan)]
-    Plan --> FanOut[Fan-out Dispatcher]
-    FanOut --> TaskQueue
-    TaskQueue --> Agents[Specialized Agents]
-    Agents --> Results[Task Outputs]
-    Results --> Validator[Validation Summary]
-    Validator --> WorkflowResult[(dynamic_workflows.result)]
-  ```
+```mermaid
+flowchart LR
+  UserGoal[Goal] --> Planner[Workflow Planner]
+  Planner --> Plan[(dynamic_workflows.plan)]
+  Plan --> FanOut[Fan-out Dispatcher]
+  FanOut --> TaskQueue
+  TaskQueue --> Agents[Specialized Agents]
+  Agents --> Results[Task Outputs]
+  Results --> Validator[Validation Summary]
+  Validator --> WorkflowResult[(dynamic_workflows.result)]
+```
 
-  Each plan contains `steps[]` with `id`, `agentRole`, `input`, and `dependsOn`. The dispatcher converts step dependencies into task dependencies, so independent steps can run in parallel while QA/security/release gates wait for upstream outputs.
+Each plan contains `steps[]` with `id`, `agentRole`, `input`, and `dependsOn`. The dispatcher converts step dependencies into task dependencies, so independent steps can run in parallel while QA/security/release gates wait for upstream outputs.
+
+### Dynamic workflow lifecycle
+
+| Phase | Status | What happens |
+| --- | --- | --- |
+| Create | `planning` | API accepts `{ goal }` or an executable `{ plan }`; the planner creates/validates steps and dependencies |
+| Dispatch | `dispatching` | Each step is assigned to an available agent role and persisted as a normal task |
+| Run | `running` | Existing queue/runtime executes sub-tasks; events include `workflow:task_dispatched`, `workflow:task_completed`, and `workflow:task_failed` |
+| Validate | `validating` | When all child tasks reach terminal state, required steps are checked and outputs are aggregated |
+| Finish | `done` / `failed` / `cancelled` | Result and validation summary are persisted in `dynamic_workflows` |
+
+Dynamic workflows intentionally reuse the normal task/execution path instead of creating a second worker system. This means model routing, DLP, tool governance, audit snapshots, workspace scoping, task logs, execution timeline, and WebSocket delivery all remain consistent.
+
+### Dynamic workflow API
+
+| Endpoint | Behavior |
+| --- | --- |
+| `POST /api/v1/supervisor/workflows` | Create a workflow from `{ goal }` or dispatch a supplied `DynamicWorkflowPlan` |
+| `GET /api/v1/supervisor/workflows` | List workflow runs, optionally scoped by workspace |
+| `GET /api/v1/supervisor/workflows/:id` | Return workflow run plus child tasks |
+| `POST /api/v1/supervisor/workflows/:id/cancel` | Mark a workflow cancelled |
+
+The current planner is deterministic and rule-based. It can be replaced or augmented later by an LLM planner that produces the same validated `DynamicWorkflowPlan` shape.
 
 `/api/tools` exposes the catalog, policy updates, per-Agent permissions, and execution history. The Dashboard **Tools** page shows enabled status, approval requirement, risk level, and recent tool calls.
 
@@ -310,14 +347,32 @@ flowchart LR
 
 Routing order:
 
-1. Explicit enabled `agent.model`.
-2. Explicit enabled `agent.config.model`.
-3. Enabled `role:<agent.role>` route.
-4. Enabled `global` route.
-5. Highest-priority enabled model in the requested fallback group.
-6. Highest-priority enabled model, then `AGENT_FACTORY_MODEL` as the final runtime fallback.
+1. **Task route** from goal/input/profile, prompt size, and retry count:
+   - simple summaries/docs/triage -> cheap route
+   - code/fix/refactor/API/DB -> `gpt-5.3-codex`
+   - explicit security/tenant/DLP/sandbox/release-risk reviews -> strong route
+   - long prompt/context -> `gpt-5.4`
+   - repeated failures -> balanced, then strong
+2. Explicit enabled `agent.model`.
+3. Explicit enabled `agent.config.model` / `modelPolicy.preferredModel`.
+4. `modelPolicy.fallbackModel` or `modelPolicy.tier`.
+5. Enabled `role:<agent.role>` route.
+6. Enabled `global` route.
+7. Highest-priority enabled model in the requested fallback group.
+8. `AGENT_FACTORY_MODEL` as the final runtime fallback.
 
 Each execution writes a `model.route` trace span and a `model_usage_stats` row with selected model, tokens/cost when available, latency, and route reason. `/api/models` exposes the catalog, enabled flags, health checks, and route updates; model config changes are audited as `model.update` / `model.route.update`.
+
+### Model routing examples
+
+| Task profile | Selected model | Why |
+| --- | --- | --- |
+| "summarize release notes" | `gpt-5.4-mini` | cheap default for small low-risk text tasks |
+| "fix TypeScript API bug" | `gpt-5.3-codex` | coding route |
+| "security review tenant isolation" | `gpt-5.5` | explicit high-risk review route |
+| "analyze entire repository" | `gpt-5.4` | long-context route |
+| cheap task failed once | `gpt-5.4` | retry escalation to balanced |
+| task failed repeatedly | `gpt-5.5` | retry escalation to strong |
 
 ### Supported Model Options
 
@@ -475,6 +530,7 @@ erDiagram
   pipelines ||--o{ tasks : stages
   pipeline_templates ||--o{ pipelines : instantiates
   tasks ||--o{ notifications : references
+  dynamic_workflows ||--o{ tasks : dispatches
   model_registry ||--o{ model_usage_stats : records
   model_registry ||--o{ model_health_checks : checks
   model_registry ||--o{ model_routes : defaults
@@ -589,6 +645,17 @@ erDiagram
     integer current_stage_index
     text gate_mode
   }
+
+  dynamic_workflows {
+    text id PK
+    text goal
+    text status
+    json plan
+    json task_ids
+    text workspace_id
+    text result
+    text validation_summary
+  }
 ```
 
 Default database path:
@@ -625,6 +692,7 @@ Typical events:
 | Task | `task:created`, `task:started`, `task:done`, `task:failed` |
 | Execution | `execution:started`, `execution:message`, `execution:done`, `execution:failed` |
 | Pipeline | stage start/done, blocked, done, failed |
+| Workflow | `workflow:created`, `workflow:planned`, `workflow:task_dispatched`, `workflow:task_completed`, `workflow:done`, `workflow:failed` |
 | Agent | registry/status related updates |
 
 ## 12. Deployment View
@@ -636,7 +704,7 @@ flowchart TB
   Node --> SQLite[(SQLite file)]
   Node --> Redis[(Redis optional)]
   Node --> Python[python3 runtime_runner.py]
-  Python --> Copilot[Copilot API reverse proxy]
+  Python --> ModelEndpoint[OpenAI-compatible model endpoint]
   Python --> Internet[Optional web tools]
   Node --> Workspace[Workspace files]
 ```
@@ -665,13 +733,27 @@ pnpm dev:dashboard
 | Execution messages | Runtime activity is persisted for timeline/history views |
 | Operator controls | Cancel/retry/delete/pipeline controls are recorded and role-gated |
 | Human inbox | Approval/question/input/review entries persist operator decisions |
+| Runtime budgets | Max turns, output length, token budget, tool-call count, cumulative tool runtime, and wall-clock limits |
+| Model fallback | Task route fallback group, role/global routes, retry escalation, and final env fallback |
+
+## 13.1 Security and Governance Boundaries
+
+| Boundary | Enforcement |
+| --- | --- |
+| API auth | Static admin token and API key auth with route scope checks |
+| Tenant/workspace | Request workspace context gates REST routes, WebSocket subscriptions, and audit/workflow access |
+| Tool policy | Tool catalog must be enabled, allowed by agent, not approval-required, and pass metadata checks |
+| Tool guardian | Blocks pipe-to-shell, destructive git, unsafe SQL, obvious exfiltration, high-confidence secrets, and unsafe package installs |
+| DLP | Agent output, tool output, cached output, and Python runtime stdout/stderr pass through DLP redaction/blocking |
+| Runtime isolation | Python runtime has resource/output limits; production local executor can be blocked unless explicitly allowed |
+| Auditability | Execution policy snapshots capture model route, tool policy, runtime limits, workspace scope, DLP mode, and blocked events |
 
 ## 14. Current Limits and Extension Points
 
 | Area | Current design | Extension |
 | --- | --- | --- |
 | Tools | Built-in Agent Factory Python tools | Add provider-backed image generation, browser automation, MCP tools |
-| Model list | Static dashboard dropdown | Fetch model list from copilot-api if endpoint is available |
+| Model list | Static dashboard dropdown | Fetch model list from the configured OpenAI-compatible endpoint if available |
 | Agent skills | Markdown + dashboard overlay | Versioned skill registry and diff/rollback |
 | Queue | Redis optional, memory fallback | Distributed workers and per-Agent concurrency pools |
 | Dashboard editing | Agent create/edit supported | Full diff view, dry-run prompt preview, tool permission templates |
