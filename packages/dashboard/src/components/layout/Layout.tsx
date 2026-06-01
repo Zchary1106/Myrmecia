@@ -11,6 +11,7 @@ import { operatorRoleLabel, runtimeControlsAllowed } from '../../lib/permissions
 // Lazy-loaded page components for code splitting
 const OrchestratorView = lazy(() => import('../orchestrator/OrchestratorView').then(m => ({ default: m.OrchestratorView })));
 const OrchestrationBoard = lazy(() => import('../orchestrator/OrchestrationBoard').then(m => ({ default: m.OrchestrationBoard })));
+const InteractionConsolePage = lazy(() => import('../../pages/InteractionConsole').then(m => ({ default: m.InteractionConsolePage })));
 const ExecutionTimeline = lazy(() => import('../timeline/ExecutionTimeline').then(m => ({ default: m.ExecutionTimeline })));
 const InboxView = lazy(() => import('../inbox/InboxView').then(m => ({ default: m.InboxView })));
 const ObservabilityView = lazy(() => import('../observability/ObservabilityView').then(m => ({ default: m.ObservabilityView })));
@@ -111,6 +112,7 @@ function ViewToggle() {
       label: 'Workspace',
       views: [
         { id: 'command', label: 'Command Center', icon: '⌘', badge: unreadCount },
+        { id: 'console', label: 'Interaction Console', icon: '🧭' },
         { id: 'tasks', label: 'Work Queue', icon: '📋' },
         { id: 'agents', label: 'Agents', icon: '🤖' },
         { id: 'tools', label: 'Tools', icon: '🧰' },
@@ -173,6 +175,8 @@ function MainContent() {
     switch (activeView) {
     case 'command':
       return <CommandCenter />;
+    case 'console':
+      return <InteractionConsolePage />;
     case 'agents':
       return <AgentsPage />;
     case 'tools':

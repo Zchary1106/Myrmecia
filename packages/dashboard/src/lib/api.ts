@@ -32,6 +32,8 @@ import type {
   WorkspaceSnapshotPreview,
   WorkspaceRestorePlan,
   WorkspacePreferenceRestoreResult,
+  DynamicWorkflowRun,
+  DynamicWorkflowPlan,
 } from '@agent-factory/shared';
 import { getApiAuthToken } from './auth';
 
@@ -257,6 +259,29 @@ export const api = {
     classify: (input: string) => request<unknown>('/supervisor/classify', { method: 'POST', body: JSON.stringify({ input }) }),
     guardrails: () => request<unknown>('/supervisor/guardrails'),
     updateGuardrails: (data: unknown) => request<unknown>('/supervisor/guardrails', { method: 'PATCH', body: JSON.stringify(data) }),
+    workflows: {
+      list: () => request<DynamicWorkflowRun[]>('/supervisor/workflows'),
+      get: (id: string) => request<DynamicWorkflowRun & { tasks?: Task[] }>(`/supervisor/workflows/${id}`),
+      create: (data: { goal: string; plan?: DynamicWorkflowPlan }) =>
+        request<DynamicWorkflowRun>('/supervisor/workflows', { method: 'POST', body: JSON.stringify(data) }),
+      preview: (data: { goal?: string; plan?: DynamicWorkflowPlan }) =>
+        request<{ plan: DynamicWorkflowPlan }>('/supervisor/workflows/preview', { method: 'POST', body: JSON.stringify(data) }),
+      cancel: (id: string) => request<DynamicWorkflowRun>(`/supervisor/workflows/${id}/cancel`, { method: 'POST' }),
+      controlStep: (id: string, stepId: string, data: { action: 'rerun' | 'skip' | 'replace_agent' | 'force_unblock'; agentId?: string; reason?: string }) =>
+        request<DynamicWorkflowRun>(`/supervisor/workflows/${id}/steps/${encodeURIComponent(stepId)}/control`, { method: 'POST', body: JSON.stringify(data) }),
+    },
+  },
+  executionAudit: {
+    get: (executionId: string) => request<{
+      executionId: string;
+      taskId: string;
+      agentId: string;
+      workspaceId: string;
+      policySnapshot: Record<string, unknown>;
+      events: { type: string; severity: 'info' | 'warn' | 'block' | 'error'; message: string; metadata?: Record<string, unknown>; createdAt?: string }[];
+      createdAt: string;
+      updatedAt: string;
+    }>(`/execution-audit/${encodeURIComponent(executionId)}`),
   },
   knowledge: {
     documents: () => request<unknown[]>('/knowledge/documents'),
@@ -335,5 +360,9 @@ export const api = {
       request<unknown>(`/notification-channels/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
     delete: (id: string) =>
       request<unknown>(`/notification-channels/${id}`, { method: 'DELETE' }),
+  },
+  artifacts: {
+    list: () => request<Array<{ id: string; ownerId: string; name: string; expiresAt: string; createdAt: string }>>('/artifacts'),
+    get: (id: string) => request<{ id: string; ownerId: string; name: string; content: string; expiresAt: string; createdAt: string }>(`/artifacts/${id}`),
   },
 };
