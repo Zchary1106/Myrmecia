@@ -9,7 +9,10 @@ import { DynamicWorkflowRuntime, buildDynamicWorkflowPlan, getDynamicWorkflow, v
 import { eventBus } from '../src/events/event-bus.js';
 
 describe('dynamic workflow runtime', () => {
+  let runtimes: DynamicWorkflowRuntime[] = [];
+
   beforeEach(() => {
+    runtimes = [];
     closeDb();
     process.env.DB_PATH = join(mkdtempSync(join(tmpdir(), 'agent-factory-workflow-')), 'test.db');
     getDb();
@@ -19,6 +22,7 @@ describe('dynamic workflow runtime', () => {
   });
 
   afterEach(() => {
+    for (const instance of runtimes) instance.dispose();
     closeDb();
     delete process.env.DB_PATH;
   });
@@ -39,7 +43,9 @@ describe('dynamic workflow runtime', () => {
     const agentManager = {
       findAvailableAgent: (role: string) => listAgents({ role })[0] || listAgents()[0],
     };
-    return new DynamicWorkflowRuntime(taskQueue as any, agentManager as any);
+    const instance = new DynamicWorkflowRuntime(taskQueue as any, agentManager as any);
+    runtimes.push(instance);
+    return instance;
   }
 
   it('validates executable plans and rejects unknown dependencies', () => {

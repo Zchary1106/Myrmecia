@@ -527,12 +527,23 @@ export function InteractionConsolePage() {
       setAudit(null);
       return;
     }
+    let stale = false;
+    const executionId = execution.id;
     void loadExecutionMessages(execution.id);
     setLoadingAudit(true);
-    api.executionAudit.get(execution.id)
-      .then(setAudit)
-      .catch(() => setAudit(null))
-      .finally(() => setLoadingAudit(false));
+    api.executionAudit.get(executionId)
+      .then(report => {
+        if (!stale) setAudit(report);
+      })
+      .catch(() => {
+        if (!stale) setAudit(null);
+      })
+      .finally(() => {
+        if (!stale) setLoadingAudit(false);
+      });
+    return () => {
+      stale = true;
+    };
   }, [execution?.id]);
 
   const activeCount = tasks.filter(task => task.status === 'running').length;

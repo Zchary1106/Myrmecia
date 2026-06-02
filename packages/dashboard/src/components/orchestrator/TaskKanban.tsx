@@ -9,8 +9,10 @@ const columns = [
   { key: 'pending', label: 'Pending', icon: '⏸', color: 'border-gray-500/30' },
   { key: 'queued', label: 'Queued', icon: '📥', color: 'border-yellow-500/30' },
   { key: 'running', label: 'Running', icon: '⚡', color: 'border-blue-500/30' },
+  { key: 'review', label: 'Review', icon: '👀', color: 'border-purple-500/30' },
   { key: 'done', label: 'Done', icon: '✅', color: 'border-green-500/30' },
   { key: 'failed', label: 'Failed', icon: '❌', color: 'border-red-500/30' },
+  { key: 'cancelled', label: 'Cancelled', icon: '⛔', color: 'border-gray-600/30' },
 ];
 
 function TaskCard({ task, agents }: { task: any; agents: any[] }) {
@@ -41,7 +43,7 @@ function TaskCard({ task, agents }: { task: any; agents: any[] }) {
 
 export function TaskKanban({ tasks, agents }: TaskKanbanProps) {
   return (
-    <div className="grid grid-cols-5 gap-3 min-h-[120px]">
+    <div className="grid grid-cols-7 gap-3 min-h-[120px]">
       {columns.map(col => {
         const colTasks = tasks.filter(t => {
           if (col.key === 'pending') return t.status === 'pending' || t.status === 'assigned';
