@@ -6,6 +6,12 @@ Autonomous multi-agent orchestration platform. Manage a pool of AI agents that e
 
 ![Architecture Overview](docs/diagrams/architecture-overview.png)
 
+Detailed execution views:
+
+![Dynamic Workflow Lifecycle](docs/diagrams/dynamic-workflow-lifecycle.png)
+
+![Runtime Governance and Tool Safety](docs/diagrams/runtime-governance.png)
+
 Agent Factory is a **pnpm monorepo** that combines a TypeScript backend (Express 5), a React dashboard, and an Agent Factory Python runtime. Agents run in managed subprocesses, orchestrated through a BullMQ/Redis task queue, with real-time WebSocket events streamed to the dashboard.
 
 | Layer | Main modules | Responsibility |
