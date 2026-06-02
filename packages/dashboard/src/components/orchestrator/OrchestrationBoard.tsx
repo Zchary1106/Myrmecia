@@ -87,6 +87,8 @@ export function OrchestrationBoard() {
   const orchTasks = selectedOrch?.tasks || selectedOrch?.taskIds.map(id =>
     tasks.find(t => t.id === id)
   ).filter(Boolean) || [];
+  const recentTasks = tasks.slice(0, 30);
+  const visibleTasks = selectedOrch ? orchTasks : recentTasks;
 
   return (
     <div className="p-4 space-y-4 h-full overflow-y-auto">
@@ -95,8 +97,9 @@ export function OrchestrationBoard() {
         <h2 className="text-xl font-bold flex items-center gap-2">
           <span>🎯</span> Orchestration Board
         </h2>
-        <div className="text-xs text-gray-500">
-          {orchestrations.filter(o => o.status === 'running').length} active
+        <div className="text-xs text-gray-500 text-right">
+          <div>{orchestrations.filter(o => o.status === 'running').length} active orchestrations</div>
+          <div className="text-[10px]">Use Work Queue for the global task board</div>
         </div>
       </div>
 
@@ -130,40 +133,47 @@ export function OrchestrationBoard() {
         })}
         {orchestrations.length === 0 && (
           <div className="text-gray-500 text-sm py-4">
-            No orchestrations yet. Dispatch a task from the Overview page.
+            No orchestrations yet. Showing recent tasks below; use Work Queue for the global task board.
           </div>
         )}
       </div>
 
-      {selectedOrch && (
-        <>
-          {/* Kanban Board */}
+      <>
+        {/* Kanban Board */}
+        <div className="bg-surface border border-border rounded-xl p-4">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <h3 className="text-sm font-semibold flex items-center gap-2">
+              <span>📋</span> {selectedOrch ? 'Orchestration Task Board' : 'Recent Task Board'}
+            </h3>
+            {!selectedOrch && (
+              <span className="text-[11px] text-gray-500">
+                Showing latest {visibleTasks.length} tasks because no orchestration is selected.
+              </span>
+            )}
+          </div>
+          <TaskKanban tasks={visibleTasks} agents={agents} />
+        </div>
+
+        {/* Dependency Graph */}
+        {selectedOrch && orchTasks.length > 1 && (
           <div className="bg-surface border border-border rounded-xl p-4">
             <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
-              <span>📋</span> Task Board
+              <span>🔗</span> Dependency Graph
             </h3>
-            <TaskKanban tasks={orchTasks} agents={agents} />
+            <DependencyGraph tasks={orchTasks} agents={agents} />
           </div>
+        )}
 
-          {/* Dependency Graph */}
-          {orchTasks.length > 1 && (
-            <div className="bg-surface border border-border rounded-xl p-4">
-              <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
-                <span>🔗</span> Dependency Graph
-              </h3>
-              <DependencyGraph tasks={orchTasks} agents={agents} />
-            </div>
-          )}
-
-          {/* Agent Message Feed */}
+        {/* Agent Message Feed */}
+        {selectedOrch && (
           <div className="bg-surface border border-border rounded-xl p-4">
             <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
               <span>💬</span> Agent Communication
             </h3>
             <AgentMessageFeed messages={messages} agents={agents} />
           </div>
-        </>
-      )}
+        )}
+      </>
     </div>
   );
 }

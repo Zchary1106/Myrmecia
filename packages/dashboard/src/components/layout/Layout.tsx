@@ -119,7 +119,7 @@ function ViewToggle() {
         { id: 'models', label: 'Models', icon: '🧠' },
         { id: 'skills', label: 'Skills', icon: '📚' },
         { id: 'orchestrator', label: 'Pipelines', icon: '🔗' },
-        { id: 'board', label: 'Board', icon: '🎯' },
+        { id: 'board', label: 'Orchestration Board', icon: '🎯' },
         { id: 'inbox', label: 'Inbox', icon: '📥', badge: pendingInboxCount },
       ],
     },

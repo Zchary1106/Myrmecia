@@ -210,9 +210,17 @@ export function buildDynamicWorkflowPlan(goal: string): DynamicWorkflowPlan {
 }
 
 export class DynamicWorkflowRuntime {
+  private readonly onTaskDoneHandler = (event: any) => this.onTaskDone(event.payload as any);
+  private readonly onTaskFailedHandler = (event: any) => this.onTaskFailed(event.payload as any);
+
   constructor(private taskQueue: TaskQueue, private agentManager: AgentManager) {
-    eventBus.on('task:done', event => this.onTaskDone(event.payload as any));
-    eventBus.on('task:failed', event => this.onTaskFailed(event.payload as any));
+    eventBus.on('task:done', this.onTaskDoneHandler);
+    eventBus.on('task:failed', this.onTaskFailedHandler);
+  }
+
+  dispose(): void {
+    eventBus.off('task:done', this.onTaskDoneHandler);
+    eventBus.off('task:failed', this.onTaskFailedHandler);
   }
 
   async start(data: { goal: string; plan?: DynamicWorkflowPlan; workspaceId?: string }): Promise<DynamicWorkflowRun> {
@@ -384,10 +392,11 @@ export class DynamicWorkflowRuntime {
 
   private findRunningByTask(taskId: string): DynamicWorkflowRun[] {
     const rows = getDb().all(
-      "SELECT * FROM dynamic_workflows WHERE status IN ('running','validating') AND task_ids LIKE ?",
-      `%${taskId}%`,
+      "SELECT * FROM dynamic_workflows WHERE status IN ('running','validating')",
     ) as any[];
-    return rows.map(rowToWorkflow);
+    return rows
+      .map(rowToWorkflow)
+      .filter(workflow => workflow.taskIds.includes(taskId));
   }
 
   private checkCompletion(workflowId: string): void {
