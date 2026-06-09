@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="packages/dashboard/public/myrmecia-logo.svg" alt="Myrmecia" style="width: 18%; height: auto;">
+  <img src="packages/dashboard/public/myrmecia-logo.png" alt="Myrmecia" style="width: 46%; height: auto;">
 </p>
 
 <div align="center" style="line-height: 1;">
@@ -103,6 +103,14 @@ Retrieval is a hybrid score (relevance + recency + importance + success) with MM
 </p>
 
 Budget/cost guardrails, DLP redaction, policy snapshots, operator audit, multi-tenant org/workspace isolation, API keys + RBAC, OpenTelemetry traces & metrics, run traces/spans, quality loops, self-healing, and checkpoint-based rollback.
+
+## Screenshots
+
+| Command Center | Unified Memory |
+| --- | --- |
+| ![Command Center](docs/diagrams/screenshots/01-command-center.png) | ![Memory](docs/diagrams/screenshots/03-memory.png) |
+| **Agents** | **Visual Orchestration (drag‑and‑drop)** |
+| ![Agents](docs/diagrams/screenshots/02-agents.png) | ![Orchestrate](docs/diagrams/screenshots/04-orchestrate.png) |
 
 ## Why Myrmecia — the colony model
 

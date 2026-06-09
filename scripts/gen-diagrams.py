@@ -206,7 +206,7 @@ def gen_architecture():
     text_center(d, (1370, 70), "Safety by default", font_caption, ACCENT_YELLOW)
 
     img.save(os.path.join(OUT, "architecture-overview.png"), quality=95)
-    print("✅ architecture-overview.png")
+    print("architecture-overview.png")
 
 # ============================================================
 # Diagram 2: Dynamic Workflow Lifecycle
@@ -261,7 +261,7 @@ def gen_dynamic_workflow_lifecycle():
         draw_arrow(d, start, end, color, width=5)
 
     img.save(os.path.join(OUT, "dynamic-workflow-lifecycle.png"), quality=95)
-    print("✅ dynamic-workflow-lifecycle.png")
+    print("dynamic-workflow-lifecycle.png")
 
 # ============================================================
 # Diagram 3: Runtime Governance Chain
@@ -302,7 +302,7 @@ def gen_runtime_governance():
         text_center(d, ((xy[0] + xy[2]) // 2, (xy[1] + xy[3]) // 2), label, font_readable, color)
 
     img.save(os.path.join(OUT, "runtime-governance.png"), quality=95)
-    print("✅ runtime-governance.png")
+    print("runtime-governance.png")
 
 # ============================================================
 # Diagram 4: Pipeline Flow
@@ -312,15 +312,15 @@ def gen_pipeline():
     img = Image.new("RGB", (W, H), BG)
     d = ImageDraw.Draw(img)
 
-    text_center(d, (W//2, 35), "🔗 Pipeline Flow — Full Product Lifecycle", font_title, WHITE)
+    text_center(d, (W//2, 35), "Pipeline Flow — Full Product Lifecycle", font_title, WHITE)
 
     stages = [
-        ("📋", "PM", "Spec &\nPlanning", ACCENT_BLUE),
-        ("🎨", "UI", "Design &\nPrototype", ACCENT_PURPLE),
-        ("💻", "Dev", "Code &\nBuild", ACCENT_GREEN),
-        ("🧪", "QA", "Test &\nValidate", ACCENT_ORANGE),
-        ("📝", "Review", "Code\nReview", ACCENT_YELLOW),
-        ("🚀", "Ops", "Deploy &\nMonitor", ACCENT_CYAN),
+        ("", "PM", "Spec &\nPlanning", ACCENT_BLUE),
+        ("", "UI", "Design &\nPrototype", ACCENT_PURPLE),
+        ("", "Dev", "Code &\nBuild", ACCENT_GREEN),
+        ("", "QA", "Test &\nValidate", ACCENT_ORANGE),
+        ("", "Review", "Code\nReview", ACCENT_YELLOW),
+        ("", "Ops", "Deploy &\nMonitor", ACCENT_CYAN),
     ]
 
     y_center = 250
@@ -359,7 +359,7 @@ def gen_pipeline():
             draw_arrow(d, (ax, y_center), (ax + gap - 10, y_center), color)
 
     # Bottom: data flow labels
-    text_center(d, (W//2, y_center + box_h//2 + 50), "Each stage output → next stage input  ·  Auto/Manual gates  ·  Retry on failure", font_small, GRAY)
+    text_center(d, (W//2, y_center + box_h//2 + 50), "Each stage output next stage input  ·  Auto/Manual gates  ·  Retry on failure", font_small, GRAY)
 
     # Progress bar
     bar_y = y_center + box_h//2 + 80
@@ -370,7 +370,7 @@ def gen_pipeline():
 
     d.text((W - 200, H - 20), "Myrmecia © 2026", font=font_label, fill=GRAY)
     img.save(os.path.join(OUT, "pipeline-flow.png"), quality=95)
-    print("✅ pipeline-flow.png")
+    print("pipeline-flow.png")
 
 # ============================================================
 # Diagram 5: Agent Pool & Roles
@@ -380,21 +380,21 @@ def gen_agent_pool():
     img = Image.new("RGB", (W, H), BG)
     d = ImageDraw.Draw(img)
 
-    text_center(d, (W//2, 35), "🤖 Agent Pool — Specialized Roles", font_title, WHITE)
+    text_center(d, (W//2, 35), "Agent Pool — Specialized Roles", font_title, WHITE)
 
     # Center hub
     cx, cy = W//2, 330
     d.ellipse((cx-60, cy-60, cx+60, cy+60), fill="#1c2333", outline=ACCENT_GREEN, width=3)
-    text_center(d, (cx, cy-12), "⚙️", font_title, WHITE)
+    text_center(d, (cx, cy-12), "", font_title, WHITE)
     text_center(d, (cx, cy+18), "Orchestrator", font_small, ACCENT_GREEN)
 
     agents = [
-        ("👔", "PM Agent", "Requirements\nTask breakdown\nPrioritization", ACCENT_BLUE, -1, -1),
-        ("🎨", "UI Agent", "Design systems\nPrototypes\nComponents", ACCENT_PURPLE, 1, -1),
-        ("💻", "Dev Agent", "Implementation\nRefactoring\nDebugging", ACCENT_GREEN, 1.3, 0.3),
-        ("🧪", "QA Agent", "Test suites\nBug hunting\nValidation", ACCENT_ORANGE, 0.7, 1.2),
-        ("🚀", "Ops Agent", "Deployment\nCI/CD\nMonitoring", ACCENT_CYAN, -0.7, 1.2),
-        ("📝", "Review", "Code review\nBest practices\nSecurity", ACCENT_YELLOW, -1.3, 0.3),
+        ("", "PM Agent", "Requirements\nTask breakdown\nPrioritization", ACCENT_BLUE, -1, -1),
+        ("", "UI Agent", "Design systems\nPrototypes\nComponents", ACCENT_PURPLE, 1, -1),
+        ("", "Dev Agent", "Implementation\nRefactoring\nDebugging", ACCENT_GREEN, 1.3, 0.3),
+        ("", "QA Agent", "Test suites\nBug hunting\nValidation", ACCENT_ORANGE, 0.7, 1.2),
+        ("", "Ops Agent", "Deployment\nCI/CD\nMonitoring", ACCENT_CYAN, -0.7, 1.2),
+        ("", "Review", "Code review\nBest practices\nSecurity", ACCENT_YELLOW, -1.3, 0.3),
     ]
 
     import math
@@ -421,7 +421,7 @@ def gen_agent_pool():
 
     d.text((W - 200, H - 20), "Myrmecia © 2026", font=font_label, fill=GRAY)
     img.save(os.path.join(OUT, "agent-pool.png"), quality=95)
-    print("✅ agent-pool.png")
+    print("agent-pool.png")
 
 # ============================================================
 # Diagram 6: Tech Stack
@@ -431,7 +431,7 @@ def gen_tech_stack():
     img = Image.new("RGB", (W, H), BG)
     d = ImageDraw.Draw(img)
 
-    text_center(d, (W//2, 35), "🧰 Tech Stack", font_title, WHITE)
+    text_center(d, (W//2, 35), "Tech Stack", font_title, WHITE)
 
     layers = [
         ("Frontend", [("React 19", ACCENT_BLUE), ("TypeScript", ACCENT_CYAN), ("Tailwind", ACCENT_PURPLE), ("shadcn/ui", ACCENT_PINK), ("WebSocket", ACCENT_GREEN)], ACCENT_BLUE),
@@ -461,7 +461,7 @@ def gen_tech_stack():
 
     d.text((W - 200, H - 20), "Myrmecia © 2026", font=font_label, fill=GRAY)
     img.save(os.path.join(OUT, "tech-stack.png"), quality=95)
-    print("✅ tech-stack.png")
+    print("tech-stack.png")
 
 # ============================================================
 # Diagram 0: Header schema (left-to-right harness flow)
@@ -517,7 +517,7 @@ def gen_schema():
     labeled_arrow(d, (815, 630), (815, 690), GRAY, "secured + traced", (110, 0), width=5)
 
     img.save(os.path.join(OUT, "schema.png"), quality=95)
-    print("✅ schema.png")
+    print("schema.png")
 
 # Generate all
 gen_schema()
@@ -527,4 +527,4 @@ gen_runtime_governance()
 gen_pipeline()
 gen_agent_pool()
 gen_tech_stack()
-print("\n🎉 All diagrams generated!")
+print("\nAll diagrams generated!")

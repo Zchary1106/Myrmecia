@@ -50,7 +50,7 @@ function AgentSidebar() {
       {/* Brand */}
       <div className="p-4 border-b border-border">
         <h1 className="text-base font-bold flex items-center gap-2">
-          <img src="/myrmecia-logo.svg" alt="" className="w-7 h-7 rounded-lg shadow-lg shadow-accent/20" />
+          <img src="/myrmecia-mark.png" alt="" className="w-7 h-7 rounded-lg shadow-lg shadow-accent/20" />
           <span>Myrmecia</span>
         </h1>
         <div className="flex items-center gap-1.5 mt-1">
