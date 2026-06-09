@@ -3,7 +3,7 @@ import { useStore } from '../../stores/store';
 import { api } from '../../lib/api';
 import { cn } from '../../lib/utils';
 import { readOnlyControlMessage, runtimeControlsAllowed } from '../../lib/permissions';
-import type { Priority, TaskMode } from '@agent-factory/shared';
+import type { Priority, TaskMode } from '@myrmecia/shared';
 
 type LaunchMode = Extract<TaskMode, 'direct' | 'master'> | 'pipeline';
 

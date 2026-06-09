@@ -21,7 +21,7 @@ import {
   type NotificationFilters,
 } from '../../lib/notificationTriage';
 import type { ActivitySummary } from '../../lib/activitySummary';
-import type { Notification, Pipeline, PlatformEvent, Task } from '@agent-factory/shared';
+import type { Notification, Pipeline, PlatformEvent, Task } from '@myrmecia/shared';
 
 const statusClass: Record<string, string> = {
   pending: 'bg-gray-500/15 text-gray-400',

@@ -4,7 +4,7 @@ import { api } from '../../lib/api';
 import { clearApiAuthToken, getApiAuthToken, setApiAuthToken } from '../../lib/auth';
 import { cn } from '../../lib/utils';
 import { operatorRoleLabel } from '../../lib/permissions';
-import type { WorkspacePreferenceRestoreResult, WorkspaceRestorePlan, WorkspaceSnapshotPreview } from '@agent-factory/shared';
+import type { WorkspacePreferenceRestoreResult, WorkspaceRestorePlan, WorkspaceSnapshotPreview } from '@myrmecia/shared';
 
 function CheckRow({ label, ok, detail }: { label: string; ok: boolean; detail: string }) {
   return (

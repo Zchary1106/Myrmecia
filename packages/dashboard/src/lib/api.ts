@@ -34,7 +34,7 @@ import type {
   WorkspacePreferenceRestoreResult,
   DynamicWorkflowRun,
   DynamicWorkflowPlan,
-} from '@agent-factory/shared';
+} from '@myrmecia/shared';
 import { getApiAuthToken } from './auth';
 
 const BASE = '/api/v1';

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
-import type { AgentSummary, ModelDefinition } from '@agent-factory/shared';
+import type { AgentSummary, ModelDefinition } from '@myrmecia/shared';
 import { useStore } from '../stores/store';
 import { cn } from '../lib/utils';
 import { api } from '../lib/api';

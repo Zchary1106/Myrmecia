@@ -14,15 +14,15 @@ All commands use pnpm from the repo root. Node >=20, pnpm >=9 required.
 | Dev server only | `pnpm dev:server` |
 | Dev dashboard only | `pnpm dev:dashboard` |
 | Build all packages | `pnpm build` |
-| Build one package | `pnpm --filter @agent-factory/<name> build` |
+| Build one package | `pnpm --filter @myrmecia/<name> build` |
 | Type-check (lint) | `pnpm lint` |
-| Run server tests | `pnpm --filter @agent-factory/server test` |
-| Run single test file | `pnpm --filter @agent-factory/server exec vitest run tests/<file>.test.ts` |
-| Run test by name | `pnpm --filter @agent-factory/server exec vitest run tests/<file>.test.ts -t "test name"` |
-| Watch server tests | `pnpm --filter @agent-factory/server test:watch` |
-| Run dashboard tests | `pnpm --filter @agent-factory/dashboard test` |
-| Run dashboard e2e | `pnpm --filter @agent-factory/dashboard test:e2e` |
-| Preview dashboard build | `pnpm --filter @agent-factory/dashboard preview` |
+| Run server tests | `pnpm --filter @myrmecia/server test` |
+| Run single test file | `pnpm --filter @myrmecia/server exec vitest run tests/<file>.test.ts` |
+| Run test by name | `pnpm --filter @myrmecia/server exec vitest run tests/<file>.test.ts -t "test name"` |
+| Watch server tests | `pnpm --filter @myrmecia/server test:watch` |
+| Run dashboard tests | `pnpm --filter @myrmecia/dashboard test` |
+| Run dashboard e2e | `pnpm --filter @myrmecia/dashboard test:e2e` |
+| Preview dashboard build | `pnpm --filter @myrmecia/dashboard preview` |
 | Start via script | `./start.sh` (pass `--clean-db`, `--install-python`, `--server-only`, `--dashboard-only`) |
 
 The dashboard Vite dev server proxies `/api` and `/ws` to `localhost:3000`. Start the server before using Playwright e2e tests.

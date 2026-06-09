@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate colorful architecture diagrams for Agent Factory README."""
+"""Generate colorful architecture diagrams for the Myrmecia README."""
 
 from PIL import Image, ImageDraw, ImageFont
 import os
@@ -162,7 +162,7 @@ def gen_architecture():
     img = Image.new("RGB", (W, H), BG)
     d = ImageDraw.Draw(img)
 
-    text_center(d, (W // 2, 58), "Agent Factory Architecture", font_hero, WHITE)
+    text_center(d, (W // 2, 58), "Myrmecia Architecture", font_hero, WHITE)
     text_center(d, (W // 2, 104), "Dashboard -> Orchestrator -> Agent Runtime -> Governed Tools + Models", font_readable, GRAY)
 
     dashboard = (110, 150, 1490, 260)
@@ -368,7 +368,7 @@ def gen_pipeline():
     rounded_rect(d, (start_x, bar_y, start_x + progress, bar_y + 12), 6, ACCENT_GREEN)
     text_center(d, (start_x + progress + 30, bar_y + 6), "65%", font_label, ACCENT_GREEN)
 
-    d.text((W - 200, H - 20), "Agent Factory © 2025", font=font_label, fill=GRAY)
+    d.text((W - 200, H - 20), "Myrmecia © 2026", font=font_label, fill=GRAY)
     img.save(os.path.join(OUT, "pipeline-flow.png"), quality=95)
     print("✅ pipeline-flow.png")
 
@@ -419,7 +419,7 @@ def gen_agent_pool():
         for j, line in enumerate(lines):
             text_center(d, (ax, y0 + 70 + j * 16), line, font_label, GRAY)
 
-    d.text((W - 200, H - 20), "Agent Factory © 2025", font=font_label, fill=GRAY)
+    d.text((W - 200, H - 20), "Myrmecia © 2026", font=font_label, fill=GRAY)
     img.save(os.path.join(OUT, "agent-pool.png"), quality=95)
     print("✅ agent-pool.png")
 
@@ -459,7 +459,7 @@ def gen_tech_stack():
 
         y += 110
 
-    d.text((W - 200, H - 20), "Agent Factory © 2025", font=font_label, fill=GRAY)
+    d.text((W - 200, H - 20), "Myrmecia © 2026", font=font_label, fill=GRAY)
     img.save(os.path.join(OUT, "tech-stack.png"), quality=95)
     print("✅ tech-stack.png")
 
@@ -471,7 +471,7 @@ def gen_schema():
     img = Image.new("RGB", (W, H), BG)
     d = ImageDraw.Draw(img)
 
-    text_center(d, (W // 2, 52), "Agent Factory — Multi-Agent Orchestration Harness", font_hero, WHITE)
+    text_center(d, (W // 2, 52), "Myrmecia — Multi-Agent Orchestration Harness", font_hero, WHITE)
     text_center(d, (W // 2, 100), "One request -> routed -> orchestrated -> executed by a governed agent harness -> shipped", font_readable, GRAY)
 
     # Row 1: the end-to-end flow

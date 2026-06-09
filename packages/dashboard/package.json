@@ -1,5 +1,5 @@
 {
-  "name": "@agent-factory/dashboard",
+  "name": "@myrmecia/dashboard",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -13,7 +13,7 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
-    "@agent-factory/shared": "workspace:*",
+    "@myrmecia/shared": "workspace:*",
     "clsx": "^2.1.1",
     "lucide-react": "^0.469.0",
     "react": "^19.0.0",

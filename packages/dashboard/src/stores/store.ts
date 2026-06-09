@@ -21,7 +21,7 @@ import type {
   TaskExecution,
   ToolDefinition,
   ToolExecution,
-} from '@agent-factory/shared';
+} from '@myrmecia/shared';
 
 export type DashboardView = 'command' | 'console' | 'agents' | 'tools' | 'models' | 'skills' | 'orchestrator' | 'board' | 'tasks' | 'timeline' | 'inbox' | 'observability' | 'audit' | 'settings' | 'cost' | 'memory' | 'orchestrate';
 

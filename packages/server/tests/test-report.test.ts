@@ -4,7 +4,7 @@ import { createTestReportFromOutput, isTestingStage } from '../src/testing/test-
 describe('test report artifacts', () => {
   it('extracts commands, failures, files, and coverage notes from QA output', () => {
     const report = createTestReportFromOutput(`
-      pnpm --filter @agent-factory/server exec vitest run tests/example.test.ts
+      pnpm --filter @myrmecia/server exec vitest run tests/example.test.ts
       FAIL tests/example.test.ts > rejects invalid token
       src/auth/token-auth.ts
       Coverage: lines 82%

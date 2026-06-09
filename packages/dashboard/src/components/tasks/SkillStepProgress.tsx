@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { cn } from '../../lib/utils';
 import { api } from '../../lib/api';
-import type { LogEntry } from '@agent-factory/shared';
+import type { LogEntry } from '@myrmecia/shared';
 
 interface StepState {
   index: number;

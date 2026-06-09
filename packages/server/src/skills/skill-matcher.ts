@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import { modelBaseURL, modelApiKey, defaultModel } from '../lib/brand-config.js';
 import { listSkills, getLatestPublishedSkillVersion } from '../db/models/skill.js';
 import { parseSkillContent } from './skill-parser.js';
 import { logger } from '../lib/logger.js';
@@ -82,13 +83,13 @@ export async function matchSkillForTask(
 
   try {
     const client = new OpenAI({
-      baseURL: process.env.AGENT_FACTORY_BASE_URL || 'https://your-model-endpoint.example.com/v1',
-      apiKey: process.env.AGENT_FACTORY_API_KEY || process.env.ANTHROPIC_API_KEY || '',
+      baseURL: modelBaseURL(),
+      apiKey: modelApiKey(),
     });
 
     const prompt = buildMatcherPrompt(taskInput, candidates);
     const response = await client.chat.completions.create({
-      model: process.env.AGENT_FACTORY_MODEL || 'gpt-5.4-mini',
+      model: defaultModel(),
       messages: [{ role: 'user', content: prompt }],
       temperature: 0,
       max_tokens: 200,

@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useStore } from '../../stores/store';
 import { api } from '../../lib/api';
 import { cn } from '../../lib/utils';
-import type { ExecutionMessage, QualityLoopAttempt, RunTrace, Task, TaskExecution, TraceSpan } from '@agent-factory/shared';
+import type { ExecutionMessage, QualityLoopAttempt, RunTrace, Task, TaskExecution, TraceSpan } from '@myrmecia/shared';
 
 const statusClass: Record<string, string> = {
   pending: 'bg-gray-500/15 text-gray-400 border-gray-500/20',

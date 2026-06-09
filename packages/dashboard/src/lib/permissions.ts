@@ -1,4 +1,4 @@
-import type { RuntimeDiagnostics } from '@agent-factory/shared';
+import type { RuntimeDiagnostics } from '@myrmecia/shared';
 
 export function runtimeControlsAllowed(diagnostics: RuntimeDiagnostics | null): boolean {
   return diagnostics?.operator.permissions.canControlRuntime ?? true;

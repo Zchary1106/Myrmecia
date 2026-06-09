@@ -2,13 +2,13 @@
   "name": "agent-factory",
   "version": "0.1.0",
   "private": true,
-  "description": "Autonomous Agent Orchestration System",
+  "description": "Myrmecia — autonomous multi-agent orchestration platform (formerly Agent Factory)",
   "scripts": {
     "start:local": "bash scripts/start.sh",
-    "dev": "concurrently \"pnpm --filter @agent-factory/server dev\" \"pnpm --filter @agent-factory/dashboard dev\"",
+    "dev": "concurrently \"pnpm --filter @myrmecia/server dev\" \"pnpm --filter @myrmecia/dashboard dev\"",
     "build": "pnpm -r build",
-    "dev:server": "pnpm --filter @agent-factory/server dev",
-    "dev:dashboard": "pnpm --filter @agent-factory/dashboard dev",
+    "dev:server": "pnpm --filter @myrmecia/server dev",
+    "dev:dashboard": "pnpm --filter @myrmecia/dashboard dev",
     "lint": "pnpm -r --if-present lint"
   },
   "devDependencies": {

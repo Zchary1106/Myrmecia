@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import type { AgentSummary } from '@agent-factory/shared';
+import type { AgentSummary } from '@myrmecia/shared';
 import { api } from '../../lib/api';
 import { cn } from '../../lib/utils';
 import { useStore } from '../../stores/store';

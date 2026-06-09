@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { SkillExecutor } from '../src/skills/skill-executor.js';
-import type { SkillExecutorConfig } from '@agent-factory/shared';
+import type { SkillExecutorConfig } from '@myrmecia/shared';
 import { parseSkillContent } from '../src/skills/skill-parser.js';
 import { validateStep } from '../src/skills/step-validator.js';
 import { buildMatcherPrompt, parseMatcherResponse } from '../src/skills/skill-matcher.js';

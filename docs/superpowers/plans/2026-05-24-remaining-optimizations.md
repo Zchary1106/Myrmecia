@@ -27,7 +27,7 @@
 - [ ] `run` command: POST to `/api/v1/tasks`, connect WebSocket for streaming output
 - [ ] `status` command: GET `/api/v1/tasks` and display table
 - [ ] Add bin field to package.json for `agent-factory` command
-- [ ] Test: `pnpm --filter @agent-factory/cli build && node packages/cli/dist/index.js --help`
+- [ ] Test: `pnpm --filter @myrmecia/cli build && node packages/cli/dist/index.js --help`
 - [ ] Commit
 
 ---

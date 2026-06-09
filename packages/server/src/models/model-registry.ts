@@ -1,4 +1,5 @@
 import { getDb } from '../db/database.js';
+import { envWithAlias } from '../lib/brand-config.js';
 import type { AgentDefinition, ModelDefinition, ModelHealthStatus, ModelRoute, ModelSelection, ModelTier, Task } from '../types.js';
 
 interface BuiltinModel {
@@ -534,7 +535,7 @@ export function selectModelForAgent(agent: AgentDefinition, task?: ModelRouteTas
     };
   }
 
-  const envModel = process.env.AGENT_FACTORY_MODEL;
+  const envModel = envWithAlias('MYRMECIA_MODEL', 'AGENT_FACTORY_MODEL');
   return {
     modelId: envModel || 'gpt-5.4-mini',
     source: envModel ? 'env.default' : 'runtime.default',
