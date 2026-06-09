@@ -15,6 +15,8 @@ import { recordModelUsage, selectModelForAgent } from '../models/model-registry.
 import { resolveSkillForAgent } from '../db/models/skill.js';
 import { getExecutor, DEFAULT_LIMITS } from './executor.js';
 import { getTrajectoryStore } from '../memory/trajectory-store.js';
+import { getMemoryService } from '../memory/memory-service.js';
+import { getWritePipeline } from '../memory/write-pipeline.js';
 import { messageBus } from './message-bus.js';
 import { tsAgentLoop } from './ts-agent-loop.js';
 import { metrics } from '../observability/telemetry.js';
@@ -174,7 +176,7 @@ export class AgentRuntime {
       eventBus.emit('execution:done', { executionId: execution.id, taskId: task.id, workspaceId: task.workspaceId, progress: finalProgress });
 
       // Record trajectory for semantic routing learning
-      this.recordTrajectory(task, agent.id, true, safeResult.durationMs, safeResult.costUSD);
+      this.recordTrajectory(task, agent.id, true, safeResult.durationMs, safeResult.costUSD, safeResult.output);
 
       // Emit telemetry metrics
       metrics.taskExecutions.add(1, { status: 'done' });
@@ -201,7 +203,7 @@ export class AgentRuntime {
       eventBus.emit('execution:failed', { executionId: execution.id, taskId: task.id, workspaceId: task.workspaceId, error: errorMsg });
 
       // Record failed trajectory too (for learning what doesn't work)
-      this.recordTrajectory(task, agent.id, false, Date.now() - (Date.parse(task.startedAt || '') || Date.now()), 0);
+      this.recordTrajectory(task, agent.id, false, Date.now() - (Date.parse(task.startedAt || '') || Date.now()), 0, errorMsg);
 
       // Emit failure telemetry
       metrics.taskExecutions.add(1, { status: 'failed' });
@@ -213,8 +215,8 @@ export class AgentRuntime {
     }
   }
 
-  /** Record task trajectory for semantic learning (fire-and-forget) */
-  private recordTrajectory(task: Task, agentId: string, success: boolean, durationMs: number, costUSD: number): void {
+  /** Record task trajectory + episodic memory (fire-and-forget) */
+  private recordTrajectory(task: Task, agentId: string, success: boolean, durationMs: number, costUSD: number, output?: string): void {
     // Quality score: success=0.8 base, penalize high cost, reward fast completion
     const quality = success
       ? Math.min(1, 0.8 + (durationMs < 60000 ? 0.1 : 0) + (costUSD < 0.01 ? 0.1 : 0))
@@ -229,6 +231,27 @@ export class AgentRuntime {
       quality,
       durationMs,
     }).catch(() => { /* non-critical, don't break execution */ });
+
+    // Richer, workspace-scoped episode for long-term context recall.
+    getMemoryService().captureEpisode({
+      input: task.input,
+      output,
+      agentId,
+      mode: task.mode,
+      workspaceId: task.workspaceId,
+      pipelineId: task.pipelineId || undefined,
+      success,
+      quality,
+    }).catch(() => { /* non-critical */ });
+
+    // Extract durable semantic facts / preferences from successful work.
+    if (success) {
+      getWritePipeline().ingestFromExecution({
+        input: task.input,
+        output,
+        scope: task.workspaceId ? { workspace: task.workspaceId } : undefined,
+      }).catch(() => { /* non-critical */ });
+    }
   }
 
   private enforceAgentRateLimit(agentId: string): void {

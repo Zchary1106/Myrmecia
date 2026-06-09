@@ -23,6 +23,8 @@ const AgentsPage = lazy(() => import('../../pages/Agents').then(m => ({ default:
 const ToolsPage = lazy(() => import('../../pages/Tools').then(m => ({ default: m.ToolsPage })));
 const ModelsPage = lazy(() => import('../../pages/Models').then(m => ({ default: m.ModelsPage })));
 const SkillsPage = lazy(() => import('../../pages/Skills').then(m => ({ default: m.SkillsPage })));
+const MemoryPage = lazy(() => import('../../pages/Memory').then(m => ({ default: m.MemoryPage })));
+const OrchestratePage = lazy(() => import('../../pages/Orchestrate').then(m => ({ default: m.OrchestratePage })));
 
 function agentDotColor(agent: any): string {
   const active = agent.activeExecutions || 0;
@@ -118,7 +120,9 @@ function ViewToggle() {
         { id: 'tools', label: 'Tools', icon: '🧰' },
         { id: 'models', label: 'Models', icon: '🧠' },
         { id: 'skills', label: 'Skills', icon: '📚' },
+        { id: 'memory', label: 'Memory', icon: '🧬' },
         { id: 'orchestrator', label: 'Pipelines', icon: '🔗' },
+        { id: 'orchestrate', label: 'Orchestrate', icon: '🕸️' },
         { id: 'board', label: 'Orchestration Board', icon: '🎯' },
         { id: 'inbox', label: 'Inbox', icon: '📥', badge: pendingInboxCount },
       ],
@@ -185,6 +189,10 @@ function MainContent() {
       return <ModelsPage />;
     case 'skills':
       return <SkillsPage />;
+    case 'memory':
+      return <MemoryPage />;
+    case 'orchestrate':
+      return <OrchestratePage />;
     case 'orchestrator':
       return <OrchestratorView />;
     case 'board':

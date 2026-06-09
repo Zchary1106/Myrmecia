@@ -7,6 +7,7 @@ import { completeTraceSpan, createTraceSpan } from '../db/models/trace.js';
 import { resolveAllowedToolsForAgent, validateToolParams } from '../tools/tool-policy.js';
 import { createToolExecution, completeToolExecution, summarizeToolPayload } from '../tools/tool-execution.js';
 import { estimateModelCost, recordModelUsage, selectModelForAgent } from '../models/model-registry.js';
+import { getModelGateway, streamChatCompletion } from '../models/gateway.js';
 import { messageBus } from './message-bus.js';
 import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
@@ -19,6 +20,8 @@ import { metrics } from '../observability/telemetry.js';
 import { assertExecutionTokenBudget, remainingResponseTokens, resolveAgentRuntimeLimits } from './runtime-limits.js';
 import { sanitizeAgentOutput } from '../security/dlp-runtime.js';
 import { buildSandboxToolDefinition, executeTool, isSandboxTool } from '../skills/tool-sandbox.js';
+import { isMcpTool } from '../tools/mcp-manager.js';
+import { getMcpToolDefinitions, executeMcpTool } from '../tools/mcp-tools.js';
 import { appendExecutionAuditEvent, recordExecutionPolicySnapshot } from '../audit/execution-audit.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -35,7 +38,13 @@ function buildModelToolDefinitions(toolIds: string[]) {
     const modelToolName = buildModelToolName(toolId, index);
     modelNameToToolId.set(modelToolName, toolId);
     return buildSandboxToolDefinition(toolId, modelToolName);
-  });
+  }) as any[];
+
+  // Surface connected MCP tools to the model (routed to the MCP manager at call time).
+  const { defs: mcpDefs, nameToQualified } = getMcpToolDefinitions();
+  for (const [modelName, qualified] of nameToQualified) modelNameToToolId.set(modelName, qualified);
+  toolDefs.push(...(mcpDefs as any[]));
+
   return { toolDefs, modelNameToToolId };
 }
 
@@ -104,10 +113,9 @@ function buildSystemPrompt(
 }
 
 export class TsAgentLoop {
-  private getClient(): OpenAI {
-    const baseURL = process.env.AGENT_FACTORY_BASE_URL || 'https://morninglab.japaneast.cloudapp.azure.com/v1';
-    const apiKey = process.env.AGENT_FACTORY_API_KEY || process.env.ANTHROPIC_API_KEY || '';
-    return new OpenAI({ baseURL, apiKey });
+  private getClient(modelId?: string): OpenAI {
+    // Delegate to the provider-agnostic gateway (defaults to the platform base URL).
+    return getModelGateway().clientForModel(modelId);
   }
 
   async execute(
@@ -289,14 +297,23 @@ export class TsAgentLoop {
       while (numTurns < maxTurns) {
         numTurns++;
 
-        const completion = await client.chat.completions.create({
+        const completionParams = {
           model: selectedModel,
           messages,
           tools: toolDefs.length > 0 ? toolDefs : undefined,
           max_tokens: remainingResponseTokens(inputTokens, outputTokens, limits),
-        }, {
-          signal: abortController.signal,
-        });
+        };
+
+        // Opt-in token streaming (AGENT_STREAMING=true): emits token:delta events
+        // and accumulates into a normal completion object. Default path unchanged.
+        const completion = process.env.AGENT_STREAMING === 'true'
+          ? await streamChatCompletion(
+              client,
+              completionParams,
+              (delta) => eventBus.emit('token:delta', { executionId, taskId: task.id, workspaceId: task.workspaceId, delta }),
+              abortController.signal
+            )
+          : await client.chat.completions.create(completionParams, { signal: abortController.signal });
 
         const choice = completion.choices[0];
         if (!choice) throw new Error('No response from model');
@@ -408,11 +425,13 @@ export class TsAgentLoop {
                 throw new Error(`Tool runtime budget exceeded (${limits.maxToolRuntimeMsPerExecution}ms)`);
               }
               totalToolCalls++;
-              const result = await executeTool(toolName, toolInput, task.workdir || process.cwd(), {
-                allowedTools: toolPolicy.allowedTools,
-                timeoutMs: Math.min(limits.maxToolCallTimeoutMs, limits.maxToolRuntimeMsPerExecution - totalToolRuntimeMs),
-                maxOutputChars: Math.min(limits.maxOutputChars, 8_000),
-              });
+              const result = isMcpTool(toolName)
+                ? await executeMcpTool(toolName, toolInput, Math.min(limits.maxToolCallTimeoutMs, limits.maxToolRuntimeMsPerExecution - totalToolRuntimeMs))
+                : await executeTool(toolName, toolInput, task.workdir || process.cwd(), {
+                    allowedTools: toolPolicy.allowedTools,
+                    timeoutMs: Math.min(limits.maxToolCallTimeoutMs, limits.maxToolRuntimeMsPerExecution - totalToolRuntimeMs),
+                    maxOutputChars: Math.min(limits.maxOutputChars, 8_000),
+                  });
               toolOutput = sanitizeAgentOutput(result.output, {
                 agentId: agent.id,
                 taskId: task.id,
@@ -666,11 +685,13 @@ export class TsAgentLoop {
               limits.maxToolRuntimeMsPerExecution - executionToolRuntimeMs,
             );
             const toolStartedAt = Date.now();
-            const result = await executeTool(toolName, toolInput, workdir, {
-              allowedTools: stepAllowedTools,
-              timeoutMs: remainingToolBudgetMs,
-              maxOutputChars: Math.min(limits.maxOutputChars, 8_000),
-            });
+            const result = isMcpTool(toolName)
+              ? await executeMcpTool(toolName, toolInput, remainingToolBudgetMs)
+              : await executeTool(toolName, toolInput, workdir, {
+                  allowedTools: stepAllowedTools,
+                  timeoutMs: remainingToolBudgetMs,
+                  maxOutputChars: Math.min(limits.maxOutputChars, 8_000),
+                });
             const toolElapsedMs = Date.now() - toolStartedAt;
             stepToolRuntimeMs += toolElapsedMs;
             executionToolRuntimeMs += toolElapsedMs;

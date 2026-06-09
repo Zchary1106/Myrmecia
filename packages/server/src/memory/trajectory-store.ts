@@ -1,18 +1,20 @@
 /**
- * Trajectory Store — Task Execution Learning System
+ * Trajectory Store — Task Execution Learning (adapter over the unified MemoryStore)
  *
- * Records every task execution as a trajectory (input + agent + outcome),
- * embeds task inputs into vectors, stores in HNSW for fast similarity search.
- * Enables semantic routing: "what agent/mode worked best for similar tasks?"
+ * Historically this owned its own `task_trajectories` table + HNSW index. As of
+ * the Phase 1 memory unification it delegates to {@link SqliteMemoryStore},
+ * storing each execution as an `episodic` memory. The public API is unchanged so
+ * existing callers (agent-runtime, intent-classifier) keep working.
+ *
+ * Semantic routing: "what agent/mode worked best for similar tasks?"
  */
 
-import { v4 as uuid } from 'uuid';
-import { HNSWIndex } from './hnsw.js';
-import { getEmbeddingService, type EmbeddingService } from './embedding.js';
+import { getMemoryStore, type SqliteMemoryStore } from './memory-store.js';
 import { getDb } from '../db/database.js';
 import { logger } from '../lib/logger.js';
+import type { ScoreWeights } from './types.js';
 
-// ---------- Types ----------
+// ---------- Types (stable public API) ----------
 
 export interface TaskTrajectory {
   id: string;
@@ -40,78 +42,29 @@ export interface SimilarTrajectory {
   similarity: number;
 }
 
-// ---------- Schema ----------
-
-export const TRAJECTORY_SCHEMA = `
-CREATE TABLE IF NOT EXISTS task_trajectories (
-  id TEXT PRIMARY KEY,
-  task_input TEXT NOT NULL,
-  embedding BLOB NOT NULL,
-  agent_id TEXT NOT NULL,
-  mode TEXT NOT NULL,
-  template_id TEXT,
-  success INTEGER NOT NULL DEFAULT 1,
-  quality REAL NOT NULL DEFAULT 0.5,
-  duration_ms INTEGER,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX IF NOT EXISTS idx_trajectories_agent ON task_trajectories(agent_id);
-CREATE INDEX IF NOT EXISTS idx_trajectories_mode ON task_trajectories(mode);
-
-CREATE TABLE IF NOT EXISTS hnsw_indexes (
-  name TEXT PRIMARY KEY,
-  data BLOB NOT NULL,
-  dimensions INTEGER NOT NULL,
-  entry_count INTEGER NOT NULL,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-`;
+const TRAJECTORY_SOURCE = 'task_trajectory';
+// Pure-cosine weights so routing similarity matches the legacy behaviour.
+const RELEVANCE_ONLY: ScoreWeights = { relevance: 1, recency: 0, importance: 0, success: 0 };
 
 // ---------- TrajectoryStore ----------
 
 export class TrajectoryStore {
-  private index: HNSWIndex | null = null;
-  private embedding: EmbeddingService;
+  private store: SqliteMemoryStore;
   private initialized = false;
 
-  constructor(embeddingService?: EmbeddingService) {
-    this.embedding = embeddingService || getEmbeddingService();
+  constructor(store?: SqliteMemoryStore) {
+    this.store = store || getMemoryStore();
   }
 
-  /** Initialize: create tables and load HNSW from SQLite */
+  /** Initialize the underlying memory store and migrate any legacy rows. */
   async initialize(): Promise<void> {
     if (this.initialized) return;
-
-    const db = getDb();
-    db.exec(TRAJECTORY_SCHEMA);
-
-    // Try loading persisted HNSW index
-    const saved = db.get(
-      'SELECT data, dimensions FROM hnsw_indexes WHERE name = ?',
-      'trajectories'
-    ) as { data: Buffer; dimensions: number } | undefined;
-
-    if (saved && saved.dimensions === this.embedding.dimensions) {
-      try {
-        this.index = HNSWIndex.deserialize(saved.data);
-        logger.info({ entries: this.index.size() }, 'Loaded HNSW index from SQLite');
-      } catch (err: any) {
-        logger.warn({ err: err.message }, 'Failed to deserialize HNSW, rebuilding');
-        this.index = null;
-      }
-    }
-
-    if (!this.index) {
-      this.index = new HNSWIndex({ dimensions: this.embedding.dimensions });
-      // Rebuild from stored trajectories
-      await this.rebuildIndex();
-    }
-
+    await this.store.initialize();
+    await this.migrateLegacy();
     this.initialized = true;
   }
 
-  /** Record a completed task trajectory */
+  /** Record a completed task trajectory as an episodic memory. */
   async record(data: {
     taskInput: string;
     agentId: string;
@@ -123,95 +76,82 @@ export class TrajectoryStore {
   }): Promise<void> {
     await this.initialize();
 
-    const id = `traj_${uuid().slice(0, 12)}`;
-    const embedding = await this.embedding.embed(data.taskInput);
-
-    const db = getDb();
-    db.run(
-      `INSERT INTO task_trajectories (id, task_input, embedding, agent_id, mode, template_id, success, quality, duration_ms)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      id, data.taskInput, Buffer.from(new Float32Array(embedding).buffer),
-      data.agentId, data.mode, data.templateId || null,
-      data.success ? 1 : 0, data.quality, data.durationMs
-    );
-
-    // Add to HNSW
-    this.index!.add(id, embedding);
-
-    // Persist HNSW periodically (every 10 additions)
-    if (this.index!.size() % 10 === 0) {
-      this.persistIndex();
-    }
+    await this.store.add({
+      type: 'episodic',
+      content: data.taskInput,
+      importance: data.quality,
+      success: data.success ? 1 : 0,
+      quality: data.quality,
+      sourceType: 'task',
+      metadata: {
+        agentId: data.agentId,
+        mode: data.mode,
+        templateId: data.templateId ?? null,
+        durationMs: data.durationMs,
+        success: data.success,
+      },
+    });
   }
 
-  /** Find similar historical trajectories */
+  /** Find similar historical trajectories (ranked by cosine similarity). */
   async findSimilar(input: string, topK = 5): Promise<SimilarTrajectory[]> {
     await this.initialize();
 
-    if (this.index!.size() === 0) return [];
+    const results = await this.store.recall({
+      query: input,
+      types: ['episodic', 'procedural'],
+      topK,
+      weights: RELEVANCE_ONLY,
+      mmrLambda: 1,
+    });
 
-    const queryEmbedding = await this.embedding.embed(input);
-    const results = this.index!.search(queryEmbedding, topK);
-
-    const db = getDb();
-    const trajectories: SimilarTrajectory[] = [];
-
-    for (const result of results) {
-      const row = db.get('SELECT * FROM task_trajectories WHERE id = ?', result.id) as any;
-      if (!row) continue;
-
-      const similarity = 1 - result.distance; // cosine distance → similarity
-      trajectories.push({
-        trajectory: {
-          id: row.id,
-          taskInput: row.task_input,
-          embedding: Array.from(new Float32Array(row.embedding.buffer || row.embedding)),
-          agentId: row.agent_id,
-          mode: row.mode,
-          templateId: row.template_id || undefined,
-          success: !!row.success,
-          quality: row.quality,
-          durationMs: row.duration_ms,
-          createdAt: row.created_at,
-        },
-        similarity,
-      });
-    }
-
-    return trajectories;
+    return results
+      .map(({ item, relevance }) => {
+        const meta = item.metadata as Record<string, any>;
+        const agentId = (meta.agentId as string) || item.scope.agent || '';
+        if (!agentId) return null;
+        const trajectory: TaskTrajectory = {
+          id: item.id,
+          taskInput: item.content,
+          embedding: item.embedding ?? [],
+          agentId,
+          mode: (meta.mode as string) || 'direct',
+          templateId: (meta.templateId as string) || undefined,
+          success: item.success != null ? item.success >= 0.5 : !!meta.success,
+          quality: item.quality ?? item.importance,
+          durationMs: (meta.durationMs as number) ?? 0,
+          createdAt: item.createdAt,
+        };
+        return { trajectory, similarity: relevance };
+      })
+      .filter((x): x is SimilarTrajectory => x !== null)
+      .sort((a, b) => b.similarity - a.similarity);
   }
 
-  /** Recommend a route based on historical success */
+  /** Recommend a route based on historical success. */
   async recommendRoute(input: string): Promise<RouteRecommendation | null> {
     const similar = await this.findSimilar(input, 5);
 
-    // Filter by minimum similarity threshold
     const relevant = similar.filter(s => s.similarity >= 0.7);
     if (relevant.length === 0) return null;
 
-    // Weighted voting: weight = similarity * quality
+    // Weighted voting: weight = similarity * quality, successes only.
     const votes = new Map<string, { weight: number; mode: string; templateId?: string }>();
-
     for (const { trajectory, similarity } of relevant) {
-      if (!trajectory.success) continue; // Only learn from successes
-
-      const key = trajectory.agentId;
+      if (!trajectory.success) continue;
       const weight = similarity * trajectory.quality;
-      const existing = votes.get(key);
-
+      const existing = votes.get(trajectory.agentId);
       if (!existing || weight > existing.weight) {
-        votes.set(key, { weight, mode: trajectory.mode, templateId: trajectory.templateId });
+        votes.set(trajectory.agentId, { weight, mode: trajectory.mode, templateId: trajectory.templateId });
       }
     }
 
     if (votes.size === 0) return null;
 
-    // Pick highest weighted vote
     let bestAgent = '';
     let bestWeight = 0;
     let bestMode = '';
     let bestTemplate: string | undefined;
-
     for (const [agent, vote] of votes) {
       if (vote.weight > bestWeight) {
         bestAgent = agent;
@@ -221,7 +161,6 @@ export class TrajectoryStore {
       }
     }
 
-    // Confidence = highest similarity * average quality of relevant results
     const avgQuality = relevant.reduce((s, r) => s + r.trajectory.quality, 0) / relevant.length;
     const confidence = relevant[0].similarity * avgQuality;
 
@@ -234,45 +173,56 @@ export class TrajectoryStore {
     };
   }
 
-  /** Persist HNSW index to SQLite */
-  persistIndex(): void {
-    if (!this.index) return;
-
+  /** One-time copy of legacy `task_trajectories` rows into `memory_items`. */
+  private async migrateLegacy(): Promise<void> {
     const db = getDb();
-    const data = this.index.serialize();
-
-    db.run(
-      `INSERT INTO hnsw_indexes (name, data, dimensions, entry_count, updated_at)
-       VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-       ON CONFLICT(name) DO UPDATE SET data = ?, dimensions = ?, entry_count = ?, updated_at = CURRENT_TIMESTAMP`,
-      'trajectories', data, this.embedding.dimensions, this.index.size(),
-      data, this.embedding.dimensions, this.index.size()
+    const exists = db.get(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='task_trajectories'"
     );
-  }
+    if (!exists) return;
 
-  /** Rebuild HNSW from all stored trajectories */
-  private async rebuildIndex(): Promise<void> {
-    const db = getDb();
-    const rows = db.all('SELECT id, embedding FROM task_trajectories') as any[];
+    const migrated = db.all(
+      `SELECT source_id FROM memory_items WHERE source_type = ?`,
+      TRAJECTORY_SOURCE
+    ) as Array<{ source_id: string }>;
+    const done = new Set(migrated.map(r => r.source_id));
 
-    this.index = new HNSWIndex({ dimensions: this.embedding.dimensions });
+    const rows = db.all('SELECT * FROM task_trajectories') as any[];
+    const pending = rows.filter(r => !done.has(r.id));
+    if (pending.length === 0) return;
 
-    for (const row of rows) {
+    let count = 0;
+    for (const row of pending) {
       try {
-        const embedding = Array.from(new Float32Array(
-          row.embedding.buffer || row.embedding
-        ));
-        if (embedding.length === this.embedding.dimensions) {
-          this.index.add(row.id, embedding);
-        }
-      } catch {
-        // Skip corrupted entries
+        const embedding = Array.from(
+          new Float32Array(row.embedding.buffer || row.embedding)
+        );
+        await this.store.add({
+          type: 'episodic',
+          content: row.task_input,
+          importance: row.quality ?? 0.5,
+          success: row.success ? 1 : 0,
+          quality: row.quality ?? 0.5,
+          sourceType: TRAJECTORY_SOURCE,
+          sourceId: row.id,
+          embedding: embedding.length > 0 ? embedding : undefined,
+          metadata: {
+            agentId: row.agent_id,
+            mode: row.mode,
+            templateId: row.template_id ?? null,
+            durationMs: row.duration_ms ?? 0,
+            success: !!row.success,
+          },
+        });
+        count++;
+      } catch (err: any) {
+        logger.warn({ err: err.message, id: row.id }, 'Skipped legacy trajectory during migration');
       }
     }
 
-    if (rows.length > 0) {
-      logger.info({ rebuilt: this.index.size() }, 'Rebuilt HNSW index from trajectories');
-      this.persistIndex();
+    if (count > 0) {
+      this.store.persist();
+      logger.info({ migrated: count }, 'Migrated legacy task_trajectories into memory_items');
     }
   }
 }

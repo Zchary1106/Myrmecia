@@ -22,6 +22,7 @@ import { v4 as uuid } from 'uuid';
 import { getDb } from '../db/database.js';
 import { logger } from '../lib/logger.js';
 import { getEmbeddingService } from '../memory/embedding.js';
+import { getMemoryStore } from '../memory/memory-store.js';
 import { Router } from 'express';
 
 // ---------- Types ----------
@@ -198,6 +199,25 @@ export async function ingestDocument(workspaceId: string, title: string, content
     const chunkId = `${id}_chunk_${i}`;
     const embedding = await getEmbedding(chunks[i]);
     store.upsert(chunkId, embedding, { documentId: id, workspaceId, index: i });
+
+    // Bridge knowledge into the unified memory so it participates in recall /
+    // context injection (reuses the embedding — no extra cost).
+    if (process.env.MEMORY_KNOWLEDGE_BRIDGE !== 'false') {
+      try {
+        await getMemoryStore().add({
+          type: 'semantic',
+          content: chunks[i],
+          embedding,
+          scope: { workspace: workspaceId },
+          importance: 0.5,
+          sourceType: 'document',
+          sourceId: id,
+          metadata: { documentId: id, index: i, title },
+        });
+      } catch (err: any) {
+        logger.warn({ err: err.message, docId: id }, 'knowledge→memory bridge failed');
+      }
+    }
   }
 
   logger.info({ docId: id, chunks: chunks.length }, 'Document ingested');

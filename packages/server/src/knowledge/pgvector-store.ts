@@ -6,6 +6,7 @@
  */
 
 import { logger } from '../lib/logger.js';
+import { getEmbeddingService } from '../memory/embedding.js';
 
 // ---------- Interface (mirrors rag.ts VectorStore) ----------
 
@@ -37,6 +38,7 @@ export class PgVectorStore implements VectorStore {
 
   private async ensureSchema(): Promise<void> {
     if (this.initialized) return;
+    const dims = getEmbeddingService().dimensions;
     const client = await this.pool.connect();
     try {
       await client.query('CREATE EXTENSION IF NOT EXISTS vector');
@@ -45,12 +47,27 @@ export class PgVectorStore implements VectorStore {
           id TEXT PRIMARY KEY,
           document_id TEXT,
           chunk_index INTEGER,
-          embedding vector(1536),
+          embedding vector(${dims}),
           content TEXT,
           metadata JSONB DEFAULT '{}',
           workspace_id TEXT
         )
       `);
+      // Guard against a dimension change between runs: an existing table with a
+      // different vector width would break inserts/queries, so surface it loudly.
+      const dimRow = await client.query(
+        `SELECT atttypmod AS typmod
+           FROM pg_attribute
+          WHERE attrelid = 'embeddings'::regclass AND attname = 'embedding'`
+      );
+      const existingDims = dimRow.rows?.[0]?.typmod;
+      if (existingDims && existingDims > 0 && existingDims !== dims) {
+        logger.warn(
+          { existingDims, configuredDims: dims },
+          'pgvector embeddings column dimension differs from current embedding backend; ' +
+          'recreate the table or align EMBEDDING_BACKEND/EMBEDDING_MODEL'
+        );
+      }
       // HNSW index for fast cosine search
       await client.query(`
         CREATE INDEX IF NOT EXISTS idx_embeddings_hnsw
@@ -65,7 +82,7 @@ export class PgVectorStore implements VectorStore {
         ON embeddings (document_id)
       `);
       this.initialized = true;
-      logger.info('PgVectorStore schema initialized');
+      logger.info({ dimensions: dims }, 'PgVectorStore schema initialized');
     } finally {
       client.release();
     }
