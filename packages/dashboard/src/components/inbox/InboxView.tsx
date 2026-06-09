@@ -5,7 +5,7 @@ import { cn } from '../../lib/utils';
 import { readOnlyControlMessage, runtimeControlsAllowed } from '../../lib/permissions';
 import { relatedNotificationsForInbox } from '../../lib/notificationTriage';
 import { TaskDetailDrawer } from '../common/TaskDetailDrawer';
-import type { InboxEntry, InboxEntryStatus } from '@agent-factory/shared';
+import type { InboxEntry, InboxEntryStatus } from '@myrmecia/shared';
 
 const statusClass: Record<InboxEntryStatus, string> = {
   pending: 'bg-yellow-500/15 text-yellow-400 border-yellow-500/20',

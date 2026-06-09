@@ -17,6 +17,7 @@ import { getExecutor, DEFAULT_LIMITS } from './executor.js';
 import { getTrajectoryStore } from '../memory/trajectory-store.js';
 import { getMemoryService } from '../memory/memory-service.js';
 import { getWritePipeline } from '../memory/write-pipeline.js';
+import { modelBaseURL, modelApiKey, defaultModel } from '../lib/brand-config.js';
 import { messageBus } from './message-bus.js';
 import { tsAgentLoop } from './ts-agent-loop.js';
 import { metrics } from '../observability/telemetry.js';
@@ -562,9 +563,9 @@ export class AgentRuntime {
         args: [PYTHON_RUNTIME_RUNNER, config],
         workdir: task.workdir || agent.config.workdir || process.cwd(),
         env: {
-          AGENT_FACTORY_BASE_URL: process.env.AGENT_FACTORY_BASE_URL || 'https://morninglab.japaneast.cloudapp.azure.com/v1',
-          AGENT_FACTORY_API_KEY: process.env.AGENT_FACTORY_API_KEY || process.env.ANTHROPIC_API_KEY || '',
-          AGENT_FACTORY_MODEL: process.env.AGENT_FACTORY_MODEL || 'gpt-5.4-mini',
+          AGENT_FACTORY_BASE_URL: modelBaseURL(),
+          AGENT_FACTORY_API_KEY: modelApiKey(),
+          AGENT_FACTORY_MODEL: defaultModel(),
           AGENT_FACTORY_EXECUTION_ID: executionId,
           AGENT_FACTORY_TASK_ID: task.id,
           AGENT_FACTORY_AGENT_ID: agent.id,

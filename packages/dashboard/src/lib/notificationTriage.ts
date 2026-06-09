@@ -1,4 +1,4 @@
-import type { InboxEntry, Notification } from '@agent-factory/shared';
+import type { InboxEntry, Notification } from '@myrmecia/shared';
 
 export type NotificationStatusFilter = 'all' | 'unread' | 'read';
 export type NotificationScopeFilter = 'all' | 'tasks' | 'pipelines' | 'inbox' | 'system';

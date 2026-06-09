@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { wsClient } from '../lib/ws';
 import { useStore } from '../stores/store';
 import { api } from '../lib/api';
-import type { ExecutionEventPayload, InboxEventPayload, PipelineEventPayload, QualityLoopEventPayload, TaskEventPayload, WSEvent } from '@agent-factory/shared';
+import type { ExecutionEventPayload, InboxEventPayload, PipelineEventPayload, QualityLoopEventPayload, TaskEventPayload, WSEvent } from '@myrmecia/shared';
 
 export function useWebSocket() {
   useEffect(() => {

@@ -1,5 +1,6 @@
 import { createHash } from 'crypto';
 import { getDb } from '../db/database.js';
+import { modelBaseURL, modelApiKey, defaultModel } from '../lib/brand-config.js';
 import { parseSkillContent } from './skill-parser.js';
 import { upsertSkill, createSkillVersion, publishSkillVersion } from '../db/models/skill.js';
 import { logger } from '../lib/logger.js';
@@ -330,8 +331,8 @@ async function transformToStructured(content: string, skillName: string): Promis
   try {
     const OpenAI = (await import('openai')).default;
     const client = new OpenAI({
-      baseURL: process.env.AGENT_FACTORY_BASE_URL || 'https://morninglab.japaneast.cloudapp.azure.com/v1',
-      apiKey: process.env.AGENT_FACTORY_API_KEY || process.env.ANTHROPIC_API_KEY || '',
+      baseURL: modelBaseURL(),
+      apiKey: modelApiKey(),
     });
 
     const prompt = `You are a skill format converter. Given a markdown skill definition, generate YAML frontmatter that converts it into a step-driven executor format.
@@ -349,7 +350,7 @@ ${content.slice(0, 3000)}
 Output the complete converted skill file:`;
 
     const response = await client.chat.completions.create({
-      model: process.env.AGENT_FACTORY_MODEL || 'gpt-5.4-mini',
+      model: defaultModel(),
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.2,
       max_tokens: 4096,

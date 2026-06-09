@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { AgentSummary, ToolDefinition, ToolExecution, ToolPermission } from '@agent-factory/shared';
+import type { AgentSummary, ToolDefinition, ToolExecution, ToolPermission } from '@myrmecia/shared';
 import { api } from '../lib/api';
 import { useStore } from '../stores/store';
 import { cn } from '../lib/utils';

@@ -1,4 +1,4 @@
-import type { WSEvent, WSCommand } from '@agent-factory/shared';
+import type { WSEvent, WSCommand } from '@myrmecia/shared';
 import { getApiAuthToken } from './auth';
 
 type EventHandler = (event: WSEvent) => void;

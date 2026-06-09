@@ -1,4 +1,4 @@
-import type { RuntimeDiagnostics } from '@agent-factory/shared';
+import type { RuntimeDiagnostics } from '@myrmecia/shared';
 import { api } from './api';
 
 const STORAGE_PREFIX = 'agentFactory.savedViews';

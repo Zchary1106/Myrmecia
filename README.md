@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="packages/dashboard/public/agent-factory-logo.svg" alt="Agent Factory" style="width: 18%; height: auto;">
+  <img src="packages/dashboard/public/myrmecia-logo.svg" alt="Myrmecia" style="width: 18%; height: auto;">
 </p>
 
 <div align="center" style="line-height: 1;">
@@ -14,9 +14,11 @@
 
 ---
 
-# Agent Factory: Autonomous Multi-Agent Orchestration Platform
+# Myrmecia — Autonomous Multi-Agent Orchestration Platform
 
-Agent Factory is a self-hosted, code-first platform that manages a pool of specialized AI agents and runs them — independently, in coordinated pipelines, or on a **drag-and-drop canvas** — from product spec through design, code, test, and deploy. It pairs a complete agent **harness** (tool-calling loop, memory, context management, model routing) with enterprise-grade governance, observability, and a real-time dashboard.
+> *Formerly **Agent Factory**.* A colony of specialized agents, coordinated through a shared memory. See [Why Myrmecia](#why-myrmecia--the-colony-model).
+
+Myrmecia is a self-hosted, code-first platform that manages a pool of specialized AI agents and runs them — independently, in coordinated pipelines, or on a **drag-and-drop canvas** — from product spec through design, code, test, and deploy. It pairs a complete agent **harness** (tool-calling loop, memory, context management, model routing) with enterprise-grade governance, observability, and a real-time dashboard.
 
 ## News
 - [2026-06] **Visual Orchestration** — a drag-and-drop canvas (`Orchestrate` page) to wire agents into a DAG; the `GraphWorkflowEngine` dispatches each node when its predecessors finish, feeds upstream outputs downstream, and **journals runs for replay/resume**. Live node status streams over WebSocket.
@@ -31,7 +33,7 @@ Agent Factory is a self-hosted, code-first platform that manages a pool of speci
  <picture>
    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=Zchary1106/agent-factory&type=Date&theme=dark" />
    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=Zchary1106/agent-factory&type=Date" />
-   <img alt="Agent Factory Star History" src="https://api.star-history.com/svg?repos=Zchary1106/agent-factory&type=Date" style="width: 80%; height: auto;" />
+   <img alt="Myrmecia Star History" src="https://api.star-history.com/svg?repos=Zchary1106/agent-factory&type=Date" style="width: 80%; height: auto;" />
  </picture>
 </a>
 </div>
@@ -42,15 +44,15 @@ Agent Factory is a self-hosted, code-first platform that manages a pool of speci
 
 </div>
 
-## Agent Factory Framework
+## Myrmecia Framework
 
-Agent Factory mirrors a real engineering org: specialized agents (PM, design, dev, QA, ops, review, content) collaborate through templated pipelines, dynamic fan-out workflows, a supervisor that decomposes one-line requests, or a manual canvas you wire yourself. Every run flows through tool governance, guardrails, and full tracing, and feeds a shared long-term memory so the platform gets better at routing and decomposing similar work over time.
+Myrmecia mirrors a real engineering org: specialized agents (PM, design, dev, QA, ops, review, content) collaborate through templated pipelines, dynamic fan-out workflows, a supervisor that decomposes one-line requests, or a manual canvas you wire yourself. Every run flows through tool governance, guardrails, and full tracing, and feeds a shared long-term memory so the platform gets better at routing and decomposing similar work over time.
 
 <p align="center">
-  <img src="docs/diagrams/schema.png" alt="Agent Factory schema" style="width: 100%; height: auto;">
+  <img src="docs/diagrams/schema.png" alt="Myrmecia schema" style="width: 100%; height: auto;">
 </p>
 
-> Agent Factory is local-first and self-hosted. It bundles the agent harness *and* the platform around it (queue, orchestration, governance, observability, dashboard) in a single pnpm monorepo.
+> Myrmecia is local-first and self-hosted. It bundles the agent harness *and* the platform around it (queue, orchestration, governance, observability, dashboard) in a single pnpm monorepo.
 
 ### Agent Pool
 
@@ -101,6 +103,30 @@ Retrieval is a hybrid score (relevance + recency + importance + success) with MM
 </p>
 
 Budget/cost guardrails, DLP redaction, policy snapshots, operator audit, multi-tenant org/workspace isolation, API keys + RBAC, OpenTelemetry traces & metrics, run traces/spans, quality loops, self-healing, and checkpoint-based rollback.
+
+## Why Myrmecia — the colony model
+
+> *Myrmecia* (the genus of bull ants) names the philosophy behind the platform: **no single brain holds the plan — intelligence emerges from many specialized agents coordinating through a shared memory that reinforces what works and lets the rest fade.**
+
+This isn't a decorative metaphor; ant-colony mechanics map onto components we actually built. The coordination model ants use is **stigmergy** — indirect signalling through a shared environment — and its engineering form, **Ant Colony Optimization (ACO)**, is a classic algorithm for many simple agents finding optimal routes by reinforcing successful trails. That is precisely what this platform does.
+
+| Colony mechanism | What it is in Myrmecia | Module |
+| --- | --- | --- |
+| **Pheromone trails** (successful paths reinforced) | Trajectory memory + semantic routing learns which agent/mode worked for similar tasks | `memory/trajectory-store` · `intent-classifier` |
+| **Pheromone evaporation** (stale trails fade) | Memory **decay/forgetting** of stale, low-value entries | `memory/decay.ts` |
+| **Ant Colony Optimization** (foraging shortest path) | Success/quality-weighted routing & model selection | semantic routing · `model-registry` |
+| **Caste division of labor** | Role-specialized agents (PM / dev / QA / ops / review …) | `agents/registry.yaml` |
+| **Decentralized emergent coordination** | DAG / dynamic workflows advance from local dependencies + upstream outputs | `agents/graph-workflow` · `dynamic-workflow` |
+| **Trophallaxis** (sharing food & information) | Agent comms, shared artifacts, federation | `agent-comms` · `shared-artifact-store` |
+| **Nest as collective memory** | Four-layer memory + bi-temporal entity graph | `memory/*` · `memory/graph.ts` |
+| **Colony resilience** | Self-healing, quality loops, checkpoint rollback | `self-healing` · `quality-loop` |
+| **Scale (dozens → millions)** | Worker pool, queue, distributed WebSocket | `scaling/*` |
+
+**The one honest seam:** real colonies are leaderless, yet Myrmecia has an optional **Supervisor / Master**. We resolve this by casting the Master as a *founding queen* — she only **seeds and decomposes** the initial task; runtime coordination stays stigmergic (shared memory + dependency graphs). Drop her, and the colony still runs (direct and visual-DAG modes).
+
+**Etymology & lineage:** from Greek *myrmex* (μύρμηξ, "ant") — the same root as the mythological **Myrmidons**, the fiercely disciplined warrior-people Zeus formed from ants: a fitting image for a disciplined fleet of agents working as one.
+
+> Brand name **Myrmecia**; package scope migrates gradually from `@myrmecia/*` to `@myrmecia/*`, so the rename stays low-risk.
 
 ## Installation
 
@@ -217,7 +243,7 @@ agent-factory/
 ├── packages/
 │   ├── server/         # Express 5 orchestrator — agents, memory, pipelines, graph engine, MCP, queue, routes, WebSocket
 │   ├── dashboard/      # React 19 SPA — command center, agents, pipelines, Orchestrate canvas, Memory, costs
-│   ├── python-runtime/ # Agent Factory Python Runtime — agent subprocess runtime
+│   ├── python-runtime/ # Myrmecia Python Runtime — agent subprocess runtime
 │   ├── cli/            # CLI tool
 │   └── shared/         # Shared TypeScript types
 ├── agents/             # Agent registry + skill markdown
@@ -241,26 +267,26 @@ agent-factory/
 | Dev server / dashboard only | `pnpm dev:server` · `pnpm dev:dashboard` |
 | Build all packages | `pnpm build` |
 | Type-check | `pnpm lint` |
-| Server tests | `pnpm --filter @agent-factory/server test` |
-| Single test file | `pnpm --filter @agent-factory/server exec vitest run tests/<file>.test.ts` |
-| Dashboard tests / e2e | `pnpm --filter @agent-factory/dashboard test` · `test:e2e` |
+| Server tests | `pnpm --filter @myrmecia/server test` |
+| Single test file | `pnpm --filter @myrmecia/server exec vitest run tests/<file>.test.ts` |
+| Dashboard tests / e2e | `pnpm --filter @myrmecia/dashboard test` · `test:e2e` |
 
 ## Contributing
 
-Contributions are welcome — bug fixes, documentation, new agents/skills, and feature ideas. Please run the type-check and tests (`pnpm lint`, `pnpm --filter @agent-factory/server test`) before opening a PR.
+Contributions are welcome — bug fixes, documentation, new agents/skills, and feature ideas. Please run the type-check and tests (`pnpm lint`, `pnpm --filter @myrmecia/server test`) before opening a PR.
 
 ## Acknowledgements
 
-Agent Factory stands on the open-source ecosystem — Express, React, Vite, Tailwind, BullMQ, better-sqlite3, OpenTelemetry, the OpenAI SDK, and the Model Context Protocol. Its memory and orchestration designs draw on ideas from MemGPT/Letta, Mem0, Zep/Graphiti, and the Stanford Generative Agents work.
+Myrmecia stands on the open-source ecosystem — Express, React, Vite, Tailwind, BullMQ, better-sqlite3, OpenTelemetry, the OpenAI SDK, and the Model Context Protocol. Its memory and orchestration designs draw on ideas from MemGPT/Letta, Mem0, Zep/Graphiti, and the Stanford Generative Agents work.
 
 ## Citation
 
-If Agent Factory is useful in your work, a citation is appreciated:
+If Myrmecia is useful in your work, a citation is appreciated:
 
 ```bibtex
-@software{agent_factory_2026,
-  title  = {Agent Factory: Autonomous Multi-Agent Orchestration Platform},
-  author = {Agent Factory contributors},
+@software{myrmecia_2026,
+  title  = {Myrmecia: Autonomous Multi-Agent Orchestration Platform},
+  author = {Myrmecia contributors},
   year   = {2026},
   url    = {https://github.com/Zchary1106/agent-factory}
 }

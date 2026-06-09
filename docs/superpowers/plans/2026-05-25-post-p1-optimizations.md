@@ -25,7 +25,7 @@
 - [ ] On cache hit: skip API call, return cached output with 0 token cost
 - [ ] On cache miss: call API, then `llmCache.set(key, { output, inputTokens, outputTokens })`
 - [ ] Emit `metrics.cacheHitRate.add(1, {status:'hit'|'miss'})` for observability
-- [ ] Test: `pnpm --filter @agent-factory/server exec vitest run src/cache/llm-cache.test.ts` (existing 6 tests should still pass)
+- [ ] Test: `pnpm --filter @myrmecia/server exec vitest run src/cache/llm-cache.test.ts` (existing 6 tests should still pass)
 - [ ] Commit
 
 ---

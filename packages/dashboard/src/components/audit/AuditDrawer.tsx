@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { OperatorAction } from '@agent-factory/shared';
+import type { OperatorAction } from '@myrmecia/shared';
 import { cn } from '../../lib/utils';
 import { useStore } from '../../stores/store';
 

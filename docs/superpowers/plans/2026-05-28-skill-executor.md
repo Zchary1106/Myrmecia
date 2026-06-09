@@ -68,7 +68,7 @@ export interface SkillExecutorConfig {
 
 - [ ] **Step 2: Build to verify types compile**
 
-Run: `pnpm --filter @agent-factory/shared build`
+Run: `pnpm --filter @myrmecia/shared build`
 Expected: Clean build, no errors.
 
 - [ ] **Step 3: Commit**
@@ -155,7 +155,7 @@ You are a developer...`;
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `pnpm --filter @agent-factory/server exec vitest run tests/skill-executor.test.ts -t "skill-parser"`
+Run: `pnpm --filter @myrmecia/server exec vitest run tests/skill-executor.test.ts -t "skill-parser"`
 Expected: FAIL — cannot resolve `../src/skills/skill-parser.js`
 
 - [ ] **Step 3: Implement the parser**
@@ -221,7 +221,7 @@ export function parseSkillContent(content: string): ParsedSkill {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `pnpm --filter @agent-factory/server exec vitest run tests/skill-executor.test.ts -t "skill-parser"`
+Run: `pnpm --filter @myrmecia/server exec vitest run tests/skill-executor.test.ts -t "skill-parser"`
 Expected: All 3 tests PASS
 
 - [ ] **Step 5: Commit**
@@ -295,7 +295,7 @@ describe('step-validator', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `pnpm --filter @agent-factory/server exec vitest run tests/skill-executor.test.ts -t "step-validator"`
+Run: `pnpm --filter @myrmecia/server exec vitest run tests/skill-executor.test.ts -t "step-validator"`
 Expected: FAIL — cannot resolve `../src/skills/step-validator.js`
 
 - [ ] **Step 3: Implement the validator**
@@ -366,7 +366,7 @@ export async function validateStep(input: ValidateStepInput): Promise<ValidateSt
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `pnpm --filter @agent-factory/server exec vitest run tests/skill-executor.test.ts -t "step-validator"`
+Run: `pnpm --filter @myrmecia/server exec vitest run tests/skill-executor.test.ts -t "step-validator"`
 Expected: All 4 tests PASS
 
 - [ ] **Step 5: Commit**
@@ -424,7 +424,7 @@ describe('skill-matcher', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `pnpm --filter @agent-factory/server exec vitest run tests/skill-executor.test.ts -t "skill-matcher"`
+Run: `pnpm --filter @myrmecia/server exec vitest run tests/skill-executor.test.ts -t "skill-matcher"`
 Expected: FAIL — cannot resolve `../src/skills/skill-matcher.js`
 
 - [ ] **Step 3: Implement the matcher**
@@ -547,7 +547,7 @@ export async function matchSkillForTask(
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `pnpm --filter @agent-factory/server exec vitest run tests/skill-executor.test.ts -t "skill-matcher"`
+Run: `pnpm --filter @myrmecia/server exec vitest run tests/skill-executor.test.ts -t "skill-matcher"`
 Expected: All 4 tests PASS
 
 - [ ] **Step 5: Commit**
@@ -571,7 +571,7 @@ Append to `packages/server/tests/skill-executor.test.ts`:
 
 ```typescript
 import { SkillExecutor } from '../src/skills/skill-executor.js';
-import type { SkillExecutorConfig, SkillStep } from '@agent-factory/shared';
+import type { SkillExecutorConfig, SkillStep } from '@myrmecia/shared';
 
 describe('skill-executor', () => {
   const mockConfig: SkillExecutorConfig = {
@@ -643,7 +643,7 @@ describe('skill-executor', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `pnpm --filter @agent-factory/server exec vitest run tests/skill-executor.test.ts -t "skill-executor"`
+Run: `pnpm --filter @myrmecia/server exec vitest run tests/skill-executor.test.ts -t "skill-executor"`
 Expected: FAIL — cannot resolve `../src/skills/skill-executor.js`
 
 - [ ] **Step 3: Implement the executor**
@@ -815,7 +815,7 @@ export class SkillExecutor {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `pnpm --filter @agent-factory/server exec vitest run tests/skill-executor.test.ts -t "skill-executor"`
+Run: `pnpm --filter @myrmecia/server exec vitest run tests/skill-executor.test.ts -t "skill-executor"`
 Expected: All tests PASS
 
 - [ ] **Step 5: Commit**
@@ -986,7 +986,7 @@ import type { SkillExecutorConfig } from '../types.js';
 
 - [ ] **Step 5: Build to verify compilation**
 
-Run: `pnpm --filter @agent-factory/server build`
+Run: `pnpm --filter @myrmecia/server build`
 Expected: Clean build (or pre-existing errors only, no new errors from this change)
 
 - [ ] **Step 6: Commit**
@@ -1056,7 +1056,7 @@ Keep the existing markdown content below the frontmatter unchanged.
 
 - [ ] **Step 2: Verify the file is valid by running the parser against it**
 
-Run: `pnpm --filter @agent-factory/server exec vitest run tests/skill-executor.test.ts`
+Run: `pnpm --filter @myrmecia/server exec vitest run tests/skill-executor.test.ts`
 Expected: All existing tests still pass (parser handles real-world content)
 
 - [ ] **Step 3: Commit**
@@ -1077,17 +1077,17 @@ git commit -m "feat(agents): upgrade dev.md with step-driven TDD skill definitio
 
 Run: `grep -n "from.*shared" packages/server/src/types.ts | head`
 
-If `types.ts` re-exports from `@agent-factory/shared`, add:
+If `types.ts` re-exports from `@myrmecia/shared`, add:
 
 ```typescript
-export type { SkillStep, SkillStepValidation, SkillExecutorConfig } from '@agent-factory/shared';
+export type { SkillStep, SkillStepValidation, SkillExecutorConfig } from '@myrmecia/shared';
 ```
 
 If instead it duplicates types, add the interfaces directly (same as in Task 1).
 
 - [ ] **Step 2: Build**
 
-Run: `pnpm --filter @agent-factory/server build`
+Run: `pnpm --filter @myrmecia/server build`
 Expected: No new errors
 
 - [ ] **Step 3: Commit**
@@ -1158,7 +1158,7 @@ You are a test agent.`;
 
 - [ ] **Step 2: Run full test suite**
 
-Run: `pnpm --filter @agent-factory/server exec vitest run tests/skill-executor.test.ts`
+Run: `pnpm --filter @myrmecia/server exec vitest run tests/skill-executor.test.ts`
 Expected: All tests PASS
 
 - [ ] **Step 3: Commit**

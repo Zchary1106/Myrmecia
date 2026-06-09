@@ -4,7 +4,7 @@ import { cn } from '../../lib/utils';
 import { FilterBar, FilterEmptyState, FilterResultSummary, HighlightChip, SavedViewControls, SearchInput, SelectFilter } from '../common/FilterControls';
 import { TaskDetailDrawer } from '../common/TaskDetailDrawer';
 import { createSavedView, loadSavedViews, persistSavedViews, savedViewScope, type SavedView } from '../../lib/savedViews';
-import type { OperatorAction } from '@agent-factory/shared';
+import type { OperatorAction } from '@myrmecia/shared';
 
 const statusClass: Record<OperatorAction['status'], string> = {
   success: 'bg-green-500/10 text-green-400 border-green-500/20',

@@ -1,4 +1,4 @@
-import type { InboxEntry, OperatorAction, Pipeline, PlatformEvent, RuntimeDiagnostics, Task } from '@agent-factory/shared';
+import type { InboxEntry, OperatorAction, Pipeline, PlatformEvent, RuntimeDiagnostics, Task } from '@myrmecia/shared';
 import { api } from './api';
 import { savedViewScope } from './savedViews';
 

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { ModelDefinition, ModelRoute } from '@agent-factory/shared';
+import type { ModelDefinition, ModelRoute } from '@myrmecia/shared';
 import { api } from '../lib/api';
 import { cn } from '../lib/utils';
 import { useStore } from '../stores/store';

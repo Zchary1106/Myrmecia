@@ -4,7 +4,7 @@ import { cn } from '../../lib/utils';
 import { FilterBar, FilterEmptyState, FilterResultSummary, HighlightChip, SavedViewControls, SearchInput, SelectFilter } from '../common/FilterControls';
 import { TaskDetailDrawer } from '../common/TaskDetailDrawer';
 import { createSavedView, loadSavedViews, persistSavedViews, savedViewScope, type SavedView } from '../../lib/savedViews';
-import type { PlatformEvent } from '@agent-factory/shared';
+import type { PlatformEvent } from '@myrmecia/shared';
 
 const severityClass: Record<PlatformEvent['severity'], string> = {
   info: 'bg-blue-500/10 text-blue-400 border-blue-500/20',

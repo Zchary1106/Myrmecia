@@ -12,20 +12,20 @@ Use pnpm from the repository root. Node >=20 and pnpm >=9 are expected.
 | Run only server | `pnpm dev:server` |
 | Run only dashboard | `pnpm dev:dashboard` |
 | Build all workspaces | `pnpm build` |
-| Build server | `pnpm --filter @agent-factory/server build` |
-| Build dashboard | `pnpm --filter @agent-factory/dashboard build` |
-| Run server tests | `pnpm --filter @agent-factory/server test` |
-| Run one server test file | `pnpm --filter @agent-factory/server exec vitest run tests/context-manager.test.ts` |
-| Run one server test by name | `pnpm --filter @agent-factory/server exec vitest run tests/context-manager.test.ts -t "should include previous stage output"` |
-| Watch server tests | `pnpm --filter @agent-factory/server test:watch` |
-| Preview dashboard build | `pnpm --filter @agent-factory/dashboard preview` |
+| Build server | `pnpm --filter @myrmecia/server build` |
+| Build dashboard | `pnpm --filter @myrmecia/dashboard build` |
+| Run server tests | `pnpm --filter @myrmecia/server test` |
+| Run one server test file | `pnpm --filter @myrmecia/server exec vitest run tests/context-manager.test.ts` |
+| Run one server test by name | `pnpm --filter @myrmecia/server exec vitest run tests/context-manager.test.ts -t "should include previous stage output"` |
+| Watch server tests | `pnpm --filter @myrmecia/server test:watch` |
+| Preview dashboard build | `pnpm --filter @myrmecia/dashboard preview` |
 
 Playwright MCP is configured in `.vscode/mcp.json` for browser workflows against the Vite dashboard; start the dashboard with `pnpm dev:dashboard` or the full app with `pnpm dev` before using it.
 
 Current command caveats:
 
 - `pnpm lint` is defined at the root as `pnpm -r lint`, but no workspace currently defines a `lint` script.
-- `pnpm --filter @agent-factory/server exec vitest run <file>` is the reliable single-test form; passing the file after `pnpm ... test --` can still run the full suite.
+- `pnpm --filter @myrmecia/server exec vitest run <file>` is the reliable single-test form; passing the file after `pnpm ... test --` can still run the full suite.
 - Server tests currently include a pre-existing `tests/db.test.ts` failure from `schema.sql` adding `workspace_path` both in the base table and migration section.
 - Server build currently has pre-existing TypeScript errors around `AgentDefinition.status`, `IORedis` construction, and the inferred Express router type in `routes/executions.ts`.
 

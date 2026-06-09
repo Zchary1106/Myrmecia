@@ -39,7 +39,7 @@ importers:
 
   packages/dashboard:
     dependencies:
-      '@agent-factory/shared':
+      '@myrmecia/shared':
         specifier: workspace:*
         version: link:../shared
       clsx:
@@ -103,7 +103,7 @@ importers:
 
   packages/server:
     dependencies:
-      '@agent-factory/shared':
+      '@myrmecia/shared':
         specifier: workspace:*
         version: link:../shared
       '@anthropic-ai/claude-code':

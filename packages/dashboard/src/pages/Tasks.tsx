@@ -5,7 +5,7 @@ import { TaskDetailDrawer } from '../components/common/TaskDetailDrawer';
 import { FilterBar, FilterEmptyState, FilterResultSummary, SavedViewControls, SearchInput, SelectFilter } from '../components/common/FilterControls';
 import { createSavedView, loadSavedViews, persistSavedViews, savedViewScope, type SavedView } from '../lib/savedViews';
 import { WorkLauncher } from '../components/common/WorkLauncher';
-import type { AgentSummary, Priority, Task, TaskMode, TaskStatus } from '@agent-factory/shared';
+import type { AgentSummary, Priority, Task, TaskMode, TaskStatus } from '@myrmecia/shared';
 
 const columns = [
   { key: 'pending', label: 'Pending', color: 'border-gray-500', statuses: ['pending', 'queued', 'assigned'] },

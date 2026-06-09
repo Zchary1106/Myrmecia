@@ -3,7 +3,7 @@ import { useStore } from '../../stores/store';
 import { api } from '../../lib/api';
 import { cn } from '../../lib/utils';
 import { readOnlyControlMessage, runtimeControlsAllowed } from '../../lib/permissions';
-import type { ExecutionMessage, LogEntry, OperatorAction, QualityLoopAttempt, Task } from '@agent-factory/shared';
+import type { ExecutionMessage, LogEntry, OperatorAction, QualityLoopAttempt, Task } from '@myrmecia/shared';
 import { SkillStepProgress } from '../tasks/SkillStepProgress';
 
 type DetailTab = 'overview' | 'trace' | 'logs' | 'quality' | 'audit';

@@ -3,7 +3,7 @@ import { useStore } from '../../stores/store';
 import { api } from '../../lib/api';
 import { cn } from '../../lib/utils';
 import { readOnlyControlMessage, runtimeControlsAllowed } from '../../lib/permissions';
-import type { Pipeline, PipelineTemplate, PipelineTemplateValidationResult } from '@agent-factory/shared';
+import type { Pipeline, PipelineTemplate, PipelineTemplateValidationResult } from '@myrmecia/shared';
 
 const stageStatusConfig: Record<string, { bg: string; text: string; icon: string }> = {
   pending: { bg: 'bg-gray-500/20', text: 'text-gray-500', icon: '⏸' },

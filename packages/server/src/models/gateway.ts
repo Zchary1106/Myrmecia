@@ -14,6 +14,7 @@
 
 import OpenAI from 'openai';
 import { logger } from '../lib/logger.js';
+import { modelBaseURL, modelApiKey } from '../lib/brand-config.js';
 
 export interface ProviderConfig {
   baseURL: string;
@@ -32,8 +33,8 @@ const DEFAULT_PROVIDER = 'default';
 
 function defaultProviderConfig(): ProviderConfig {
   return {
-    baseURL: process.env.AGENT_FACTORY_BASE_URL || 'https://morninglab.japaneast.cloudapp.azure.com/v1',
-    apiKey: process.env.AGENT_FACTORY_API_KEY || process.env.ANTHROPIC_API_KEY || '',
+    baseURL: modelBaseURL(),
+    apiKey: modelApiKey(),
   };
 }
 

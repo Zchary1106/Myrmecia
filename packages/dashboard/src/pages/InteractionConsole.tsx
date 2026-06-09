@@ -11,7 +11,7 @@ import type {
   Task,
   TaskExecution,
   ToolExecution,
-} from '@agent-factory/shared';
+} from '@myrmecia/shared';
 
 type AuditReport = Awaited<ReturnType<typeof api.executionAudit.get>>;
 type ArtifactSummary = Awaited<ReturnType<typeof api.artifacts.list>>[number];

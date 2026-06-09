@@ -1,1 +1,1 @@
-export type * from '@agent-factory/shared';
+export type * from '@myrmecia/shared';
