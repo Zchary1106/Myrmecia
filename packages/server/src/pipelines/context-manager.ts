@@ -1,4 +1,5 @@
 import type { Pipeline } from '../types.js';
+import { getMemoryService } from '../memory/memory-service.js';
 
 /**
  * Context Manager
@@ -6,6 +7,7 @@ import type { Pipeline } from '../types.js';
  * - Previous stages: summary only (saves tokens)
  * - Immediate predecessor: full output
  * - Shared project context injected
+ * - Relevant long-term memory recalled (semantic + procedural + episodic)
  */
 export class ContextManager {
   /** Build optimized input for a pipeline stage */
@@ -45,6 +47,28 @@ export class ContextManager {
     }
 
     return parts.join('\n\n---\n\n');
+  }
+
+  /**
+   * Like {@link buildStageInput} but additionally injects a relevant long-term
+   * memory block (semantic facts, procedural lessons, past episodes) scoped to
+   * the pipeline's workspace. Falls back to the plain input on any failure.
+   */
+  async buildStageInputWithMemory(pipeline: Pipeline, stageIndex: number): Promise<string> {
+    const base = this.buildStageInput(pipeline, stageIndex);
+    try {
+      const stage = pipeline.stages[stageIndex];
+      const query = `${pipeline.input}\n${stage?.name ?? ''}`.trim();
+      const block = await getMemoryService().buildContextBlock({
+        query,
+        scope: pipeline.workspaceId ? { workspace: pipeline.workspaceId } : undefined,
+        types: ['semantic', 'procedural', 'episodic'],
+        heading: '## Relevant Memory (from past work)',
+      });
+      return block ? `${base}\n\n---\n\n${block}` : base;
+    } catch {
+      return base;
+    }
   }
 
   /** Create a summary of text, keeping it under maxChars */

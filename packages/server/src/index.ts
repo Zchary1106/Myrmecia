@@ -44,6 +44,11 @@ import { initTelemetry, telemetryMiddleware, metricsHandler } from './observabil
 import { tenantMiddleware } from './auth/tenant.js';
 import { createAuthRoutes, sessionAuthMiddleware } from './auth/oidc.js';
 import { createKnowledgeRoutes } from './knowledge/rag.js';
+import { createMemoryRoutes } from './routes/memory.js';
+import { GraphWorkflowEngine } from './agents/graph-workflow.js';
+import { createGraphWorkflowRoutes } from './routes/graph-workflows.js';
+import { getMcpManager } from './tools/mcp-manager.js';
+import { createMcpRoutes } from './routes/mcp.js';
 import { createAuditRoutes } from './security/dlp.js';
 import { createUsageRoutes } from './billing/usage.js';
 import { createPluginRoutes } from './plugins/registry.js';
@@ -60,7 +65,7 @@ import { createExecutionAuditRoutes } from './routes/execution-audit.js';
 import { pubsub, INSTANCE_ID } from './scaling/redis-pubsub.js';
 import { createDistributedWSHub } from './scaling/distributed-ws.js';
 import { workerPool } from './scaling/worker-pool.js';
-import { initMemorySystem } from './memory/index.js';
+import { initMemorySystem, getMemoryMaintenance } from './memory/index.js';
 import { CapabilityRegistry } from './agents/capability-registry.js';
 import { AgentComms } from './agents/agent-comms.js';
 import { SharedArtifactStore } from './agents/shared-artifact-store.js';
@@ -91,6 +96,15 @@ async function main() {
   // Initialize memory / trajectory learning system
   logger.info('Initializing memory system...');
   await initMemorySystem();
+
+  // Periodic memory decay / forgetting (0 disables; default every 6h).
+  const decayIntervalMs = Number(process.env.MEMORY_DECAY_INTERVAL_MS ?? 6 * 60 * 60 * 1000);
+  if (decayIntervalMs > 0) {
+    const decayTimer = setInterval(() => {
+      getMemoryMaintenance().runDecay().catch(() => { /* non-critical */ });
+    }, decayIntervalMs);
+    decayTimer.unref?.();
+  }
 
   // Initialize agent manager
   // Try multiple paths for registry.yaml (handles different CWDs)
@@ -127,6 +141,12 @@ async function main() {
   const templatesDir = join(__dirname, '../../../templates');
   logger.info('Loading pipeline templates...');
   await pipelineEngine.loadTemplates(templatesDir);
+
+  // Visual graph workflow engine (drag-and-drop manual orchestration)
+  const graphWorkflowEngine = new GraphWorkflowEngine(taskQueue, agentManager);
+
+  // Connect configured MCP servers (best-effort; from MCP_SERVERS env)
+  await getMcpManager().init().catch(() => undefined);
 
   // Initialize notification service
   new NotifierService();
@@ -206,6 +226,9 @@ async function main() {
   app.use('/api/v1/templates', createTemplateRoutes());
   app.use('/api/v1', createSystemRoutes());
   app.use('/api/v1/knowledge', createKnowledgeRoutes());
+  app.use('/api/v1/memory', createMemoryRoutes());
+  app.use('/api/v1/graph-workflows', createGraphWorkflowRoutes(graphWorkflowEngine));
+  app.use('/api/v1/mcp', createMcpRoutes());
   app.use('/api/v1/audit', createAuditRoutes());
   app.use('/api/v1/usage', createUsageRoutes());
   app.use('/api/v1/plugins', createPluginRoutes());

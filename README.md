@@ -1,58 +1,124 @@
-# Agent Factory
+<p align="center">
+  <img src="packages/dashboard/public/agent-factory-logo.svg" alt="Agent Factory" style="width: 18%; height: auto;">
+</p>
 
-Autonomous multi-agent orchestration platform. Manage a pool of AI agents that execute tasks independently or in coordinated pipelines — from product spec to deployment.
+<div align="center" style="line-height: 1;">
+  <img alt="Node" src="https://img.shields.io/badge/Node-%3E%3D20-339933?logo=node.js&logoColor=white"/>
+  <img alt="pnpm" src="https://img.shields.io/badge/pnpm-%3E%3D9-F69220?logo=pnpm&logoColor=white"/>
+  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-ESM-3178C6?logo=typescript&logoColor=white"/>
+  <img alt="React" src="https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black"/>
+  <img alt="Express" src="https://img.shields.io/badge/Express-5-000000?logo=express&logoColor=white"/>
+  <img alt="MCP" src="https://img.shields.io/badge/MCP-enabled-7C3AED"/>
+  <img alt="License" src="https://img.shields.io/badge/License-MIT-green"/>
+</div>
 
-## Architecture
+---
 
-![Architecture Overview](docs/diagrams/architecture-overview.png)
+# Agent Factory: Autonomous Multi-Agent Orchestration Platform
 
-Detailed execution views:
+Agent Factory is a self-hosted, code-first platform that manages a pool of specialized AI agents and runs them — independently, in coordinated pipelines, or on a **drag-and-drop canvas** — from product spec through design, code, test, and deploy. It pairs a complete agent **harness** (tool-calling loop, memory, context management, model routing) with enterprise-grade governance, observability, and a real-time dashboard.
 
-![Dynamic Workflow Lifecycle](docs/diagrams/dynamic-workflow-lifecycle.png)
+## News
+- [2026-06] **Visual Orchestration** — a drag-and-drop canvas (`Orchestrate` page) to wire agents into a DAG; the `GraphWorkflowEngine` dispatches each node when its predecessors finish, feeds upstream outputs downstream, and **journals runs for replay/resume**. Live node status streams over WebSocket.
+- [2026-06] **MCP (Model Context Protocol)** — a dependency-free stdio client connects external MCP tool servers and **surfaces their tools inside the agent tool-calling loop** (`mcp__server__tool`).
+- [2026-06] **Unified Memory** — four-layer memory (working / episodic / semantic / procedural) + a bi-temporal entity graph, with extraction → consolidation → reflection → decay, injected into context, routing, and decomposition.
+- [2026-06] **Model Gateway & Token Streaming** — provider-agnostic client routing (`MODEL_PROVIDERS`) and opt-in `token:delta` streaming over WebSocket.
+- [2026-05] **Dynamic Workflow Runtime** — runtime-generated executable plans that fan out across agents with dependency tracking and validation.
+- [2026-05] **Supervisor Mode** — one-line task intake with intent classification and semantic routing learned from past executions.
 
-![Runtime Governance and Tool Safety](docs/diagrams/runtime-governance.png)
+<div align="center">
+<a href="https://star-history.com/#Zchary1106/agent-factory&Date">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=Zchary1106/agent-factory&type=Date&theme=dark" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=Zchary1106/agent-factory&type=Date" />
+   <img alt="Agent Factory Star History" src="https://api.star-history.com/svg?repos=Zchary1106/agent-factory&type=Date" style="width: 80%; height: auto;" />
+ </picture>
+</a>
+</div>
 
-Agent Factory is a **pnpm monorepo** that combines a TypeScript backend (Express 5), a React dashboard, and an Agent Factory Python runtime. Agents run in managed subprocesses, orchestrated through a BullMQ/Redis task queue, with real-time WebSocket events streamed to the dashboard.
+<div align="center">
 
-| Layer | Main modules | Responsibility |
-|-------|--------------|----------------|
-| Frontend | `packages/dashboard` | React 19 dashboard for command center, agents, tasks, pipelines, skills, timeline, inbox, audit, and settings |
-| API / Orchestrator | `packages/server/src/index.ts`, `routes/*` | Express API, auth/tenant middleware, REST resources, and WebSocket upgrade handling |
-| Execution | `agents/agent-runtime.ts`, `agents/ts-agent-loop.ts`, `packages/python-runtime` | TypeScript agent loop plus optional Python runtime for tool-enabled agent execution |
-| Planning | `agents/orchestrator.ts`, `agents/dynamic-workflow.ts`, `pipelines/pipeline-engine.ts` | Fixed templates, supervisor orchestration, and dynamic fan-out workflows |
-| Queue | `queue/task-queue.ts` | BullMQ when Redis is configured; in-memory execution path for local/dev |
-| Governance | `skills/tool-sandbox.ts`, `tools/tool-policy.ts`, `audit/execution-audit.ts`, `security/*` | Tool allowlists, guardian checks, DLP redaction/blocking, policy snapshots, audit reports |
-| Persistence | SQLite schema in `packages/server/src/db/schema.sql` | Tasks, agents, executions, messages, pipelines, skills, tools, models, workflows, audit data |
-| Real-time | `events/event-bus.ts`, `ws/ws-hub.ts` | Typed internal events mapped to tenant-aware WebSocket channels |
+🚀 [Framework](#agent-factory-framework) | ⚡ [Installation](#installation) | 🎛️ [Usage](#usage) | 🧠 [Memory](#unified-memory) | 🔌 [MCP](#tooling--mcp) | 🛠️ [Commands](#commands) | 🤝 [Contributing](#contributing)
 
-### Core runtime flow
+</div>
 
-1. A user creates a task, pipeline, or dynamic workflow through the dashboard/API.
-2. Auth and tenant middleware resolve workspace access and API/token scope.
-3. `TaskQueue` creates task rows and either enqueues BullMQ jobs or runs the in-memory path.
-4. `AgentManager` selects an available agent by role/capacity.
-5. `AgentRuntime` builds the prompt, selects a model, records a policy snapshot, and runs either the TypeScript loop or Python runtime.
-6. Tool calls pass through registry policy, approval requirements, guardrails, sandbox checks, and DLP processing before results are returned.
-7. Outputs, messages, model usage, traces, audit events, and workflow/pipeline artifacts are persisted and emitted to WebSocket subscribers.
+## Agent Factory Framework
 
-For the full system design, data model, event map, and workflow diagrams, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+Agent Factory mirrors a real engineering org: specialized agents (PM, design, dev, QA, ops, review, content) collaborate through templated pipelines, dynamic fan-out workflows, a supervisor that decomposes one-line requests, or a manual canvas you wire yourself. Every run flows through tool governance, guardrails, and full tracing, and feeds a shared long-term memory so the platform gets better at routing and decomposing similar work over time.
 
-## Quick Start
+<p align="center">
+  <img src="docs/diagrams/schema.png" alt="Agent Factory schema" style="width: 100%; height: auto;">
+</p>
 
-**Prerequisites:** Node.js >= 20, pnpm >= 9, Python 3 (for the optional Python runtime)
+> Agent Factory is local-first and self-hosted. It bundles the agent harness *and* the platform around it (queue, orchestration, governance, observability, dashboard) in a single pnpm monorepo.
+
+### Agent Pool
+
+A registry of role-specialized agents (`agents/registry.yaml` + skill markdown). Each agent declares a role, model tier with fallback, capabilities, allowed tools, and triggers. Agents are capability templates — runtime state lives in executions, not in long-lived workers.
+
+<p align="center">
+  <img src="docs/diagrams/agent-pool.png" alt="Agent Pool" width="100%">
+</p>
+
+- **Master** — decomposes complex requests into a dependency-ordered subtask plan (now few-shot–primed by recalled past decompositions).
+- **PM / UI / Dev / QA / Ops / Review** — the core delivery roles.
+- **Content & specialists** — WeChat/RedNote writers, i18n, security, accessibility, performance, and more.
+
+### Orchestration Modes
+
+| Mode | What it does |
+| --- | --- |
+| **Direct** | Assign a task straight to one agent. |
+| **Pipeline** | Fixed YAML stage sequence (PM → Design → Code → Test → Deploy) with manual gating, loop stages, and rollback. |
+| **Dynamic Workflow** | A plan generated at runtime that fans out across agents with dependency tracking and validation. |
+| **Visual Orchestration** | Drag agents onto a canvas and connect them; the `GraphWorkflowEngine` runs the DAG with live status, replay, and resume. |
+| **Supervisor** | One-line intake; intent classification + semantic routing pick the mode/agent automatically. |
+
+<p align="center">
+  <img src="docs/diagrams/dynamic-workflow-lifecycle.png" alt="Workflow Lifecycle" width="85%">
+</p>
+
+### Unified Memory
+
+A single dimension-adaptive vector store backs four memory layers plus a bi-temporal entity graph:
+
+- **Working** — per-execution context assembled by the Context Manager.
+- **Episodic** — every task execution (input + outcome), workspace-scoped for cross-pipeline recall.
+- **Semantic** — facts, conventions, and user preferences, extracted and de-duplicated (`ADD`/`UPDATE`/`NOOP`).
+- **Procedural** — routing experience and reusable lessons synthesized by post-pipeline **reflection**.
+
+Retrieval is a hybrid score (relevance + recency + importance + success) with MMR diversity; stale, low-value memory **decays** automatically. See [`docs/MEMORY-ARCHITECTURE.md`](docs/MEMORY-ARCHITECTURE.md).
+
+### Tooling & MCP
+
+- **Built-in tools** flow through a registry → policy → sandbox → approval pipeline with per-agent allowlists and DLP.
+- **MCP tools** — configure external MCP stdio servers via `MCP_SERVERS`; their tools are aggregated as `mcp__<server>__<tool>` and exposed to agents inside the tool-calling loop (toggle with `MCP_TOOLS_IN_AGENTS`).
+
+### Governance & Observability
+
+<p align="center">
+  <img src="docs/diagrams/runtime-governance.png" alt="Runtime Governance and Tool Safety" width="100%">
+</p>
+
+Budget/cost guardrails, DLP redaction, policy snapshots, operator audit, multi-tenant org/workspace isolation, API keys + RBAC, OpenTelemetry traces & metrics, run traces/spans, quality loops, self-healing, and checkpoint-based rollback.
+
+## Installation
+
+**Prerequisites:** Node.js >= 20, pnpm >= 9, Python 3 (for the optional Python runtime).
 
 ```bash
+git clone https://github.com/Zchary1106/agent-factory.git
+cd agent-factory
+
 pnpm install
 pip install -r packages/python-runtime/requirements.txt
 
 # Start dev server + dashboard
 pnpm dev
-
-# Open dashboard
-open http://localhost:5173
+# Dashboard: http://localhost:5173   ·   API: http://localhost:3000
 ```
 
-Startup options via `./start.sh`:
+### Startup options
 
 ```bash
 ./start.sh --clean-db        # fresh SQLite database
@@ -61,142 +127,110 @@ Startup options via `./start.sh`:
 ./start.sh --dashboard-only  # dashboard only (port 5173)
 ```
 
-Or via Docker:
+### Docker
 
 ```bash
 docker compose up -d
-# Server: http://localhost:3000
-# Dashboard: http://localhost:5173
+# Server: http://localhost:3000   ·   Dashboard: http://localhost:5173
 ```
 
-## Project Structure
-
-```
-agent-factory/
-├── packages/
-│   ├── server/       # Express 5 orchestrator — agents, pipelines, queue, routes, WebSocket
-│   ├── dashboard/    # React 19 SPA — task/agent/pipeline monitoring, cost analytics
-│   ├── python-runtime/ # Agent Factory Python Runtime — agent subprocess runtime
-│   ├── cli/          # CLI tool for interacting with the platform
-│   └── shared/       # TypeScript type definitions shared across packages
-├── agents/           # Agent definitions (registry.yaml + 23 skill .md files)
-├── templates/        # Pipeline templates (11 YAML workflow definitions)
-├── docs/             # Design specs, architecture docs, diagrams
-├── docker-compose.yml
-└── Dockerfile
-```
-
-## How It Works
-
-1. **Task Queue** — `TaskQueue.enqueue()` creates a task, emits `task:created`, and enqueues in BullMQ (or runs in-memory when Redis is unavailable).
-2. **Agent Manager** — checks concurrent capacity, delegates to `AgentRuntime`.
-3. **Agent Runtime** — runs the TypeScript loop or Agent Factory Python Runtime, tracks progress/cost/tokens, records trace spans, emits events.
-4. **Pipeline Engine** — listens for `task:done`, writes stage artifacts, advances to the next ready stage(s). Supports parallel stages (`dependsOn`), manual gating, loop stages, and rollback.
-5. **WebSocket Hub** — maps internal events to pub/sub channels (`tasks`, `task:{id}`, `agents`, `agent:{id}`, `pipelines`, `pipeline:{id}`, `executions`, `execution:{id}`).
-
-## Features
-
-### Agent Pool
-
-23 specialized agents defined in `agents/registry.yaml`: Master, PM, UI Designer, Developer, QA, DevOps, Reviewer, Security Reviewer, API Designer, DB Migration, Doc Writer, i18n, Issue Refiner, Release Notes, Release Compliance, Performance Investigator, GitOps Reviewer, React Dashboard Auditor, Accessibility Tester, QA Automation, Architecture Planner, WeChat Writer, Xiaohongshu Writer.
-
-Custom agents can be created from the dashboard or API. Each agent has configurable model, max turns, timeout, tool whitelist, and skill assignment.
-
-### Agent Interaction Console
-
-The dashboard includes an **Interaction Console** for making agent work easier to understand. It brings workflow/task structure, live agent messages, model routing, tool activity, audit events, and next-step recommendations into one view.
-
-| Panel | Purpose |
-| --- | --- |
-| Workflow / task map | Select dynamic workflows or recent tasks and inspect task dependencies |
-| Agent conversation | Read recent structured messages, tool uses, progress, and errors |
-| Transparency panel | See selected agent, model/tier, route reason, tool status, audit blockers, and recommended next action |
-| Control bar | Create dynamic workflows, retry/upgrade failed work, cancel tasks, and cancel active workflows |
-
-This turns agent execution from a black box into an observable team workflow: who is acting, why they were selected, what evidence they produced, and what should happen next.
-
-### Pipeline Workflows
-
-11 pipeline templates for automated stage-by-stage execution:
-
-| Template | Flow |
-|----------|------|
-| `full-product.yaml` | Spec → Design → Code → Test → Deploy |
-| `bugfix.yaml` | Triage → Fix → Test → Deploy |
-| `feature.yaml` | Spec → Code → Test → Review |
-| `feature-with-qa-loop.yaml` | Feature with automated QA feedback loop |
-| `product-quality.yaml` | Full product pipeline with quality gates |
-| `parallel-feature.yaml` | Parallel stage execution via `dependsOn` |
-| `qa-validation.yaml` | Dedicated QA validation workflow |
-| `release-compliance.yaml` | Compliance-checked release process |
-| `structured-autonomy.yaml` | Autonomous agent workflow with structured outputs |
-| `wechat-article.yaml` | WeChat article generation pipeline |
-| `xiaohongshu-note.yaml` | Xiaohongshu note generation pipeline |
-
-Use the visual pipeline builder in the dashboard to create, edit, validate, and run custom templates.
-
-### Dynamic Workflow Runtime
-
-For large or ambiguous engineering requests, Agent Factory can now generate an executable workflow plan at runtime, fan out work across many specialized agents, and aggregate/validate the results. This is separate from fixed YAML templates: the runtime creates a `dynamic_workflows` run with step dependencies, dispatches each step as a task through the existing queue, tracks completion events, and emits a final validation summary.
-
-API entry points:
-
-| Endpoint | Purpose |
-| --- | --- |
-| `POST /api/v1/supervisor/workflows` | Create and dispatch a dynamic workflow from `{ goal }` or a supplied executable `{ plan }` |
-| `GET /api/v1/supervisor/workflows` | List workflow runs |
-| `GET /api/v1/supervisor/workflows/:id` | Inspect workflow plan, tasks, result, and validation summary |
-| `POST /api/v1/supervisor/workflows/:id/cancel` | Cancel a workflow run |
-
-### Agent Federation (Batch C)
-
-Inter-agent communication protocol enabling agents to discover each other, share artifacts, and coordinate work. Includes capability registry, shared artifact store with access control, and sync/async messaging between agents.
-
-### Skill Registry
-
-Markdown-based skills with YAML frontmatter, versioned drafts/published states, assignment per agent, hot-reload via file watcher, and checksum-verified execution traces.
-
-### Model Registry & Routing
-
-Centralized model catalog with task-aware routing, per-agent defaults, role fallback, health badges, retry escalation, long-context routing, and automatic fallback chains through an OpenAI-compatible endpoint.
-
-### Cost Dashboard
-
-Real-time cost tracking with per-agent and per-model breakdowns, token usage charts, cost trend analysis, and summary cards.
-
-### Execution Trace
-
-Structured span inspection for prompt build, model selection, LLM calls, tool calls, and policy blocks. Full visibility into every agent execution.
-
-### Tool Governance
-
-Built-in tool runtime with enable/disable toggles, approval requirements, execution history, and per-agent tool whitelists. Blocks and approvals are recorded in the audit log.
-
-### Quality & Governance
-
-- **Self-healing** — automatic retry and recovery for failed executions
-- **Quality loops** — feedback-driven improvement cycles
-- **Execution scoring** — LLM judge evaluates output quality with sliding window averages
-- **Coverage checking** — triggered on task completion
-- **Pipeline rollback** — checkpoint-based stage rollback with retry
-- **Operator audit** — all admin actions recorded
-
-### Smart Notifications
-
-WebSocket push notifications when tasks complete or require input. Optional WeCom integration.
-
-## Environment Variables
+### Environment Variables
 
 | Variable | Purpose |
 |----------|---------|
-| `AGENT_FACTORY_BASE_URL` | OpenAI-compatible model endpoint |
+| `AGENT_FACTORY_BASE_URL` | OpenAI-compatible model endpoint (default provider) |
 | `AGENT_FACTORY_API_KEY` | Model endpoint API key |
 | `AGENT_FACTORY_MODEL` | Default fallback model |
 | `ANTHROPIC_API_KEY` | Optional fallback API key |
+| `MODEL_PROVIDERS` | JSON map of provider → `{ baseURL, apiKeyEnv }` for the model gateway |
+| `MODEL_PROVIDER_MAP` | JSON map of modelId → provider name |
+| `AGENT_STREAMING` | `true` to stream token deltas over WebSocket (default off) |
+| `MCP_SERVERS` | JSON array of MCP stdio servers, e.g. `[{"name":"fs","command":"npx","args":["-y","@modelcontextprotocol/server-filesystem","/tmp"]}]` |
+| `MCP_TOOLS_IN_AGENTS` | `false` to hide MCP tools from the agent loop (default on) |
+| `EMBEDDING_BACKEND` | `openai` / `local` / `pseudo` for the memory vector store |
+| `MEMORY_DECAY_INTERVAL_MS` | Periodic memory decay interval (0 disables) |
 | `REDIS_URL` / `REDIS_HOST` | Redis connection (in-memory queue fallback if unset) |
 | `DATABASE_URL` | PostgreSQL connection string (SQLite when unset) |
 | `PORT` | Server port (default 3000) |
 | `NODE_ENV` | `development` / `production` |
+
+## Usage
+
+### Dashboard
+
+Open `http://localhost:5173`. Key pages: **Command Center**, **Interaction Console**, **Work Queue**, **Agents**, **Tools**, **Models**, **Skills**, **Pipelines**, **Orchestrate** (visual canvas), **Memory**, **Timeline**, **Observe**, **Audit**, **Costs**.
+
+### Visual orchestration (drag-and-drop)
+
+On the **Orchestrate** page, drag agents from the palette onto the canvas, click a node's `+` handle and then a target to connect them, set a Goal, and hit **Run**. Or do it over the API:
+
+```bash
+# Create a graph: PM → Dev, then Review
+curl -s localhost:3000/api/v1/graph-workflows -H 'Content-Type: application/json' -d '{
+  "name": "Feature flow",
+  "input": "build a profile page",
+  "graph": {
+    "nodes": [
+      {"id":"a","label":"Spec","agentRole":"product-manager"},
+      {"id":"b","label":"Build","agentRole":"developer"},
+      {"id":"c","label":"Review","agentRole":"reviewer"}
+    ],
+    "edges": [
+      {"id":"e1","source":"a","target":"b"},
+      {"id":"e2","source":"b","target":"c"}
+    ]
+  }
+}'
+
+# Run it (returns live runState; replay / resume / cancel also available)
+curl -s -X POST localhost:3000/api/v1/graph-workflows/<id>/run \
+  -H 'Content-Type: application/json' -d '{"input":"build a profile page"}'
+```
+
+### Dispatch a task
+
+```bash
+curl -s localhost:3000/api/v1/tasks -H 'Content-Type: application/json' -d '{
+  "title": "Add dark mode",
+  "description": "Implement a dark-mode toggle in the dashboard",
+  "mode": "pipeline"
+}'
+```
+
+### Connect an MCP server at runtime
+
+```bash
+curl -s localhost:3000/api/v1/mcp/servers -H 'Content-Type: application/json' -d '{
+  "name": "fs",
+  "command": "npx",
+  "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+}'
+curl -s localhost:3000/api/v1/mcp/tools   # aggregated tools as mcp__fs__*
+```
+
+## Architecture
+
+This is a **pnpm monorepo** combining a TypeScript orchestrator, a React dashboard, and a Python agent runtime.
+
+```
+agent-factory/
+├── packages/
+│   ├── server/         # Express 5 orchestrator — agents, memory, pipelines, graph engine, MCP, queue, routes, WebSocket
+│   ├── dashboard/      # React 19 SPA — command center, agents, pipelines, Orchestrate canvas, Memory, costs
+│   ├── python-runtime/ # Agent Factory Python Runtime — agent subprocess runtime
+│   ├── cli/            # CLI tool
+│   └── shared/         # Shared TypeScript types
+├── agents/             # Agent registry + skill markdown
+├── templates/          # Pipeline templates (YAML)
+├── docs/               # Specs, architecture, memory design, diagrams
+└── docker-compose.yml
+```
+
+**Runtime flow:** `TaskQueue.enqueue()` → `AgentManager` (capacity/role) → `AgentRuntime` (TypeScript tool-loop or Python runtime; tracks cost/tokens/traces) → `PipelineEngine` / `GraphWorkflowEngine` advance dependent work → `EventBus` → WebSocket hub fans typed events to tenant-aware channels. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+
+<p align="center">
+  <img src="docs/diagrams/architecture-overview.png" alt="Architecture Overview" style="width: 100%; height: auto;">
+</p>
 
 ## Commands
 
@@ -204,14 +238,33 @@ WebSocket push notifications when tasks complete or require input. Optional WeCo
 |------|---------|
 | Install all deps | `pnpm install` |
 | Dev server + dashboard | `pnpm dev` |
-| Dev server only | `pnpm dev:server` |
-| Dev dashboard only | `pnpm dev:dashboard` |
+| Dev server / dashboard only | `pnpm dev:server` · `pnpm dev:dashboard` |
 | Build all packages | `pnpm build` |
 | Type-check | `pnpm lint` |
 | Server tests | `pnpm --filter @agent-factory/server test` |
 | Single test file | `pnpm --filter @agent-factory/server exec vitest run tests/<file>.test.ts` |
-| Dashboard tests | `pnpm --filter @agent-factory/dashboard test` |
-| Dashboard e2e | `pnpm --filter @agent-factory/dashboard test:e2e` |
+| Dashboard tests / e2e | `pnpm --filter @agent-factory/dashboard test` · `test:e2e` |
+
+## Contributing
+
+Contributions are welcome — bug fixes, documentation, new agents/skills, and feature ideas. Please run the type-check and tests (`pnpm lint`, `pnpm --filter @agent-factory/server test`) before opening a PR.
+
+## Acknowledgements
+
+Agent Factory stands on the open-source ecosystem — Express, React, Vite, Tailwind, BullMQ, better-sqlite3, OpenTelemetry, the OpenAI SDK, and the Model Context Protocol. Its memory and orchestration designs draw on ideas from MemGPT/Letta, Mem0, Zep/Graphiti, and the Stanford Generative Agents work.
+
+## Citation
+
+If Agent Factory is useful in your work, a citation is appreciated:
+
+```bibtex
+@software{agent_factory_2026,
+  title  = {Agent Factory: Autonomous Multi-Agent Orchestration Platform},
+  author = {Agent Factory contributors},
+  year   = {2026},
+  url    = {https://github.com/Zchary1106/agent-factory}
+}
+```
 
 ## License
 

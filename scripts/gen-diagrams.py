@@ -43,6 +43,11 @@ font_section = get_font(28)
 font_card = get_font(20)
 font_card_small = get_font_regular(16)
 font_tiny = get_font_regular(14)
+font_hero = get_font(48)
+font_large = get_font(32)
+font_mid = get_font(26)
+font_readable = get_font_regular(22)
+font_caption = get_font_regular(18)
 
 # Color palette
 BG = "#0d1117"
@@ -134,98 +139,71 @@ def labeled_arrow(draw, start, end, color, label=None, label_offset=(0, 0), widt
         mid = ((start[0] + end[0]) // 2 + label_offset[0], (start[1] + end[1]) // 2 + label_offset[1])
         text_center(draw, mid, label, font_tiny, color)
 
+def simple_card(draw, xy, title, subtitle, color, fill="#111827"):
+    x0, y0, x1, y1 = xy
+    height = y1 - y0
+    rounded_rect(draw, xy, 22, fill, color, 4)
+    if subtitle:
+        text_center(draw, ((x0 + x1) // 2, y0 + int(height * 0.36)), title, font_mid, color)
+        for i, line in enumerate(wrap_text(subtitle, 26)[:2]):
+            text_center(draw, ((x0 + x1) // 2, y0 + int(height * 0.68) + i * 24), line, font_caption, GRAY)
+    else:
+        text_center(draw, ((x0 + x1) // 2, (y0 + y1) // 2), title, font_mid, color)
+
+def band_title(draw, xy, title, color):
+    x0, y0, x1, _ = xy
+    text_center(draw, ((x0 + x1) // 2, y0 + 36), title, font_large, color)
+
 # ============================================================
 # Diagram 1: System Architecture Overview
 # ============================================================
 def gen_architecture():
-    W, H = 2400, 1800
+    W, H = 1600, 1050
     img = Image.new("RGB", (W, H), BG)
     d = ImageDraw.Draw(img)
 
-    # Header
-    text_center(d, (W // 2, 58), "Agent Factory — Detailed System Architecture", font_big_title, WHITE)
-    text_center(d, (W // 2, 108), "Dynamic workflows · task-aware model routing · tool governance · auditability", font_card_small, GRAY)
+    text_center(d, (W // 2, 58), "Agent Factory Architecture", font_hero, WHITE)
+    text_center(d, (W // 2, 104), "Dashboard -> Orchestrator -> Agent Runtime -> Governed Tools + Models", font_readable, GRAY)
 
-    # Dashboard layer
-    rounded_rect(d, (90, 150, 2310, 320), 26, "#111827", ACCENT_BLUE, 4)
-    text_center(d, (1200, 198), "Web Dashboard", font_section, ACCENT_BLUE)
-    text_center(d, (1200, 246), "Interaction Console · Work Queue · Orchestration Board · Pipelines · Skills · Models · Audit · Cost Dashboard", font_card_small, WHITE)
-    text_center(d, (1200, 286), "React 19 · Zustand · Vite · Tailwind · REST client · WebSocket subscriptions", font_tiny, GRAY)
+    dashboard = (110, 150, 1490, 260)
+    rounded_rect(d, dashboard, 28, "#111827", ACCENT_BLUE, 5)
+    text_center(d, (800, 195), "Web Dashboard", font_large, ACCENT_BLUE)
+    text_center(d, (800, 232), "Console · Work Queue · Board · Audit", font_readable, WHITE)
 
-    labeled_arrow(d, (1200, 320), (1200, 390), ACCENT_BLUE, "HTTP API + WebSocket", (170, -2), width=4)
+    api = (110, 335, 1490, 520)
+    rounded_rect(d, api, 28, "#111827", ACCENT_GREEN, 5)
+    band_title(d, api, "Express Orchestrator API", ACCENT_GREEN)
+    for xy, title, subtitle, color in [
+        ((150, 415, 360, 495), "Auth", "tenant + scope", ACCENT_GREEN),
+        ((390, 415, 600, 495), "Supervisor", "intent + plans", ACCENT_BLUE),
+        ((630, 415, 840, 495), "Queue", "tasks + deps", ACCENT_ORANGE),
+        ((870, 415, 1080, 495), "Pipelines", "fixed flows", ACCENT_CYAN),
+        ((1110, 415, 1320, 495), "Events", "WS + audit", ACCENT_PINK),
+    ]:
+        simple_card(d, xy, title, subtitle, color)
 
-    # API layer
-    rounded_rect(d, (90, 390, 2310, 770), 26, "#111827", ACCENT_GREEN, 4)
-    text_center(d, (1200, 438), "Express Orchestrator API", font_section, ACCENT_GREEN)
-    api_cards = [
-        ((145, 500, 535, 720), "Auth + Tenant", "Token auth, API key scopes, workspace isolation.", ACCENT_GREEN,
-         ["workspace filters", "tenant-aware routes", "scoped audit access"]),
-        ((575, 500, 965, 720), "Supervisor", "Classifies operator intent and owns dynamic workflow APIs.", ACCENT_BLUE,
-         ["dispatch + plan preview", "workflow cancel", "step controls"]),
-        ((1005, 500, 1395, 720), "Task Queue", "Queues work through BullMQ or the local in-memory fallback.", ACCENT_ORANGE,
-         ["priority + dependencies", "retry / cancel", "worker handoff"]),
-        ((1435, 500, 1825, 720), "Pipeline Engine", "Runs YAML templates, stage dependencies, and artifacts.", ACCENT_CYAN,
-         ["dependsOn DAG", "manual gates", "rollback support"]),
-        ((1865, 500, 2255, 720), "Realtime + Audit", "Publishes events and records execution policy snapshots.", ACCENT_PINK,
-         ["WebSocket channels", "trace spans", "audit reports"]),
-    ]
-    for xy, title, subtitle, color, bullets in api_cards:
-        diagram_card(d, xy, title, subtitle, color, bullets, wrap_chars=34)
+    runtime = (110, 600, 1490, 785)
+    rounded_rect(d, runtime, 28, "#111827", ACCENT_PURPLE, 5)
+    band_title(d, runtime, "Planning + Agent Execution", ACCENT_PURPLE)
+    for xy, title, subtitle, color in [
+        ((150, 680, 405, 760), "Dynamic Workflow", "DAG fan-out", ACCENT_PURPLE),
+        ((435, 680, 690, 760), "Agent Runtime", "TS loop / Python", ACCENT_GREEN),
+        ((720, 680, 975, 760), "Model Router", "cost + risk", ACCENT_CYAN),
+        ((1005, 680, 1260, 760), "Tool Governance", "policy + DLP", ACCENT_PINK),
+    ]:
+        simple_card(d, xy, title, subtitle, color)
 
-    # Planning / execution layer
-    labeled_arrow(d, (730, 770), (520, 890), ACCENT_ORANGE, "enqueue")
-    labeled_arrow(d, (1200, 770), (1200, 890), ACCENT_GREEN, "plan / route")
-    labeled_arrow(d, (1670, 770), (1880, 890), ACCENT_PINK, "events")
+    infra = (110, 865, 1490, 985)
+    rounded_rect(d, infra, 28, "#111827", GRAY, 5)
+    text_center(d, (800, 900), "Persistence + Runtime Infrastructure", font_large, GRAY)
+    text_center(d, (800, 945), "SQLite/Postgres · Redis/BullMQ · Workspaces · Model Endpoint · Audit Store", font_readable, WHITE)
 
-    rounded_rect(d, (90, 890, 2310, 1285), 26, "#111827", ACCENT_PURPLE, 4)
-    text_center(d, (1200, 938), "Planning + Agent Execution", font_section, ACCENT_PURPLE)
-    exec_cards = [
-        ((135, 985, 545, 1235), "Dynamic Workflow Runtime", "Builds executable plans, fans out many agent tasks, and aggregates validation.", ACCENT_PURPLE,
-         ["plan preview / JSON edit", "DAG dependencies", "rerun / skip / unblock"]),
-        ((590, 985, 960, 1235), "Agent Manager", "Selects available agent templates by role, skill, and capacity.", ACCENT_BLUE,
-         ["23 agent templates", "skill assignment", "concurrency limits"]),
-        ((1005, 985, 1375, 1235), "Agent Runtime", "Builds prompts, records traces, executes work, and streams progress.", ACCENT_GREEN,
-         ["TS Agent Loop", "Python Runtime", "progress events"]),
-        ((1420, 985, 1790, 1235), "Model Router", "Chooses a model by task risk, prompt size, retry count, and agent policy.", ACCENT_CYAN,
-         ["cheap/simple", "codex/code", "gpt-5.5/risk", "gpt-5.4/long context"]),
-        ((1835, 985, 2265, 1235), "Tool Governance", "Every tool call passes policy, sandbox, DLP, and guardian checks.", ACCENT_PINK,
-         ["allowlists + approval gates", "secret redaction", "dangerous command block"]),
-    ]
-    for xy, title, subtitle, color, bullets in exec_cards:
-        diagram_card(d, xy, title, subtitle, color, bullets, wrap_chars=36)
+    labeled_arrow(d, (800, 260), (800, 335), ACCENT_BLUE, "API / WS", (90, 0), width=5)
+    labeled_arrow(d, (800, 520), (800, 600), ACCENT_GREEN, "dispatch", (90, 0), width=5)
+    labeled_arrow(d, (800, 785), (800, 865), ACCENT_PURPLE, "persist", (85, 0), width=5)
 
-    # Data / infrastructure layer
-    labeled_arrow(d, (1200, 1285), (1200, 1380), ACCENT_PURPLE, "persist + observe", (160, -2), width=4)
-    rounded_rect(d, (90, 1380, 2310, 1665), 26, "#111827", GRAY, 4)
-    text_center(d, (1200, 1428), "Persistence + Runtime Infrastructure", font_section, GRAY)
-    data_cards = [
-        ((125, 1480, 475, 1630), "SQLite / Postgres", "Canonical state for tasks, workflows, agents, tools.", ACCENT_BLUE,
-         ["tasks", "executions", "dynamic_workflows"]),
-        ((505, 1480, 855, 1630), "Redis / BullMQ", "Optional distributed queue and worker execution.", ACCENT_RED,
-         ["agent-factory-tasks", "priority jobs"]),
-        ((885, 1480, 1235, 1630), "Workspaces", "Isolated task and pipeline files plus stage artifacts.", ACCENT_ORANGE,
-         [".agent-factory/workspaces", "test-report.json"]),
-        ((1265, 1480, 1615, 1630), "Skill + Model Stores", "Versioned prompts and model route registry.", ACCENT_PURPLE,
-         ["skill_versions", "model_routes", "usage stats"]),
-        ((1645, 1480, 1995, 1630), "Audit + Events", "Operator actions, policy snapshots, platform events.", ACCENT_PINK,
-         ["execution_audit", "operator_actions"]),
-        ((2025, 1480, 2275, 1630), "Model Endpoint", "OpenAI-compatible API for selected models.", ACCENT_CYAN,
-         ["gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.5"]),
-    ]
-    for xy, title, subtitle, color, bullets in data_cards:
-        diagram_card(d, xy, title, subtitle, color, bullets, wrap_chars=31)
-
-    # Cross-cutting rail
-    rounded_rect(d, (90, 1700, 2310, 1758), 16, "#0f172a", ACCENT_YELLOW, 3)
-    text_center(
-        d,
-        (1200, 1729),
-        "Cross-cutting controls: auth scopes · tenant isolation · runtime budgets · DLP · sandbox · approval inbox · cost tracking",
-        font_card_small,
-        ACCENT_YELLOW,
-    )
-
-    d.text((W - 270, H - 34), "Agent Factory © 2026", font=font_tiny, fill=GRAY)
+    rounded_rect(d, (1250, 45, 1490, 95), 18, "#0f172a", ACCENT_YELLOW, 3)
+    text_center(d, (1370, 70), "Safety by default", font_caption, ACCENT_YELLOW)
 
     img.save(os.path.join(OUT, "architecture-overview.png"), quality=95)
     print("✅ architecture-overview.png")
@@ -234,79 +212,54 @@ def gen_architecture():
 # Diagram 2: Dynamic Workflow Lifecycle
 # ============================================================
 def gen_dynamic_workflow_lifecycle():
-    W, H = 2200, 1300
+    W, H = 1600, 900
     img = Image.new("RGB", (W, H), BG)
     d = ImageDraw.Draw(img)
 
-    text_center(d, (W // 2, 58), "Dynamic Workflow Lifecycle", font_big_title, WHITE)
-    text_center(d, (W // 2, 108), "Operator intent -> executable DAG -> parallel agent tasks -> validation summary", font_card_small, GRAY)
+    text_center(d, (W // 2, 58), "Dynamic Workflow Lifecycle", font_hero, WHITE)
+    text_center(d, (W // 2, 104), "From one goal to a controlled multi-agent DAG", font_readable, GRAY)
 
-    steps = [
-        ((95, 180, 415, 410), "1. Intent", "The operator asks for a complex task in the Interaction Console or API.", ACCENT_BLUE,
-         ["goal + constraints", "workspace context", "priority"]),
-        ((465, 180, 785, 410), "2. Plan Preview", "Supervisor builds a deterministic executable plan before dispatch.", ACCENT_PURPLE,
-         ["editable JSON", "agent roles", "dependency graph"]),
-        ((835, 180, 1155, 410), "3. Persist Workflow", "The run is stored in dynamic_workflows with plan, status, and taskIds.", ACCENT_GREEN,
-         ["plan snapshot", "status history", "validation fields"]),
-        ((1205, 180, 1525, 410), "4. Fan-out Tasks", "Each ready step becomes a normal task with mapped dependencies.", ACCENT_ORANGE,
-         ["TaskQueue", "dependsOn", "agent assignment"]),
-        ((1575, 180, 1895, 410), "5. Observe + Control", "Operators inspect DAG progress, messages, audit, and artifacts.", ACCENT_PINK,
-         ["rerun / skip", "replace agent", "force unblock"]),
+    flow = [
+        ((80, 165, 310, 285), "Intent", "user goal", ACCENT_BLUE),
+        ((380, 165, 610, 285), "Plan", "preview + edit", ACCENT_PURPLE),
+        ((680, 165, 910, 285), "Persist", "workflow run", ACCENT_GREEN),
+        ((980, 165, 1210, 285), "Fan-out", "agent tasks", ACCENT_ORANGE),
+        ((1280, 165, 1510, 285), "Control", "rerun / skip", ACCENT_PINK),
     ]
+    for i, (xy, title, subtitle, color) in enumerate(flow):
+        simple_card(d, xy, title, subtitle, color)
+        if i < len(flow) - 1:
+            draw_arrow(d, (xy[2] + 20, 225), (flow[i + 1][0][0] - 20, 225), color, width=5)
 
-    for i, (xy, title, subtitle, color, bullets) in enumerate(steps):
-        diagram_card(d, xy, title, subtitle, color, bullets, wrap_chars=30)
-        if i < len(steps) - 1:
-            x1 = xy[2]
-            next_x0 = steps[i + 1][0][0]
-            draw_arrow(d, (x1 + 12, 295), (next_x0 - 12, 295), color, width=4)
+    simple_card(d, (600, 365, 1000, 495), "Aggregate", "validate + summarize", ACCENT_CYAN)
+    labeled_arrow(d, (1395, 285), (1000, 365), ACCENT_PINK, "events", (40, -18), width=5)
+    labeled_arrow(d, (795, 285), (795, 365), ACCENT_GREEN, "state", (70, 0), width=5)
 
-    diagram_card(
-        d,
-        (720, 500, 1480, 725),
-        "6. Completion Aggregator",
-        "The workflow runtime listens for task terminal events, combines step outputs, and writes a validation summary.",
-        ACCENT_CYAN,
-        ["all steps terminal", "failed/skipped counts", "result + evidence links"],
-        wrap_chars=64,
-    )
-
-    labeled_arrow(d, (1735, 410), (1480, 500), ACCENT_PINK, "events", (20, -18), width=4)
-    labeled_arrow(d, (1100, 410), (1100, 500), ACCENT_GREEN, "persist", (90, -4), width=4)
-
-    # DAG detail row
-    rounded_rect(d, (95, 805, 2105, 1215), 26, "#111827", ACCENT_PURPLE, 4)
-    text_center(d, (1100, 855), "Executable DAG Detail", font_section, ACCENT_PURPLE)
-
-    dag_nodes = [
-        ((190, 940, 430, 1075), "Spec", "PM / planner", ACCENT_BLUE),
-        ((570, 900, 810, 1035), "Design", "UI / architecture", ACCENT_PURPLE),
-        ((570, 1060, 810, 1195), "Data/API", "backend developer", ACCENT_GREEN),
-        ((950, 980, 1190, 1115), "Implementation", "developer", ACCENT_ORANGE),
-        ((1330, 900, 1570, 1035), "QA", "test automation", ACCENT_YELLOW),
-        ((1330, 1060, 1570, 1195), "Security", "security reviewer", ACCENT_PINK),
-        ((1710, 980, 1950, 1115), "Validation", "aggregate result", ACCENT_CYAN),
+    rounded_rect(d, (90, 580, 1510, 850), 30, "#111827", ACCENT_PURPLE, 5)
+    text_center(d, (800, 620), "Example DAG", font_large, ACCENT_PURPLE)
+    nodes = [
+        ((150, 705, 320, 780), "Spec", "", ACCENT_BLUE),
+        ((450, 670, 620, 745), "Design", "", ACCENT_PURPLE),
+        ((450, 765, 620, 840), "API", "", ACCENT_GREEN),
+        ((750, 720, 950, 795), "Build", "", ACCENT_ORANGE),
+        ((1060, 670, 1230, 745), "QA", "", ACCENT_YELLOW),
+        ((1060, 765, 1230, 840), "Security", "", ACCENT_PINK),
+        ((1320, 720, 1490, 795), "Done", "", ACCENT_CYAN),
     ]
-    for xy, title, subtitle, color in dag_nodes:
-        diagram_card(d, xy, title, subtitle, color, [], wrap_chars=22)
+    for xy, title, subtitle, color in nodes:
+        simple_card(d, xy, title, subtitle, color)
+    for start, end, color in [
+        ((320, 742), (450, 708), ACCENT_BLUE),
+        ((320, 742), (450, 803), ACCENT_BLUE),
+        ((620, 708), (750, 758), ACCENT_PURPLE),
+        ((620, 803), (750, 758), ACCENT_GREEN),
+        ((950, 758), (1060, 708), ACCENT_ORANGE),
+        ((950, 758), (1060, 803), ACCENT_ORANGE),
+        ((1230, 708), (1320, 758), ACCENT_YELLOW),
+        ((1230, 803), (1320, 758), ACCENT_PINK),
+    ]:
+        draw_arrow(d, start, end, color, width=5)
 
-    edges = [
-        ((430, 1008), (570, 967), ACCENT_BLUE),
-        ((430, 1008), (570, 1127), ACCENT_BLUE),
-        ((810, 967), (950, 1048), ACCENT_PURPLE),
-        ((810, 1127), (950, 1048), ACCENT_GREEN),
-        ((1190, 1048), (1330, 967), ACCENT_ORANGE),
-        ((1190, 1048), (1330, 1127), ACCENT_ORANGE),
-        ((1570, 967), (1710, 1048), ACCENT_YELLOW),
-        ((1570, 1127), (1710, 1048), ACCENT_PINK),
-    ]
-    for start, end, color in edges:
-        draw_arrow(d, start, end, color, width=4)
-
-    rounded_rect(d, (95, 1230, 2105, 1280), 16, "#0f172a", ACCENT_YELLOW, 3)
-    text_center(d, (1100, 1255), "Step controls are persisted as operator actions and reflected back through WebSocket workflow events.", font_card_small, ACCENT_YELLOW)
-
-    d.text((W - 270, H - 18), "Agent Factory © 2026", font=font_tiny, fill=GRAY)
     img.save(os.path.join(OUT, "dynamic-workflow-lifecycle.png"), quality=95)
     print("✅ dynamic-workflow-lifecycle.png")
 
@@ -314,59 +267,40 @@ def gen_dynamic_workflow_lifecycle():
 # Diagram 3: Runtime Governance Chain
 # ============================================================
 def gen_runtime_governance():
-    W, H = 2200, 1250
+    W, H = 1600, 900
     img = Image.new("RGB", (W, H), BG)
     d = ImageDraw.Draw(img)
 
-    text_center(d, (W // 2, 58), "Runtime Governance and Tool Safety", font_big_title, WHITE)
-    text_center(d, (W // 2, 108), "Every model output and tool call is constrained, scanned, budgeted, and auditable", font_card_small, GRAY)
+    text_center(d, (W // 2, 58), "Runtime Governance", font_hero, WHITE)
+    text_center(d, (W // 2, 104), "Every tool call passes policy, sandbox, DLP, and audit", font_readable, GRAY)
 
     chain = [
-        ((95, 200, 405, 430), "Agent Runtime", "Build prompt, select model, create execution, and stream events.", ACCENT_GREEN,
-         ["policy snapshot", "runtime budgets", "trace spans"]),
-        ((465, 200, 775, 430), "Tool Registry", "Resolves known tools and risk metadata before execution.", ACCENT_BLUE,
-         ["readOnly / network", "writesWorkspace", "approvalRequired"]),
-        ((835, 200, 1145, 430), "Tool Policy", "Enforces agent allowlists, domain rules, and approval gates.", ACCENT_PURPLE,
-         ["allowed tools", "blocked metadata", "operator approval"]),
-        ((1205, 200, 1515, 430), "Sandbox", "Confines filesystem, shell, and network operations.", ACCENT_ORANGE,
-         ["workspace paths", "command guard", "timeout budgets"]),
-        ((1575, 200, 1885, 430), "DLP + Guardian", "Scans inputs, outputs, logs, and artifacts for unsafe data.", ACCENT_PINK,
-         ["PII redaction", "secret blocking", "prompt injection"]),
+        ((80, 185, 300, 305), "Runtime", "request", ACCENT_GREEN),
+        ((370, 185, 590, 305), "Registry", "known tools", ACCENT_BLUE),
+        ((660, 185, 880, 305), "Policy", "allow / approve", ACCENT_PURPLE),
+        ((950, 185, 1170, 305), "Sandbox", "confine", ACCENT_ORANGE),
+        ((1240, 185, 1460, 305), "DLP", "redact / block", ACCENT_PINK),
     ]
-
-    for i, (xy, title, subtitle, color, bullets) in enumerate(chain):
-        diagram_card(d, xy, title, subtitle, color, bullets, wrap_chars=30)
+    for i, (xy, title, subtitle, color) in enumerate(chain):
+        simple_card(d, xy, title, subtitle, color)
         if i < len(chain) - 1:
-            draw_arrow(d, (xy[2] + 14, 315), (chain[i + 1][0][0] - 14, 315), color, width=4)
+            draw_arrow(d, (xy[2] + 20, 245), (chain[i + 1][0][0] - 20, 245), color, width=5)
 
-    diagram_card(
-        d,
-        (720, 535, 1480, 780),
-        "Audit Report",
-        "Allowed calls, blocked calls, DLP findings, model route, token/cost usage, and runtime limits are persisted for explainability.",
-        ACCENT_CYAN,
-        ["execution_audit_reports", "operator_actions", "task / execution events"],
-        wrap_chars=64,
-    )
-    labeled_arrow(d, (1730, 430), (1480, 535), ACCENT_PINK, "sanitized events", (70, -28), width=4)
-    labeled_arrow(d, (250, 430), (720, 535), ACCENT_GREEN, "execution metadata", (40, -20), width=4)
+    simple_card(d, (600, 440, 1000, 570), "Audit Report", "why it ran or stopped", ACCENT_CYAN)
+    labeled_arrow(d, (190, 305), (600, 440), ACCENT_GREEN, "metadata", (10, -20), width=5)
+    labeled_arrow(d, (1350, 305), (1000, 440), ACCENT_PINK, "findings", (20, -20), width=5)
 
-    # Decision outcomes
-    rounded_rect(d, (95, 875, 2105, 1135), 26, "#111827", GRAY, 4)
-    text_center(d, (1100, 925), "Execution Outcomes", font_section, GRAY)
-    outcomes = [
-        ((155, 985, 555, 1095), "Allowed", "Tool executes and sanitized result returns to the model.", ACCENT_GREEN),
-        ((640, 985, 1040, 1095), "Requires Approval", "Execution pauses and creates an approval card / inbox item.", ACCENT_YELLOW),
-        ((1125, 985, 1525, 1095), "Blocked", "Dangerous command, forbidden path, domain, or policy violation.", ACCENT_RED),
-        ((1610, 985, 2010, 1095), "Redacted", "Sensitive output is masked before storage or display.", ACCENT_PINK),
-    ]
-    for xy, title, subtitle, color in outcomes:
-        diagram_card(d, xy, title, subtitle, color, [], wrap_chars=34)
+    rounded_rect(d, (120, 690, 1480, 820), 26, "#111827", GRAY, 5)
+    text_center(d, (800, 728), "Possible Outcomes", font_large, GRAY)
+    for xy, label, color in [
+        ((180, 755, 430, 800), "Allowed", ACCENT_GREEN),
+        ((500, 755, 750, 800), "Needs Approval", ACCENT_YELLOW),
+        ((820, 755, 1070, 800), "Blocked", ACCENT_RED),
+        ((1140, 755, 1390, 800), "Redacted", ACCENT_PINK),
+    ]:
+        rounded_rect(d, xy, 16, "#0f172a", color, 3)
+        text_center(d, ((xy[0] + xy[2]) // 2, (xy[1] + xy[3]) // 2), label, font_readable, color)
 
-    rounded_rect(d, (95, 1165, 2105, 1218), 16, "#0f172a", ACCENT_YELLOW, 3)
-    text_center(d, (1100, 1191), "Guardrails apply to TS Agent Loop, Python Runtime output, cached artifacts, task outputs, and dashboard-visible logs.", font_card_small, ACCENT_YELLOW)
-
-    d.text((W - 270, H - 18), "Agent Factory © 2026", font=font_tiny, fill=GRAY)
     img.save(os.path.join(OUT, "runtime-governance.png"), quality=95)
     print("✅ runtime-governance.png")
 
@@ -529,7 +463,64 @@ def gen_tech_stack():
     img.save(os.path.join(OUT, "tech-stack.png"), quality=95)
     print("✅ tech-stack.png")
 
+# ============================================================
+# Diagram 0: Header schema (left-to-right harness flow)
+# ============================================================
+def gen_schema():
+    W, H = 1600, 900
+    img = Image.new("RGB", (W, H), BG)
+    d = ImageDraw.Draw(img)
+
+    text_center(d, (W // 2, 52), "Agent Factory — Multi-Agent Orchestration Harness", font_hero, WHITE)
+    text_center(d, (W // 2, 100), "One request -> routed -> orchestrated -> executed by a governed agent harness -> shipped", font_readable, GRAY)
+
+    # Row 1: the end-to-end flow
+    flow = [
+        (80, "Request", "one-line goal", ACCENT_BLUE),
+        (330, "Supervisor", "intent + routing", ACCENT_CYAN),
+        (580, "Orchestrator", "pipeline / DAG / master", ACCENT_PURPLE),
+        (830, "Agent Harness", "tool-loop + context", ACCENT_GREEN),
+        (1080, "Governed Tools", "built-in + MCP", ACCENT_PINK),
+        (1330, "Output", "code / review / deploy", ACCENT_ORANGE),
+    ]
+    cw = 220
+    for x, title, subtitle, color in flow:
+        simple_card(d, (x, 200, x + cw, 360), title, subtitle, color)
+    for i in range(len(flow) - 1):
+        x_end = flow[i][0] + cw
+        x_next = flow[i + 1][0]
+        labeled_arrow(d, (x_end, 280), (x_next, 280), GRAY, width=4)
+
+    # Row 2: harness internals band (under the Agent Harness column)
+    band = (80, 440, 1550, 630)
+    rounded_rect(d, band, 26, "#111827", ACCENT_GREEN, 4)
+    band_title(d, band, "Agent Harness Internals", ACCENT_GREEN)
+    for xy, title, subtitle, color in [
+        ((120, 515, 440, 605), "Tool-Calling Loop", "multi-turn fn-calls", ACCENT_GREEN),
+        ((470, 515, 770, 605), "Context Manager", "compress + recall", ACCENT_CYAN),
+        ((800, 515, 1090, 605), "Unified Memory", "4-layer + graph", ACCENT_PURPLE),
+        ((1120, 515, 1510, 605), "Model Gateway", "providers + streaming", ACCENT_YELLOW),
+    ]:
+        simple_card(d, xy, title, subtitle, color)
+    labeled_arrow(d, (940, 360), (940, 440), ACCENT_GREEN, "runs", (60, 0), width=5)
+
+    # Row 3: cross-cutting platform band
+    base = (80, 690, 1550, 840)
+    rounded_rect(d, base, 26, "#111827", GRAY, 4)
+    band_title(d, base, "Governance  ·  Observability  ·  Persistence", GRAY)
+    for xy, title, subtitle, color in [
+        ((120, 762, 560, 828), "Governance", "policy / sandbox / DLP", ACCENT_PINK),
+        ((590, 762, 1030, 828), "Observability", "OTel traces + metrics", ACCENT_BLUE),
+        ((1060, 762, 1510, 828), "Persistence", "SQLite/PG · Redis/BullMQ", GRAY),
+    ]:
+        simple_card(d, xy, title, subtitle, color)
+    labeled_arrow(d, (815, 630), (815, 690), GRAY, "secured + traced", (110, 0), width=5)
+
+    img.save(os.path.join(OUT, "schema.png"), quality=95)
+    print("✅ schema.png")
+
 # Generate all
+gen_schema()
 gen_architecture()
 gen_dynamic_workflow_lifecycle()
 gen_runtime_governance()

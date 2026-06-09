@@ -3,6 +3,7 @@ import { createTask, getTask, updateTask, listTasks, addTaskLog } from '../db/mo
 import { getAgent, listAgents } from '../db/models/agent.js';
 import { eventBus } from '../events/event-bus.js';
 import { TaskQueue } from '../queue/task-queue.js';
+import { getMemoryService } from '../memory/memory-service.js';
 import type { Task } from '../types.js';
 
 interface SubTask {
@@ -27,6 +28,15 @@ export class MasterAgent {
     addTaskLog(parentTask.id, 'info', 'Master Agent analyzing and decomposing task...', 'master');
     eventBus.emit('task:log', { taskId: parentTask.id, agentId: 'master', workspaceId: parentTask.workspaceId, message: 'Decomposing task...' });
 
+    // Recall lessons / past decompositions for similar work to guide the breakdown.
+    const memoryBlock = await getMemoryService().buildContextBlock({
+      query: parentTask.description || parentTask.title,
+      scope: parentTask.workspaceId ? { workspace: parentTask.workspaceId } : undefined,
+      types: ['procedural', 'episodic', 'semantic'],
+      heading: '## Lessons from similar past work (use these to inform the breakdown)',
+      tokenBudget: 800,
+    }).catch(() => '');
+
     const prompt = `You are a project manager AI. Analyze the following task and break it down into atomic subtasks.
 
 For each subtask, provide:
@@ -36,7 +46,7 @@ For each subtask, provide:
 - dependencies: array of subtask indices (0-based) that must complete before this one
 
 IMPORTANT: Output ONLY a valid JSON array. No markdown, no explanation.
-
+${memoryBlock ? `\n${memoryBlock}\n` : ''}
 Task: ${parentTask.description || parentTask.title}
 
 Example output:

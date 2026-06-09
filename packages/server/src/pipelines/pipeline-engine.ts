@@ -10,6 +10,7 @@ import { eventBus } from '../events/event-bus.js';
 import { TaskQueue } from '../queue/task-queue.js';
 import { AgentManager } from '../agents/agent-manager.js';
 import { contextManager } from './context-manager.js';
+import { getReflectionService } from '../memory/reflection.js';
 import { workspaceManager } from '../workspace/workspace-manager.js';
 import { createTestReportFromOutput, isTestingStage } from '../testing/test-report.js';
 import { saveCheckpoint, getCompletedStageIndices } from './checkpoint.js';
@@ -130,8 +131,8 @@ export class PipelineEngine {
     const stage = stages[stageIndex];
     if (!stage) return;
 
-    // Use context manager for optimized input building
-    const prompt = contextManager.buildStageInput(pipeline, stageIndex);
+    // Use context manager for optimized input building (with long-term memory recall)
+    const prompt = await contextManager.buildStageInputWithMemory(pipeline, stageIndex);
 
     // Determine workspace — use pipeline workspace if available, else cwd
     const ws = workspaceManager.getWorkspaceInfo(pipelineId, 'pipeline');
@@ -259,6 +260,12 @@ export class PipelineEngine {
     if (allDone) {
       updatePipeline(pipeline.id, { status: 'done', completedAt: new Date().toISOString() });
       eventBus.emit('pipeline:done', { pipelineId: pipeline.id, workspaceId: pipeline.workspaceId });
+
+      // Reflect on the completed run → store insights + a reusable procedural lesson.
+      const finished = getPipeline(pipeline.id);
+      if (finished) {
+        getReflectionService().reflectOnPipeline(finished).catch(() => { /* non-critical */ });
+      }
 
       // Merge workspace back if git worktree
       if (ws?.isGitWorktree) {

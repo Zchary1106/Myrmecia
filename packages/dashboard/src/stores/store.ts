@@ -23,7 +23,7 @@ import type {
   ToolExecution,
 } from '@agent-factory/shared';
 
-export type DashboardView = 'command' | 'console' | 'agents' | 'tools' | 'models' | 'skills' | 'orchestrator' | 'board' | 'tasks' | 'timeline' | 'inbox' | 'observability' | 'audit' | 'settings' | 'cost';
+export type DashboardView = 'command' | 'console' | 'agents' | 'tools' | 'models' | 'skills' | 'orchestrator' | 'board' | 'tasks' | 'timeline' | 'inbox' | 'observability' | 'audit' | 'settings' | 'cost' | 'memory' | 'orchestrate';
 
 // Legacy ChatMessage for backward compat
 export interface ChatMessage {

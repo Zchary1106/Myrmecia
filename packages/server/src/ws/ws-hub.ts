@@ -124,6 +124,17 @@ export class WSHub {
       channels.push('agents');
       channels.push('executions');
     }
+    // Visual graph workflows
+    if (event.type.startsWith('graph:')) {
+      channels.push('graphs');
+      if (p?.workflowId) channels.push(`graph:${p.workflowId}`);
+    }
+    // Token streaming from agent executions
+    if (event.type.startsWith('token:')) {
+      channels.push('executions');
+      if (p?.executionId) channels.push(`execution:${p.executionId}`);
+      if (p?.taskId) channels.push(`task:${p.taskId}`);
+    }
     return channels;
   }
 

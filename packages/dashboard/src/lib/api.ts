@@ -365,4 +365,82 @@ export const api = {
     list: () => request<Array<{ id: string; ownerId: string; name: string; expiresAt: string; createdAt: string }>>('/artifacts'),
     get: (id: string) => request<{ id: string; ownerId: string; name: string; content: string; expiresAt: string; createdAt: string }>(`/artifacts/${id}`),
   },
+  memory: {
+    list: (params?: { type?: string; limit?: number }) =>
+      request<MemoryItemDTO[]>(`/memory${params ? '?' + new URLSearchParams(params as any) : ''}`),
+    stats: () => request<{ counts: Record<string, number>; total: number }>('/memory/stats'),
+    recall: (query: string, types?: string[], topK?: number) =>
+      request<ScoredMemoryDTO[]>('/memory/recall', { method: 'POST', body: JSON.stringify({ query, types, topK }) }),
+    add: (content: string, opts?: { type?: string; importance?: number; summary?: string }) =>
+      request<MemoryItemDTO>('/memory', { method: 'POST', body: JSON.stringify({ content, ...opts }) }),
+    remove: (id: string) => request<{ ok: boolean; id: string }>(`/memory/${id}`, { method: 'DELETE' }),
+  },
+  graphWorkflows: {
+    list: () => request<GraphWorkflowDTO[]>('/graph-workflows'),
+    get: (id: string) => request<GraphWorkflowDTO>(`/graph-workflows/${id}`),
+    create: (data: { name: string; description?: string; graph?: GraphDefDTO; input?: string }) =>
+      request<GraphWorkflowDTO>('/graph-workflows', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id: string, data: { name?: string; description?: string; graph?: GraphDefDTO; input?: string }) =>
+      request<GraphWorkflowDTO>(`/graph-workflows/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+    remove: (id: string) => request<{ ok: boolean }>(`/graph-workflows/${id}`, { method: 'DELETE' }),
+    run: (id: string, input?: string) => request<GraphWorkflowDTO>(`/graph-workflows/${id}/run`, { method: 'POST', body: JSON.stringify({ input }) }),
+    replay: (id: string, input?: string) => request<GraphWorkflowDTO>(`/graph-workflows/${id}/replay`, { method: 'POST', body: JSON.stringify({ input }) }),
+    resume: (id: string) => request<GraphWorkflowDTO>(`/graph-workflows/${id}/resume`, { method: 'POST' }),
+    cancel: (id: string) => request<GraphWorkflowDTO>(`/graph-workflows/${id}/cancel`, { method: 'POST' }),
+    events: (id: string, runId?: string) =>
+      request<Array<{ nodeId?: string; type: string; data: any; createdAt: string }>>(`/graph-workflows/${id}/events${runId ? `?runId=${runId}` : ''}`),
+  },
 };
+
+export interface GraphNodeDTO {
+  id: string;
+  label?: string;
+  agentId?: string;
+  agentRole?: string;
+  prompt?: string;
+  position?: { x: number; y: number };
+}
+export interface GraphEdgeDTO { id: string; source: string; target: string }
+export interface GraphDefDTO { nodes: GraphNodeDTO[]; edges: GraphEdgeDTO[] }
+export interface GraphNodeStateDTO {
+  status: 'pending' | 'running' | 'done' | 'failed' | 'skipped';
+  taskId?: string;
+  agentId?: string;
+  output?: string;
+  error?: string;
+}
+export interface GraphWorkflowDTO {
+  id: string;
+  name: string;
+  description?: string;
+  workspaceId?: string;
+  graph: GraphDefDTO;
+  status: 'draft' | 'running' | 'done' | 'failed' | 'cancelled';
+  input?: string;
+  runState?: { runId: string; input: string; nodes: Record<string, GraphNodeStateDTO>; startedAt: string };
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+}
+
+export interface MemoryItemDTO {
+  id: string;
+  type: 'working' | 'episodic' | 'semantic' | 'procedural';
+  scope: Record<string, string | undefined>;
+  content: string;
+  summary?: string;
+  importance: number;
+  success?: number;
+  quality?: number;
+  sourceType?: string;
+  createdAt: string;
+  lastAccessedAt?: string;
+  accessCount: number;
+  metadata: Record<string, unknown>;
+}
+
+export interface ScoredMemoryDTO {
+  item: MemoryItemDTO;
+  score: number;
+  relevance: number;
+}
