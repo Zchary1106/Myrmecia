@@ -606,7 +606,7 @@ export function CommandCenter() {
           <input
             value={commandInput}
             onChange={event => setCommandInput(event.target.value)}
-            placeholder="Tell the agent factory what to build, fix, investigate, or review..."
+            placeholder="Tell Myrmecia what to build, fix, investigate, or review..."
             disabled={dispatching}
             className="flex-1 bg-background border border-border rounded-xl px-4 py-3 text-sm focus:border-accent outline-none placeholder-gray-600"
           />
