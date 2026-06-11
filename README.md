@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="packages/dashboard/public/myrmecia-logo.png" alt="Myrmecia" style="width: 46%; height: auto;">
+  <img src="packages/dashboard/public/myrmecia-banner.svg" alt="Myrmecia — Multi-Agent Orchestration" width="100%">
 </p>
 
 <div align="center" style="line-height: 1;">
