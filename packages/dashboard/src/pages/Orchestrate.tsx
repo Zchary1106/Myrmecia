@@ -26,11 +26,15 @@ export function OrchestratePage() {
   const [nodes, setNodes] = useState<GraphNodeDTO[]>([]);
   const [edges, setEdges] = useState<GraphEdgeDTO[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
-  const [connectFrom, setConnectFrom] = useState<string | null>(null);
+  const [connecting, setConnecting] = useState<string | null>(null);
+  const [cursor, setCursor] = useState<{ x: number; y: number } | null>(null);
   const [run, setRun] = useState<GraphWorkflowDTO | null>(null);
   const [error, setError] = useState('');
   const canvasRef = useRef<HTMLDivElement>(null);
   const drag = useRef<{ id: string; dx: number; dy: number } | null>(null);
+  const connectRef = useRef<string | null>(null);
+  const nodesRef = useRef<GraphNodeDTO[]>([]);
+  nodesRef.current = nodes;
   const wfIdRef = useRef<string | null>(null);
   useEffect(() => { wfIdRef.current = wfId; }, [wfId]);
 
@@ -44,7 +48,7 @@ export function OrchestratePage() {
       const wf = await api.graphWorkflows.get(id);
       setWfId(wf.id); setName(wf.name); setInput(wf.input || '');
       setNodes(layout(wf.graph.nodes)); setEdges(wf.graph.edges); setRun(wf);
-      setSelected(null); setConnectFrom(null);
+      setSelected(null); setConnecting(null); connectRef.current = null;
     } catch (e: any) { setError(e.message); }
   }, []);
 
@@ -97,50 +101,91 @@ export function OrchestratePage() {
   const nodeState = (id: string): GraphNodeStateDTO['status'] | 'idle' => run?.runState?.nodes[id]?.status ?? 'idle';
 
   // ---- canvas interactions ----
+  const canvasPos = (e: { clientX: number; clientY: number }) => {
+    const r = canvasRef.current!.getBoundingClientRect();
+    return { x: e.clientX - r.left, y: e.clientY - r.top };
+  };
+
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault();
     const agentId = e.dataTransfer.getData('agentId');
     const agent = agents.find(a => a.id === agentId);
     if (!agent) return;
-    const rect = canvasRef.current!.getBoundingClientRect();
-    const position = { x: e.clientX - rect.left - NODE_W / 2, y: e.clientY - rect.top - NODE_H / 2 };
+    const p = canvasPos(e);
+    const position = { x: p.x - NODE_W / 2, y: p.y - NODE_H / 2 };
     setNodes(prev => [...prev, { id: nid(), label: agent.name, agentId: agent.id, agentRole: agent.role, prompt: '', position }]);
   };
 
   const startDrag = (e: React.MouseEvent, id: string) => {
     const node = nodes.find(n => n.id === id);
     if (!node?.position) return;
-    const rect = canvasRef.current!.getBoundingClientRect();
-    drag.current = { id, dx: e.clientX - rect.left - node.position.x, dy: e.clientY - rect.top - node.position.y };
+    const p = canvasPos(e);
+    drag.current = { id, dx: p.x - node.position.x, dy: p.y - node.position.y };
   };
-  useEffect(() => {
-    const move = (e: MouseEvent) => {
-      if (!drag.current) return;
-      const rect = canvasRef.current!.getBoundingClientRect();
-      const { id, dx, dy } = drag.current;
-      setNodes(prev => prev.map(n => n.id === id ? { ...n, position: { x: e.clientX - rect.left - dx, y: e.clientY - rect.top - dy } } : n));
-    };
-    const up = () => { drag.current = null; };
-    window.addEventListener('mousemove', move);
-    window.addEventListener('mouseup', up);
-    return () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); };
-  }, []);
 
-  const clickNode = (id: string) => {
-    if (connectFrom && connectFrom !== id) {
-      const exists = edges.some(ed => ed.source === connectFrom && ed.target === id);
-      if (!exists) setEdges(prev => [...prev, { id: nid('e'), source: connectFrom, target: id }]);
-      setConnectFrom(null);
-      return;
-    }
-    setSelected(id);
+  // Begin dragging a connection out of a node's output port.
+  const startConnect = (e: React.MouseEvent, id: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    connectRef.current = id;
+    setConnecting(id);
+    setCursor(canvasPos(e));
   };
 
   const removeNode = (id: string) => {
     setNodes(prev => prev.filter(n => n.id !== id));
     setEdges(prev => prev.filter(e => e.source !== id && e.target !== id));
-    if (selected === id) setSelected(null);
+    setSelected(prev => (prev === id ? null : prev));
   };
+
+  const removeEdge = (id: string) => setEdges(prev => prev.filter(e => e.id !== id));
+
+  // Node move (drag.current) + connection drag (connectRef.current).
+  useEffect(() => {
+    const move = (e: MouseEvent) => {
+      if (drag.current) {
+        const p = canvasPos(e);
+        const { id, dx, dy } = drag.current;
+        setNodes(prev => prev.map(n => n.id === id ? { ...n, position: { x: p.x - dx, y: p.y - dy } } : n));
+      } else if (connectRef.current) {
+        setCursor(canvasPos(e));
+      }
+    };
+    const up = (e: MouseEvent) => {
+      const from = connectRef.current;
+      if (from) {
+        const p = canvasPos(e);
+        const target = nodesRef.current.find(n =>
+          n.id !== from && n.position &&
+          p.x >= n.position.x && p.x <= n.position.x + NODE_W &&
+          p.y >= n.position.y && p.y <= n.position.y + NODE_H);
+        if (target) {
+          setEdges(prev => prev.some(ed => ed.source === from && ed.target === target.id)
+            ? prev
+            : [...prev, { id: nid('e'), source: from, target: target.id }]);
+        }
+      }
+      drag.current = null;
+      connectRef.current = null;
+      setConnecting(null);
+      setCursor(null);
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+    return () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); };
+  }, []);
+
+  // Delete the selected node with Delete / Backspace (ignored while typing).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Delete' && e.key !== 'Backspace') return;
+      const tag = document.activeElement?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if (selected) { e.preventDefault(); removeNode(selected); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [selected]);
 
   // ---- persistence / run ----
   const save = async () => {
@@ -173,11 +218,12 @@ export function OrchestratePage() {
   const cancel = async () => { if (wfId) { try { setRun(await api.graphWorkflows.cancel(wfId)); } catch (e: any) { setError(e.message); } } };
 
   const newWorkflow = () => {
-    setWfId(null); setName('Untitled Orchestration'); setInput(''); setNodes([]); setEdges([]); setRun(null); setSelected(null);
+    setWfId(null); setName('Untitled Orchestration'); setInput(''); setNodes([]); setEdges([]); setRun(null); setSelected(null); setConnecting(null); connectRef.current = null;
   };
 
   const selectedNode = nodes.find(n => n.id === selected) || null;
-  const center = (n: GraphNodeDTO) => ({ x: (n.position?.x ?? 0) + NODE_W / 2, y: (n.position?.y ?? 0) + NODE_H / 2 });
+  const outPort = (n: GraphNodeDTO) => ({ x: (n.position?.x ?? 0) + NODE_W, y: (n.position?.y ?? 0) + NODE_H / 2 });
+  const inPort = (n: GraphNodeDTO) => ({ x: (n.position?.x ?? 0), y: (n.position?.y ?? 0) + NODE_H / 2 });
 
   const statusBadge = useMemo(() => {
     const s = run?.status || 'draft';
@@ -238,13 +284,13 @@ export function OrchestratePage() {
           ref={canvasRef}
           onDrop={onDrop}
           onDragOver={e => e.preventDefault()}
-          onClick={() => { setSelected(null); setConnectFrom(null); }}
+          onClick={() => setSelected(null)}
           className="relative min-h-0 flex-1 overflow-auto bg-background"
           style={{ backgroundImage: 'radial-gradient(circle, rgba(255,255,255,0.06) 1px, transparent 1px)', backgroundSize: '22px 22px' }}
         >
           {nodes.length === 0 && (
             <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-sm text-gray-600">
-              从左侧把智能体拖到这里，连线即可手动编排
+              从左侧把智能体拖到这里 · 从节点右侧圆点拖出连线 · 选中后按 Del 删除
             </div>
           )}
 
@@ -257,9 +303,21 @@ export function OrchestratePage() {
             {edges.map(e => {
               const s = nodes.find(n => n.id === e.source); const t = nodes.find(n => n.id === e.target);
               if (!s || !t) return null;
-              const a = center(s); const b = center(t);
-              return <line key={e.id} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="#6b7280" strokeWidth={2} markerEnd="url(#arrow)" />;
+              const a = outPort(s); const b = inPort(t);
+              return (
+                <g key={e.id} style={{ pointerEvents: 'stroke', cursor: 'pointer' }} onClick={() => removeEdge(e.id)}>
+                  <title>点击删除连线</title>
+                  <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="transparent" strokeWidth={16} />
+                  <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="#6b7280" strokeWidth={2} markerEnd="url(#arrow)" className="transition-colors hover:stroke-red-400" />
+                </g>
+              );
             })}
+            {connecting && cursor && (() => {
+              const s = nodes.find(n => n.id === connecting);
+              if (!s?.position) return null;
+              const a = outPort(s);
+              return <line x1={a.x} y1={a.y} x2={cursor.x} y2={cursor.y} stroke="#58a6ff" strokeWidth={2} strokeDasharray="5 4" markerEnd="url(#arrow)" />;
+            })()}
           </svg>
 
           {nodes.map(n => {
@@ -268,24 +326,34 @@ export function OrchestratePage() {
               <div
                 key={n.id}
                 onMouseDown={e => { e.stopPropagation(); startDrag(e, n.id); }}
-                onClick={e => { e.stopPropagation(); clickNode(n.id); }}
+                onClick={e => { e.stopPropagation(); setSelected(n.id); }}
                 className={cn(
                   'absolute flex cursor-move select-none flex-col rounded-xl border-2 bg-surface px-3 py-2 shadow-lg',
                   statusColor[st], selected === n.id && 'ring-2 ring-accent/40',
-                  connectFrom === n.id && 'ring-2 ring-blue-400',
+                  connecting === n.id && 'ring-2 ring-blue-400',
                 )}
                 style={{ left: n.position?.x ?? 0, top: n.position?.y ?? 0, width: NODE_W, height: NODE_H }}
               >
                 <div className="flex items-center justify-between gap-1">
                   <span className="truncate text-[12px] font-semibold">{n.label}</span>
-                  <button onClick={e => { e.stopPropagation(); removeNode(n.id); }} className="text-gray-600 hover:text-red-300">✕</button>
+                  <button
+                    onMouseDown={e => e.stopPropagation()}
+                    onClick={e => { e.stopPropagation(); removeNode(n.id); }}
+                    title="删除节点 (Del)"
+                    className="-mr-1 px-1 text-gray-500 hover:text-red-400"
+                  >✕</button>
                 </div>
                 <div className="mt-0.5 truncate text-[10px] text-gray-500">{n.agentRole}{st !== 'idle' && ` · ${st}`}</div>
+
+                {/* input port (drop target is the whole node) */}
+                <span className="absolute -left-1.5 top-1/2 h-3 w-3 -translate-y-1/2 rounded-full border-2 border-gray-500 bg-background" />
+                {/* output port — drag from here to connect */}
                 <button
-                  onClick={e => { e.stopPropagation(); setConnectFrom(connectFrom === n.id ? null : n.id); }}
-                  title="连接到下一个节点"
-                  className="absolute -right-2 top-1/2 h-4 w-4 -translate-y-1/2 rounded-full border border-blue-400 bg-background text-[9px] leading-none text-blue-300 hover:bg-blue-500/20"
-                >+</button>
+                  onMouseDown={e => startConnect(e, n.id)}
+                  onClick={e => e.stopPropagation()}
+                  title="从这里拖出连线"
+                  className="absolute -right-1.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 cursor-crosshair rounded-full border-2 border-blue-400 bg-background hover:bg-blue-400"
+                />
               </div>
             );
           })}
@@ -319,9 +387,9 @@ export function OrchestratePage() {
             <div className="space-y-2 text-xs text-gray-500">
               <div className="font-semibold text-gray-300">How to orchestrate</div>
               <p>1. 从左侧拖拽智能体到画布</p>
-              <p>2. 点节点右侧 <span className="text-blue-300">+</span> 再点目标节点连线（依赖/数据流）</p>
-              <p>3. 填写 Goal，点击 Run；节点会按依赖顺序执行，上游输出自动喂给下游</p>
-              <p>4. Save 保存图，Replay 重跑</p>
+              <p>2. 从节点<span className="text-blue-300">右侧圆点</span>按住拖出连线，松手落到目标节点（依赖/数据流）</p>
+              <p>3. 选中节点按 <span className="text-gray-300">Del/Backspace</span> 或点 ✕ 删除；点连线可删除</p>
+              <p>4. 填写 Goal，点击 Run；节点按依赖顺序执行，上游输出自动喂给下游。Save 保存 / Replay 重跑</p>
             </div>
           )}
         </aside>
