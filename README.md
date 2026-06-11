@@ -29,16 +29,6 @@ Myrmecia is a self-hosted, code-first platform that manages a pool of specialize
 - [2026-05] **Supervisor Mode** — one-line task intake with intent classification and semantic routing learned from past executions.
 
 <div align="center">
-<a href="https://star-history.com/#Zchary1106/agent-factory&Date">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=Zchary1106/agent-factory&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=Zchary1106/agent-factory&type=Date" />
-   <img alt="Myrmecia Star History" src="https://api.star-history.com/svg?repos=Zchary1106/agent-factory&type=Date" style="width: 80%; height: auto;" />
- </picture>
-</a>
-</div>
-
-<div align="center">
 
 🚀 [Framework](#agent-factory-framework) | ⚡ [Installation](#installation) | 🎛️ [Usage](#usage) | 🧠 [Memory](#unified-memory) | 🔌 [MCP](#tooling--mcp) | 🛠️ [Commands](#commands) | 🤝 [Contributing](#contributing)
 
@@ -299,6 +289,18 @@ If Myrmecia is useful in your work, a citation is appreciated:
   url    = {https://github.com/Zchary1106/agent-factory}
 }
 ```
+
+## Star History
+
+<div align="center">
+<a href="https://star-history.com/#Zchary1106/agent-factory&Date">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=Zchary1106/agent-factory&type=Date&theme=dark" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=Zchary1106/agent-factory&type=Date" />
+   <img alt="Myrmecia Star History" src="https://api.star-history.com/svg?repos=Zchary1106/agent-factory&type=Date" style="width: 80%; height: auto;" />
+ </picture>
+</a>
+</div>
 
 ## License
 
