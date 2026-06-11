@@ -73,6 +73,12 @@ export function SkillsPage() {
     () => detail?.versions.find(version => version.id === selectedVersionId),
     [detail, selectedVersionId],
   );
+  // A new version can't duplicate existing content (DB enforces UNIQUE(skill_id, checksum)),
+  // so "Save as draft" requires an actual content change.
+  const contentUnchanged = useMemo(
+    () => !!selectedVersion && editorContent.trim() === (selectedVersion.content ?? '').trim(),
+    [selectedVersion, editorContent],
+  );
   const publishedVersions = useMemo(
     () => detail?.versions.filter(version => version.status === 'published') || [],
     [detail],
@@ -113,12 +119,16 @@ export function SkillsPage() {
 
   const createDraft = () => runAction(async () => {
     if (!detail) return;
-    const version = await api.skills.createVersion(detail.id, {
+    await api.skills.createVersion(detail.id, {
       content: editorContent,
       changelog,
       status: 'draft',
     });
-    setSelectedVersionId(version.id);
+    // Re-fetch and select the newest draft so Update/Publish become available.
+    const next = await api.skills.get(detail.id);
+    setDetail(next);
+    const draft = [...next.versions].reverse().find(v => v.status === 'draft');
+    if (draft) { setSelectedVersionId(draft.id); setEditorContent(draft.content); setChangelog(draft.changelog || ''); }
   });
 
   const updateDraft = () => {
@@ -225,20 +235,39 @@ export function SkillsPage() {
                 <div className="mt-1 text-xs text-gray-500">{detail?.description || 'No skill selected'}</div>
               </div>
               <div className="flex flex-wrap gap-2">
-                <button disabled={saving || !detail} onClick={createDraft} className="rounded-lg bg-accent px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">
+                <button disabled={saving || !detail || contentUnchanged} onClick={createDraft}
+                  title={contentUnchanged ? 'Edit the skill content below first to create a new draft' : 'Create an editable draft from the current content'}
+                  className="rounded-lg bg-accent px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">
                   Save as draft
                 </button>
-                <button disabled={saving || selectedVersion?.status !== 'draft'} onClick={updateDraft} className="rounded-lg bg-surface-hover px-3 py-2 text-xs text-gray-300 disabled:opacity-50">
+                <button disabled={saving || selectedVersion?.status !== 'draft'} onClick={updateDraft}
+                  title={selectedVersion?.status === 'draft' ? 'Save changes to this draft' : 'Only draft versions are editable — use “Save as draft” first'}
+                  className="rounded-lg bg-surface-hover px-3 py-2 text-xs text-gray-300 disabled:opacity-50">
                   Update draft
                 </button>
-                <button disabled={saving || !selectedVersion || selectedVersion.status === 'archived'} onClick={publishVersion} className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">
+                <button disabled={saving || selectedVersion?.status !== 'draft'} onClick={publishVersion}
+                  title={selectedVersion?.status === 'draft' ? 'Publish this draft' : selectedVersion?.status === 'published' ? 'This version is already published' : 'Only drafts can be published — “Save as draft” first'}
+                  className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">
                   Publish
                 </button>
-                <button disabled={saving || !selectedVersion || selectedVersion.status === 'archived'} onClick={archiveVersion} className="rounded-lg bg-red-500/20 px-3 py-2 text-xs text-red-200 disabled:opacity-50">
+                <button disabled={saving || !selectedVersion || selectedVersion.status === 'archived'} onClick={archiveVersion}
+                  title={!selectedVersion ? 'Select a version' : selectedVersion.status === 'archived' ? 'This version is already archived' : 'Archive this version'}
+                  className="rounded-lg bg-red-500/20 px-3 py-2 text-xs text-red-200 disabled:opacity-50">
                   Archive
                 </button>
               </div>
             </div>
+
+            {detail && (
+              <div className="mt-2 text-[11px] text-gray-500">
+                {selectedVersion
+                  ? <>Selected <span className="text-gray-300">v{selectedVersion.version}</span> · <span className="text-gray-300">{selectedVersion.status}</span>
+                      {selectedVersion.status === 'published' && ' — read-only. Edit the content below, then “Save as draft” → Publish.'}
+                      {selectedVersion.status === 'archived' && ' — archived. Edit the content below, then “Save as draft” to create a new editable version → Publish.'}
+                      {selectedVersion.status === 'draft' && ' — editable. Use Update draft / Publish.'}</>
+                  : 'No version selected — edit the content below and “Save as draft” to create one.'}
+              </div>
+            )}
 
             <div className="mt-4 grid gap-3 lg:grid-cols-[220px_1fr]">
               <div className="space-y-2">
