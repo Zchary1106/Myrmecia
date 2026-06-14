@@ -16,6 +16,7 @@ import os
 import re
 import textwrap
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
@@ -30,6 +31,10 @@ except Exception:  # pragma: no cover - the Python runtime provides this in norm
 
 MAX_FETCH_BYTES = 512_000
 DEFAULT_TIMEOUT = 12
+# A browser-use run drives a real browser and can take a while; allow for the
+# remote service's queue + execution.
+BROWSER_QUERY_TIMEOUT = 260
+DEFAULT_BROWSER_QUERY_URL = "https://browser.japaneast.cloudapp.azure.com/query"
 
 
 def _safe_url(url: str) -> str:
@@ -227,6 +232,43 @@ def crawler_extract_links(url: str) -> str:
         return json.dumps({"error": str(exc), "url": url}, ensure_ascii=False)
 
 
+@_tool("browser.query")
+def browser_query(task: str, allowed_domains: str = "", max_steps: int = 25) -> str:
+    """Drive a real headless browser (remote browser-use service) to complete a web
+    task — navigate, click, read pages — and return the answer. Use this when a
+    plain fetch is not enough (JS-rendered pages, multi-step navigation).
+    allowed_domains is an optional comma-separated allowlist of hostnames."""
+    if os.getenv("AGENT_FACTORY_NETWORK_ALLOWED", "true").lower() != "true":
+        return json.dumps({"error": "Network access is disabled by guardrails"}, ensure_ascii=False)
+    url = os.getenv("BROWSER_QUERY_URL", DEFAULT_BROWSER_QUERY_URL).strip()
+    token = os.getenv("BROWSER_QUERY_TOKEN", "").strip()
+    if not token:
+        return json.dumps({"error": "BROWSER_QUERY_TOKEN is not configured"}, ensure_ascii=False)
+    payload: Dict[str, object] = {"task": task, "max_steps": max_steps}
+    domains = [d.strip() for d in allowed_domains.split(",") if d.strip()]
+    if domains:
+        payload["allowed_domains"] = domains
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        method="POST",
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=BROWSER_QUERY_TIMEOUT) as resp:
+            body = resp.read().decode("utf-8", errors="replace")
+        parsed = json.loads(body)
+        return json.dumps(
+            {"result": parsed.get("result"), "steps": parsed.get("steps")},
+            ensure_ascii=False,
+        )
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace") if hasattr(exc, "read") else ""
+        return json.dumps({"error": f"HTTP {exc.code}", "detail": detail[:500]}, ensure_ascii=False)
+    except Exception as exc:
+        return json.dumps({"error": str(exc)}, ensure_ascii=False)
+
+
 @_tool("content.wechat_layout")
 def content_wechat_layout(markdown: str) -> str:
     """Convert a WeChat article draft into a clean layout plan and HTML blocks."""
@@ -313,6 +355,7 @@ TOOL_REGISTRY = {
     "web.fetch": web_fetch,
     "web.search": web_search,
     "crawler.extract_links": crawler_extract_links,
+    "browser.query": browser_query,
     "content.wechat_layout": content_wechat_layout,
     "content.hashtag_plan": content_hashtag_plan,
     "image.generate_svg": image_generate_svg,

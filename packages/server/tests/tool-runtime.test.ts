@@ -6,7 +6,7 @@ import { closeDb, getDb } from '../src/db/database.js';
 import { createAgent } from '../src/db/models/agent.js';
 import { createTask } from '../src/db/models/task.js';
 import { createExecution } from '../src/db/models/execution.js';
-import { syncBuiltinTools, updateToolPolicy, setToolPermission } from '../src/tools/tool-registry.js';
+import { syncBuiltinTools, updateToolPolicy, setToolPermission, getTool } from '../src/tools/tool-registry.js';
 import { createToolExecution, completeToolExecution, listToolExecutions } from '../src/tools/tool-execution.js';
 import { resolveAllowedToolsForAgent } from '../src/tools/tool-policy.js';
 
@@ -39,6 +39,24 @@ describe('tool runtime', () => {
     expect(policy.allowedTools).toEqual(['web.search']);
     expect(policy.decisions.find(decision => decision.toolId === 'web.fetch')?.reason).toBe('tool_disabled');
     expect(policy.decisions.find(decision => decision.toolId === 'missing.tool')?.reason).toBe('unknown_tool');
+  });
+
+  it('registers the browser.query tool with a task-based schema', () => {
+    const tool = getTool('browser.query');
+    expect(tool).toBeDefined();
+    expect(tool?.category).toBe('research');
+    expect((tool?.inputSchema as any)?.required).toContain('task');
+    expect((tool?.metadata as any)?.network).toBe(true);
+
+    const agent = createAgent({
+      id: 'browser-agent',
+      name: 'Browser Agent',
+      role: 'researcher',
+      allowedTools: ['browser.query'],
+    });
+    setToolPermission({ toolId: 'browser.query', agentId: agent.id, enabled: true });
+    const policy = resolveAllowedToolsForAgent(agent);
+    expect(policy.allowedTools).toContain('browser.query');
   });
 
   it('persists tool execution lifecycle', () => {

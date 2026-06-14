@@ -80,6 +80,26 @@ export const BUILTIN_TOOLS: BuiltinToolDefinition[] = [
     },
   },
   {
+    id: 'browser.query',
+    name: 'Browser Query',
+    description: 'Drive a real headless browser (remote browser-use service) to complete a web task — navigate, click, read JS-rendered pages — and return the answer. Use when web.fetch is not enough.',
+    category: 'research',
+    riskLevel: 'medium',
+    version: '1.0.0',
+    implementationRef: 'packages/python-runtime/agent_tools.py:browser_query',
+    inputSchema: {
+      type: 'object',
+      required: ['task'],
+      properties: {
+        task: { type: 'string', minLength: 1 },
+        allowed_domains: { type: 'string', description: 'Optional comma-separated hostname allowlist' },
+        max_steps: { type: 'integer', minimum: 1, maximum: 60 },
+      },
+    },
+    outputSchema: { type: 'object' },
+    metadata: { network: true, readOnly: true, allowedDomains: ['*'], destructive: false, writesWorkspace: false, writesOutsideWorkspace: false },
+  },
+  {
     id: 'content.wechat_layout',
     name: 'WeChat Layout',
     description: 'Convert a WeChat article draft into layout recommendations and HTML blocks.',
