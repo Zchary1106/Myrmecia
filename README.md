@@ -130,6 +130,10 @@ This isn't a decorative metaphor; ant-colony mechanics map onto components we ac
 
 Most tools in this space give you **one slice** of the problem. Myrmecia's differentiator is packaging the agent **engine** *and* the production **platform** around it — queue, orchestration, governance, observability, memory, and a real-time dashboard — as a single self-hosted system.
 
+<p align="center">
+  <img src="docs/diagrams/comparison.svg" alt="How Myrmecia compares — capability matrix" width="100%">
+</p>
+
 | Category | Representative tools | What they give | What Myrmecia adds on top |
 | --- | --- | --- | --- |
 | **Orchestration libraries** | LangGraph · AutoGen · CrewAI | An SDK to wire agents; you build the rest | Built-in queue, pipelines, governance, observability, and live WebSocket events — a product, not a library |
