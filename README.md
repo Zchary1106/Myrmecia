@@ -30,7 +30,7 @@ Myrmecia is a self-hosted, code-first platform that manages a pool of specialize
 
 <div align="center">
 
-🚀 [Framework](#agent-factory-framework) | ⚡ [Installation](#installation) | 🎛️ [Usage](#usage) | 🧠 [Memory](#unified-memory) | 🔌 [MCP](#tooling--mcp) | 🛠️ [Commands](#commands) | 🤝 [Contributing](#contributing)
+🚀 [Framework](#agent-factory-framework) | ⚖️ [Compare](#how-myrmecia-compares) | ⚡ [Installation](#installation) | 🎛️ [Usage](#usage) | 🧠 [Memory](#unified-memory) | 🔌 [MCP](#tooling--mcp) | 🛠️ [Commands](#commands) | 🤝 [Contributing](#contributing)
 
 </div>
 
@@ -125,6 +125,31 @@ This isn't a decorative metaphor; ant-colony mechanics map onto components we ac
 **Etymology & lineage:** from Greek *myrmex* (μύρμηξ, "ant") — the same root as the mythological **Myrmidons**, the fiercely disciplined warrior-people Zeus formed from ants: a fitting image for a disciplined fleet of agents working as one.
 
 > Brand name **Myrmecia**; package scope migrates gradually from `@myrmecia/*` to `@myrmecia/*`, so the rename stays low-risk.
+
+## How Myrmecia compares
+
+Most tools in this space give you **one slice** of the problem. Myrmecia's differentiator is packaging the agent **engine** *and* the production **platform** around it — queue, orchestration, governance, observability, memory, and a real-time dashboard — as a single self-hosted system.
+
+| Category | Representative tools | What they give | What Myrmecia adds on top |
+| --- | --- | --- | --- |
+| **Orchestration libraries** | LangGraph · AutoGen · CrewAI | An SDK to wire agents; you build the rest | Built-in queue, pipelines, governance, observability, and live WebSocket events — a product, not a library |
+| **Visual workflow builders** | Dify · n8n · Flowise | Drag-and-drop flows, shallow agent depth | Drag-drop **and** code **and** a one-line *Supervisor* that decomposes tasks — plus run replay/resume |
+| **Memory services** | Mem0 · Zep | A bolt-on memory store | Four-layer memory + bi-temporal graph wired **into** context, routing, and decomposition |
+| **Hosted platforms** | OpenAI Assistants · vendor clouds | Closed, data leaves your infra | **Local-first, self-hosted**, data stays on your machines |
+
+**Where Myrmecia is strong**
+
+- **All-in-one, self-hosted** — engine + platform in one monorepo; data never leaves your infrastructure.
+- **Governance is built in** — tool registry with per-agent permissions, risk levels, approval gates, parameter constraints, cost guardrails, and audit.
+- **Observability-first** — trace spans, execution scoring, token/cost tracking, and a real-time dashboard for debugging multi-agent runs.
+- **Memory as a designed subsystem** — not a vector store bolted on; it feeds routing and task decomposition so the system gets better at dispatching similar work.
+- **Pluggable runtimes & tools** — TypeScript loop or Python runtime, a provider-agnostic model gateway with token streaming, **MCP tools in the loop**, and a `browser.query` tool that drives a real browser.
+
+**Where it's young (being honest)**
+
+- Smaller community and ecosystem than LangGraph/CrewAI, and less battle-tested at scale.
+- Some known engineering debt (a few TypeScript build errors and a `db.test` schema conflict) is still being cleaned up.
+- The moat is **integration + governance + observability + memory** combined, not a single novel algorithm — so depth in those areas is where Myrmecia keeps its edge.
 
 ## Installation
 
