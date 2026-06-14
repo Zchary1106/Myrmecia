@@ -98,7 +98,14 @@ export class AgentManager {
 
   /** Find an available agent for a role (with capacity) */
   findAvailableAgent(role: string): AgentDefinition | undefined {
-    const agents = listAgents({ role });
+    let agents = listAgents({ role });
+    if (agents.length === 0) {
+      // Templates/workflows often reference an agent by its id (e.g. "pm",
+      // "dev", "qa") rather than its role ("product-manager", "developer",
+      // "tester"). Fall back to an id match so those pipelines aren't blocked.
+      const byId = getAgent(role);
+      if (byId) agents = [byId];
+    }
     const available = agents.filter(a => {
       const active = getActiveExecutionCount(a.id);
       return active < (a.config.maxConcurrent || 1);
