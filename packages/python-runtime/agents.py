@@ -15,9 +15,17 @@ AGENTS_DIR = os.path.join(os.path.dirname(__file__), "../../agents")
 
 
 def get_llm(model: Optional[str] = None) -> LLM:
-    """Create LLM instance for copilot-api proxy."""
+    """Create LLM instance for the OpenAI-compatible gateway.
+
+    crewai/LiteLLM needs an explicit ``openai/`` provider prefix to route a
+    custom base_url + api_key correctly; without it LiteLLM looks for a global
+    OPENAI_API_KEY and fails on unknown model names.
+    """
+    chosen = model or LLM_MODEL
+    if "/" not in chosen:
+        chosen = f"openai/{chosen}"
     return LLM(
-        model=model or LLM_MODEL,
+        model=chosen,
         base_url=LLM_BASE_URL,
         api_key=LLM_API_KEY,
     )

@@ -565,6 +565,8 @@ export class AgentRuntime {
         env: {
           AGENT_FACTORY_BASE_URL: modelBaseURL(),
           AGENT_FACTORY_API_KEY: modelApiKey(),
+          OPENAI_API_KEY: modelApiKey(),
+          OPENAI_BASE_URL: modelBaseURL(),
           AGENT_FACTORY_MODEL: defaultModel(),
           AGENT_FACTORY_EXECUTION_ID: executionId,
           AGENT_FACTORY_TASK_ID: task.id,
