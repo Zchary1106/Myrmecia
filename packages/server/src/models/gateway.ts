@@ -90,7 +90,9 @@ export class ModelGateway {
     const cacheKey = `${provider}:${cfg.baseURL}`;
     let client = this.clients.get(cacheKey);
     if (!client) {
-      client = new OpenAI({ baseURL: cfg.baseURL, apiKey: cfg.apiKey });
+      // Generous retries (exponential backoff is built into the SDK for 408/409/
+      // 429/5xx) to ride out the gateway's intermittent 502 "upstream_error".
+      client = new OpenAI({ baseURL: cfg.baseURL, apiKey: cfg.apiKey, maxRetries: 5, timeout: 120_000 });
       this.clients.set(cacheKey, client);
     }
     return client;
