@@ -32,6 +32,21 @@ function buildModelToolName(toolId: string, index: number): string {
   return `tool_${index}_${safeName}`;
 }
 
+/**
+ * Extract assistant text whether the gateway returns `content` as a plain
+ * string, as an array of content blocks (some providers do this when text and
+ * tool calls are mixed), or `null`.
+ */
+function extractMessageText(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .map(part => (typeof part === 'string' ? part : (part as any)?.text ?? ''))
+      .join('');
+  }
+  return '';
+}
+
 function buildModelToolDefinitions(toolIds: string[]) {
   const modelNameToToolId = new Map<string, string>();
   const toolDefs = toolIds.map((toolId, index) => {
@@ -329,7 +344,7 @@ export class TsAgentLoop {
 
         let assistantMsg = choice.message;
 
-        let text = typeof assistantMsg.content === 'string' ? assistantMsg.content : '';
+        let text = extractMessageText(assistantMsg.content);
         if (text) {
           text = sanitizeAgentOutput(text, {
             agentId: agent.id,
@@ -639,7 +654,7 @@ export class TsAgentLoop {
         }
 
         let assistantMsg = choice.message;
-        let text = typeof assistantMsg.content === 'string' ? assistantMsg.content : '';
+        let text = extractMessageText(assistantMsg.content);
         if (text) {
           text = sanitizeAgentOutput(text, {
             agentId: agent.id,
@@ -712,6 +727,21 @@ export class TsAgentLoop {
         } else {
           // No tool calls — step complete
           break;
+        }
+      }
+
+      // If the model only emitted tool calls (no text), ask once more without
+      // tools so step validation has a concrete textual result to check.
+      if (!finalOutput.trim()) {
+        try {
+          const summary = await client.chat.completions.create({
+            model: selectedModel,
+            messages: [...messages, { role: 'user', content: 'Provide the result of this step as plain text.' }],
+            max_tokens: remainingResponseTokens(inputTokens, outputTokens, limits),
+          });
+          finalOutput = extractMessageText(summary.choices[0]?.message?.content).trim() || finalOutput;
+        } catch {
+          /* keep finalOutput as-is */
         }
       }
 

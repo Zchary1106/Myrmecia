@@ -33,10 +33,10 @@ agents:
       model: gpt-5.4-mini
       tier: cheap
       fallbackModel: claude-haiku-4.5
-      maxTokens: 8192
-      maxResponseTokens: 4096
+      maxTokens: 120000
+      maxResponseTokens: 8192
       maxToolCalls: 24
-      maxWallClockMs: 240000
+      maxWallClockMs: 600000
     capabilities: [spec, user-stories, requirements, acceptance-criteria, web-research]
     allowed_tools: [web.search, web.fetch, content.hashtag_plan]
     triggers: [需求, spec, PRD, 用户故事, requirement]
@@ -71,10 +71,10 @@ agents:
       model: gpt-5.3-codex
       tier: balanced
       fallbackModel: gpt-5.4
-      maxTokens: 8192
-      maxResponseTokens: 4096
+      maxTokens: 120000
+      maxResponseTokens: 8192
       maxToolCalls: 48
-      maxWallClockMs: 300000
+      maxWallClockMs: 600000
     capabilities: [typescript, react, express, database, api, frontend, backend, web-research]
     allowed_tools: [web.search, web.fetch]
     triggers: [写代码, 实现, 开发, implement, code, fix]
@@ -90,10 +90,10 @@ agents:
       model: claude-haiku-4.5
       tier: cheap
       fallbackModel: gpt-5.4-mini
-      maxTokens: 8192
-      maxResponseTokens: 3072
+      maxTokens: 120000
+      maxResponseTokens: 8192
       maxToolCalls: 24
-      maxWallClockMs: 180000
+      maxWallClockMs: 600000
     capabilities: [testing, unit-test, integration-test, coverage, edge-cases, web-research]
     allowed_tools: [web.search, web.fetch]
     triggers: [测试, test, QA, 验证, coverage]
@@ -128,10 +128,10 @@ agents:
       model: gpt-5.5
       tier: strong
       fallbackModel: claude-opus-4.8
-      maxTokens: 8192
-      maxResponseTokens: 4096
+      maxTokens: 120000
+      maxResponseTokens: 8192
       maxToolCalls: 24
-      maxWallClockMs: 240000
+      maxWallClockMs: 600000
     capabilities: [code-review, security, best-practices, architecture, web-research]
     allowed_tools: [web.search, web.fetch]
     triggers: [review, 审查, 代码审核, security scan]
