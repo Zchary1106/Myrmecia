@@ -21,6 +21,7 @@ const { values: flags, positionals } = parseArgs({
     server: { type: 'string' },
     token: { type: 'string' },
     gate: { type: 'string' },
+    model: { type: 'string', short: 'm' },
     limit: { type: 'string' },
     json: { type: 'boolean' },
     'no-stream': { type: 'boolean' },
@@ -33,6 +34,7 @@ let TOKEN = String(flags.token || process.env.MYRMECIA_TOKEN || process.env.AGEN
 const JSON_OUT = Boolean(flags.json);
 const NO_STREAM = Boolean(flags['no-stream']);
 let INTERACTIVE = false;
+let currentModel = String(flags.model || process.env.MYRMECIA_MODEL || 'auto');
 
 // ------------------------------------------------------------------ colors
 const useColor = process.stdout.isTTY && !process.env.NO_COLOR;
@@ -299,6 +301,54 @@ async function cmdSupervisor(parts: string[]) {
   out(indent(JSON.stringify(res, null, 2)));
 }
 
+// ------------------------------------------------------------ model switching
+const ROUTE_KEYS_TO_FORCE = [
+  'global', 'task:simple', 'task:coding', 'task:long-context', 'task:high-risk',
+  'role:orchestrator', 'role:product-manager', 'role:designer', 'role:developer',
+  'role:tester', 'role:reviewer',
+];
+
+async function initCurrentModel() {
+  if (currentModel && currentModel !== 'auto') return;
+  try {
+    const routes = listOf(await api('/models/routes'));
+    const global = routes.find((r: any) => r.routeKey === 'global');
+    if (global?.defaultModelId) currentModel = global.defaultModelId;
+  } catch { /* leave as 'auto' */ }
+}
+
+/** Force the whole colony onto one model by repointing the core routes. */
+async function setModel(id: string, quiet = false) {
+  const models = listOf(await api('/models'));
+  const m = models.find((x: any) => x.id === id);
+  if (!m) {
+    out(c.red(`unknown model: ${id}`));
+    out(c.gray('  available: ') + models.map((x: any) => x.id).slice(0, 12).join(', ') + (models.length > 12 ? ' …' : ''));
+    return;
+  }
+  const tier = m.tier || 'balanced';
+  const group = m.fallbackGroup || 'balanced';
+  for (const routeKey of ROUTE_KEYS_TO_FORCE) {
+    try {
+      await api('/models/routes', { method: 'PATCH', body: { routeKey, defaultModelId: id, modelTier: tier, fallbackGroup: group } });
+    } catch { /* best effort per route */ }
+  }
+  currentModel = id;
+  if (!quiet) out(c.green('✓') + c.gray(' model → ') + c.cyan(id) + c.gray(`  (${tier}, applied to the colony)`));
+}
+
+async function cmdModelSwitch(arg?: string) {
+  if (arg) return setModel(arg);
+  const models = listOf(await api('/models'));
+  out(c.bold('Models') + c.gray(`   (current: `) + c.cyan(currentModel) + c.gray(')'));
+  for (const m of models) {
+    const on = m.enabled === false ? c.red('off') : c.green('on');
+    const mark = m.id === currentModel ? c.green(' ●') : '  ';
+    out(`${mark} ${(m.id || '').padEnd(28)} ${c.gray((m.tier || '').padEnd(10))} ${on}`);
+  }
+  out(c.gray('  switch with ') + c.cyan('/model <id>'));
+}
+
 // --------------------------------------------------------------- interactive
 async function quietHealth(): Promise<any | null> {
   try {
@@ -323,12 +373,12 @@ async function welcome() {
   const h = await quietHealth();
   if (h) {
     out('  ' + c.green('●') + ' ' + c.gray('connected ') + c.cyan(SERVER)
-      + c.gray(`   ·   ${h.agents?.total ?? '?'} agents ready   ·   ${h.tasks?.running ?? 0} running`));
+      + c.gray(`   ·   ${h.agents?.total ?? '?'} agents ready   ·   model `) + rgb(57, 210, 192)(currentModel));
   } else {
     out('  ' + c.red('●') + ' ' + c.gray('offline — start the server with ') + c.cyan('pnpm dev') + c.gray(' (or pass --server)'));
   }
-  out('  ' + c.gray('Type a task, or ') + c.cyan('/help') + c.gray(' for commands · ')
-    + c.cyan('/agents') + c.gray(' to see the colony · ') + c.cyan('/exit') + c.gray(' to quit'));
+  out('  ' + c.gray('Type a task, or ') + c.cyan('/help') + c.gray(' · ')
+    + c.cyan('/agents') + c.gray(' · ') + c.cyan('/model') + c.gray(' · ') + c.cyan('/exit'));
   out('');
 }
 
@@ -344,6 +394,7 @@ function slashHelp() {
   out(c.bold('Slash commands'));
   const rows: Array<[string, string]> = [
     ['/agents', 'list the agent colony'],
+    ['/model [id]', 'show models / switch the active model'],
     ['/models', 'list models + routing status'],
     ['/templates', 'list pipeline templates'],
     ['/pipelines', 'recent pipeline runs'],
@@ -363,7 +414,8 @@ async function handleSlash(input: string): Promise<boolean> {
   switch ((cmd || '').toLowerCase()) {
     case 'help': case '?': slashHelp(); break;
     case 'agents': case 'agent': await cmdAgents(); break;
-    case 'models': case 'model': await cmdModels(); break;
+    case 'models': await cmdModels(); break;
+    case 'model': case 'm': await cmdModelSwitch(rest[0]); break;
     case 'templates': case 'template': await cmdTemplates(); break;
     case 'pipelines': case 'pipeline': await cmdPipelinesList(); break;
     case 'health': case 'status': await cmdHealth(); break;
@@ -402,37 +454,148 @@ async function dispatchInteractive(input: string) {
   }
 }
 
+// ----------------------------------------------------------- boxed TUI input
+/** Build a line of exactly `totalW` visible columns; the segment at `fillIndex` flexes. */
+function boxLine(segs: Array<[string, (s: string) => string]>, totalW: number, fillIndex: number, fillChar = ' '): string {
+  const fixed = segs.reduce((n, [t], i) => (i === fillIndex ? n : n + t.length), 0);
+  const fillLen = Math.max(0, totalW - fixed);
+  return segs.map(([t, fn], i) => (i === fillIndex ? fn(fillChar.repeat(fillLen)) : fn(t))).join('');
+}
+
+/**
+ * A Claude-Code-style bordered input box (raw mode). Renders a 3-line rounded
+ * box anchored at the bottom and redraws on each keystroke. Resolves with the
+ * submitted line, or null on Ctrl+C / Ctrl+D-on-empty. TTY only.
+ */
+function readBoxedLine(history: string[]): Promise<string | null> {
+  return new Promise((resolve) => {
+    const stdin = process.stdin as any;
+    stdin.setRawMode(true);
+    stdin.resume();
+    stdin.setEncoding('utf8');
+    let buf = '';
+    let cur = 0;
+    let hi = history.length;
+    let saved = '';
+    let drawn = false;
+    const teal = rgb(57, 210, 192);
+
+    const width = () => Math.max(40, Math.min((process.stdout.columns || 80) - 1, 100));
+
+    const frame = () => {
+      const w = width();
+      const inputW = w - 6;
+      let start = 0;
+      if (buf.length > inputW) start = Math.max(0, Math.min(cur, buf.length - inputW));
+      if (cur - start > inputW) start = cur - inputW;
+      if (cur < start) start = cur;
+      const visible = buf.slice(start, start + inputW);
+      const cursorOffset = cur - start;
+      const midContent = buf.length === 0
+        ? c.dim('Describe a task, or /help'.slice(0, inputW).padEnd(inputW))
+        : c.bold(visible) + ' '.repeat(Math.max(0, inputW - visible.length));
+      const top = boxLine([
+        ['╭─ ', c.gray], ['myrmecia', c.cyan], [' ', c.gray],
+        ['', c.gray], [' ', c.gray], [currentModel, teal], [' ─╮', c.gray],
+      ], w, 3, '─');
+      const mid = c.gray('│ ') + c.cyan('› ') + midContent + c.gray(' │');
+      const hintPlain = '/help  /model  /agents  /exit';
+      const hintColored = hintPlain.split(/(\s+)/).map(tok => (tok.startsWith('/') ? c.cyan(tok) : c.gray(tok))).join('');
+      const bot = boxLine([
+        ['╰─ ', c.gray], [hintPlain, () => hintColored], [' ', c.gray],
+        ['', c.gray], ['╯', c.gray],
+      ], w, 3, '─');
+      return { lines: [top, mid, bot], cursorCol: 5 + cursorOffset };
+    };
+
+    const draw = () => {
+      const { lines, cursorCol } = frame();
+      if (drawn) process.stdout.write('\x1b[1A\r\x1b[J'); else drawn = true;
+      process.stdout.write(lines.join('\n'));
+      process.stdout.write('\x1b[1A' + `\x1b[${cursorCol}G`);
+    };
+
+    const cleanup = () => { stdin.setRawMode(false); stdin.pause(); stdin.removeListener('data', onData); };
+    const commit = (val: string | null) => {
+      if (drawn) process.stdout.write('\x1b[1A\r\x1b[J');
+      cleanup();
+      if (val && val.trim()) process.stdout.write(c.cyan('❯ ') + val + '\n');
+      resolve(val);
+    };
+
+    const onData = (d: string) => {
+      if (d === '\u0003') { process.stdout.write('\n'); return commit(null); }       // Ctrl+C
+      if (d === '\u0004') { if (!buf) { process.stdout.write('\n'); return commit(null); } return; } // Ctrl+D
+      if (d === '\r' || d === '\n') return commit(buf);
+      if (d === '\u0015') { buf = buf.slice(cur); cur = 0; return draw(); }            // Ctrl+U
+      if (d === '\u0001') { cur = 0; return draw(); }                                  // Ctrl+A
+      if (d === '\u0005') { cur = buf.length; return draw(); }                         // Ctrl+E
+      if (d === '\u007f' || d === '\b') { if (cur > 0) { buf = buf.slice(0, cur - 1) + buf.slice(cur); cur--; draw(); } return; }
+      if (d.startsWith('\u001b')) {
+        if (d === '\u001b[D') { if (cur > 0) cur--; return draw(); }
+        if (d === '\u001b[C') { if (cur < buf.length) cur++; return draw(); }
+        if (d === '\u001b[H' || d === '\u001b[1~') { cur = 0; return draw(); }
+        if (d === '\u001b[F' || d === '\u001b[4~') { cur = buf.length; return draw(); }
+        if (d === '\u001b[A') { if (hi > 0) { if (hi === history.length) saved = buf; hi--; buf = history[hi]; cur = buf.length; draw(); } return; }
+        if (d === '\u001b[B') { if (hi < history.length) { hi++; buf = hi === history.length ? saved : history[hi]; cur = buf.length; draw(); } return; }
+        return;
+      }
+      const text = d.replace(/[\u0000-\u001f\u007f]/g, '');
+      if (text) { buf = buf.slice(0, cur) + text + buf.slice(cur); cur += text.length; draw(); }
+    };
+
+    stdin.on('data', onData);
+    draw();
+  });
+}
+
 async function cmdChat() {
   INTERACTIVE = true;
+  await initCurrentModel();
+  if (flags.model) await setModel(String(flags.model), true).catch(() => {});
   await welcome();
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  rl.on('SIGINT', () => rl.close());
-  rl.setPrompt(c.cyan('myrmecia ❯ '));
-  rl.prompt();
-  // for-await serialises line handling: each task fully streams before the
-  // next prompt, so concurrent input (paste / pipe) can't interleave.
-  try {
-    for await (const line of rl) {
-      const input = line.trim();
-      if (input) {
-        try {
-          if (input.startsWith('/')) {
-            if ((await handleSlash(input)) === false) break;
-          } else {
-            await dispatchInteractive(input);
-          }
-        } catch (e: any) {
-          out(c.red('error: ') + (e?.message || String(e)));
-        }
+  const history: string[] = [];
+  const handle = async (input: string): Promise<boolean> => {
+    if (!input) return true;
+    try {
+      if (input.startsWith('/')) {
+        if ((await handleSlash(input)) === false) return false;
+      } else {
+        await dispatchInteractive(input);
       }
-      out('');
-      rl.prompt();
+    } catch (e: any) {
+      out(c.red('error: ') + (e?.message || String(e)));
     }
-  } catch (e: any) {
-    // Piped stdin reaching EOF mid-iteration surfaces as "readline was closed".
-    if (!/closed/i.test(e?.message || '')) throw e;
+    return true;
+  };
+
+  if (process.stdin.isTTY) {
+    for (;;) {
+      const line = await readBoxedLine(history);
+      if (line === null) break;
+      const input = line.trim();
+      if (input) history.push(input);
+      out('');
+      if (!(await handle(input))) break;
+      out('');
+    }
+  } else {
+    // Non-TTY (piped / scripted): a plain readline loop, serialized via for-await.
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    rl.setPrompt(c.cyan('myrmecia ❯ '));
+    rl.prompt();
+    try {
+      for await (const line of rl) {
+        const cont = await handle(line.trim());
+        out('');
+        if (!cont) break;
+        rl.prompt();
+      }
+    } catch (e: any) {
+      if (!/closed/i.test(e?.message || '')) throw e;
+    }
+    rl.close();
   }
-  rl.close();
   out(c.gray('bye 🐜'));
   process.exit(0);
 }
@@ -449,6 +612,7 @@ ${c.bold('One-shot commands')}
   ${c.cyan('health')}                          server status
   ${c.cyan('agents')}                          list agents
   ${c.cyan('models')}                          list models
+  ${c.cyan('model')} [id]                      show / switch the active model
   ${c.cyan('templates')}                       list pipeline templates
   ${c.cyan('ask')} <request...>               route a task via the supervisor (live stream)
   ${c.cyan('run')} <agentId> <prompt...>       run a task on an agent (live stream)
@@ -459,6 +623,7 @@ ${c.bold('One-shot commands')}
 ${c.bold('Flags')}
   --server <url>     server base URL (env MYRMECIA_SERVER, default http://localhost:3000)
   --token <token>    API token if auth is enabled (env MYRMECIA_TOKEN)
+  -m, --model <id>   force the colony onto a model (env MYRMECIA_MODEL)
   --gate auto|manual pipeline gating mode (default auto)
   --json             raw JSON output
   --no-stream        don't stream; just enqueue and return ids
@@ -478,11 +643,16 @@ async function main() {
   const rest = positionals.slice(1);
   if (flags.help) return help();
   if (!cmd) return cmdChat();
+  // Apply --model for one-shot commands that run agents.
+  if (flags.model && ['ask', 'run', 'exec', 'pipeline', 'pipe'].includes(cmd)) {
+    await setModel(String(flags.model), true).catch(() => {});
+  }
   switch (cmd) {
     case 'chat': case 'repl': case 'shell': return cmdChat();
     case 'health': return cmdHealth();
     case 'agents': case 'agent': return cmdAgents();
-    case 'models': case 'model': return cmdModels();
+    case 'models': return cmdModels();
+    case 'model': return cmdModelSwitch(rest[0]);
     case 'templates': case 'template': return cmdTemplates();
     case 'run': case 'exec': return cmdRun(rest[0], rest.slice(1));
     case 'ask': return dispatchInteractive(rest.join(' ').trim() || die('usage: myrmecia ask <request...>'));
