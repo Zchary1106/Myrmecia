@@ -154,101 +154,6 @@ def band_title(draw, xy, title, color):
     x0, y0, x1, _ = xy
     text_center(draw, ((x0 + x1) // 2, y0 + 36), title, font_large, color)
 
-# ============================================================
-# Diagram 1: System Architecture Overview
-# ============================================================
-def gen_architecture():
-    W, H = 1600, 1050
-    img = Image.new("RGB", (W, H), BG)
-    d = ImageDraw.Draw(img)
-
-    text_center(d, (W // 2, 58), "Myrmecia Architecture", font_hero, WHITE)
-    text_center(d, (W // 2, 104), "Dashboard -> Orchestrator -> Agent Runtime -> Governed Tools + Models", font_readable, GRAY)
-
-    dashboard = (110, 150, 1490, 260)
-    rounded_rect(d, dashboard, 28, "#111827", ACCENT_BLUE, 5)
-    text_center(d, (800, 195), "Web Dashboard", font_large, ACCENT_BLUE)
-    text_center(d, (800, 232), "Console · Work Queue · Board · Audit", font_readable, WHITE)
-
-    api = (110, 335, 1490, 520)
-    rounded_rect(d, api, 28, "#111827", ACCENT_GREEN, 5)
-    band_title(d, api, "Express Orchestrator API", ACCENT_GREEN)
-    for xy, title, subtitle, color in [
-        ((150, 415, 360, 495), "Auth", "tenant + scope", ACCENT_GREEN),
-        ((390, 415, 600, 495), "Supervisor", "intent + plans", ACCENT_BLUE),
-        ((630, 415, 840, 495), "Queue", "tasks + deps", ACCENT_ORANGE),
-        ((870, 415, 1080, 495), "Pipelines", "fixed flows", ACCENT_CYAN),
-        ((1110, 415, 1320, 495), "Events", "WS + audit", ACCENT_PINK),
-    ]:
-        simple_card(d, xy, title, subtitle, color)
-
-    runtime = (110, 600, 1490, 785)
-    rounded_rect(d, runtime, 28, "#111827", ACCENT_PURPLE, 5)
-    band_title(d, runtime, "Planning + Agent Execution", ACCENT_PURPLE)
-    for xy, title, subtitle, color in [
-        ((150, 680, 405, 760), "Dynamic Workflow", "DAG fan-out", ACCENT_PURPLE),
-        ((435, 680, 690, 760), "Agent Runtime", "TS loop / Python", ACCENT_GREEN),
-        ((720, 680, 975, 760), "Model Router", "cost + risk", ACCENT_CYAN),
-        ((1005, 680, 1260, 760), "Tool Governance", "policy + DLP", ACCENT_PINK),
-    ]:
-        simple_card(d, xy, title, subtitle, color)
-
-    infra = (110, 865, 1490, 985)
-    rounded_rect(d, infra, 28, "#111827", GRAY, 5)
-    text_center(d, (800, 900), "Persistence + Runtime Infrastructure", font_large, GRAY)
-    text_center(d, (800, 945), "SQLite/Postgres · Redis/BullMQ · Workspaces · Model Endpoint · Audit Store", font_readable, WHITE)
-
-    labeled_arrow(d, (800, 260), (800, 335), ACCENT_BLUE, "API / WS", (90, 0), width=5)
-    labeled_arrow(d, (800, 520), (800, 600), ACCENT_GREEN, "dispatch", (90, 0), width=5)
-    labeled_arrow(d, (800, 785), (800, 865), ACCENT_PURPLE, "persist", (85, 0), width=5)
-
-    rounded_rect(d, (1250, 45, 1490, 95), 18, "#0f172a", ACCENT_YELLOW, 3)
-    text_center(d, (1370, 70), "Safety by default", font_caption, ACCENT_YELLOW)
-
-    img.save(os.path.join(OUT, "architecture-overview.png"), quality=95)
-    print("architecture-overview.png")
-
-
-# ============================================================
-# Diagram 3: Runtime Governance Chain
-# ============================================================
-def gen_runtime_governance():
-    W, H = 1600, 900
-    img = Image.new("RGB", (W, H), BG)
-    d = ImageDraw.Draw(img)
-
-    text_center(d, (W // 2, 58), "Runtime Governance", font_hero, WHITE)
-    text_center(d, (W // 2, 104), "Every tool call passes policy, sandbox, DLP, and audit", font_readable, GRAY)
-
-    chain = [
-        ((80, 185, 300, 305), "Runtime", "request", ACCENT_GREEN),
-        ((370, 185, 590, 305), "Registry", "known tools", ACCENT_BLUE),
-        ((660, 185, 880, 305), "Policy", "allow / approve", ACCENT_PURPLE),
-        ((950, 185, 1170, 305), "Sandbox", "confine", ACCENT_ORANGE),
-        ((1240, 185, 1460, 305), "DLP", "redact / block", ACCENT_PINK),
-    ]
-    for i, (xy, title, subtitle, color) in enumerate(chain):
-        simple_card(d, xy, title, subtitle, color)
-        if i < len(chain) - 1:
-            draw_arrow(d, (xy[2] + 20, 245), (chain[i + 1][0][0] - 20, 245), color, width=5)
-
-    simple_card(d, (600, 440, 1000, 570), "Audit Report", "why it ran or stopped", ACCENT_CYAN)
-    labeled_arrow(d, (190, 305), (600, 440), ACCENT_GREEN, "metadata", (10, -20), width=5)
-    labeled_arrow(d, (1350, 305), (1000, 440), ACCENT_PINK, "findings", (20, -20), width=5)
-
-    rounded_rect(d, (120, 690, 1480, 820), 26, "#111827", GRAY, 5)
-    text_center(d, (800, 728), "Possible Outcomes", font_large, GRAY)
-    for xy, label, color in [
-        ((180, 755, 430, 800), "Allowed", ACCENT_GREEN),
-        ((500, 755, 750, 800), "Needs Approval", ACCENT_YELLOW),
-        ((820, 755, 1070, 800), "Blocked", ACCENT_RED),
-        ((1140, 755, 1390, 800), "Redacted", ACCENT_PINK),
-    ]:
-        rounded_rect(d, xy, 16, "#0f172a", color, 3)
-        text_center(d, ((xy[0] + xy[2]) // 2, (xy[1] + xy[3]) // 2), label, font_readable, color)
-
-    img.save(os.path.join(OUT, "runtime-governance.png"), quality=95)
-    print("runtime-governance.png")
 
 # ============================================================
 # Diagram 4: Pipeline Flow
@@ -359,68 +264,10 @@ def gen_tech_stack():
     img.save(os.path.join(OUT, "tech-stack.png"), quality=95)
     print("tech-stack.png")
 
-# ============================================================
-# Diagram 0: Header schema (left-to-right harness flow)
-# ============================================================
-def gen_schema():
-    W, H = 1600, 900
-    img = Image.new("RGB", (W, H), BG)
-    d = ImageDraw.Draw(img)
-
-    text_center(d, (W // 2, 52), "Myrmecia — Multi-Agent Orchestration Harness", font_hero, WHITE)
-    text_center(d, (W // 2, 100), "One request -> routed -> orchestrated -> executed by a governed agent harness -> shipped", font_readable, GRAY)
-
-    # Row 1: the end-to-end flow
-    flow = [
-        (80, "Request", "one-line goal", ACCENT_BLUE),
-        (330, "Supervisor", "intent + routing", ACCENT_CYAN),
-        (580, "Orchestrator", "pipeline / DAG / master", ACCENT_PURPLE),
-        (830, "Agent Harness", "tool-loop + context", ACCENT_GREEN),
-        (1080, "Governed Tools", "built-in + MCP", ACCENT_PINK),
-        (1330, "Output", "code / review / deploy", ACCENT_ORANGE),
-    ]
-    cw = 220
-    for x, title, subtitle, color in flow:
-        simple_card(d, (x, 200, x + cw, 360), title, subtitle, color)
-    for i in range(len(flow) - 1):
-        x_end = flow[i][0] + cw
-        x_next = flow[i + 1][0]
-        labeled_arrow(d, (x_end, 280), (x_next, 280), GRAY, width=4)
-
-    # Row 2: harness internals band (under the Agent Harness column)
-    band = (80, 440, 1550, 630)
-    rounded_rect(d, band, 26, "#111827", ACCENT_GREEN, 4)
-    band_title(d, band, "Agent Harness Internals", ACCENT_GREEN)
-    for xy, title, subtitle, color in [
-        ((120, 515, 440, 605), "Tool-Calling Loop", "multi-turn fn-calls", ACCENT_GREEN),
-        ((470, 515, 770, 605), "Context Manager", "compress + recall", ACCENT_CYAN),
-        ((800, 515, 1090, 605), "Unified Memory", "4-layer + graph", ACCENT_PURPLE),
-        ((1120, 515, 1510, 605), "Model Gateway", "providers + streaming", ACCENT_YELLOW),
-    ]:
-        simple_card(d, xy, title, subtitle, color)
-    labeled_arrow(d, (940, 360), (940, 440), ACCENT_GREEN, "runs", (60, 0), width=5)
-
-    # Row 3: cross-cutting platform band
-    base = (80, 690, 1550, 840)
-    rounded_rect(d, base, 26, "#111827", GRAY, 4)
-    band_title(d, base, "Governance  ·  Observability  ·  Persistence", GRAY)
-    for xy, title, subtitle, color in [
-        ((120, 762, 560, 828), "Governance", "policy / sandbox / DLP", ACCENT_PINK),
-        ((590, 762, 1030, 828), "Observability", "OTel traces + metrics", ACCENT_BLUE),
-        ((1060, 762, 1510, 828), "Persistence", "SQLite/PG · Redis/BullMQ", GRAY),
-    ]:
-        simple_card(d, xy, title, subtitle, color)
-    labeled_arrow(d, (815, 630), (815, 690), GRAY, "secured + traced", (110, 0), width=5)
-
-    img.save(os.path.join(OUT, "schema.png"), quality=95)
-    print("schema.png")
 
 # Generate all
 # NOTE: agent-pool & dynamic-workflow-lifecycle are now *animated* SVGs,
 # produced by scripts/gen-flow-diagrams.py (data-flow particles).
-gen_schema()
-gen_architecture()
-gen_runtime_governance()
 gen_pipeline()
 gen_tech_stack()
 print("\nAll diagrams generated!")
