@@ -213,6 +213,22 @@ docker compose up -d
 
 Open `http://localhost:5173`. Key pages: **Command Center**, **Interaction Console**, **Work Queue**, **Agents**, **Tools**, **Models**, **Skills**, **Pipelines**, **Orchestrate** (visual canvas), **Memory**, **Timeline**, **Observe**, **Audit**, **Costs**.
 
+### Command-line (CLI)
+
+Prefer the terminal? The `myrmecia` CLI drives the same server the dashboard uses — **zero install, zero dependencies** (Node ≥ 22 built-ins only). With the server running:
+
+```bash
+pnpm cli health                                   # server status
+pnpm cli agents                                   # list agents
+pnpm cli templates                                # list pipeline templates
+pnpm cli run pm "Write a spec for a dark-mode toggle"   # run an agent (live stream)
+pnpm cli pipeline Feature "Add CSV export to reports"   # run a pipeline (streams stages)
+pnpm cli supervisor "build a login page with tests"     # decompose a one-line request
+pnpm cli task <taskId>                            # inspect a task
+```
+
+Point it at any server with `--server <url>` (or `MYRMECIA_SERVER`), add `--token` if API auth is enabled, and `--json` for machine-readable output. Run `pnpm cli --help` for the full list. You can also call it directly: `node packages/cli/src/index.ts <command>`.
+
 ### Visual orchestration (drag-and-drop)
 
 On the **Orchestrate** page, drag agents from the palette onto the canvas, click a node's `+` handle and then a target to connect them, set a Goal, and hit **Run**. Or do it over the API:
@@ -292,6 +308,7 @@ agent-factory/
 | Install all deps | `pnpm install` |
 | Dev server + dashboard | `pnpm dev` |
 | Dev server / dashboard only | `pnpm dev:server` · `pnpm dev:dashboard` |
+| CLI (terminal client) | `pnpm cli <command>` (e.g. `pnpm cli health`) |
 | Build all packages | `pnpm build` |
 | Type-check | `pnpm lint` |
 | Server tests | `pnpm --filter @myrmecia/server test` |
