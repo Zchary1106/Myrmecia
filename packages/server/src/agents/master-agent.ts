@@ -57,11 +57,19 @@ Example output:
 ]`;
 
     try {
-      const result = await agentRuntime.execute(masterAgent, {
-        ...parentTask,
+      // Run the decomposition on a real (standalone) task row so the execution's
+      // foreign key (task_executions.task_id -> tasks.id) is satisfied. It is NOT
+      // a child of the parent, so monitorSubtasks() won't wait on it.
+      const decomposeTask = createTask({
+        title: `Plan: ${parentTask.title}`.slice(0, 80),
+        description: prompt,
+        mode: 'master',
         input: prompt,
-        id: `${parentTask.id}_decompose`,
-      } as Task);
+        workspaceId: parentTask.workspaceId,
+        workdir: parentTask.workdir,
+      });
+
+      const result = await agentRuntime.execute(masterAgent, decomposeTask);
 
       // Parse subtasks from output
       const jsonMatch = result.output.match(/\[[\s\S]*\]/);

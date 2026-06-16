@@ -17,6 +17,7 @@ import { PipelineEngine } from '../pipelines/pipeline-engine.js';
 import { messageBus } from './message-bus.js';
 import { tier1Engine, type Tier1Result } from './tier1-engine.js';
 import { listTasks, getTask, updateTask, addTaskLog } from '../db/models/task.js';
+import { getAgent } from '../db/models/agent.js';
 import { getActiveExecutionCount } from '../db/models/execution.js';
 import type { TaskIntent } from './intent-classifier.js';
 import type { Task } from '../types.js';
@@ -153,7 +154,9 @@ export class Orchestrator {
     try {
       let tasks: Task[];
 
-      if (intent.complexity === 'trivial') {
+      const directAgent = intent.suggestedAgent ? getAgent(intent.suggestedAgent) : undefined;
+
+      if (intent.complexity === 'trivial' || (intent.suggestedMode === 'direct' && directAgent)) {
         // Direct dispatch — no decomposition needed
         tasks = await this.directDispatch(id, input, intent);
       } else if (intent.suggestedMode === 'pipeline' && intent.suggestedTemplate) {
@@ -180,11 +183,17 @@ export class Orchestrator {
   private async directDispatch(orchestrationId: string, input: string, intent: TaskIntent): Promise<Task[]> {
     updateOrchestration(orchestrationId, { status: 'dispatching' });
 
+    // Only assign an agent that actually exists, otherwise leave it unassigned
+    // (a null assignee is valid; a dangling id would violate the FK on tasks).
+    const assigneeId = intent.suggestedAgent && getAgent(intent.suggestedAgent)
+      ? intent.suggestedAgent
+      : undefined;
+
     const task = await this.taskQueue.enqueue({
       title: input.slice(0, 80),
       description: input,
       mode: 'direct',
-      assigneeId: intent.suggestedAgent,
+      assigneeId,
       input,
       priority: 'normal',
     });
@@ -192,7 +201,7 @@ export class Orchestrator {
     eventBus.emit('orchestration:task_dispatched', {
       orchestrationId,
       taskId: task.id,
-      agentId: intent.suggestedAgent,
+      agentId: assigneeId,
       role: 'direct',
     });
 
