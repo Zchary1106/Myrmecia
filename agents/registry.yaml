@@ -76,7 +76,7 @@ agents:
       maxToolCalls: 48
       maxWallClockMs: 600000
     capabilities: [typescript, react, express, database, api, frontend, backend, web-research]
-    allowed_tools: [web.search, web.fetch]
+    allowed_tools: [file_read, file_list, grep, file_write, apply_patch, shell_exec, web.search, web.fetch]
     triggers: [写代码, 实现, 开发, implement, code, fix]
 
   - id: qa
@@ -95,7 +95,7 @@ agents:
       maxToolCalls: 24
       maxWallClockMs: 600000
     capabilities: [testing, unit-test, integration-test, coverage, edge-cases, web-research]
-    allowed_tools: [web.search, web.fetch]
+    allowed_tools: [file_read, file_list, grep, shell_exec, web.search, web.fetch]
     triggers: [测试, test, QA, 验证, coverage]
 
   - id: ops
