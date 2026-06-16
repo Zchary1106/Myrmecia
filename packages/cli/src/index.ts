@@ -205,15 +205,45 @@ async function cmdTask(id: string) {
 
 const indent = (s: string, pad = '    ') => s.split('\n').map(l => pad + l).join('\n');
 
+let cursorHidden = false;
+const showCursor = () => { if (cursorHidden) { process.stdout.write('\x1b[?25h'); cursorHidden = false; } };
+process.on('exit', showCursor);
+
+/**
+ * A single-line braille spinner. Returns a stop() that clears the line.
+ * Falls back to a one-shot printed label when stdout isn't an interactive TTY.
+ */
+function startSpinner(label: string): () => void {
+  if (!process.stdout.isTTY || !useColor) {
+    out(c.gray(`  ${label}…`));
+    return () => {};
+  }
+  const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+  let i = 0;
+  cursorHidden = true;
+  process.stdout.write('\x1b[?25l');
+  const tick = () => {
+    process.stdout.write('\r  ' + rgb(57, 210, 192)(frames[i % frames.length]) + ' ' + c.gray(label) + '\x1b[K');
+    i++;
+  };
+  tick();
+  const iv = setInterval(tick, 80);
+  return () => { clearInterval(iv); process.stdout.write('\r\x1b[K'); showCursor(); };
+}
+
 /** Stream a task's live events (messages + tool calls) until it reaches a terminal state. */
 async function streamTask(taskId: string): Promise<any> {
   let finished = false;
+  let spinnerStop: (() => void) | null = startSpinner('agent working');
+  const stopSpinner = () => { if (spinnerStop) { spinnerStop(); spinnerStop = null; } };
   const printEvent = (ev: any) => {
     const p = ev.payload || {};
     if (p.taskId && p.taskId !== taskId) return;
     if (ev.type === 'execution:message' && p.content) {
+      stopSpinner();
       out(p.type === 'agent_text' ? p.content : c.dim(p.content));
     } else if (ev.type === 'tool:started' || ev.type === 'tool:start') {
+      stopSpinner();
       out(c.magenta(`  🔧 ${p.toolId || p.toolName || 'tool'}`));
     } else if (ev.type === 'task:running') {
       out(c.yellow('  …running'));
@@ -235,6 +265,7 @@ async function streamTask(taskId: string): Promise<any> {
   })();
   await Promise.race([stream, poll]);
   finished = true;
+  stopSpinner();
   return one(await api(`/tasks/${taskId}`));
 }
 
@@ -526,7 +557,13 @@ async function handleSlash(input: string): Promise<boolean> {
 
 /** Natural-language input → classify + dispatch via the supervisor → stream the result. */
 async function dispatchInteractive(input: string) {
-  const res = one(await api('/supervisor/dispatch', { method: 'POST', body: { input } }));
+  const stop = startSpinner('routing to a specialist');
+  let res: any;
+  try {
+    res = one(await api('/supervisor/dispatch', { method: 'POST', body: { input } }));
+  } finally {
+    stop();
+  }
   const intent = res?.intent || {};
   const agent = intent.suggestedAgent || '—';
   const mode = res?.mode || intent.suggestedMode || '—';
@@ -576,7 +613,7 @@ function readBoxedLine(history: string[]): Promise<string | null> {
 
     const INPUT_ROW = 2;            // 0:meta-top 1:rule 2:input 3:rule 4:meta-bottom
     const PREFIX = '  › ';          // 4 visible columns before the text
-    const width = () => Math.max(48, Math.min((process.stdout.columns || 80) - 1, 100));
+    const width = () => Math.max(48, (process.stdout.columns || 80) - 1);
 
     const frame = () => {
       const w = width();
@@ -620,13 +657,15 @@ function readBoxedLine(history: string[]): Promise<string | null> {
       process.stdout.write(`\x1b[${lines.length - 1 - INPUT_ROW}A` + `\x1b[${cursorCol}G`);
     };
 
-    const cleanup = () => { stdin.setRawMode(false); stdin.pause(); stdin.removeListener('data', onData); };
+    const cleanup = () => { stdin.setRawMode(false); stdin.pause(); stdin.removeListener('data', onData); process.stdout.removeListener('resize', onResize); };
     const commit = (val: string | null) => {
       if (drawn) process.stdout.write(`\x1b[${INPUT_ROW}A\r\x1b[J`);
       cleanup();
       if (val && val.trim()) process.stdout.write(c.cyan('❯ ') + val + '\n');
       resolve(val);
     };
+    const onResize = () => { if (drawn) draw(); };
+    process.stdout.on('resize', onResize);
 
     const onData = (chunk: string) => {
       let changed = false;
