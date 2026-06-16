@@ -215,23 +215,38 @@ Open `http://localhost:5173`. Key pages: **Command Center**, **Interaction Conso
 
 ### Command-line (CLI)
 
-Prefer the terminal? The `myrmecia` CLI drives the same server the dashboard uses — **zero install, zero dependencies** (Node ≥ 22 built-ins only). With the server running:
+Prefer the terminal? The `myrmecia` CLI drives the same server the dashboard uses — **zero install, zero dependencies** (Node ≥ 22 built-ins only).
 
 <p align="center">
-  <img src="docs/diagrams/cli-demo.svg" alt="Myrmecia CLI" width="62%">
+  <img src="docs/diagrams/cli-demo.svg" alt="Myrmecia interactive CLI" width="68%">
 </p>
 
+Run it with no arguments to open the **interactive colony shell** — a welcome banner, then natural-language input that's *routed to the right specialist* live (the differentiator vs. single-agent tools), plus `/slash` commands to inspect and steer the colony:
+
 ```bash
-pnpm cli health                                   # server status
-pnpm cli agents                                   # list agents
-pnpm cli templates                                # list pipeline templates
-pnpm cli run pm "Write a spec for a dark-mode toggle"   # run an agent (live stream)
-pnpm cli pipeline Feature "Add CSV export to reports"   # run a pipeline (streams stages)
-pnpm cli supervisor "build a login page with tests"     # decompose a one-line request
-pnpm cli task <taskId>                            # inspect a task
+pnpm cli                        # interactive shell (banner + routing + /agents, /models, …)
+```
+```text
+myrmecia ❯ Add a dark-mode toggle to settings, with tests
+🐜 routed → dev · pipeline · medium · via semantic
+  done      Spec · pm
+  running   Code · dev
+  …
+myrmecia ❯ /agents             # see the 23-specialist colony
 ```
 
-Point it at any server with `--server <url>` (or `MYRMECIA_SERVER`), add `--token` if API auth is enabled, and `--json` for machine-readable output. Run `pnpm cli --help` for the full list. You can also call it directly: `node packages/cli/src/index.ts <command>`.
+Or use it one-shot for scripting (every command streams live output):
+
+```bash
+pnpm cli health                                        # server status
+pnpm cli agents                                        # list agents
+pnpm cli ask "Add a dark-mode toggle with tests"       # classify + route + run
+pnpm cli run pm "Write a spec for a dark-mode toggle"  # run a specific agent
+pnpm cli pipeline Feature "Add CSV export to reports"  # run a pipeline (streams stages)
+pnpm cli task <taskId>                                 # inspect a task
+```
+
+Point it at any server with `--server <url>` (or `MYRMECIA_SERVER`), add `--token` if API auth is enabled, and `--json` for machine-readable output. Run `pnpm cli --help` for the full list. You can also call it directly: `node packages/cli/src/index.ts`.
 
 ### Visual orchestration (drag-and-drop)
 
