@@ -337,9 +337,97 @@ async function setModel(id: string, quiet = false) {
   if (!quiet) out(c.green('✓') + c.gray(' model → ') + c.cyan(id) + c.gray(`  (${tier}, applied to the colony)`));
 }
 
+/**
+ * Split a raw-mode stdin chunk into individual key tokens. A single read can
+ * bundle several keystrokes (e.g. a pasted line, or "↓↓⏎" arriving at once),
+ * so we slice escape sequences (CSI "\x1b[…", SS3 "\x1bO…") as whole tokens and
+ * emit every other byte on its own.
+ */
+function parseKeys(d: string): string[] {
+  const keys: string[] = [];
+  let i = 0;
+  while (i < d.length) {
+    if (d[i] === '\u001b' && (d[i + 1] === '[' || d[i + 1] === 'O')) {
+      let j = i + 2;
+      while (j < d.length && !/[A-Za-z~]/.test(d[j])) j++;
+      keys.push(d.slice(i, j + 1));
+      i = j + 1;
+    } else {
+      keys.push(d[i]);
+      i += 1;
+    }
+  }
+  return keys;
+}
+
+/**
+ * Interactive raw-mode model picker (↑/↓ to move, Enter to select, Esc to
+ * cancel). Returns the chosen model id, or null if cancelled. TTY only.
+ */
+function pickModel(models: any[], current: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    const items = models.filter((m) => m.enabled !== false);
+    if (items.length === 0) return resolve(null);
+    let idx = items.findIndex((m) => m.id === current);
+    if (idx < 0) idx = 0;
+    const stdin = process.stdin as any;
+    stdin.setRawMode(true);
+    stdin.resume();
+    stdin.setEncoding('utf8');
+    const teal = rgb(57, 210, 192);
+    const H = items.length + 1;
+    let drawn = false;
+
+    const render = () => {
+      const lines: string[] = [];
+      lines.push(c.gray('  select a model  ') + c.dim('↑/↓ move · enter select · esc cancel'));
+      for (let i = 0; i < items.length; i++) {
+        const m = items[i];
+        const dot = m.id === current ? c.green('●') : c.gray('○');
+        const id = (m.id || '').padEnd(26);
+        const tier = c.gray((m.tier || '').padEnd(9));
+        lines.push(i === idx
+          ? '  ' + teal('❯ ') + dot + ' ' + c.bold(id) + ' ' + tier
+          : '    ' + dot + ' ' + c.gray(id) + ' ' + tier);
+      }
+      if (drawn) process.stdout.write(`\x1b[${H}A`); else drawn = true;
+      process.stdout.write('\r\x1b[J' + lines.join('\n') + '\n');
+    };
+
+    const cleanup = () => {
+      if (drawn) process.stdout.write(`\x1b[${H}A\r\x1b[J`);
+      stdin.setRawMode(false);
+      stdin.pause();
+      stdin.removeListener('data', onData);
+    };
+
+    const onData = (chunk: string) => {
+      for (const d of parseKeys(chunk)) {
+        if (d === '\u0003' || d === '\u001b' || d === 'q') { cleanup(); return resolve(null); } // Ctrl+C / Esc / q
+        if (d === '\r' || d === '\n') { cleanup(); return resolve(items[idx].id); }
+        if (d === '\u001b[A' || d === '\u001bOA' || d === 'k') { idx = (idx - 1 + items.length) % items.length; render(); continue; }
+        if (d === '\u001b[B' || d === '\u001bOB' || d === 'j') { idx = (idx + 1) % items.length; render(); continue; }
+      }
+    };
+
+    stdin.on('data', onData);
+    render();
+  });
+}
+
 async function cmdModelSwitch(arg?: string) {
   if (arg) return setModel(arg);
   const models = listOf(await api('/models'));
+
+  // In a real terminal, offer an interactive picker; otherwise print a list.
+  if (process.stdin.isTTY && INTERACTIVE) {
+    out(c.bold('Models') + c.gray('   current: ') + c.cyan(currentModel));
+    const chosen = await pickModel(models, currentModel);
+    if (!chosen) { out(c.gray('  (unchanged)')); return; }
+    if (chosen === currentModel) { out(c.gray('  already on ') + c.cyan(chosen)); return; }
+    return setModel(chosen);
+  }
+
   out(c.bold('Models') + c.gray(`   (current: `) + c.cyan(currentModel) + c.gray(')'));
   for (const m of models) {
     const on = m.enabled === false ? c.red('off') : c.green('on');
@@ -523,25 +611,29 @@ function readBoxedLine(history: string[]): Promise<string | null> {
       resolve(val);
     };
 
-    const onData = (d: string) => {
-      if (d === '\u0003') { process.stdout.write('\n'); return commit(null); }       // Ctrl+C
-      if (d === '\u0004') { if (!buf) { process.stdout.write('\n'); return commit(null); } return; } // Ctrl+D
-      if (d === '\r' || d === '\n') return commit(buf);
-      if (d === '\u0015') { buf = buf.slice(cur); cur = 0; return draw(); }            // Ctrl+U
-      if (d === '\u0001') { cur = 0; return draw(); }                                  // Ctrl+A
-      if (d === '\u0005') { cur = buf.length; return draw(); }                         // Ctrl+E
-      if (d === '\u007f' || d === '\b') { if (cur > 0) { buf = buf.slice(0, cur - 1) + buf.slice(cur); cur--; draw(); } return; }
-      if (d.startsWith('\u001b')) {
-        if (d === '\u001b[D') { if (cur > 0) cur--; return draw(); }
-        if (d === '\u001b[C') { if (cur < buf.length) cur++; return draw(); }
-        if (d === '\u001b[H' || d === '\u001b[1~') { cur = 0; return draw(); }
-        if (d === '\u001b[F' || d === '\u001b[4~') { cur = buf.length; return draw(); }
-        if (d === '\u001b[A') { if (hi > 0) { if (hi === history.length) saved = buf; hi--; buf = history[hi]; cur = buf.length; draw(); } return; }
-        if (d === '\u001b[B') { if (hi < history.length) { hi++; buf = hi === history.length ? saved : history[hi]; cur = buf.length; draw(); } return; }
-        return;
+    const onData = (chunk: string) => {
+      let changed = false;
+      for (const d of parseKeys(chunk)) {
+        if (d === '\u0003') { process.stdout.write('\n'); return commit(null); }       // Ctrl+C
+        if (d === '\u0004') { if (!buf) { process.stdout.write('\n'); return commit(null); } continue; } // Ctrl+D
+        if (d === '\r' || d === '\n') return commit(buf);                               // Enter
+        if (d === '\u0015') { buf = buf.slice(cur); cur = 0; changed = true; continue; }      // Ctrl+U
+        if (d === '\u0001') { cur = 0; changed = true; continue; }                            // Ctrl+A
+        if (d === '\u0005') { cur = buf.length; changed = true; continue; }                   // Ctrl+E
+        if (d === '\u007f' || d === '\b') { if (cur > 0) { buf = buf.slice(0, cur - 1) + buf.slice(cur); cur--; changed = true; } continue; }
+        if (d.startsWith('\u001b')) {
+          if (d === '\u001b[D' || d === '\u001bOD') { if (cur > 0) { cur--; changed = true; } continue; }
+          if (d === '\u001b[C' || d === '\u001bOC') { if (cur < buf.length) { cur++; changed = true; } continue; }
+          if (d === '\u001b[H' || d === '\u001bOH' || d === '\u001b[1~') { cur = 0; changed = true; continue; }
+          if (d === '\u001b[F' || d === '\u001bOF' || d === '\u001b[4~') { cur = buf.length; changed = true; continue; }
+          if (d === '\u001b[A' || d === '\u001bOA') { if (hi > 0) { if (hi === history.length) saved = buf; hi--; buf = history[hi]; cur = buf.length; changed = true; } continue; }
+          if (d === '\u001b[B' || d === '\u001bOB') { if (hi < history.length) { hi++; buf = hi === history.length ? saved : history[hi]; cur = buf.length; changed = true; } continue; }
+          continue;
+        }
+        const text = d.replace(/[\u0000-\u001f\u007f]/g, '');
+        if (text) { buf = buf.slice(0, cur) + text + buf.slice(cur); cur += text.length; changed = true; }
       }
-      const text = d.replace(/[\u0000-\u001f\u007f]/g, '');
-      if (text) { buf = buf.slice(0, cur) + text + buf.slice(cur); cur += text.length; draw(); }
+      if (changed) draw();
     };
 
     stdin.on('data', onData);
@@ -652,7 +744,7 @@ async function main() {
     case 'health': return cmdHealth();
     case 'agents': case 'agent': return cmdAgents();
     case 'models': return cmdModels();
-    case 'model': return cmdModelSwitch(rest[0]);
+    case 'model': await initCurrentModel(); return cmdModelSwitch(rest[0]);
     case 'templates': case 'template': return cmdTemplates();
     case 'run': case 'exec': return cmdRun(rest[0], rest.slice(1));
     case 'ask': return dispatchInteractive(rest.join(' ').trim() || die('usage: myrmecia ask <request...>'));
