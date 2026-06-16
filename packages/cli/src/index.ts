@@ -35,6 +35,8 @@ const JSON_OUT = Boolean(flags.json);
 const NO_STREAM = Boolean(flags['no-stream']);
 let INTERACTIVE = false;
 let currentModel = String(flags.model || process.env.MYRMECIA_MODEL || 'auto');
+let agentCount = 0;
+let connected = false;
 
 // ------------------------------------------------------------------ colors
 const useColor = process.stdout.isTTY && !process.env.NO_COLOR;
@@ -460,9 +462,12 @@ async function welcome() {
   out('');
   const h = await quietHealth();
   if (h) {
+    connected = true;
+    agentCount = Number(h.agents?.total ?? 0) || 0;
     out('  ' + c.green('●') + ' ' + c.gray('connected ') + c.cyan(SERVER)
       + c.gray(`   ·   ${h.agents?.total ?? '?'} agents ready   ·   model `) + rgb(57, 210, 192)(currentModel));
   } else {
+    connected = false;
     out('  ' + c.red('●') + ' ' + c.gray('offline — start the server with ') + c.cyan('pnpm dev') + c.gray(' (or pass --server)'));
   }
   out('  ' + c.gray('Type a task, or ') + c.cyan('/help') + c.gray(' · ')
@@ -551,9 +556,10 @@ function boxLine(segs: Array<[string, (s: string) => string]>, totalW: number, f
 }
 
 /**
- * A Claude-Code-style bordered input box (raw mode). Renders a 3-line rounded
- * box anchored at the bottom and redraws on each keystroke. Resolves with the
- * submitted line, or null on Ctrl+C / Ctrl+D-on-empty. TTY only.
+ * A Copilot-CLI-style input frame (raw mode): a slim meta line, a full-width
+ * horizontal rule, the `›` input line, a closing rule, and a hints line — no
+ * vertical side bars. Redraws on each keystroke. Resolves with the submitted
+ * line, or null on Ctrl+C / Ctrl+D-on-empty. TTY only.
  */
 function readBoxedLine(history: string[]): Promise<string | null> {
   return new Promise((resolve) => {
@@ -568,44 +574,55 @@ function readBoxedLine(history: string[]): Promise<string | null> {
     let drawn = false;
     const teal = rgb(57, 210, 192);
 
-    const width = () => Math.max(40, Math.min((process.stdout.columns || 80) - 1, 100));
+    const INPUT_ROW = 2;            // 0:meta-top 1:rule 2:input 3:rule 4:meta-bottom
+    const PREFIX = '  › ';          // 4 visible columns before the text
+    const width = () => Math.max(48, Math.min((process.stdout.columns || 80) - 1, 100));
 
     const frame = () => {
       const w = width();
-      const inputW = w - 6;
+      const inner = w - 4;          // rules/content sit inside a 2-col margin
+      const inputW = inner - 2;     // minus the "› " marker
       let start = 0;
       if (buf.length > inputW) start = Math.max(0, Math.min(cur, buf.length - inputW));
       if (cur - start > inputW) start = cur - inputW;
       if (cur < start) start = cur;
       const visible = buf.slice(start, start + inputW);
       const cursorOffset = cur - start;
-      const midContent = buf.length === 0
-        ? c.dim('Describe a task, or /help'.slice(0, inputW).padEnd(inputW))
-        : c.bold(visible) + ' '.repeat(Math.max(0, inputW - visible.length));
-      const top = boxLine([
-        ['╭─ ', c.gray], ['myrmecia', c.cyan], [' ', c.gray],
-        ['', c.gray], [' ', c.gray], [currentModel, teal], [' ─╮', c.gray],
-      ], w, 3, '─');
-      const mid = c.gray('│ ') + c.cyan('› ') + midContent + c.gray(' │');
-      const hintPlain = '/help  /model  /agents  /exit';
-      const hintColored = hintPlain.split(/(\s+)/).map(tok => (tok.startsWith('/') ? c.cyan(tok) : c.gray(tok))).join('');
-      const bot = boxLine([
-        ['╰─ ', c.gray], [hintPlain, () => hintColored], [' ', c.gray],
-        ['', c.gray], ['╯', c.gray],
-      ], w, 3, '─');
-      return { lines: [top, mid, bot], cursorCol: 5 + cursorOffset };
+      const inputText = buf.length === 0
+        ? c.dim('Describe a task, or /help')
+        : c.bold(visible);
+
+      const host = SERVER.replace(/^https?:\/\//, '');
+      const rightTop = connected ? `${host}  ·  ${agentCount} agents` : `${host}  ·  offline`;
+      const dotColor = connected ? c.green : c.red;
+      const metaTop = boxLine([
+        ['  ', c.gray], ['● ', () => dotColor('●') + ' '], ['myrmecia', c.cyan], ['', c.gray], [rightTop, c.gray], ['  ', c.gray],
+      ], w, 3, ' ');
+
+      const rule = c.gray('  ' + '─'.repeat(Math.max(0, w - 4)) + '  ');
+      const inputLine = c.cyan(PREFIX) + inputText;
+
+      const hintsPlain = '/help · /model · /agents · /exit';
+      const hintsColored = hintsPlain.split(' · ').map((h) => c.cyan(h)).join(c.gray(' · '));
+      const rightBot = `model ${currentModel}`;
+      const metaBot = boxLine([
+        ['  ', c.gray], [hintsPlain, () => hintsColored], ['', c.gray],
+        [rightBot, () => c.gray('model ') + teal(currentModel)], ['  ', c.gray],
+      ], w, 2, ' ');
+
+      return { lines: [metaTop, rule, inputLine, rule, metaBot], cursorCol: PREFIX.length + 1 + cursorOffset };
     };
 
     const draw = () => {
       const { lines, cursorCol } = frame();
-      if (drawn) process.stdout.write('\x1b[1A\r\x1b[J'); else drawn = true;
+      if (drawn) process.stdout.write(`\x1b[${INPUT_ROW}A\r\x1b[J`); else drawn = true;
       process.stdout.write(lines.join('\n'));
-      process.stdout.write('\x1b[1A' + `\x1b[${cursorCol}G`);
+      process.stdout.write(`\x1b[${lines.length - 1 - INPUT_ROW}A` + `\x1b[${cursorCol}G`);
     };
 
     const cleanup = () => { stdin.setRawMode(false); stdin.pause(); stdin.removeListener('data', onData); };
     const commit = (val: string | null) => {
-      if (drawn) process.stdout.write('\x1b[1A\r\x1b[J');
+      if (drawn) process.stdout.write(`\x1b[${INPUT_ROW}A\r\x1b[J`);
       cleanup();
       if (val && val.trim()) process.stdout.write(c.cyan('❯ ') + val + '\n');
       resolve(val);

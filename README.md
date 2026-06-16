@@ -227,10 +227,10 @@ Prefer the terminal? The `myrmecia` CLI drives the same server the dashboard use
   <img src="docs/diagrams/cli-demo.svg" alt="Myrmecia interactive CLI" width="68%">
 </p>
 
-Run it with no arguments to open the **interactive colony shell** — a welcome banner, a Claude-Code-style **bordered input box** (with the active model shown in the top border), then natural-language input that's *routed to the right specialist* live (the differentiator vs. single-agent tools), plus `/slash` commands to inspect and steer the colony:
+Run it with no arguments to open the **interactive colony shell** — a welcome banner, a Copilot-CLI-style **input frame** (with the active model and connection shown around it), then natural-language input that's *routed to the right specialist* live (the differentiator vs. single-agent tools), plus `/slash` commands to inspect and steer the colony:
 
 ```bash
-pnpm cli                        # interactive shell (banner + boxed input + routing)
+pnpm cli                        # interactive shell (banner + input frame + routing)
 pnpm cli --model claude-haiku-4.5   # start pinned to a specific model
 ```
 ```text

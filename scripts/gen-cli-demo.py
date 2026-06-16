@@ -96,19 +96,23 @@ line([("  done      ", GREEN, False), ("Review", WHITE, False), ("  \u00b7 revie
 line([("result ", WHITE, True), ("done", GREEN, False)])
 y += 14
 
-# the new bordered input box (Claude-Code style) with the active model
-BOXW = 58
+# the new Copilot-style input frame: meta line, rules, › input, hints + model
+BOXW = 84
 model = "claude-haiku-4.5"
-top_mid = "─ myrmecia "
-top_right = f" {model} ─"
-top_fill = "\u2500" * max(1, BOXW - 2 - len(top_mid) - len(top_right))
-inner = BOXW - 6
-content = "Add a dark-mode toggle to settings, with tests"[:inner].ljust(inner)
-hint = "/help  /model  /agents  /exit"
-bot_fill = "\u2500" * max(1, BOXW - 5 - len(hint))
-line([("\u256d\u2500 ", GRAY, False), ("myrmecia", CYAN, True), (" " + top_fill + " ", GRAY, False), (model, TEAL, False), (" \u2500\u256e", GRAY, False)])
-line([("\u2502 ", GRAY, False), ("\u203a ", CYAN, False), (content, WHITE, False), (" \u2502", GRAY, False)])
-line([("\u2570\u2500 ", GRAY, False), ("/help", CYAN, False), ("  ", GRAY, False), ("/model", CYAN, False), ("  ", GRAY, False), ("/agents", CYAN, False), ("  ", GRAY, False), ("/exit", CYAN, False), (" " + bot_fill + "\u256f", GRAY, False)])
+rule = "\u2500" * (BOXW - 4)
+# meta-top: ● myrmecia ........................ host · agents
+left_top = "\u25cf myrmecia"
+right_top = "localhost:3000  \u00b7  23 agents"
+gap_top = " " * max(1, BOXW - 2 - len(left_top) - len(right_top) - 2)
+# meta-bottom: /help · /model · /agents · /exit ........ model claude-haiku-4.5
+hints = "/help \u00b7 /model \u00b7 /agents \u00b7 /exit"
+right_bot = f"model {model}"
+gap_bot = " " * max(1, BOXW - 2 - len(hints) - len(right_bot) - 2)
+line([("  ", GRAY, False), ("\u25cf", GREEN, False), (" myrmecia", CYAN, True), (gap_top, GRAY, False), (right_top, GRAY, False)])
+line([("  ", GRAY, False), (rule, GRAY, False)])
+line([("  \u203a ", CYAN, False), ("Add a dark-mode toggle to settings, with tests", WHITE, False)])
+line([("  ", GRAY, False), (rule, GRAY, False)])
+line([("  ", GRAY, False), ("/help", CYAN, False), (" \u00b7 ", GRAY, False), ("/model", CYAN, False), (" \u00b7 ", GRAY, False), ("/agents", CYAN, False), (" \u00b7 ", GRAY, False), ("/exit", CYAN, False), (gap_bot, GRAY, False), ("model ", GRAY, False), (model, TEAL, False)])
 
 H = int(y + 14)
 W = int(PAD_X * 2 + max_chars * CHAR_W) + 8
