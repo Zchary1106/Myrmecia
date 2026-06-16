@@ -18,6 +18,7 @@ import { SkillExecutor } from '../skills/skill-executor.js';
 import { llmCache } from '../cache/llm-cache.js';
 import { metrics } from '../observability/telemetry.js';
 import { assertExecutionTokenBudget, remainingResponseTokens, resolveAgentRuntimeLimits } from './runtime-limits.js';
+import { compactMessages } from './context-compactor.js';
 import { sanitizeAgentOutput } from '../security/dlp-runtime.js';
 import { buildSandboxToolDefinition, executeTool, isSandboxTool } from '../skills/tool-sandbox.js';
 import { isMcpTool } from '../tools/mcp-manager.js';
@@ -311,6 +312,13 @@ export class TsAgentLoop {
 
       while (numTurns < maxTurns) {
         numTurns++;
+
+        const compaction = compactMessages(messages, limits.maxExecutionTokens, { keepRecent: 6, triggerRatio: 0.5 });
+        if (compaction.compacted) {
+          messages.length = 0;
+          messages.push(...compaction.messages);
+          addTaskLog(task.id, 'info', `🗜️ auto-compacted context ~${compaction.before}→${compaction.after} tokens`, agent.id);
+        }
 
         const completionParams = {
           model: selectedModel,
@@ -631,6 +639,13 @@ export class TsAgentLoop {
 
       for (let turn = 0; turn < maxTurns; turn++) {
         if (abortController.signal.aborted) throw new Error('Execution aborted');
+
+        const compaction = compactMessages(messages, limits.maxExecutionTokens, { keepRecent: 6, triggerRatio: 0.5 });
+        if (compaction.compacted) {
+          messages.length = 0;
+          messages.push(...compaction.messages);
+          addTaskLog(task.id, 'info', `🗜️ auto-compacted step context ~${compaction.before}→${compaction.after} tokens`, agent.id);
+        }
 
         const completion = await client.chat.completions.create({
           model: selectedModel,
