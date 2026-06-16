@@ -4,7 +4,7 @@
  */
 import { exec, execFile } from 'child_process';
 import { promisify } from 'util';
-import { readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, existsSync } from 'fs';
 import { resolve, normalize, dirname, relative, isAbsolute, join } from 'path';
 import { guardrails } from '../agents/safety-guardrails.js';
 import { getRuntimeLimits } from '../agents/runtime-limits.js';
@@ -27,6 +27,8 @@ export interface ToolSandboxOptions {
 export const SANDBOX_TOOL_NAMES = [
   'file_read',
   'file_write',
+  'file_list',
+  'apply_patch',
   'shell_exec',
   'grep',
   'search',
@@ -47,7 +49,9 @@ export function isSandboxTool(toolName: string): boolean {
 export function buildSandboxToolDefinition(toolName: string, modelToolName = toolName) {
   const descriptionByTool: Record<string, string> = {
     file_read: 'Read a UTF-8 file from the task workspace.',
-    file_write: 'Write a UTF-8 file inside the task workspace.',
+    file_write: 'Create or overwrite a UTF-8 file inside the task workspace.',
+    file_list: 'List files/directories in the task workspace (recursive, capped).',
+    apply_patch: 'Make a surgical edit: replace one exact occurrence of old_str with new_str in a workspace file (token-efficient vs. rewriting the whole file).',
     shell_exec: 'Run a shell command in the task workspace with guardrail checks and a timeout.',
     grep: 'Search workspace text files for a pattern.',
     search: 'Search workspace text files for a pattern.',
@@ -58,12 +62,31 @@ export function buildSandboxToolDefinition(toolName: string, modelToolName = too
     'content.hashtag_plan': 'Generate platform hashtag and keyword suggestions.',
     'image.generate_svg': 'Generate a simple SVG cover image in the task workspace.',
   };
+  const schemaByTool: Record<string, { properties: Record<string, unknown>; required?: string[] }> = {
+    file_read: { properties: { path: { type: 'string', description: 'Workspace-relative file path' } }, required: ['path'] },
+    file_write: { properties: { path: { type: 'string' }, content: { type: 'string' } }, required: ['path', 'content'] },
+    file_list: { properties: { path: { type: 'string', description: 'Optional subdirectory (default workspace root)' } } },
+    apply_patch: {
+      properties: {
+        path: { type: 'string' },
+        old_str: { type: 'string', description: 'Exact text to replace (must match a single occurrence)' },
+        new_str: { type: 'string', description: 'Replacement text' },
+      },
+      required: ['path', 'old_str', 'new_str'],
+    },
+    shell_exec: { properties: { command: { type: 'string' } }, required: ['command'] },
+    grep: { properties: { pattern: { type: 'string' }, glob: { type: 'string', description: 'Optional file glob, e.g. *.ts' } }, required: ['pattern'] },
+    search: { properties: { pattern: { type: 'string' } }, required: ['pattern'] },
+  };
+  const schema = schemaByTool[toolName];
   return {
     type: 'function' as const,
     function: {
       name: modelToolName,
       description: descriptionByTool[toolName] || `Tool: ${toolName}`,
-      parameters: { type: 'object' as const, properties: {}, additionalProperties: true },
+      parameters: schema
+        ? { type: 'object' as const, properties: schema.properties, required: schema.required, additionalProperties: false }
+        : { type: 'object' as const, properties: {}, additionalProperties: true },
     },
   };
 }
@@ -289,6 +312,53 @@ export async function executeTool(
       return { output: capOutput(stdout || 'No matches', Math.min(maxOutputChars, 4_000)), status: 'done' };
     } catch (err: any) {
       return { output: capOutput(err.stdout || 'No matches', Math.min(maxOutputChars, 2_000)), status: err.code === 1 ? 'done' : 'failed' };
+    }
+  }
+
+  if (toolName === 'file_list') {
+    try {
+      const sub = String(toolInput.path || toolInput.dir || '.');
+      const root = assertSafePath(workdir, sub);
+      const entries: string[] = [];
+      const SKIP = new Set(['node_modules', '.git', 'dist', '.agent-factory']);
+      const walk = (dir: string, depth: number) => {
+        if (depth > 4 || entries.length >= 500) return;
+        for (const name of readdirSync(dir)) {
+          if (SKIP.has(name)) continue;
+          const full = join(dir, name);
+          let st;
+          try { st = statSync(full); } catch { continue; }
+          const rel = relative(workdir, full);
+          if (st.isDirectory()) { entries.push(rel + '/'); walk(full, depth + 1); }
+          else entries.push(rel);
+          if (entries.length >= 500) return;
+        }
+      };
+      walk(root, 0);
+      return { output: capOutput(entries.join('\n') || '(empty)', maxOutputChars), status: 'done' };
+    } catch (err: any) {
+      return { output: `List failed: ${err.message}`, status: 'failed' };
+    }
+  }
+
+  if (toolName === 'apply_patch') {
+    try {
+      const filePath = assertSafePath(workdir, String(toolInput.path || toolInput.file_path || ''));
+      const oldStr = String(toolInput.old_str ?? toolInput.find ?? '');
+      const newStr = String(toolInput.new_str ?? toolInput.replace ?? '');
+      if (!oldStr) throw new Error('apply_patch requires a non-empty old_str');
+      if (!existsSync(filePath)) throw new Error(`file not found: ${toolInput.path}`);
+      const content = readFileSync(filePath, 'utf-8');
+      const idx = content.indexOf(oldStr);
+      if (idx === -1) throw new Error('old_str not found in file (it must match exactly, including whitespace)');
+      if (content.indexOf(oldStr, idx + oldStr.length) !== -1) {
+        throw new Error('old_str matches multiple times; include more surrounding context to make it unique');
+      }
+      writeFileSync(filePath, content.slice(0, idx) + newStr + content.slice(idx + oldStr.length), 'utf-8');
+      const delta = newStr.split('\n').length - oldStr.split('\n').length;
+      return { output: capOutput(`Patched ${toolInput.path} (${delta >= 0 ? '+' : ''}${delta} lines)`, maxOutputChars), status: 'done' };
+    } catch (err: any) {
+      return { output: `Patch failed: ${err.message}`, status: 'failed' };
     }
   }
 
