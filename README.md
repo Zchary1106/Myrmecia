@@ -217,6 +217,10 @@ Open `http://localhost:5173`. Key pages: **Command Center**, **Interaction Conso
 
 Prefer the terminal? The `myrmecia` CLI drives the same server the dashboard uses — **zero install, zero dependencies** (Node ≥ 22 built-ins only). With the server running:
 
+<p align="center">
+  <img src="docs/diagrams/cli-demo.svg" alt="Myrmecia CLI" width="62%">
+</p>
+
 ```bash
 pnpm cli health                                   # server status
 pnpm cli agents                                   # list agents
