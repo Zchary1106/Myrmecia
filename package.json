@@ -9,6 +9,7 @@
     "build": "pnpm -r build",
     "dev:server": "pnpm --filter @myrmecia/server dev",
     "dev:dashboard": "pnpm --filter @myrmecia/dashboard dev",
+    "cli": "node packages/cli/src/index.ts",
     "lint": "pnpm -r --if-present lint"
   },
   "devDependencies": {
