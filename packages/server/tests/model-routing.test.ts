@@ -131,13 +131,13 @@ describe('model registry and routing', () => {
       mode: 'direct',
     });
 
-    expect(selection.modelId).toBe('gpt-5.3-codex');
+    expect(selection.modelId).toBe('gpt-5.4');
     expect(selection.source).toBe('task.route');
     expect(selection.taskProfile).toBe('coding');
   });
 
   it('falls back within a task route before using an agent pinned model', () => {
-    updateModel('gpt-5.3-codex', { enabled: false });
+    updateModel('gpt-5.4', { enabled: false });
     const agent = createAgent({
       id: 'task-route-fallback-agent',
       name: 'Task Route Fallback Agent',
@@ -152,9 +152,9 @@ describe('model registry and routing', () => {
       mode: 'direct',
     });
 
-    expect(selection.modelId).toBe('gpt-5.4');
+    expect(selection.modelId).toBe('gemini-3.1-pro-preview');
     expect(selection.source).toBe('task.route');
-    expect(selection.fallbackModelId).toBe('gpt-5.4');
+    expect(selection.fallbackModelId).toBe('gemini-3.1-pro-preview');
     expect(selection.reason).toContain('route default unavailable');
   });
 
@@ -173,7 +173,7 @@ describe('model registry and routing', () => {
       mode: 'direct',
     });
 
-    expect(selection.modelId).toBe('gpt-5.3-codex');
+    expect(selection.modelId).toBe('gpt-5.4');
     expect(selection.taskProfile).toBe('coding');
   });
 
@@ -192,7 +192,7 @@ describe('model registry and routing', () => {
       mode: 'direct',
     });
 
-    expect(selection.modelId).toBe('gpt-5.5');
+    expect(selection.modelId).toBe('claude-opus-4.7');
     expect(selection.taskProfile).toBe('high-risk');
   });
 
@@ -259,7 +259,7 @@ describe('model registry and routing', () => {
 
     expect(firstRetry.modelId).toBe('gpt-5.4');
     expect(firstRetry.taskProfile).toBe('retry-escalation-balanced');
-    expect(secondRetry.modelId).toBe('gpt-5.5');
+    expect(secondRetry.modelId).toBe('claude-opus-4.7');
     expect(secondRetry.taskProfile).toBe('retry-escalation-strong');
   });
 
