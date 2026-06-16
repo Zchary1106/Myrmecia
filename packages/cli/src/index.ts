@@ -54,7 +54,10 @@ const statusColor = (s: string): string => {
   return c.gray(s || '-');
 };
 
-const out = (s = '') => process.stdout.write(s + '\n');
+const out = (s = '') => {
+  if (footerActive) { footerPrintAbove(s); return; }
+  process.stdout.write(s + '\n');
+};
 const die = (msg: string, code = 1): never => { process.stderr.write(c.red('error: ') + msg + '\n'); process.exit(code); };
 
 // 24-bit truecolor (falls back to plain when color is disabled).
@@ -231,22 +234,28 @@ function startSpinner(label: string): () => void {
   return () => { clearInterval(iv); process.stdout.write('\r\x1b[K'); showCursor(); };
 }
 
-/** Stream a task's live events (messages + tool calls) until it reaches a terminal state. */
+/** Stream a task's live events until it reaches a terminal state. Agent-text
+ *  snippets are shown as an ephemeral live preview (footer) — never committed
+ *  to scrollback — so the caller can print the full authoritative output once. */
 async function streamTask(taskId: string): Promise<any> {
   let finished = false;
-  let spinnerStop: (() => void) | null = startSpinner('agent working');
+  const useFooter = footerActive;
+  let spinnerStop: (() => void) | null = useFooter ? null : startSpinner('agent working');
   const stopSpinner = () => { if (spinnerStop) { spinnerStop(); spinnerStop = null; } };
+  if (useFooter) footerSet('agent working');
   const printEvent = (ev: any) => {
     const p = ev.payload || {};
     if (p.taskId && p.taskId !== taskId) return;
     if (ev.type === 'execution:message' && p.content) {
-      stopSpinner();
-      out(p.type === 'agent_text' ? p.content : c.dim(p.content));
+      // Live preview only (snippets are truncated server-side) — keep them in
+      // the footer so the full output isn't duplicated/truncated in scrollback.
+      const preview = String(p.content).replace(/\s+/g, ' ').trim().slice(0, 72);
+      if (useFooter && preview) footerSet(preview);
     } else if (ev.type === 'tool:started' || ev.type === 'tool:start') {
-      stopSpinner();
-      out(c.magenta(`  🔧 ${p.toolId || p.toolName || 'tool'}`));
-    } else if (ev.type === 'task:running') {
-      out(c.yellow('  …running'));
+      const tool = p.toolId || p.toolName || 'tool';
+      if (useFooter) footerSet(`running ${tool}`);
+      else stopSpinner();
+      out(c.magenta(`  🔧 ${tool}`));
     }
   };
   const stream = streamChannel(`task:${taskId}`, printEvent, (ev) => {
@@ -557,30 +566,29 @@ async function handleSlash(input: string): Promise<boolean> {
 
 /** Natural-language input → classify + dispatch via the supervisor → stream the result. */
 async function dispatchInteractive(input: string) {
-  const stop = startSpinner('routing to a specialist');
-  let res: any;
+  footerMount('routing to a specialist');
   try {
-    res = one(await api('/supervisor/dispatch', { method: 'POST', body: { input } }));
+    const res = one(await api('/supervisor/dispatch', { method: 'POST', body: { input } }));
+    const intent = res?.intent || {};
+    const agent = intent.suggestedAgent || '—';
+    const mode = res?.mode || intent.suggestedMode || '—';
+    const complexity = intent.complexity || '—';
+    const via = intent.routingSource || 'classifier';
+    out(`${c.cyan('🐜 routed')} → ${c.bold(agent)} ${c.gray(`· ${mode} · ${complexity} · via ${via}`)}`);
+    const tasks = res?.tasks || [];
+    if (tasks.length > 1) out(c.gray(`  decomposed into ${tasks.length} tasks — streaming the first`));
+    if (tasks.length) {
+      const task = await streamTask(tasks[0].id);
+      out('');
+      out(`${c.bold('result')} ${statusColor(task.status)}`);
+      if (task.output) out(indent(String(task.output)));
+    } else if (res?.orchestration?.result) {
+      out(indent(String(res.orchestration.result)));
+    } else {
+      out(c.gray('  (dispatched)'));
+    }
   } finally {
-    stop();
-  }
-  const intent = res?.intent || {};
-  const agent = intent.suggestedAgent || '—';
-  const mode = res?.mode || intent.suggestedMode || '—';
-  const complexity = intent.complexity || '—';
-  const via = intent.routingSource || 'classifier';
-  out(`${c.cyan('🐜 routed')} → ${c.bold(agent)} ${c.gray(`· ${mode} · ${complexity} · via ${via}`)}`);
-  const tasks = res?.tasks || [];
-  if (tasks.length > 1) out(c.gray(`  decomposed into ${tasks.length} tasks — streaming the first`));
-  if (tasks.length) {
-    const t = await streamTask(tasks[0].id);
-    out('');
-    out(`${c.bold('result')} ${statusColor(t.status)}`);
-    if (t.output) out(indent(String(t.output)));
-  } else if (res?.orchestration?.result) {
-    out(indent(String(res.orchestration.result)));
-  } else {
-    out(c.gray('  (dispatched)'));
+    footerUnmount();
   }
 }
 
@@ -590,6 +598,86 @@ function boxLine(segs: Array<[string, (s: string) => string]>, totalW: number, f
   const fixed = segs.reduce((n, [t], i) => (i === fillIndex ? n : n + t.length), 0);
   const fillLen = Math.max(0, totalW - fixed);
   return segs.map(([t, fn], i) => (i === fillIndex ? fn(fillChar.repeat(fillLen)) : fn(t))).join('');
+}
+
+/**
+ * Build the 5-line input frame (meta · rule · body · rule · hints) for a given
+ * width. `body` is either the editable input (text + cursorOffset) or a busy
+ * status string. Shared by the editable box and the pinned busy footer.
+ */
+function buildInputFrame(w: number, opts: { text?: string; busy?: string; cursorOffset?: number }): { lines: string[]; cursorCol: number } {
+  const teal = rgb(57, 210, 192);
+  const PREFIX = '  › ';
+  const host = SERVER.replace(/^https?:\/\//, '');
+  const rightTop = connected ? `${host}  ·  ${agentCount} agents` : `${host}  ·  offline`;
+  const dotColor = connected ? c.green : c.red;
+  const metaTop = boxLine([
+    ['  ', c.gray], ['● ', () => dotColor('●') + ' '], ['myrmecia', c.cyan], ['', c.gray], [rightTop, c.gray], ['  ', c.gray],
+  ], w, 3, ' ');
+  const rule = c.gray('  ' + '─'.repeat(Math.max(0, w - 4)) + '  ');
+
+  let inputLine: string;
+  let cursorCol = PREFIX.length + 1;
+  if (opts.busy !== undefined) {
+    inputLine = c.cyan(PREFIX) + opts.busy;
+  } else {
+    inputLine = c.cyan(PREFIX) + (opts.text || '');
+    cursorCol = PREFIX.length + 1 + (opts.cursorOffset || 0);
+  }
+
+  const hintsPlain = '/help · /model · /agents · /exit';
+  const hintsColored = hintsPlain.split(' · ').map((h) => c.cyan(h)).join(c.gray(' · '));
+  const metaBot = boxLine([
+    ['  ', c.gray], [hintsPlain, () => hintsColored], ['', c.gray],
+    [`model ${currentModel}`, () => c.gray('model ') + teal(currentModel)], ['  ', c.gray],
+  ], w, 2, ' ');
+
+  return { lines: [metaTop, rule, inputLine, rule, metaBot], cursorCol };
+}
+
+// ---- pinned bottom frame: keeps the input frame visible while output scrolls above it
+const SPIN = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+const FOOTER_H = 5;
+let footerActive = false;
+let footerStatus = '';
+let footerSpinIdx = 0;
+let footerTimer: ReturnType<typeof setInterval> | null = null;
+const footerWidth = () => Math.max(48, (process.stdout.columns || 80) - 1);
+
+function footerBody(): string {
+  const teal = rgb(57, 210, 192);
+  if (!footerStatus) return c.dim('working…');
+  return teal(SPIN[footerSpinIdx % SPIN.length]) + ' ' + c.gray(footerStatus) + c.dim('   ·  esc to interrupt');
+}
+function footerDraw() {
+  const { lines } = buildInputFrame(footerWidth(), { busy: footerBody() });
+  process.stdout.write(lines.join('\n'));
+}
+function footerErase() {
+  process.stdout.write(`\r\x1b[${FOOTER_H - 1}A\x1b[J`);
+}
+function footerMount(status: string) {
+  if (!process.stdout.isTTY || !useColor) { out(c.gray(`  ${status}…`)); return; }
+  footerStatus = status; footerActive = true; footerSpinIdx = 0;
+  process.stdout.write('\x1b[?25l'); cursorHidden = true;
+  footerDraw();
+  footerTimer = setInterval(() => { footerSpinIdx++; footerErase(); footerDraw(); }, 90);
+}
+function footerSet(status: string) {
+  footerStatus = status;
+  if (footerActive) { footerErase(); footerDraw(); }
+}
+function footerUnmount() {
+  if (!footerActive) return;
+  if (footerTimer) { clearInterval(footerTimer); footerTimer = null; }
+  footerErase();
+  footerActive = false;
+  showCursor();
+}
+function footerPrintAbove(text: string) {
+  footerErase();
+  process.stdout.write(text + '\n');
+  footerDraw();
 }
 
 /**
@@ -609,45 +697,21 @@ function readBoxedLine(history: string[]): Promise<string | null> {
     let hi = history.length;
     let saved = '';
     let drawn = false;
-    const teal = rgb(57, 210, 192);
 
     const INPUT_ROW = 2;            // 0:meta-top 1:rule 2:input 3:rule 4:meta-bottom
-    const PREFIX = '  › ';          // 4 visible columns before the text
     const width = () => Math.max(48, (process.stdout.columns || 80) - 1);
 
     const frame = () => {
       const w = width();
-      const inner = w - 4;          // rules/content sit inside a 2-col margin
-      const inputW = inner - 2;     // minus the "› " marker
+      const inputW = w - 6;
       let start = 0;
       if (buf.length > inputW) start = Math.max(0, Math.min(cur, buf.length - inputW));
       if (cur - start > inputW) start = cur - inputW;
       if (cur < start) start = cur;
       const visible = buf.slice(start, start + inputW);
-      const cursorOffset = cur - start;
-      const inputText = buf.length === 0
-        ? c.dim('Describe a task, or /help')
-        : c.bold(visible);
-
-      const host = SERVER.replace(/^https?:\/\//, '');
-      const rightTop = connected ? `${host}  ·  ${agentCount} agents` : `${host}  ·  offline`;
-      const dotColor = connected ? c.green : c.red;
-      const metaTop = boxLine([
-        ['  ', c.gray], ['● ', () => dotColor('●') + ' '], ['myrmecia', c.cyan], ['', c.gray], [rightTop, c.gray], ['  ', c.gray],
-      ], w, 3, ' ');
-
-      const rule = c.gray('  ' + '─'.repeat(Math.max(0, w - 4)) + '  ');
-      const inputLine = c.cyan(PREFIX) + inputText;
-
-      const hintsPlain = '/help · /model · /agents · /exit';
-      const hintsColored = hintsPlain.split(' · ').map((h) => c.cyan(h)).join(c.gray(' · '));
-      const rightBot = `model ${currentModel}`;
-      const metaBot = boxLine([
-        ['  ', c.gray], [hintsPlain, () => hintsColored], ['', c.gray],
-        [rightBot, () => c.gray('model ') + teal(currentModel)], ['  ', c.gray],
-      ], w, 2, ' ');
-
-      return { lines: [metaTop, rule, inputLine, rule, metaBot], cursorCol: PREFIX.length + 1 + cursorOffset };
+      const cursorOffset = buf.length === 0 ? 0 : cur - start;
+      const text = buf.length === 0 ? c.dim('Describe a task, or /help') : c.bold(visible);
+      return buildInputFrame(w, { text, cursorOffset });
     };
 
     const draw = () => {
