@@ -21,6 +21,9 @@
 Myrmecia is a self-hosted, code-first platform that manages a pool of specialized AI agents and runs them — independently, in coordinated pipelines, or on a **drag-and-drop canvas** — from product spec through design, code, test, and deploy. It pairs a complete agent **harness** (tool-calling loop, memory, context management, model routing) with enterprise-grade governance, observability, and a real-time dashboard.
 
 ## News
+- [2026-06] **Coding tools + TDD** — agents get a sandboxed engineering toolset (`file_read` / `file_write` / `file_list` / `apply_patch` / `shell_exec` / `grep`, workspace-confined, path-traversal-proof, governed). The dev agent runs a full **test-driven** loop (write failing tests → implement → refactor) and produces working code that passes its own tests.
+- [2026-06] **Auto-compact context** — long tool-calling loops summarize older turns before each model call, bounding per-call context to ~O(1) and total usage to ~O(N) so runs no longer hit the token budget.
+- [2026-06] **Interactive CLI** — a zero-dependency `myrmecia` terminal shell: a welcome banner, natural-language input *routed live to the right specialist*, and `/slash` commands. Same backend as the dashboard. [See usage ↓](#command-line-cli)
 - [2026-06] **Visual Orchestration** — a drag-and-drop canvas (`Orchestrate` page) to wire agents into a DAG; the `GraphWorkflowEngine` dispatches each node when its predecessors finish, feeds upstream outputs downstream, and **journals runs for replay/resume**. Live node status streams over WebSocket.
 - [2026-06] **MCP (Model Context Protocol)** — a dependency-free stdio client connects external MCP tool servers and **surfaces their tools inside the agent tool-calling loop** (`mcp__server__tool`).
 - [2026-06] **Unified Memory** — four-layer memory (working / episodic / semantic / procedural) + a bi-temporal entity graph, with extraction → consolidation → reflection → decay, injected into context, routing, and decomposition.
@@ -83,8 +86,11 @@ Retrieval is a hybrid score (relevance + recency + importance + success) with MM
 
 ### Tooling & MCP
 
+- **Engineering tools** — agents can actually change code through a sandbox confined to the task workspace: `file_read`, `file_list`, `grep`, `file_write`, `apply_patch` (surgical single-occurrence edits), and `shell_exec`. Paths are traversal-checked, shell commands are guardrailed, and high-risk tools (e.g. `shell_exec`) require approval by default — granted per-agent as an operator override.
 - **Built-in tools** flow through a registry → policy → sandbox → approval pipeline with per-agent allowlists and DLP.
 - **MCP tools** — configure external MCP stdio servers via `MCP_SERVERS`; their tools are aggregated as `mcp__<server>__<tool>` and exposed to agents inside the tool-calling loop (toggle with `MCP_TOOLS_IN_AGENTS`).
+- **Auto-compact** — long agent runs summarize older conversation turns before each model call (keeping the system prompt, the task, and recent turns verbatim), so context stays bounded instead of growing until it trips the token budget.
+- **TDD loop** — the dev agent writes failing tests, implements until they pass, then refactors, validating each phase by running the workspace's test command.
 
 ### Governance & Observability
 
