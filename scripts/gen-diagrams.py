@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate colorful architecture diagrams for the Myrmecia README."""
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
 import os
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -154,6 +154,31 @@ def band_title(draw, xy, title, color):
     x0, y0, x1, _ = xy
     text_center(draw, ((x0 + x1) // 2, y0 + 36), title, font_large, color)
 
+# ---- helpers for the high-fidelity (supersampled) diagrams ----
+def _hex_rgb(h):
+    h = h.lstrip("#")
+    return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
+
+def ray_rect_exit(px, py, x0, y0, x1, y1):
+    """Point on rect border along the ray from the rect center toward (px, py)."""
+    rcx, rcy = (x0 + x1) / 2.0, (y0 + y1) / 2.0
+    dx, dy = px - rcx, py - rcy
+    if dx == 0 and dy == 0:
+        return (rcx, rcy)
+    hx, hy = (x1 - x0) / 2.0, (y1 - y0) / 2.0
+    tx = hx / abs(dx) if dx != 0 else float("inf")
+    ty = hy / abs(dy) if dy != 0 else float("inf")
+    t = min(tx, ty)
+    return (rcx + dx * t, rcy + dy * t)
+
+def _arrowhead(d, start, end, color, size):
+    import math
+    ang = math.atan2(end[1] - start[1], end[0] - start[0])
+    a1, a2 = ang + math.pi * 0.82, ang - math.pi * 0.82
+    p1 = (end[0] + size * math.cos(a1), end[1] + size * math.sin(a1))
+    p2 = (end[0] + size * math.cos(a2), end[1] + size * math.sin(a2))
+    d.polygon([end, p1, p2], fill=color)
+
 # ============================================================
 # Diagram 1: System Architecture Overview
 # ============================================================
@@ -212,54 +237,128 @@ def gen_architecture():
 # Diagram 2: Dynamic Workflow Lifecycle
 # ============================================================
 def gen_dynamic_workflow_lifecycle():
-    W, H = 1600, 900
-    img = Image.new("RGB", (W, H), BG)
+    import math
+    W, H = 1600, 920
+    SS = 2
+    img = Image.new("RGB", (W * SS, H * SS), BG)
+
+    def sf(size, bold=True):
+        return get_font(int(size * SS)) if bold else get_font_regular(int(size * SS))
+    F_hero, F_readable = sf(46), sf(20, False)
+    F_card, F_sub = sf(25), sf(16, False)
+    F_node, F_lbl = sf(22), sf(15, False)
+    F_panel = sf(30)
+
+    def S(v):
+        return int(round(v * SS))
+
+    def tc(d, xy, text, font, fill):
+        b = d.textbbox((0, 0), text, font=font)
+        d.text((S(xy[0]) - (b[2] - b[0]) // 2, S(xy[1]) - (b[3] - b[1]) // 2), text, font=font, fill=fill)
+
+    def card(d, rect, title, subtitle, color):
+        x0, y0, x1, y1 = rect
+        d.rounded_rectangle((S(x0), S(y0), S(x1), S(y1)), radius=S(18), fill="#161c26", outline=color, width=S(3))
+        if subtitle:
+            tc(d, ((x0 + x1) / 2, y0 + (y1 - y0) * 0.36), title, F_card, color)
+            tc(d, ((x0 + x1) / 2, y0 + (y1 - y0) * 0.70), subtitle, F_sub, GRAY)
+        else:
+            tc(d, ((x0 + x1) / 2, (y0 + y1) / 2), title, F_node, color)
+
+    glow = Image.new("RGBA", (W * SS, H * SS), (0, 0, 0, 0))
+    gd = ImageDraw.Draw(glow)
+    connectors = []  # (start, end, color, headsize)
+
+    def connect(p0, p1, color, head=11, glow_w=8):
+        gd.line([(S(p0[0]), S(p0[1])), (S(p1[0]), S(p1[1]))], fill=_hex_rgb(color) + (95,), width=S(glow_w))
+        connectors.append((p0, p1, color, head))
+
+    def connect_path(pts, color, glow_w=8):
+        sp = [(S(p[0]), S(p[1])) for p in pts]
+        gd.line(sp, fill=_hex_rgb(color) + (95,), width=S(glow_w))
+        connectors.append(("path", pts, color, 11))
+
+    # ---- top flow row ----
+    flow = [
+        ("Intent", "user goal", ACCENT_BLUE),
+        ("Plan", "preview + edit", ACCENT_PURPLE),
+        ("Persist", "workflow run", ACCENT_GREEN),
+        ("Fan-out", "agent tasks", ACCENT_ORANGE),
+        ("Control", "rerun / skip", ACCENT_PINK),
+    ]
+    cw, ch, ty0, ty1 = 232, 118, 170, 288
+    centers = [175, 482, 789, 1096, 1403]
+    rects = [(c - cw / 2, ty0, c + cw / 2, ty1) for c in centers]
+    for i in range(len(flow) - 1):
+        connect((rects[i][2], 229), (rects[i + 1][0], 229), flow[i][2])
+
+    # Persist -> Aggregate (state) and Control -> Aggregate (events)
+    agg = (605, 372, 995, 500)
+    connect((789, ty1), (789, agg[1]), ACCENT_GREEN)                       # state, straight down
+    connect_path([(1403, ty1), (1403, 436), (agg[2], 436)], ACCENT_PINK)   # events, elbow into right edge
+
+    # ---- bottom DAG panel ----
+    panel = (90, 575, 1510, 868)
+    nodes = {
+        "Spec": ((150, 688, 320, 758), ACCENT_BLUE),
+        "Design": ((430, 660, 600, 724), ACCENT_PURPLE),
+        "API": ((430, 760, 600, 824), ACCENT_GREEN),
+        "Build": ((730, 690, 910, 758), ACCENT_ORANGE),
+        "QA": ((1030, 660, 1200, 724), ACCENT_YELLOW),
+        "Security": ((1030, 760, 1200, 824), ACCENT_PINK),
+        "Done": ((1320, 690, 1490, 758), ACCENT_CYAN),
+    }
+    edges = [
+        ("Spec", "Design"), ("Spec", "API"), ("Design", "Build"), ("API", "Build"),
+        ("Build", "QA"), ("Build", "Security"), ("QA", "Done"), ("Security", "Done"),
+    ]
+    for a, b in edges:
+        ra, ca = nodes[a]
+        rb, cb = nodes[b]
+        ac = ((ra[0] + ra[2]) / 2, (ra[1] + ra[3]) / 2)
+        bc = ((rb[0] + rb[2]) / 2, (rb[1] + rb[3]) / 2)
+        connect(ray_rect_exit(*bc, *ra), ray_rect_exit(*ac, *rb), ca, head=10)
+
+    glow = glow.filter(ImageFilter.GaussianBlur(S(4)))
+    # paint the DAG panel background BEFORE compositing glow/cores so the
+    # in-panel connectors are not covered by it.
+    ImageDraw.Draw(img).rounded_rectangle(
+        (S(panel[0]), S(panel[1]), S(panel[2]), S(panel[3])), radius=S(28), fill="#0f1420")
+    img = Image.alpha_composite(img.convert("RGBA"), glow).convert("RGB")
     d = ImageDraw.Draw(img)
 
-    text_center(d, (W // 2, 58), "Dynamic Workflow Lifecycle", font_hero, WHITE)
-    text_center(d, (W // 2, 104), "From one goal to a controlled multi-agent DAG", font_readable, GRAY)
+    # crisp connector cores + arrowheads
+    for item in connectors:
+        if item[0] == "path":
+            _, pts, color, head = item
+            sp = [(S(p[0]), S(p[1])) for p in pts]
+            d.line(sp, fill=color, width=S(3), joint="curve")
+            _arrowhead(d, sp[-2], sp[-1], color, S(head))
+        else:
+            p0, p1, color, head = item
+            d.line([(S(p0[0]), S(p0[1])), (S(p1[0]), S(p1[1]))], fill=color, width=S(3))
+            _arrowhead(d, (S(p0[0]), S(p0[1])), (S(p1[0]), S(p1[1])), color, S(head))
 
-    flow = [
-        ((80, 165, 310, 285), "Intent", "user goal", ACCENT_BLUE),
-        ((380, 165, 610, 285), "Plan", "preview + edit", ACCENT_PURPLE),
-        ((680, 165, 910, 285), "Persist", "workflow run", ACCENT_GREEN),
-        ((980, 165, 1210, 285), "Fan-out", "agent tasks", ACCENT_ORANGE),
-        ((1280, 165, 1510, 285), "Control", "rerun / skip", ACCENT_PINK),
-    ]
-    for i, (xy, title, subtitle, color) in enumerate(flow):
-        simple_card(d, xy, title, subtitle, color)
-        if i < len(flow) - 1:
-            draw_arrow(d, (xy[2] + 20, 225), (flow[i + 1][0][0] - 20, 225), color, width=5)
+    # titles
+    tc(d, (W // 2, 60), "Dynamic Workflow Lifecycle", F_hero, WHITE)
+    tc(d, (W // 2, 108), "From one goal to a controlled multi-agent DAG", F_readable, GRAY)
 
-    simple_card(d, (600, 365, 1000, 495), "Aggregate", "validate + summarize", ACCENT_CYAN)
-    labeled_arrow(d, (1395, 285), (1000, 365), ACCENT_PINK, "events", (40, -18), width=5)
-    labeled_arrow(d, (795, 285), (795, 365), ACCENT_GREEN, "state", (70, 0), width=5)
+    # connector labels
+    tc(d, (843, 326), "state", F_lbl, ACCENT_GREEN)
+    tc(d, (1455, 412), "events", F_lbl, ACCENT_PINK)
 
-    rounded_rect(d, (90, 580, 1510, 850), 30, "#111827", ACCENT_PURPLE, 5)
-    text_center(d, (800, 620), "Example DAG", font_large, ACCENT_PURPLE)
-    nodes = [
-        ((150, 705, 320, 780), "Spec", "", ACCENT_BLUE),
-        ((450, 670, 620, 745), "Design", "", ACCENT_PURPLE),
-        ((450, 765, 620, 840), "API", "", ACCENT_GREEN),
-        ((750, 720, 950, 795), "Build", "", ACCENT_ORANGE),
-        ((1060, 670, 1230, 745), "QA", "", ACCENT_YELLOW),
-        ((1060, 765, 1230, 840), "Security", "", ACCENT_PINK),
-        ((1320, 720, 1490, 795), "Done", "", ACCENT_CYAN),
-    ]
-    for xy, title, subtitle, color in nodes:
-        simple_card(d, xy, title, subtitle, color)
-    for start, end, color in [
-        ((320, 742), (450, 708), ACCENT_BLUE),
-        ((320, 742), (450, 803), ACCENT_BLUE),
-        ((620, 708), (750, 758), ACCENT_PURPLE),
-        ((620, 803), (750, 758), ACCENT_GREEN),
-        ((950, 758), (1060, 708), ACCENT_ORANGE),
-        ((950, 758), (1060, 803), ACCENT_ORANGE),
-        ((1230, 708), (1320, 758), ACCENT_YELLOW),
-        ((1230, 803), (1320, 758), ACCENT_PINK),
-    ]:
-        draw_arrow(d, start, end, color, width=5)
+    # top flow cards
+    for (title, sub, color), rect in zip(flow, rects):
+        card(d, rect, title, sub, color)
+    card(d, agg, "Aggregate", "validate + summarize", ACCENT_CYAN)
 
+    # bottom panel border (background already painted) + nodes
+    d.rounded_rectangle((S(panel[0]), S(panel[1]), S(panel[2]), S(panel[3])), radius=S(28), outline=ACCENT_PURPLE, width=S(3))
+    tc(d, ((panel[0] + panel[2]) / 2, panel[1] + 36), "Example DAG", F_panel, ACCENT_PURPLE)
+    for name, (rect, color) in nodes.items():
+        card(d, rect, name, "", color)
+
+    img = img.resize((W, H), Image.LANCZOS)
     img.save(os.path.join(OUT, "dynamic-workflow-lifecycle.png"), quality=95)
     print("dynamic-workflow-lifecycle.png")
 
@@ -376,50 +475,85 @@ def gen_pipeline():
 # Diagram 5: Agent Pool & Roles
 # ============================================================
 def gen_agent_pool():
-    W, H = 1200, 650
-    img = Image.new("RGB", (W, H), BG)
-    d = ImageDraw.Draw(img)
+    import math
+    W, H = 1240, 720
+    SS = 2
+    img = Image.new("RGB", (W * SS, H * SS), BG)
 
-    text_center(d, (W//2, 35), "Agent Pool — Specialized Roles", font_title, WHITE)
+    def sf(size, bold=True):
+        return get_font(int(size * SS)) if bold else get_font_regular(int(size * SS))
+    F_title, F_sub = sf(34), sf(18, False)
+    F_card, F_desc = sf(21), sf(14, False)
+    F_hub, F_hubsub = sf(18), sf(12, False)
+    F_foot = sf(13, False)
 
-    # Center hub
-    cx, cy = W//2, 330
-    d.ellipse((cx-60, cy-60, cx+60, cy+60), fill="#1c2333", outline=ACCENT_GREEN, width=3)
-    text_center(d, (cx, cy-12), "", font_title, WHITE)
-    text_center(d, (cx, cy+18), "Orchestrator", font_small, ACCENT_GREEN)
+    def S(v):
+        return int(round(v * SS))
 
-    agents = [
-        ("", "PM Agent", "Requirements\nTask breakdown\nPrioritization", ACCENT_BLUE, -1, -1),
-        ("", "UI Agent", "Design systems\nPrototypes\nComponents", ACCENT_PURPLE, 1, -1),
-        ("", "Dev Agent", "Implementation\nRefactoring\nDebugging", ACCENT_GREEN, 1.3, 0.3),
-        ("", "QA Agent", "Test suites\nBug hunting\nValidation", ACCENT_ORANGE, 0.7, 1.2),
-        ("", "Ops Agent", "Deployment\nCI/CD\nMonitoring", ACCENT_CYAN, -0.7, 1.2),
-        ("", "Review", "Code review\nBest practices\nSecurity", ACCENT_YELLOW, -1.3, 0.3),
+    def tc(d, xy, text, font, fill):
+        b = d.textbbox((0, 0), text, font=font)
+        d.text((S(xy[0]) - (b[2] - b[0]) // 2, S(xy[1]) - (b[3] - b[1]) // 2), text, font=font, fill=fill)
+
+    cx, cy = 620, 384
+    R_hub, R_orbit = 62, 236
+    card_w, card_h = 186, 112
+
+    nodes = [
+        ("PM Agent", ["Requirements", "Task breakdown", "Prioritization"], ACCENT_BLUE, 120),
+        ("UI Agent", ["Design systems", "Prototypes", "Components"], ACCENT_PURPLE, 60),
+        ("Dev Agent", ["Implementation", "Refactoring", "Debugging"], ACCENT_GREEN, 0),
+        ("QA Agent", ["Test suites", "Bug hunting", "Validation"], ACCENT_ORANGE, 300),
+        ("Ops Agent", ["Deployment", "CI / CD", "Monitoring"], ACCENT_CYAN, 240),
+        ("Review", ["Code review", "Best practices", "Security"], ACCENT_YELLOW, 180),
     ]
 
-    import math
-    radius = 200
-    for i, (emoji, name, desc, color, dx, dy) in enumerate(agents):
-        ax = cx + int(dx * radius)
-        ay = cy + int(dy * radius)
+    placed = []
+    for name, desc, color, ang in nodes:
+        th = math.radians(ang)
+        ax, ay = cx + R_orbit * math.cos(th), cy - R_orbit * math.sin(th)
+        rect = (ax - card_w / 2, ay - card_h / 2, ax + card_w / 2, ay + card_h / 2)
+        hub_edge = (cx + R_hub * math.cos(th), cy - R_hub * math.sin(th))
+        card_edge = ray_rect_exit(cx, cy, *rect)
+        placed.append((name, desc, color, rect, hub_edge, card_edge))
 
-        # Line to center
-        d.line([(cx, cy), (ax, ay)], fill=color, width=2)
+    # soft glow under the spokes
+    glow = Image.new("RGBA", (W * SS, H * SS), (0, 0, 0, 0))
+    gd = ImageDraw.Draw(glow)
+    for _, _, color, _, he, ce in placed:
+        gd.line([(S(he[0]), S(he[1])), (S(ce[0]), S(ce[1]))], fill=_hex_rgb(color) + (110,), width=S(9))
+    glow = glow.filter(ImageFilter.GaussianBlur(S(5)))
+    img = Image.alpha_composite(img.convert("RGBA"), glow).convert("RGB")
+    d = ImageDraw.Draw(img)
 
-        # Agent card
-        card_w, card_h = 150, 120
-        x0 = ax - card_w // 2
-        y0 = ay - card_h // 2
-        rounded_rect(d, (x0, y0, x0+card_w, y0+card_h), 12, "#1c2333", color, 2)
+    # crisp spoke cores + endpoint dots
+    for _, _, color, _, he, ce in placed:
+        d.line([(S(he[0]), S(he[1])), (S(ce[0]), S(ce[1]))], fill=color, width=S(2))
+        for pt in (he, ce):
+            d.ellipse((S(pt[0] - 3), S(pt[1] - 3), S(pt[0] + 3), S(pt[1] + 3)), fill=color)
 
-        text_center(d, (ax, y0 + 22), emoji, font_header, WHITE)
-        text_center(d, (ax, y0 + 48), name, font_body, color)
+    tc(d, (W // 2, 50), "Agent Pool — Specialized Roles", F_title, WHITE)
+    tc(d, (W // 2, 90), "One orchestrator routes each task to the right specialist", F_sub, GRAY)
 
-        lines = desc.split("\n")
-        for j, line in enumerate(lines):
-            text_center(d, (ax, y0 + 70 + j * 16), line, font_label, GRAY)
+    # hub
+    d.ellipse((S(cx - R_hub), S(cy - R_hub), S(cx + R_hub), S(cy + R_hub)), fill="#10231a", outline=ACCENT_GREEN, width=S(3))
+    d.ellipse((S(cx - R_hub + 9), S(cy - R_hub + 9), S(cx + R_hub - 9), S(cy + R_hub - 9)), outline="#1f7a45", width=S(1))
+    tc(d, (cx, cy - 9), "Orchestrator", F_hub, ACCENT_GREEN)
+    tc(d, (cx, cy + 15), "routes · gates", F_hubsub, GRAY)
 
-    d.text((W - 200, H - 20), "Myrmecia © 2026", font=font_label, fill=GRAY)
+    # cards
+    for name, desc, color, rect, _, _ in placed:
+        x0, y0, x1, y1 = rect
+        d.rounded_rectangle((S(x0), S(y0), S(x1), S(y1)), radius=S(16), fill="#161c26", outline=color, width=S(2))
+        tc(d, ((x0 + x1) / 2, y0 + 28), name, F_card, color)
+        uw = 30
+        d.line([(S((x0 + x1) / 2 - uw), S(y0 + 47)), (S((x0 + x1) / 2 + uw), S(y0 + 47))], fill=color, width=S(2))
+        for i, line in enumerate(desc):
+            tc(d, ((x0 + x1) / 2, y0 + 66 + i * 18), line, F_desc, GRAY)
+
+    b = d.textbbox((0, 0), "Myrmecia © 2026", font=F_foot)
+    d.text((S(W - 20) - (b[2] - b[0]), S(H - 34)), "Myrmecia © 2026", font=F_foot, fill=GRAY)
+
+    img = img.resize((W, H), Image.LANCZOS)
     img.save(os.path.join(OUT, "agent-pool.png"), quality=95)
     print("agent-pool.png")
 
