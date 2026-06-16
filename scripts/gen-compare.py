@@ -25,6 +25,8 @@ COLS = ["Myrmecia", "LangGraph\nCrewAI", "Dify\nn8n", "Mem0\nZep", "Hosted\nAssi
 
 ROWS = [
     ("Agent engine (tool loop)",        [2, 2, 1, 0, 2]),
+    ("Edit code & run shell (TDD)",     [2, 1, 1, 0, 2]),
+    ("Context auto-compact",            [2, 1, 0, 1, 2]),
     ("Multi-agent DAG orchestration",   [2, 2, 1, 0, 1]),
     ("Visual editor",                   [2, 0, 2, 0, 1]),
     ("Unified memory subsystem",        [2, 1, 0, 2, 1]),

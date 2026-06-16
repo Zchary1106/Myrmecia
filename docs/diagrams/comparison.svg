@@ -1,8 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="640" viewBox="0 0 1180 640" fill="none" role="img" aria-label="Myrmecia capability comparison">
-  <rect x="0.5" y="0.5" width="1179" height="639" rx="20" fill="#11161f" stroke="#30363d"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="728" viewBox="0 0 1180 728" fill="none" role="img" aria-label="Myrmecia capability comparison">
+  <rect x="0.5" y="0.5" width="1179" height="727" rx="20" fill="#11161f" stroke="#30363d"/>
   <text x="36" y="46" font-family="Futura,'Trebuchet MS',Avenir,'Segoe UI',system-ui,sans-serif" font-size="26" font-weight="700" fill="#e6edf3">How Myrmecia compares</text>
   <text x="36" y="72" font-family="Futura,'Trebuchet MS',Avenir,sans-serif" font-size="15" fill="#9aa6b3">Engine + platform in one self-hosted system — others cover a slice.</text>
-  <rect x="344.0" y="88.0" width="162.4" height="468.0" rx="14" fill="#39d2c0" fill-opacity="0.06" stroke="#39d2c0" stroke-opacity="0.35" stroke-width="1.5"/>
+  <rect x="344.0" y="88.0" width="162.4" height="556.0" rx="14" fill="#39d2c0" fill-opacity="0.06" stroke="#39d2c0" stroke-opacity="0.35" stroke-width="1.5"/>
   <text x="425.2" y="120.0" text-anchor="middle" font-family="Futura,'Trebuchet MS',Avenir,'Segoe UI',system-ui,sans-serif" font-size="16" font-weight="700" fill="#39d2c0">Myrmecia</text>
   <text x="587.6" y="111.0" text-anchor="middle" font-family="Futura,'Trebuchet MS',Avenir,'Segoe UI',system-ui,sans-serif" font-size="16" font-weight="600" fill="#9aa6b3">LangGraph</text>
   <text x="587.6" y="129.0" text-anchor="middle" font-family="Futura,'Trebuchet MS',Avenir,'Segoe UI',system-ui,sans-serif" font-size="16" font-weight="600" fill="#9aa6b3">CrewAI</text>
@@ -19,63 +19,76 @@
   <circle cx="750.0" cy="174.0" r="11" fill="none" stroke="#bc8cff" stroke-width="2.2"/><path d="M 750.0 163.0 A 11 11 0 0 1 750.0 185.0 Z" fill="#bc8cff"/>
   <circle cx="912.4" cy="174.0" r="11" fill="none" stroke="#30363d" stroke-width="2.2"/>
   <circle cx="1074.8" cy="174.0" r="11" fill="#39d2c0" /><circle cx="1074.8" cy="174.0" r="11" fill="none" stroke="#39d2c0" stroke-opacity="0.35" stroke-width="5"/>
-  <text x="36" y="223.0" font-family="Futura,'Trebuchet MS',Avenir,'Segoe UI',system-ui,sans-serif" font-size="16" fill="#e6edf3">Multi-agent DAG orchestration</text>
+  <text x="36" y="223.0" font-family="Futura,'Trebuchet MS',Avenir,'Segoe UI',system-ui,sans-serif" font-size="16" fill="#e6edf3">Edit code &amp; run shell (TDD)</text>
   <circle cx="425.2" cy="218.0" r="11" fill="#39d2c0" /><circle cx="425.2" cy="218.0" r="11" fill="none" stroke="#39d2c0" stroke-opacity="0.35" stroke-width="5"/>
-  <circle cx="587.6" cy="218.0" r="11" fill="#39d2c0" /><circle cx="587.6" cy="218.0" r="11" fill="none" stroke="#39d2c0" stroke-opacity="0.35" stroke-width="5"/>
+  <circle cx="587.6" cy="218.0" r="11" fill="none" stroke="#bc8cff" stroke-width="2.2"/><path d="M 587.6 207.0 A 11 11 0 0 1 587.6 229.0 Z" fill="#bc8cff"/>
   <circle cx="750.0" cy="218.0" r="11" fill="none" stroke="#bc8cff" stroke-width="2.2"/><path d="M 750.0 207.0 A 11 11 0 0 1 750.0 229.0 Z" fill="#bc8cff"/>
   <circle cx="912.4" cy="218.0" r="11" fill="none" stroke="#30363d" stroke-width="2.2"/>
-  <circle cx="1074.8" cy="218.0" r="11" fill="none" stroke="#bc8cff" stroke-width="2.2"/><path d="M 1074.8 207.0 A 11 11 0 0 1 1074.8 229.0 Z" fill="#bc8cff"/>
+  <circle cx="1074.8" cy="218.0" r="11" fill="#39d2c0" /><circle cx="1074.8" cy="218.0" r="11" fill="none" stroke="#39d2c0" stroke-opacity="0.35" stroke-width="5"/>
   <rect x="24" y="240.0" width="1132" height="44" fill="#ffffff" fill-opacity="0.015"/>
-  <text x="36" y="267.0" font-family="Futura,'Trebuchet MS',Avenir,'Segoe UI',system-ui,sans-serif" font-size="16" fill="#e6edf3">Visual editor</text>
+  <text x="36" y="267.0" font-family="Futura,'Trebuchet MS',Avenir,'Segoe UI',system-ui,sans-serif" font-size="16" fill="#e6edf3">Context auto-compact</text>
   <circle cx="425.2" cy="262.0" r="11" fill="#39d2c0" /><circle cx="425.2" cy="262.0" r="11" fill="none" stroke="#39d2c0" stroke-opacity="0.35" stroke-width="5"/>
-  <circle cx="587.6" cy="262.0" r="11" fill="none" stroke="#30363d" stroke-width="2.2"/>
-  <circle cx="750.0" cy="262.0" r="11" fill="#39d2c0" /><circle cx="750.0" cy="262.0" r="11" fill="none" stroke="#39d2c0" stroke-opacity="0.35" stroke-width="5"/>
-  <circle cx="912.4" cy="262.0" r="11" fill="none" stroke="#30363d" stroke-width="2.2"/>
-  <circle cx="1074.8" cy="262.0" r="11" fill="none" stroke="#bc8cff" stroke-width="2.2"/><path d="M 1074.8 251.0 A 11 11 0 0 1 1074.8 273.0 Z" fill="#bc8cff"/>
-  <text x="36" y="311.0" font-family="Futura,'Trebuchet MS',Avenir,'Segoe UI',system-ui,sans-serif" font-size="16" fill="#e6edf3">Unified memory subsystem</text>
+  <circle cx="587.6" cy="262.0" r="11" fill="none" stroke="#bc8cff" stroke-width="2.2"/><path d="M 587.6 251.0 A 11 11 0 0 1 587.6 273.0 Z" fill="#bc8cff"/>
+  <circle cx="750.0" cy="262.0" r="11" fill="none" stroke="#30363d" stroke-width="2.2"/>
+  <circle cx="912.4" cy="262.0" r="11" fill="none" stroke="#bc8cff" stroke-width="2.2"/><path d="M 912.4 251.0 A 11 11 0 0 1 912.4 273.0 Z" fill="#bc8cff"/>
+  <circle cx="1074.8" cy="262.0" r="11" fill="#39d2c0" /><circle cx="1074.8" cy="262.0" r="11" fill="none" stroke="#39d2c0" stroke-opacity="0.35" stroke-width="5"/>
+  <text x="36" y="311.0" font-family="Futura,'Trebuchet MS',Avenir,'Segoe UI',system-ui,sans-serif" font-size="16" fill="#e6edf3">Multi-agent DAG orchestration</text>
   <circle cx="425.2" cy="306.0" r="11" fill="#39d2c0" /><circle cx="425.2" cy="306.0" r="11" fill="none" stroke="#39d2c0" stroke-opacity="0.35" stroke-width="5"/>
-  <circle cx="587.6" cy="306.0" r="11" fill="none" stroke="#bc8cff" stroke-width="2.2"/><path d="M 587.6 295.0 A 11 11 0 0 1 587.6 317.0 Z" fill="#bc8cff"/>
-  <circle cx="750.0" cy="306.0" r="11" fill="none" stroke="#30363d" stroke-width="2.2"/>
-  <circle cx="912.4" cy="306.0" r="11" fill="#39d2c0" /><circle cx="912.4" cy="306.0" r="11" fill="none" stroke="#39d2c0" stroke-opacity="0.35" stroke-width="5"/>
+  <circle cx="587.6" cy="306.0" r="11" fill="#39d2c0" /><circle cx="587.6" cy="306.0" r="11" fill="none" stroke="#39d2c0" stroke-opacity="0.35" stroke-width="5"/>
+  <circle cx="750.0" cy="306.0" r="11" fill="none" stroke="#bc8cff" stroke-width="2.2"/><path d="M 750.0 295.0 A 11 11 0 0 1 750.0 317.0 Z" fill="#bc8cff"/>
+  <circle cx="912.4" cy="306.0" r="11" fill="none" stroke="#30363d" stroke-width="2.2"/>
   <circle cx="1074.8" cy="306.0" r="11" fill="none" stroke="#bc8cff" stroke-width="2.2"/><path d="M 1074.8 295.0 A 11 11 0 0 1 1074.8 317.0 Z" fill="#bc8cff"/>
   <rect x="24" y="328.0" width="1132" height="44" fill="#ffffff" fill-opacity="0.015"/>
-  <text x="36" y="355.0" font-family="Futura,'Trebuchet MS',Avenir,'Segoe UI',system-ui,sans-serif" font-size="16" fill="#e6edf3">Tool governance &amp; permissions</text>
+  <text x="36" y="355.0" font-family="Futura,'Trebuchet MS',Avenir,'Segoe UI',system-ui,sans-serif" font-size="16" fill="#e6edf3">Visual editor</text>
   <circle cx="425.2" cy="350.0" r="11" fill="#39d2c0" /><circle cx="425.2" cy="350.0" r="11" fill="none" stroke="#39d2c0" stroke-opacity="0.35" stroke-width="5"/>
   <circle cx="587.6" cy="350.0" r="11" fill="none" stroke="#30363d" stroke-width="2.2"/>
-  <circle cx="750.0" cy="350.0" r="11" fill="none" stroke="#bc8cff" stroke-width="2.2"/><path d="M 750.0 339.0 A 11 11 0 0 1 750.0 361.0 Z" fill="#bc8cff"/>
+  <circle cx="750.0" cy="350.0" r="11" fill="#39d2c0" /><circle cx="750.0" cy="350.0" r="11" fill="none" stroke="#39d2c0" stroke-opacity="0.35" stroke-width="5"/>
   <circle cx="912.4" cy="350.0" r="11" fill="none" stroke="#30363d" stroke-width="2.2"/>
   <circle cx="1074.8" cy="350.0" r="11" fill="none" stroke="#bc8cff" stroke-width="2.2"/><path d="M 1074.8 339.0 A 11 11 0 0 1 1074.8 361.0 Z" fill="#bc8cff"/>
-  <text x="36" y="399.0" font-family="Futura,'Trebuchet MS',Avenir,'Segoe UI',system-ui,sans-serif" font-size="16" fill="#e6edf3">Observability &amp; tracing</text>
+  <text x="36" y="399.0" font-family="Futura,'Trebuchet MS',Avenir,'Segoe UI',system-ui,sans-serif" font-size="16" fill="#e6edf3">Unified memory subsystem</text>
   <circle cx="425.2" cy="394.0" r="11" fill="#39d2c0" /><circle cx="425.2" cy="394.0" r="11" fill="none" stroke="#39d2c0" stroke-opacity="0.35" stroke-width="5"/>
   <circle cx="587.6" cy="394.0" r="11" fill="none" stroke="#bc8cff" stroke-width="2.2"/><path d="M 587.6 383.0 A 11 11 0 0 1 587.6 405.0 Z" fill="#bc8cff"/>
-  <circle cx="750.0" cy="394.0" r="11" fill="none" stroke="#bc8cff" stroke-width="2.2"/><path d="M 750.0 383.0 A 11 11 0 0 1 750.0 405.0 Z" fill="#bc8cff"/>
-  <circle cx="912.4" cy="394.0" r="11" fill="none" stroke="#30363d" stroke-width="2.2"/>
+  <circle cx="750.0" cy="394.0" r="11" fill="none" stroke="#30363d" stroke-width="2.2"/>
+  <circle cx="912.4" cy="394.0" r="11" fill="#39d2c0" /><circle cx="912.4" cy="394.0" r="11" fill="none" stroke="#39d2c0" stroke-opacity="0.35" stroke-width="5"/>
   <circle cx="1074.8" cy="394.0" r="11" fill="none" stroke="#bc8cff" stroke-width="2.2"/><path d="M 1074.8 383.0 A 11 11 0 0 1 1074.8 405.0 Z" fill="#bc8cff"/>
   <rect x="24" y="416.0" width="1132" height="44" fill="#ffffff" fill-opacity="0.015"/>
-  <text x="36" y="443.0" font-family="Futura,'Trebuchet MS',Avenir,'Segoe UI',system-ui,sans-serif" font-size="16" fill="#e6edf3">Real-time dashboard</text>
+  <text x="36" y="443.0" font-family="Futura,'Trebuchet MS',Avenir,'Segoe UI',system-ui,sans-serif" font-size="16" fill="#e6edf3">Tool governance &amp; permissions</text>
   <circle cx="425.2" cy="438.0" r="11" fill="#39d2c0" /><circle cx="425.2" cy="438.0" r="11" fill="none" stroke="#39d2c0" stroke-opacity="0.35" stroke-width="5"/>
   <circle cx="587.6" cy="438.0" r="11" fill="none" stroke="#30363d" stroke-width="2.2"/>
-  <circle cx="750.0" cy="438.0" r="11" fill="#39d2c0" /><circle cx="750.0" cy="438.0" r="11" fill="none" stroke="#39d2c0" stroke-opacity="0.35" stroke-width="5"/>
+  <circle cx="750.0" cy="438.0" r="11" fill="none" stroke="#bc8cff" stroke-width="2.2"/><path d="M 750.0 427.0 A 11 11 0 0 1 750.0 449.0 Z" fill="#bc8cff"/>
   <circle cx="912.4" cy="438.0" r="11" fill="none" stroke="#30363d" stroke-width="2.2"/>
   <circle cx="1074.8" cy="438.0" r="11" fill="none" stroke="#bc8cff" stroke-width="2.2"/><path d="M 1074.8 427.0 A 11 11 0 0 1 1074.8 449.0 Z" fill="#bc8cff"/>
-  <text x="36" y="487.0" font-family="Futura,'Trebuchet MS',Avenir,'Segoe UI',system-ui,sans-serif" font-size="16" fill="#e6edf3">Self-hosted (data stays)</text>
+  <text x="36" y="487.0" font-family="Futura,'Trebuchet MS',Avenir,'Segoe UI',system-ui,sans-serif" font-size="16" fill="#e6edf3">Observability &amp; tracing</text>
   <circle cx="425.2" cy="482.0" r="11" fill="#39d2c0" /><circle cx="425.2" cy="482.0" r="11" fill="none" stroke="#39d2c0" stroke-opacity="0.35" stroke-width="5"/>
-  <circle cx="587.6" cy="482.0" r="11" fill="#39d2c0" /><circle cx="587.6" cy="482.0" r="11" fill="none" stroke="#39d2c0" stroke-opacity="0.35" stroke-width="5"/>
-  <circle cx="750.0" cy="482.0" r="11" fill="#39d2c0" /><circle cx="750.0" cy="482.0" r="11" fill="none" stroke="#39d2c0" stroke-opacity="0.35" stroke-width="5"/>
-  <circle cx="912.4" cy="482.0" r="11" fill="#39d2c0" /><circle cx="912.4" cy="482.0" r="11" fill="none" stroke="#39d2c0" stroke-opacity="0.35" stroke-width="5"/>
-  <circle cx="1074.8" cy="482.0" r="11" fill="none" stroke="#30363d" stroke-width="2.2"/>
+  <circle cx="587.6" cy="482.0" r="11" fill="none" stroke="#bc8cff" stroke-width="2.2"/><path d="M 587.6 471.0 A 11 11 0 0 1 587.6 493.0 Z" fill="#bc8cff"/>
+  <circle cx="750.0" cy="482.0" r="11" fill="none" stroke="#bc8cff" stroke-width="2.2"/><path d="M 750.0 471.0 A 11 11 0 0 1 750.0 493.0 Z" fill="#bc8cff"/>
+  <circle cx="912.4" cy="482.0" r="11" fill="none" stroke="#30363d" stroke-width="2.2"/>
+  <circle cx="1074.8" cy="482.0" r="11" fill="none" stroke="#bc8cff" stroke-width="2.2"/><path d="M 1074.8 471.0 A 11 11 0 0 1 1074.8 493.0 Z" fill="#bc8cff"/>
   <rect x="24" y="504.0" width="1132" height="44" fill="#ffffff" fill-opacity="0.015"/>
-  <text x="36" y="531.0" font-family="Futura,'Trebuchet MS',Avenir,'Segoe UI',system-ui,sans-serif" font-size="16" fill="#e6edf3">MCP + model gateway</text>
+  <text x="36" y="531.0" font-family="Futura,'Trebuchet MS',Avenir,'Segoe UI',system-ui,sans-serif" font-size="16" fill="#e6edf3">Real-time dashboard</text>
   <circle cx="425.2" cy="526.0" r="11" fill="#39d2c0" /><circle cx="425.2" cy="526.0" r="11" fill="none" stroke="#39d2c0" stroke-opacity="0.35" stroke-width="5"/>
-  <circle cx="587.6" cy="526.0" r="11" fill="none" stroke="#bc8cff" stroke-width="2.2"/><path d="M 587.6 515.0 A 11 11 0 0 1 587.6 537.0 Z" fill="#bc8cff"/>
-  <circle cx="750.0" cy="526.0" r="11" fill="none" stroke="#30363d" stroke-width="2.2"/>
+  <circle cx="587.6" cy="526.0" r="11" fill="none" stroke="#30363d" stroke-width="2.2"/>
+  <circle cx="750.0" cy="526.0" r="11" fill="#39d2c0" /><circle cx="750.0" cy="526.0" r="11" fill="none" stroke="#39d2c0" stroke-opacity="0.35" stroke-width="5"/>
   <circle cx="912.4" cy="526.0" r="11" fill="none" stroke="#30363d" stroke-width="2.2"/>
   <circle cx="1074.8" cy="526.0" r="11" fill="none" stroke="#bc8cff" stroke-width="2.2"/><path d="M 1074.8 515.0 A 11 11 0 0 1 1074.8 537.0 Z" fill="#bc8cff"/>
-  <text x="36" y="580.0" font-family="Futura,'Trebuchet MS',Avenir,sans-serif" font-size="14" fill="#9aa6b3">Coverage of the capability, not quality of any single feature.</text>
-  <circle cx="47.0" cy="606.0" r="11" fill="#39d2c0" /><circle cx="47.0" cy="606.0" r="11" fill="none" stroke="#39d2c0" stroke-opacity="0.35" stroke-width="5"/>
-  <text x="66.0" y="611.0" font-family="Futura,'Trebuchet MS',Avenir,sans-serif" font-size="14" fill="#9aa6b3">Full</text>
-  <circle cx="143.0" cy="606.0" r="11" fill="none" stroke="#bc8cff" stroke-width="2.2"/><path d="M 143.0 595 A 11 11 0 0 1 143.0 617 Z" fill="#bc8cff"/>
-  <text x="162.0" y="611.0" font-family="Futura,'Trebuchet MS',Avenir,sans-serif" font-size="14" fill="#9aa6b3">Partial</text>
-  <circle cx="263.0" cy="606.0" r="11" fill="none" stroke="#30363d" stroke-width="2.2"/>
-  <text x="282.0" y="611.0" font-family="Futura,'Trebuchet MS',Avenir,sans-serif" font-size="14" fill="#9aa6b3">None</text>
+  <text x="36" y="575.0" font-family="Futura,'Trebuchet MS',Avenir,'Segoe UI',system-ui,sans-serif" font-size="16" fill="#e6edf3">Self-hosted (data stays)</text>
+  <circle cx="425.2" cy="570.0" r="11" fill="#39d2c0" /><circle cx="425.2" cy="570.0" r="11" fill="none" stroke="#39d2c0" stroke-opacity="0.35" stroke-width="5"/>
+  <circle cx="587.6" cy="570.0" r="11" fill="#39d2c0" /><circle cx="587.6" cy="570.0" r="11" fill="none" stroke="#39d2c0" stroke-opacity="0.35" stroke-width="5"/>
+  <circle cx="750.0" cy="570.0" r="11" fill="#39d2c0" /><circle cx="750.0" cy="570.0" r="11" fill="none" stroke="#39d2c0" stroke-opacity="0.35" stroke-width="5"/>
+  <circle cx="912.4" cy="570.0" r="11" fill="#39d2c0" /><circle cx="912.4" cy="570.0" r="11" fill="none" stroke="#39d2c0" stroke-opacity="0.35" stroke-width="5"/>
+  <circle cx="1074.8" cy="570.0" r="11" fill="none" stroke="#30363d" stroke-width="2.2"/>
+  <rect x="24" y="592.0" width="1132" height="44" fill="#ffffff" fill-opacity="0.015"/>
+  <text x="36" y="619.0" font-family="Futura,'Trebuchet MS',Avenir,'Segoe UI',system-ui,sans-serif" font-size="16" fill="#e6edf3">MCP + model gateway</text>
+  <circle cx="425.2" cy="614.0" r="11" fill="#39d2c0" /><circle cx="425.2" cy="614.0" r="11" fill="none" stroke="#39d2c0" stroke-opacity="0.35" stroke-width="5"/>
+  <circle cx="587.6" cy="614.0" r="11" fill="none" stroke="#bc8cff" stroke-width="2.2"/><path d="M 587.6 603.0 A 11 11 0 0 1 587.6 625.0 Z" fill="#bc8cff"/>
+  <circle cx="750.0" cy="614.0" r="11" fill="none" stroke="#30363d" stroke-width="2.2"/>
+  <circle cx="912.4" cy="614.0" r="11" fill="none" stroke="#30363d" stroke-width="2.2"/>
+  <circle cx="1074.8" cy="614.0" r="11" fill="none" stroke="#bc8cff" stroke-width="2.2"/><path d="M 1074.8 603.0 A 11 11 0 0 1 1074.8 625.0 Z" fill="#bc8cff"/>
+  <text x="36" y="668.0" font-family="Futura,'Trebuchet MS',Avenir,sans-serif" font-size="14" fill="#9aa6b3">Coverage of the capability, not quality of any single feature.</text>
+  <circle cx="47.0" cy="694.0" r="11" fill="#39d2c0" /><circle cx="47.0" cy="694.0" r="11" fill="none" stroke="#39d2c0" stroke-opacity="0.35" stroke-width="5"/>
+  <text x="66.0" y="699.0" font-family="Futura,'Trebuchet MS',Avenir,sans-serif" font-size="14" fill="#9aa6b3">Full</text>
+  <circle cx="143.0" cy="694.0" r="11" fill="none" stroke="#bc8cff" stroke-width="2.2"/><path d="M 143.0 683 A 11 11 0 0 1 143.0 705 Z" fill="#bc8cff"/>
+  <text x="162.0" y="699.0" font-family="Futura,'Trebuchet MS',Avenir,sans-serif" font-size="14" fill="#9aa6b3">Partial</text>
+  <circle cx="263.0" cy="694.0" r="11" fill="none" stroke="#30363d" stroke-width="2.2"/>
+  <text x="282.0" y="699.0" font-family="Futura,'Trebuchet MS',Avenir,sans-serif" font-size="14" fill="#9aa6b3">None</text>
 </svg>
