@@ -42,7 +42,7 @@ Myrmecia is a self-hosted, code-first platform that manages a pool of specialize
 Myrmecia mirrors a real engineering org: specialized agents (PM, design, dev, QA, ops, review, content) collaborate through templated pipelines, dynamic fan-out workflows, a supervisor that decomposes one-line requests, or a manual canvas you wire yourself. Every run flows through tool governance, guardrails, and full tracing, and feeds a shared long-term memory so the platform gets better at routing and decomposing similar work over time.
 
 <p align="center">
-  <img src="docs/diagrams/schema.png" alt="Myrmecia schema" style="width: 100%; height: auto;">
+  <img src="docs/diagrams/schema.svg" alt="Myrmecia schema" style="width: 100%; height: auto;">
 </p>
 
 > Myrmecia is local-first and self-hosted. It bundles the agent harness *and* the platform around it (queue, orchestration, governance, observability, dashboard) in a single pnpm monorepo.
@@ -95,7 +95,7 @@ Retrieval is a hybrid score (relevance + recency + importance + success) with MM
 ### Governance & Observability
 
 <p align="center">
-  <img src="docs/diagrams/runtime-governance.png" alt="Runtime Governance and Tool Safety" width="100%">
+  <img src="docs/diagrams/runtime-governance.svg" alt="Runtime Governance and Tool Safety" width="100%">
 </p>
 
 Budget/cost guardrails, DLP redaction, policy snapshots, operator audit, multi-tenant org/workspace isolation, API keys + RBAC, OpenTelemetry traces & metrics, run traces/spans, quality loops, self-healing, and checkpoint-based rollback.
@@ -325,7 +325,7 @@ agent-factory/
 **Runtime flow:** `TaskQueue.enqueue()` → `AgentManager` (capacity/role) → `AgentRuntime` (TypeScript tool-loop or Python runtime; tracks cost/tokens/traces) → `PipelineEngine` / `GraphWorkflowEngine` advance dependent work → `EventBus` → WebSocket hub fans typed events to tenant-aware channels. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 <p align="center">
-  <img src="docs/diagrams/architecture-overview.png" alt="Architecture Overview" style="width: 100%; height: auto;">
+  <img src="docs/diagrams/architecture-overview.svg" alt="Architecture Overview" style="width: 100%; height: auto;">
 </p>
 
 ## Commands

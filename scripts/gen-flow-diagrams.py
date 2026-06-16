@@ -29,6 +29,7 @@ ORANGE = "#f0883e"
 CYAN = "#39d2c0"
 YELLOW = "#e3b341"
 PINK = "#f778ba"
+RED = "#f85149"
 
 
 def esc(s):
@@ -135,6 +136,37 @@ def node_card(x0, y0, x1, y1, color, title, delay=0.0):
         f'<animate attributeName="stroke-opacity" values="0.55;1;0.55" dur="3s" '
         f'begin="{delay:.2f}s" repeatCount="indefinite"/></rect>'
         + text(cx, cy + 7, title, color, 21))
+
+
+def stage_card(x0, y0, x1, y1, color, title, subtitle="", delay=0.0, title_size=23, rx=16, fill=CARD):
+    """A vertically-centered card with an optional subtitle (for flow rows)."""
+    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+    parts = [
+        f'<rect x="{x0:.1f}" y="{y0:.1f}" width="{x1-x0:.1f}" height="{y1-y0:.1f}" rx="{rx}" '
+        f'fill="{fill}" stroke="{color}" stroke-width="2">'
+        f'<animate attributeName="stroke-opacity" values="0.55;1;0.55" dur="3.2s" '
+        f'begin="{delay:.2f}s" repeatCount="indefinite"/></rect>',
+    ]
+    if subtitle:
+        parts.append(text(cx, cy - 4, title, color, title_size))
+        parts.append(text(cx, cy + 20, subtitle, GRAY, 15, weight="400"))
+    else:
+        parts.append(text(cx, cy + 7, title, color, title_size))
+    return "".join(parts)
+
+
+def band(x0, y0, x1, y1, title, color):
+    """A labeled container panel."""
+    return (f'<rect x="{x0:.1f}" y="{y0:.1f}" width="{x1-x0:.1f}" height="{y1-y0:.1f}" rx="26" '
+            f'fill="{PANEL}" stroke="{color}" stroke-width="2" stroke-opacity="0.85"/>'
+            + text((x0 + x1) / 2, y0 + 34, title, color, 26))
+
+
+def chip(x0, y0, x1, y1, label, color):
+    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+    return (f'<rect x="{x0:.1f}" y="{y0:.1f}" width="{x1-x0:.1f}" height="{y1-y0:.1f}" rx="14" '
+            f'fill="#0f1722" stroke="{color}" stroke-width="2"/>'
+            + text(cx, cy + 6, label, color, 18))
 
 
 # ============================================================
@@ -334,7 +366,201 @@ def arrowhead(tip, direction, color, size=11):
             f'fill="{color}"/>')
 
 
+def hflow(s, rects, colors, ymid, prefix, dur=0.95, pdur=1.7):
+    """Animate a left-to-right flow of `rects`: dashed lines + particles + arrowheads."""
+    tracks, anim, parts = [], [], []
+    for i in range(len(rects) - 1):
+        p0 = (rects[i][2], ymid)
+        p1 = (rects[i + 1][0], ymid)
+        pid = f"{prefix}{i}"
+        tracks.append(flow_path(pid, p0, p1))
+        anim.append(dashed_line(p0, p1, colors[i], dur=dur, opacity=0.42))
+        anim.append(arrowhead(p1, (1, 0), colors[i]))
+        parts.append(particles(pid, colors[i], n=2, dur=pdur, r=3.8, begin0=i * 0.28))
+    s.append('<g>' + "".join(tracks) + '</g>')
+    s.extend(anim)
+    s.extend(parts)
+
+
+def vconnect(s, p0, p1, color, pid, label=None, label_dx=70, dur=1.0, pdur=1.7):
+    """A vertical (or near-vertical) connector with particles + arrowhead."""
+    s.append('<g>' + flow_path(pid, p0, p1) + '</g>')
+    s.append(dashed_line(p0, p1, color, dur=dur, opacity=0.42))
+    s.append(arrowhead(p1, (p1[0] - p0[0] or 0.0001, p1[1] - p0[1]), color))
+    s.append(particles(pid, color, n=2, dur=pdur, r=3.8, begin0=0.2))
+    if label:
+        s.append(text((p0[0] + p1[0]) / 2 + label_dx, (p0[1] + p1[1]) / 2 + 5, label, color, 15, weight="400"))
+
+
+def svg_open(W, H):
+    return [f'<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" '
+            f'viewBox="0 0 {W} {H}" width="{W}" height="{H}" font-family="Inter,Segoe UI,Arial,sans-serif">',
+            defs(), f'<rect width="{W}" height="{H}" rx="18" fill="url(#vign)"/>']
+
+
+# ============================================================
+# Schema — end-to-end harness data flow
+# ============================================================
+def gen_schema():
+    W, H = 1600, 900
+    s = svg_open(W, H)
+    s.append(text(W / 2, 56, "Myrmecia — Multi-Agent Orchestration Harness", WHITE, 38))
+    s.append(text(W / 2, 96, "One request — routed, orchestrated, executed by a governed agent harness, shipped", GRAY, 18, weight="400"))
+
+    flow = [
+        ("Request", "one-line goal", BLUE),
+        ("Supervisor", "intent + routing", CYAN),
+        ("Orchestrator", "pipeline · DAG · master", PURPLE),
+        ("Agent Harness", "tool-loop + context", GREEN),
+        ("Governed Tools", "built-in + MCP", PINK),
+        ("Output", "code · review · deploy", ORANGE),
+    ]
+    cw, y0, y1 = 224, 188, 312
+    xs = [70, 322, 574, 826, 1078, 1330]
+    rects = [(x, y0, x + cw, y1) for x in xs]
+    ymid = (y0 + y1) / 2
+    hflow(s, rects, [f[2] for f in flow], ymid, "sf")
+    for (title, sub, color), r in zip(flow, rects):
+        s.append(stage_card(*r, color, title, sub, title_size=22))
+
+    # Band 1: harness internals
+    b1 = (70, 430, 1530, 620)
+    inner1 = [
+        ((118, 506, 448, 596), GREEN, "Tool-Calling Loop", "multi-turn fn-calls"),
+        ((478, 506, 778, 596), CYAN, "Context Manager", "compress + recall"),
+        ((808, 506, 1098, 596), PURPLE, "Unified Memory", "4-layer + graph"),
+        ((1128, 506, 1500, 596), YELLOW, "Model Gateway", "providers + streaming"),
+    ]
+    vconnect(s, (rects[3][0] + cw / 2, y1), (rects[3][0] + cw / 2, b1[1]), GREEN, "toharness", "runs", 56)
+    s.append(band(*b1, "Agent Harness Internals", GREEN))
+    for r, color, t, sub in inner1:
+        s.append(stage_card(*r, color, t, sub, title_size=20))
+
+    # Band 2: cross-cutting platform
+    b2 = (70, 690, 1530, 840)
+    inner2 = [
+        ((118, 760, 568, 826), PINK, "Governance", "policy / sandbox / DLP"),
+        ((588, 760, 1018, 826), BLUE, "Observability", "OTel traces + metrics"),
+        ((1038, 760, 1500, 826), GRAY, "Persistence", "SQLite/PG · Redis/BullMQ"),
+    ]
+    vconnect(s, (800, b1[3]), (800, b2[1]), GRAY, "tobase", "secured + traced", 110)
+    s.append(band(*b2, "Governance  ·  Observability  ·  Persistence", GRAY))
+    for r, color, t, sub in inner2:
+        s.append(stage_card(*r, color, t, sub, title_size=20))
+
+    s.append('</svg>')
+    open(os.path.join(OUT, "schema.svg"), "w").write("\n".join(s))
+    print("schema.svg")
+
+
+# ============================================================
+# Runtime Governance — every tool call passes the chain
+# ============================================================
+def gen_runtime_governance():
+    W, H = 1600, 880
+    s = svg_open(W, H)
+    s.append(text(W / 2, 58, "Runtime Governance", WHITE, 42))
+    s.append(text(W / 2, 100, "Every tool call passes policy, sandbox, DLP, and audit", GRAY, 19, weight="400"))
+
+    chain = [
+        ("Runtime", "request", GREEN),
+        ("Registry", "known tools", BLUE),
+        ("Policy", "allow / approve", PURPLE),
+        ("Sandbox", "confine", ORANGE),
+        ("DLP", "redact / block", PINK),
+    ]
+    cw, y0, y1 = 224, 190, 314
+    xs = [72, 364, 656, 948, 1240]
+    rects = [(x, y0, x + cw, y1) for x in xs]
+    ymid = (y0 + y1) / 2
+    hflow(s, rects, [c[2] for c in chain], ymid, "gf")
+    for (title, sub, color), r in zip(chain, rects):
+        s.append(stage_card(*r, color, title, sub, title_size=23))
+
+    # Audit report fed by Runtime (metadata) and DLP (findings)
+    audit = (610, 452, 990, 580)
+    a_in = ray_rect_exit((rects[0][0] + cw / 2), ymid, *audit)
+    vconnect(s, (rects[0][0] + cw / 2, y1), a_in, GREEN, "gmeta", "metadata", -70, dur=1.1)
+    a_in2 = ray_rect_exit((rects[4][0] + cw / 2), ymid, *audit)
+    vconnect(s, (rects[4][0] + cw / 2, y1), a_in2, PINK, "gfind", "findings", 70, dur=1.1)
+    s.append(stage_card(*audit, CYAN, "Audit Report", "why it ran or stopped", title_size=24))
+
+    # Outcomes band
+    bb = (120, 690, 1480, 824)
+    s.append(band(*bb, "Possible Outcomes", GRAY))
+    outs = [
+        ((176, 760, 432, 812), "Allowed", GREEN),
+        ((496, 760, 752, 812), "Needs Approval", YELLOW),
+        ((816, 760, 1072, 812), "Blocked", RED),
+        ((1136, 760, 1392, 812), "Redacted", PINK),
+    ]
+    for r, label, color in outs:
+        s.append(chip(*r, label, color))
+
+    s.append('</svg>')
+    open(os.path.join(OUT, "runtime-governance.svg"), "w").write("\n".join(s))
+    print("runtime-governance.svg")
+
+
+# ============================================================
+# Architecture — layered top-to-bottom data flow
+# ============================================================
+def gen_architecture():
+    W, H = 1600, 1050
+    s = svg_open(W, H)
+    s.append(text(W / 2, 58, "Myrmecia Architecture", WHITE, 44))
+    s.append(text(W / 2, 100, "Dashboard → Orchestrator API → Agent Runtime → Governed Tools + Models", GRAY, 19, weight="400"))
+
+    # Layer 1: dashboard
+    l1 = (110, 150, 1490, 262)
+    s.append(band(*l1, "Web Dashboard", BLUE))
+    s.append(text((l1[0] + l1[2]) / 2, l1[1] + 78, "Console · Work Queue · Board · Audit", WHITE, 18, weight="400"))
+
+    # Layer 2: API
+    l2 = (110, 340, 1490, 524)
+    s.append(band(*l2, "Express Orchestrator API", GREEN))
+    api = [
+        ((150, 418, 360, 500), GREEN, "Auth", "tenant + scope"),
+        ((392, 418, 602, 500), BLUE, "Supervisor", "intent + plans"),
+        ((634, 418, 844, 500), ORANGE, "Queue", "tasks + deps"),
+        ((876, 418, 1086, 500), CYAN, "Pipelines", "fixed flows"),
+        ((1118, 418, 1328, 500), PINK, "Events", "WS + audit"),
+    ]
+    for r, color, t, sub in api:
+        s.append(stage_card(*r, color, t, sub, title_size=21))
+
+    # Layer 3: runtime
+    l3 = (110, 602, 1490, 786)
+    s.append(band(*l3, "Planning + Agent Execution", PURPLE))
+    rt = [
+        ((150, 680, 412, 762), PURPLE, "Dynamic Workflow", "DAG fan-out"),
+        ((444, 680, 706, 762), GREEN, "Agent Runtime", "TS loop / Python"),
+        ((738, 680, 1000, 762), CYAN, "Model Router", "cost + risk"),
+        ((1032, 680, 1294, 762), PINK, "Tool Governance", "policy + DLP"),
+    ]
+    for r, color, t, sub in rt:
+        s.append(stage_card(*r, color, t, sub, title_size=20))
+
+    # Layer 4: infra
+    l4 = (110, 864, 1490, 986)
+    s.append(band(*l4, "Persistence + Runtime Infrastructure", GRAY))
+    s.append(text((l4[0] + l4[2]) / 2, l4[1] + 80, "SQLite/Postgres · Redis/BullMQ · Workspaces · Model Endpoint · Audit Store", WHITE, 17, weight="400"))
+
+    # vertical data flow down the layers
+    cx = 800
+    vconnect(s, (cx, l1[3]), (cx, l2[1]), BLUE, "a1", "API / WS", 80)
+    vconnect(s, (cx, l2[3]), (cx, l3[1]), GREEN, "a2", "dispatch", 80)
+    vconnect(s, (cx, l3[3]), (cx, l4[1]), PURPLE, "a3", "persist", 78)
+
+    s.append('</svg>')
+    open(os.path.join(OUT, "architecture-overview.svg"), "w").write("\n".join(s))
+    print("architecture-overview.svg")
+
+
 if __name__ == "__main__":
     gen_agent_pool()
     gen_workflow()
+    gen_schema()
+    gen_runtime_governance()
+    gen_architecture()
     print("\nAnimated flow diagrams generated!")

@@ -740,7 +740,7 @@ pnpm dev:dashboard
 
 ## 13.1 Security and Governance Boundaries
 
-![Runtime Governance and Tool Safety](diagrams/runtime-governance.png)
+![Runtime Governance and Tool Safety](diagrams/runtime-governance.svg)
 
 | Boundary | Enforcement |
 | --- | --- |
