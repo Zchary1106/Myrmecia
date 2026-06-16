@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "status": "skipped",
+  "commands": [
+    "npm list | grep -i spell"
+  ],
+  "failures": [],
+  "changedFiles": [
+    "README.md",
+    "spell-check.test.js"
+  ],
+  "summary": "## test-plan",
+  "createdAt": "2026-06-16T12:16:07.161Z"
+}
