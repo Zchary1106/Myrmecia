@@ -8,6 +8,7 @@
  * it runs with `node src/index.ts` on Node >= 22 without an install step.
  */
 import { parseArgs } from 'node:util';
+import * as readline from 'node:readline';
 
 // ----------------------------------------------------------------- config
 const RAW_ARGV = process.argv.slice(2);
@@ -27,10 +28,11 @@ const { values: flags, positionals } = parseArgs({
   },
 });
 
-const SERVER = String(flags.server || process.env.MYRMECIA_SERVER || process.env.AGENT_FACTORY_URL || 'http://localhost:3000').replace(/\/+$/, '');
-const TOKEN = String(flags.token || process.env.MYRMECIA_TOKEN || process.env.AGENT_FACTORY_TOKEN || '');
+let SERVER = String(flags.server || process.env.MYRMECIA_SERVER || process.env.AGENT_FACTORY_URL || 'http://localhost:3000').replace(/\/+$/, '');
+let TOKEN = String(flags.token || process.env.MYRMECIA_TOKEN || process.env.AGENT_FACTORY_TOKEN || '');
 const JSON_OUT = Boolean(flags.json);
 const NO_STREAM = Boolean(flags['no-stream']);
+let INTERACTIVE = false;
 
 // ------------------------------------------------------------------ colors
 const useColor = process.stdout.isTTY && !process.env.NO_COLOR;
@@ -51,6 +53,44 @@ const statusColor = (s: string): string => {
 const out = (s = '') => process.stdout.write(s + '\n');
 const die = (msg: string, code = 1): never => { process.stderr.write(c.red('error: ') + msg + '\n'); process.exit(code); };
 
+// 24-bit truecolor (falls back to plain when color is disabled).
+const rgb = (r: number, g: number, b: number) => (s: string) => (useColor ? `\x1b[38;2;${r};${g};${b}m${s}\x1b[0m` : s);
+
+// teal → cyan → violet gradient (one stop per banner letter).
+const GRAD: ReadonlyArray<readonly [number, number, number]> = [
+  [57, 210, 192], [66, 197, 210], [75, 185, 228], [84, 172, 246],
+  [102, 162, 255], [131, 155, 255], [159, 147, 255], [188, 140, 255],
+];
+
+// ANSI-shadow glyphs for the wordmark (6 rows each).
+const GLYPHS: Record<string, string[]> = {
+  M: ['███╗   ███╗', '████╗ ████║', '██╔████╔██║', '██║╚██╔╝██║', '██║ ╚═╝ ██║', '╚═╝     ╚═╝'],
+  Y: ['██╗   ██╗', '╚██╗ ██╔╝', ' ╚████╔╝ ', '  ╚██╔╝  ', '   ██║   ', '   ╚═╝   '],
+  R: ['██████╗ ', '██╔══██╗', '██████╔╝', '██╔══██╗', '██║  ██║', '╚═╝  ╚═╝'],
+  E: ['███████╗', '██╔════╝', '█████╗  ', '██╔══╝  ', '███████╗', '╚══════╝'],
+  C: [' ██████╗', '██╔════╝', '██║     ', '██║     ', '╚██████╗', ' ╚═════╝'],
+  I: ['██╗', '██║', '██║', '██║', '██║', '╚═╝'],
+  A: [' █████╗ ', '██╔══██╗', '███████║', '██╔══██║', '██║  ██║', '╚═╝  ╚═╝'],
+};
+
+function renderBanner(): string {
+  const word = 'MYRMECIA';
+  const cols = process.stdout.columns || 80;
+  // Big banner only when it fits; otherwise a compact gradient wordmark.
+  const fullWidth = [...word].reduce((w, ch) => w + (GLYPHS[ch]?.[0].length || 0) + 1, 0);
+  if (cols < fullWidth + 2) {
+    const compact = [...word].map((ch, i) => rgb(...GRAD[i % GRAD.length])(ch)).join(' ');
+    return `  ${c.bold(compact)}`;
+  }
+  const rows = ['', '', '', '', '', ''];
+  [...word].forEach((ch, i) => {
+    const g = GLYPHS[ch];
+    const paint = rgb(...GRAD[i % GRAD.length]);
+    for (let r = 0; r < 6; r++) rows[r] += paint(g[r]) + ' ';
+  });
+  return rows.map(r => ' ' + r).join('\n');
+}
+
 // --------------------------------------------------------------------- api
 async function api(path: string, opts: { method?: string; body?: unknown } = {}): Promise<any> {
   const headers: Record<string, string> = { 'content-type': 'application/json' };
@@ -63,6 +103,7 @@ async function api(path: string, opts: { method?: string; body?: unknown } = {})
       body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
     });
   } catch (e: any) {
+    if (INTERACTIVE) throw new Error(`cannot reach server at ${SERVER} (${e?.message || e})`);
     return die(`cannot reach server at ${SERVER} (${e?.message || e}). Is it running? Try --server <url>.`);
   }
   const text = await res.text();
@@ -70,6 +111,7 @@ async function api(path: string, opts: { method?: string; body?: unknown } = {})
   try { data = text ? JSON.parse(text) : undefined; } catch { data = text; }
   if (!res.ok) {
     const m = data?.error?.message || data?.message || (typeof data === 'string' ? data : res.statusText);
+    if (INTERACTIVE) throw new Error(`${res.status} ${path} — ${m}`);
     return die(`${res.status} ${path} — ${m}`);
   }
   return data;
@@ -159,18 +201,8 @@ async function cmdTask(id: string) {
 
 const indent = (s: string, pad = '    ') => s.split('\n').map(l => pad + l).join('\n');
 
-async function cmdRun(agentId: string, promptParts: string[]) {
-  const prompt = promptParts.join(' ').trim();
-  if (!agentId || !prompt) return die('usage: myrmecia run <agentId> <prompt...>');
-  const res = await api(`/agents/${agentId}/execute`, { method: 'POST', body: { prompt } });
-  const taskId = res.taskId || one(res)?.taskId;
-  if (!taskId) return die('server did not return a taskId');
-  if (JSON_OUT) return out(JSON.stringify({ taskId }, null, 2));
-  out(`${c.green('▶')} ${c.bold(agentId)} task ${c.cyan(taskId)}`);
-
-  if (NO_STREAM) { out(c.dim('queued (use `myrmecia task ' + taskId + '` to check)')); return; }
-
-  // Live stream via the task channel; poll as a fallback for the terminal state.
+/** Stream a task's live events (messages + tool calls) until it reaches a terminal state. */
+async function streamTask(taskId: string): Promise<any> {
   let finished = false;
   const printEvent = (ev: any) => {
     const p = ev.payload || {};
@@ -185,7 +217,7 @@ async function cmdRun(agentId: string, promptParts: string[]) {
   };
   const stream = streamChannel(`task:${taskId}`, printEvent, (ev) => {
     const p = ev.payload || {};
-    return (ev.type === 'task:done' || ev.type === 'task:failed' || ev.type === 'task:cancelled') && p.taskId === taskId;
+    return ['task:done', 'task:failed', 'task:cancelled'].includes(ev.type) && p.taskId === taskId;
   });
   const poll = (async () => {
     while (!finished) {
@@ -199,7 +231,19 @@ async function cmdRun(agentId: string, promptParts: string[]) {
   })();
   await Promise.race([stream, poll]);
   finished = true;
-  const t = one(await api(`/tasks/${taskId}`));
+  return one(await api(`/tasks/${taskId}`));
+}
+
+async function cmdRun(agentId: string, promptParts: string[]) {
+  const prompt = promptParts.join(' ').trim();
+  if (!agentId || !prompt) return die('usage: myrmecia run <agentId> <prompt...>');
+  const res = await api(`/agents/${agentId}/execute`, { method: 'POST', body: { prompt } });
+  const taskId = res.taskId || one(res)?.taskId;
+  if (!taskId) return die('server did not return a taskId');
+  if (JSON_OUT) return out(JSON.stringify({ taskId }, null, 2));
+  out(`${c.green('▶')} ${c.bold(agentId)} task ${c.cyan(taskId)}`);
+  if (NO_STREAM) { out(c.dim('queued (use `myrmecia task ' + taskId + '` to check)')); return; }
+  const t = await streamTask(taskId);
   out('');
   out(`${c.bold('result')} ${statusColor(t.status)}`);
   if (t.output) out(indent(String(t.output)));
@@ -255,21 +299,161 @@ async function cmdSupervisor(parts: string[]) {
   out(indent(JSON.stringify(res, null, 2)));
 }
 
+// --------------------------------------------------------------- interactive
+async function quietHealth(): Promise<any | null> {
+  try {
+    const ctrl = new AbortController();
+    const to = setTimeout(() => ctrl.abort(), 2000);
+    const headers: Record<string, string> = {};
+    if (TOKEN) headers.authorization = `Bearer ${TOKEN}`;
+    const r = await fetch(`${SERVER}/api/v1/health`, { headers, signal: ctrl.signal });
+    clearTimeout(to);
+    return r.ok ? await r.json() : null;
+  } catch { return null; }
+}
+
+async function welcome() {
+  out('');
+  out(renderBanner());
+  out('');
+  out('  ' + c.bold('Autonomous Multi-Agent Orchestration') + c.gray('   ·   v0.1'));
+  out('  ' + c.gray('Not one model — a ') + c.cyan('colony') + c.gray('. Describe a task; the right specialists are routed, run in'));
+  out('  ' + c.gray('parallel when useful, and remembered. You stay in control of the whole hive.'));
+  out('');
+  const h = await quietHealth();
+  if (h) {
+    out('  ' + c.green('●') + ' ' + c.gray('connected ') + c.cyan(SERVER)
+      + c.gray(`   ·   ${h.agents?.total ?? '?'} agents ready   ·   ${h.tasks?.running ?? 0} running`));
+  } else {
+    out('  ' + c.red('●') + ' ' + c.gray('offline — start the server with ') + c.cyan('pnpm dev') + c.gray(' (or pass --server)'));
+  }
+  out('  ' + c.gray('Type a task, or ') + c.cyan('/help') + c.gray(' for commands · ')
+    + c.cyan('/agents') + c.gray(' to see the colony · ') + c.cyan('/exit') + c.gray(' to quit'));
+  out('');
+}
+
+async function cmdPipelinesList() {
+  const ps = listOf(await api('/pipelines'));
+  out(c.bold(`Pipelines (${ps.length})`));
+  for (const p of ps.slice(0, 15)) {
+    out(`  ${statusColor(String(p.status || '').padEnd(10))} ${c.cyan(p.id)} ${c.gray(p.name || '')}`);
+  }
+}
+
+function slashHelp() {
+  out(c.bold('Slash commands'));
+  const rows: Array<[string, string]> = [
+    ['/agents', 'list the agent colony'],
+    ['/models', 'list models + routing status'],
+    ['/templates', 'list pipeline templates'],
+    ['/pipelines', 'recent pipeline runs'],
+    ['/health', 'server status'],
+    ['/server [url]', 'show or switch the target server'],
+    ['/clear', 'clear the screen'],
+    ['/help', 'this help'],
+    ['/exit', 'quit'],
+  ];
+  for (const [k, v] of rows) out(`  ${c.cyan(k.padEnd(16))} ${c.gray(v)}`);
+  out('');
+  out(c.gray('  Or just type a task in plain language — the colony routes it to a specialist.'));
+}
+
+async function handleSlash(input: string): Promise<boolean> {
+  const [cmd, ...rest] = input.slice(1).trim().split(/\s+/);
+  switch ((cmd || '').toLowerCase()) {
+    case 'help': case '?': slashHelp(); break;
+    case 'agents': case 'agent': await cmdAgents(); break;
+    case 'models': case 'model': await cmdModels(); break;
+    case 'templates': case 'template': await cmdTemplates(); break;
+    case 'pipelines': case 'pipeline': await cmdPipelinesList(); break;
+    case 'health': case 'status': await cmdHealth(); break;
+    case 'banner': out(renderBanner()); break;
+    case 'server':
+      if (rest[0]) { SERVER = rest[0].replace(/\/+$/, ''); out(c.gray('server → ') + c.cyan(SERVER)); }
+      else out(c.gray('server: ') + c.cyan(SERVER));
+      break;
+    case 'clear': case 'cls': process.stdout.write('\x1b[2J\x1b[H'); break;
+    case 'exit': case 'quit': case 'q': return false;
+    default: out(c.red(`unknown command: /${cmd}`) + c.gray('  (try /help)'));
+  }
+  return true;
+}
+
+/** Natural-language input → classify + dispatch via the supervisor → stream the result. */
+async function dispatchInteractive(input: string) {
+  const res = one(await api('/supervisor/dispatch', { method: 'POST', body: { input } }));
+  const intent = res?.intent || {};
+  const agent = intent.suggestedAgent || '—';
+  const mode = res?.mode || intent.suggestedMode || '—';
+  const complexity = intent.complexity || '—';
+  const via = intent.routingSource || 'classifier';
+  out(`${c.cyan('🐜 routed')} → ${c.bold(agent)} ${c.gray(`· ${mode} · ${complexity} · via ${via}`)}`);
+  const tasks = res?.tasks || [];
+  if (tasks.length > 1) out(c.gray(`  decomposed into ${tasks.length} tasks — streaming the first`));
+  if (tasks.length) {
+    const t = await streamTask(tasks[0].id);
+    out('');
+    out(`${c.bold('result')} ${statusColor(t.status)}`);
+    if (t.output) out(indent(String(t.output)));
+  } else if (res?.orchestration?.result) {
+    out(indent(String(res.orchestration.result)));
+  } else {
+    out(c.gray('  (dispatched)'));
+  }
+}
+
+async function cmdChat() {
+  INTERACTIVE = true;
+  await welcome();
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  rl.on('SIGINT', () => rl.close());
+  rl.setPrompt(c.cyan('myrmecia ❯ '));
+  rl.prompt();
+  // for-await serialises line handling: each task fully streams before the
+  // next prompt, so concurrent input (paste / pipe) can't interleave.
+  try {
+    for await (const line of rl) {
+      const input = line.trim();
+      if (input) {
+        try {
+          if (input.startsWith('/')) {
+            if ((await handleSlash(input)) === false) break;
+          } else {
+            await dispatchInteractive(input);
+          }
+        } catch (e: any) {
+          out(c.red('error: ') + (e?.message || String(e)));
+        }
+      }
+      out('');
+      rl.prompt();
+    }
+  } catch (e: any) {
+    // Piped stdin reaching EOF mid-iteration surfaces as "readline was closed".
+    if (!/closed/i.test(e?.message || '')) throw e;
+  }
+  rl.close();
+  out(c.gray('bye 🐜'));
+  process.exit(0);
+}
+
 // --------------------------------------------------------------------- help
 function help() {
   out(`${c.bold('myrmecia')} — terminal client for the Myrmecia orchestrator
 
-${c.bold('Usage')}
-  myrmecia <command> [args] [flags]
+${c.bold('Interactive mode')}
+  myrmecia                         launch the interactive colony shell (banner,
+                                   natural-language routing, /slash commands)
 
-${c.bold('Commands')}
+${c.bold('One-shot commands')}
   ${c.cyan('health')}                          server status
   ${c.cyan('agents')}                          list agents
   ${c.cyan('models')}                          list models
   ${c.cyan('templates')}                       list pipeline templates
+  ${c.cyan('ask')} <request...>               route a task via the supervisor (live stream)
   ${c.cyan('run')} <agentId> <prompt...>       run a task on an agent (live stream)
   ${c.cyan('pipeline')} <template> <input...>  run a pipeline by name/id (live stream)
-  ${c.cyan('supervisor')} <request...>         decompose a one-line request
+  ${c.cyan('supervisor')} <request...>         decompose a one-line request (plan only)
   ${c.cyan('task')} <taskId>                   show a task's status + output
 
 ${c.bold('Flags')}
@@ -281,10 +465,10 @@ ${c.bold('Flags')}
   -h, --help         this help
 
 ${c.bold('Examples')}
-  myrmecia health
+  myrmecia                                          # interactive shell
+  myrmecia ask "Add a dark-mode toggle with tests"  # route + run
   myrmecia run pm "Write a spec for a dark-mode toggle"
   myrmecia pipeline Feature "Add CSV export to the reports page"
-  myrmecia agents --json
 `);
 }
 
@@ -292,13 +476,16 @@ ${c.bold('Examples')}
 async function main() {
   const cmd = positionals[0];
   const rest = positionals.slice(1);
-  if (!cmd || flags.help) return help();
+  if (flags.help) return help();
+  if (!cmd) return cmdChat();
   switch (cmd) {
+    case 'chat': case 'repl': case 'shell': return cmdChat();
     case 'health': return cmdHealth();
     case 'agents': case 'agent': return cmdAgents();
     case 'models': case 'model': return cmdModels();
     case 'templates': case 'template': return cmdTemplates();
     case 'run': case 'exec': return cmdRun(rest[0], rest.slice(1));
+    case 'ask': return dispatchInteractive(rest.join(' ').trim() || die('usage: myrmecia ask <request...>'));
     case 'pipeline': case 'pipe': return cmdPipeline(rest[0], rest.slice(1));
     case 'supervisor': case 'sup': return cmdSupervisor(rest);
     case 'task': return cmdTask(rest[0]);

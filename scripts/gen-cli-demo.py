@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Generate a terminal-style mockup of the Myrmecia CLI (SVG).
+"""Generate a terminal mockup of the Myrmecia interactive CLI (SVG).
 
-Renders a realistic CLI session — health, an agent run with streamed output,
-and a pipeline streaming its stages — as a macOS-style terminal window, with
-the CLI's ANSI colors mapped to on-brand SVG text colors.
+Shows the welcome screen — gradient ANSI-shadow wordmark, tagline, status —
+then a natural-language prompt being routed to a specialist agent and streamed,
+plus a /agents slash command. Mirrors what `myrmecia` prints in a real terminal.
 """
 
 import os
@@ -12,94 +12,110 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 OUT = os.path.join(ROOT, "docs", "diagrams", "cli-demo.svg")
 os.makedirs(os.path.dirname(OUT), exist_ok=True)
 
-# palette
-INK = "#0d1117"
-PANEL = "#0b0f14"
-BAR = "#161b22"
-WHITE = "#e6edf3"
-GRAY = "#8b949e"
-GREEN = "#3fb950"
-YELLOW = "#d29922"
-CYAN = "#58a6ff"
-TEAL = "#39d2c0"
-VIOLET = "#bc8cff"
-RED = "#ff7b72"
+PANEL = "#0b0f14"; BAR = "#161b22"; WHITE = "#e6edf3"; GRAY = "#8b949e"
+GREEN = "#3fb950"; YELLOW = "#d29922"; CYAN = "#58a6ff"; TEAL = "#39d2c0"; VIOLET = "#bc8cff"
 
-# A session: list of lines; each line is a list of (text, color) segments.
-P = (TEAL, "bold")  # prompt marker style sentinel (handled below)
+# teal -> cyan -> violet, one stop per banner letter
+GRAD = ["#39d2c0", "#42c5d2", "#4bb9e4", "#54acf6", "#66a2ff", "#839bff", "#9f93ff", "#bc8cff"]
 
-def seg(t, color=WHITE, bold=False):
-    return (t, color, bold)
+GLYPHS = {
+    "M": ["███╗   ███╗", "████╗ ████║", "██╔████╔██║", "██║╚██╔╝██║", "██║ ╚═╝ ██║", "╚═╝     ╚═╝"],
+    "Y": ["██╗   ██╗", "╚██╗ ██╔╝", " ╚████╔╝ ", "  ╚██╔╝  ", "   ██║   ", "   ╚═╝   "],
+    "R": ["██████╗ ", "██╔══██╗", "██████╔╝", "██╔══██╗", "██║  ██║", "╚═╝  ╚═╝"],
+    "E": ["███████╗", "██╔════╝", "█████╗  ", "██╔══╝  ", "███████╗", "╚══════╝"],
+    "C": [" ██████╗", "██╔════╝", "██║     ", "██║     ", "╚██████╗", " ╚═════╝"],
+    "I": ["██╗", "██║", "██║", "██║", "██║", "╚═╝"],
+    "A": [" █████╗ ", "██╔══██╗", "███████║", "██╔══██║", "██║  ██║", "╚═╝  ╚═╝"],
+}
+WORD = "MYRMECIA"
 
-def prompt(cmd):
-    return [seg("$ ", TEAL, True), seg(cmd, WHITE, True)]
-
-LINES = [
-    prompt("pnpm cli health"),
-    [seg("Myrmecia", WHITE, True), seg(" @ ", GRAY), seg("http://localhost:3000", CYAN)],
-    [seg("  status   ", GRAY), seg("ok", GREEN), seg("   uptime 72878s", GRAY)],
-    [seg("  agents   ", GRAY), seg("23 total · 22 idle · 1 active", WHITE)],
-    [seg("  tasks    ", GRAY), seg("0 running · 1 queued", WHITE)],
-    [],
-    prompt('myrmecia run pm "Write a spec for a dark-mode toggle"'),
-    [seg("\u25b6 ", GREEN), seg("pm", WHITE, True), seg(" task ", WHITE), seg("task_94a2f742", CYAN)],
-    [seg("## Dark Mode Toggle \u2014 Spec", WHITE)],
-    [seg("1. Problem: users want to switch the dashboard theme\u2026", WHITE)],
-    [seg("2. Acceptance: choice persists across reloads\u2026", WHITE)],
-    [],
-    [seg("result ", WHITE, True), seg("done", GREEN)],
-    [],
-    prompt('myrmecia pipeline Feature "Add CSV export to reports"'),
-    [seg("\u25b6 ", GREEN), seg("pipeline ", WHITE), seg("pipe_7f3a2c", CYAN), seg("  (Feature, auto)", GRAY)],
-    [seg("  done      ", GREEN), seg("Spec", WHITE), seg(" · pm", GRAY)],
-    [seg("  running   ", YELLOW), seg("Code", WHITE), seg(" · dev", GRAY)],
-    [seg("  done      ", GREEN), seg("Code", WHITE), seg(" · dev", GRAY)],
-    [seg("  done      ", GREEN), seg("Test", WHITE), seg(" · qa", GRAY)],
-    [seg("  done      ", GREEN), seg("Review", WHITE), seg(" · review", GRAY)],
-    [],
-    [seg("pipeline ", WHITE, True), seg("completed", GREEN)],
-]
-
-CHAR_W = 8.6
-LINE_H = 22
+CHAR_W = 8.5
+LINE_H = 21
 FS = 14
-PAD_X = 22
+PAD_X = 24
 BAR_H = 38
-TOP = BAR_H + 18
-
-max_len = max((sum(len(s[0]) for s in ln) for ln in LINES if ln), default=40)
-W = int(PAD_X * 2 + max_len * CHAR_W) + 10
-H = int(TOP + len(LINES) * LINE_H + 18)
-
 FONT = "'SF Mono','JetBrains Mono',Menlo,Consolas,'Liberation Mono',monospace"
+
+y = BAR_H + 30
+parts = []
+max_chars = 0
 
 
 def esc(s):
     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-parts = []
-# window
-parts.append(f'<rect x="0.5" y="0.5" width="{W-1}" height="{H-1}" rx="12" fill="{PANEL}" stroke="#30363d"/>')
-parts.append(f'<path d="M12 0.5 H {W-12} A 11.5 11.5 0 0 1 {W-0.5} 12 V {BAR_H} H 0.5 V 12 A 11.5 11.5 0 0 1 12 0.5 Z" fill="{BAR}"/>')
-for i, col in enumerate(("#ff5f56", "#ffbd2e", "#27c93f")):
-    parts.append(f'<circle cx="{22 + i*20}" cy="{BAR_H/2}" r="6" fill="{col}"/>')
-parts.append(f'<text x="{W/2}" y="{BAR_H/2+4}" text-anchor="middle" font-family="{FONT}" font-size="12.5" fill="{GRAY}">myrmecia \u2014 CLI</text>')
+def text(x, ypos, s, fill, bold=False):
+    w = ' font-weight="700"' if bold else ''
+    return (f'<text x="{x:.1f}" y="{ypos:.1f}" font-family="{FONT}" font-size="{FS}" '
+            f'fill="{fill}"{w} xml:space="preserve">{esc(s)}</text>')
 
-# body lines
-y = TOP
-for ln in LINES:
+
+# banner: 6 rows, each letter block in its gradient color
+banner_w = sum(len(GLYPHS[ch][0]) + 1 for ch in WORD)
+max_chars = banner_w
+for r in range(6):
     x = PAD_X
-    for (t, color, bold) in ln:
-        weight = ' font-weight="700"' if bold else ''
-        parts.append(f'<text x="{x:.1f}" y="{y:.1f}" font-family="{FONT}" font-size="{FS}" fill="{color}"{weight} xml:space="preserve">{esc(t)}</text>')
+    for i, ch in enumerate(WORD):
+        g = GLYPHS[ch][r]
+        parts.append(text(x, y, g, GRAD[i]))
+        x += (len(g) + 1) * CHAR_W
+    y += LINE_H
+y += 8
+
+
+def line(segs):
+    global y, max_chars
+    x = PAD_X
+    total = 0
+    for (t, col, b) in segs:
+        parts.append(text(x, y, t, col, b))
         x += len(t) * CHAR_W
+        total += len(t)
+    max_chars = max(max_chars, total)
     y += LINE_H
 
-svg = f'''<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}" fill="none" role="img" aria-label="Myrmecia CLI demo">
-  {chr(10).join("  " + p for p in parts)}
-</svg>
-'''
+
+line([("Autonomous Multi-Agent Orchestration", WHITE, True), ("   \u00b7   v0.1", GRAY, False)])
+line([("Not one model \u2014 a ", GRAY, False), ("colony", CYAN, False),
+      (". Tasks route to specialists, run in parallel, remembered.", GRAY, False)])
+y += 6
+line([("\u25cf ", GREEN, False), ("connected ", GRAY, False), ("http://localhost:3000", CYAN, False),
+      ("   \u00b7   23 agents ready", GRAY, False)])
+line([("Type a task, or ", GRAY, False), ("/help", CYAN, False), (" \u00b7 ", GRAY, False),
+      ("/agents", CYAN, False), (" \u00b7 ", GRAY, False), ("/exit", CYAN, False)])
+y += 10
+
+line([("myrmecia \u276f ", CYAN, True), ("Add a dark-mode toggle to settings, with tests", WHITE, False)])
+line([("\U0001f41c routed", CYAN, False), (" \u2192 ", GRAY, False), ("dev", WHITE, True),
+      ("  \u00b7 pipeline \u00b7 medium \u00b7 via semantic", GRAY, False)])
+line([("  done      ", GREEN, False), ("Spec", WHITE, False), ("  \u00b7 pm", GRAY, False)])
+line([("  running   ", YELLOW, False), ("Code", WHITE, False), ("  \u00b7 dev", GRAY, False)])
+line([("  \U0001f527 ", VIOLET, False), ("apply_patch  settings.tsx", GRAY, False)])
+line([("  done      ", GREEN, False), ("Review", WHITE, False), ("  \u00b7 review", GRAY, False)])
+line([("result ", WHITE, True), ("done", GREEN, False)])
+y += 8
+
+line([("myrmecia \u276f ", CYAN, True), ("/agents", WHITE, False)])
+line([("  ", GRAY, False), ("pm", CYAN, False), ("    product-manager   ", GRAY, False), ("PM Agent", WHITE, False)])
+line([("  ", GRAY, False), ("dev", CYAN, False), ("   developer        ", GRAY, False), ("Dev Agent", WHITE, False)])
+line([("  ", GRAY, False), ("qa", CYAN, False), ("    tester            ", GRAY, False), ("QA Agent", WHITE, False)])
+line([("  ", GRAY, False), ("\u2026", GRAY, False), ("  23 specialists in the colony", GRAY, False)])
+
+H = int(y + 14)
+W = int(PAD_X * 2 + max_chars * CHAR_W) + 8
+
+chrome = []
+chrome.append(f'<rect x="0.5" y="0.5" width="{W-1}" height="{H-1}" rx="12" fill="{PANEL}" stroke="#30363d"/>')
+chrome.append(f'<path d="M12 0.5 H {W-12} A 11.5 11.5 0 0 1 {W-0.5} 12 V {BAR_H} H 0.5 V 12 A 11.5 11.5 0 0 1 12 0.5 Z" fill="{BAR}"/>')
+for i, col in enumerate(("#ff5f56", "#ffbd2e", "#27c93f")):
+    chrome.append(f'<circle cx="{22 + i*20}" cy="{BAR_H/2}" r="6" fill="{col}"/>')
+chrome.append(f'<text x="{W/2}" y="{BAR_H/2+4}" text-anchor="middle" font-family="{FONT}" font-size="12.5" fill="{GRAY}">myrmecia \u2014 interactive</text>')
+
+svg = (f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}" '
+       f'fill="none" role="img" aria-label="Myrmecia interactive CLI">\n'
+       + "\n".join("  " + p for p in chrome + parts) + "\n</svg>\n")
+
 with open(OUT, "w") as f:
     f.write(svg)
 print("wrote", OUT, f"({W}x{H})")
