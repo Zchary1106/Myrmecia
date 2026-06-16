@@ -247,7 +247,7 @@ flowchart LR
 
 Dynamic workflows are generated at runtime instead of loaded from a fixed YAML template. The runtime creates an executable plan, fans steps out through the normal `TaskQueue`, and listens for task terminal events to validate and summarize the run.
 
-![Dynamic Workflow Lifecycle](diagrams/dynamic-workflow-lifecycle.png)
+![Dynamic Workflow Lifecycle](diagrams/dynamic-workflow-lifecycle.svg)
 
 ```mermaid
 flowchart LR

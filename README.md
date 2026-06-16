@@ -52,7 +52,7 @@ Myrmecia mirrors a real engineering org: specialized agents (PM, design, dev, QA
 A registry of role-specialized agents (`agents/registry.yaml` + skill markdown). Each agent declares a role, model tier with fallback, capabilities, allowed tools, and triggers. Agents are capability templates — runtime state lives in executions, not in long-lived workers.
 
 <p align="center">
-  <img src="docs/diagrams/agent-pool.png" alt="Agent Pool" width="100%">
+  <img src="docs/diagrams/agent-pool.svg" alt="Agent Pool" width="100%">
 </p>
 
 - **Master** — decomposes complex requests into a dependency-ordered subtask plan (now few-shot–primed by recalled past decompositions).
@@ -70,7 +70,7 @@ A registry of role-specialized agents (`agents/registry.yaml` + skill markdown).
 | **Supervisor** | One-line intake; intent classification + semantic routing pick the mode/agent automatically. |
 
 <p align="center">
-  <img src="docs/diagrams/dynamic-workflow-lifecycle.png" alt="Workflow Lifecycle" width="85%">
+  <img src="docs/diagrams/dynamic-workflow-lifecycle.svg" alt="Workflow Lifecycle" width="85%">
 </p>
 
 ### Unified Memory
