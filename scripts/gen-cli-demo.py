@@ -94,13 +94,21 @@ line([("  running   ", YELLOW, False), ("Code", WHITE, False), ("  \u00b7 dev", 
 line([("  \U0001f527 ", VIOLET, False), ("apply_patch  settings.tsx", GRAY, False)])
 line([("  done      ", GREEN, False), ("Review", WHITE, False), ("  \u00b7 review", GRAY, False)])
 line([("result ", WHITE, True), ("done", GREEN, False)])
-y += 8
+y += 14
 
-line([("myrmecia \u276f ", CYAN, True), ("/agents", WHITE, False)])
-line([("  ", GRAY, False), ("pm", CYAN, False), ("    product-manager   ", GRAY, False), ("PM Agent", WHITE, False)])
-line([("  ", GRAY, False), ("dev", CYAN, False), ("   developer        ", GRAY, False), ("Dev Agent", WHITE, False)])
-line([("  ", GRAY, False), ("qa", CYAN, False), ("    tester            ", GRAY, False), ("QA Agent", WHITE, False)])
-line([("  ", GRAY, False), ("\u2026", GRAY, False), ("  23 specialists in the colony", GRAY, False)])
+# the new bordered input box (Claude-Code style) with the active model
+BOXW = 58
+model = "claude-haiku-4.5"
+top_mid = "─ myrmecia "
+top_right = f" {model} ─"
+top_fill = "\u2500" * max(1, BOXW - 2 - len(top_mid) - len(top_right))
+inner = BOXW - 6
+content = "Add a dark-mode toggle to settings, with tests"[:inner].ljust(inner)
+hint = "/help  /model  /agents  /exit"
+bot_fill = "\u2500" * max(1, BOXW - 5 - len(hint))
+line([("\u256d\u2500 ", GRAY, False), ("myrmecia", CYAN, True), (" " + top_fill + " ", GRAY, False), (model, TEAL, False), (" \u2500\u256e", GRAY, False)])
+line([("\u2502 ", GRAY, False), ("\u203a ", CYAN, False), (content, WHITE, False), (" \u2502", GRAY, False)])
+line([("\u2570\u2500 ", GRAY, False), ("/help", CYAN, False), ("  ", GRAY, False), ("/model", CYAN, False), ("  ", GRAY, False), ("/agents", CYAN, False), ("  ", GRAY, False), ("/exit", CYAN, False), (" " + bot_fill + "\u256f", GRAY, False)])
 
 H = int(y + 14)
 W = int(PAD_X * 2 + max_chars * CHAR_W) + 8
