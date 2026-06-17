@@ -393,6 +393,11 @@ export const api = {
   teams: {
     list: () => request<{ teams: TeamDTO[] }>('/teams').then(r => r.teams),
     get: (id: string) => request<TeamDTO>(`/teams/${id}`),
+    create: (data: TeamInputDTO) =>
+      request<TeamDTO>('/teams', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id: string, data: Partial<TeamInputDTO>) =>
+      request<TeamDTO>(`/teams/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+    remove: (id: string) => request<{ ok: boolean; reverted: boolean }>(`/teams/${id}`, { method: 'DELETE' }),
     dispatch: (id: string, goal: string) =>
       request<{ run: TeamRunDTO; team: TeamDTO; board: TeamBoardItem[] }>(`/teams/${id}/dispatch`, { method: 'POST', body: JSON.stringify({ goal }) }),
     runs: (teamId?: string) =>
@@ -404,10 +409,15 @@ export const api = {
   },
 };
 
+export interface TeamInputDTO {
+  id?: string; name: string; emoji?: string; lead?: string;
+  members: string[]; template?: string; triggers?: string[]; blurb?: string;
+}
 export interface TeamRosterMember { role: string; agentId: string; name: string }
 export interface TeamDTO {
   id: string; name: string; emoji: string; lead: string;
   members: string[]; template?: string; triggers: string[]; blurb: string;
+  builtin?: boolean;
   roster?: TeamRosterMember[];
 }
 export interface TeamRunDTO {

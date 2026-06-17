@@ -129,6 +129,11 @@ export class WSHub {
       channels.push('graphs');
       if (p?.workflowId) channels.push(`graph:${p.workflowId}`);
     }
+    // Agent teams (parallel shared board)
+    if (event.type.startsWith('team:')) {
+      channels.push('teams');
+      if (p?.runId) channels.push(`team:${p.runId}`);
+    }
     // Token streaming from agent executions
     if (event.type.startsWith('token:')) {
       channels.push('executions');

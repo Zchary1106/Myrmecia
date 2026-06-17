@@ -375,6 +375,8 @@ function applyModuleSchemas(db: DbDriver) {
     `CREATE TABLE IF NOT EXISTS team_runs (id TEXT PRIMARY KEY, team_id TEXT NOT NULL, goal TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'planning', parent_task_id TEXT, result TEXT, workspace_id TEXT NOT NULL DEFAULT 'default', created_at DATETIME DEFAULT CURRENT_TIMESTAMP, completed_at DATETIME);
      CREATE INDEX IF NOT EXISTS idx_team_runs_team ON team_runs(team_id);
      CREATE INDEX IF NOT EXISTS idx_team_runs_status ON team_runs(status);`,
+    // Custom (user-defined) team definitions — merged over the teams.yaml built-ins
+    `CREATE TABLE IF NOT EXISTS team_definitions (id TEXT PRIMARY KEY, name TEXT NOT NULL, emoji TEXT NOT NULL DEFAULT '•', lead TEXT NOT NULL DEFAULT 'master', members JSON NOT NULL DEFAULT '[]', template TEXT, triggers JSON NOT NULL DEFAULT '[]', blurb TEXT NOT NULL DEFAULT '', workspace_id TEXT NOT NULL DEFAULT 'default', created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP);`,
     // Coverage reports
     `CREATE TABLE IF NOT EXISTS coverage_reports (
   id TEXT PRIMARY KEY,
