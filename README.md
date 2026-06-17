@@ -243,12 +243,13 @@ myrmecia ❯ @feature Add a dark-mode toggle with tests   # put a whole team on 
 🛠️  Feature Team · lead master · 5 teammates
   ✓ Spec     pm
   ▸ Code     dev
+myrmecia ❯ @feature:dev use react-dropzone, keep the bundle small   # message a teammate
 myrmecia ❯ /teams              # list the squads (🛠️ @feature 🐛 @bugfix 🔍 @quality …)
 myrmecia ❯ /model              # show models, or `/model <id>` to switch the colony
 myrmecia ❯ /agents             # see the 23-specialist colony
 ```
 
-**Agent teams.** Beyond single agents, address a whole **squad** with `@team <task>`: the team's lead routes the work across its members and you watch a live team board. Built-in teams: `@feature` (PM → UI → Dev → QA → Ops), `@bugfix`, `@quality`, `@release`, `@content`. Run `/teams` to see the roster; teams are defined in [`agents/teams.yaml`](agents/teams.yaml).
+**Agent teams.** Beyond single agents, address a whole **squad** with `@team <task>`: the team's lead splits the goal into subtasks and the members **run in parallel on a shared task board** (dependency-gated), so you watch real teammates collaborate. As one teammate finishes, its key finding is shared with the others still working. You can also **talk to a teammate directly** — `@team:role <message>` (add `!` to *redirect* a finished teammate into new work, e.g. `@feature:dev! also add tests`), and press **Esc** to detach the board (it keeps running) so you can steer. Built-in teams: `@feature` (PM → UI → Dev → QA → Ops), `@bugfix`, `@quality`, `@release`, `@content`. Run `/teams` to see the roster; teams are defined in [`agents/teams.yaml`](agents/teams.yaml).
 
 Or use it one-shot for scripting (every command streams live output):
 

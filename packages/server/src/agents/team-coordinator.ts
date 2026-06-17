@@ -3,7 +3,9 @@ import { getDb } from '../db/database.js';
 import { eventBus } from '../events/event-bus.js';
 import { TaskQueue } from '../queue/task-queue.js';
 import { MasterAgent } from './master-agent.js';
+import { messageBus } from './message-bus.js';
 import { listTasks, getTask } from '../db/models/task.js';
+import { listExecutions } from '../db/models/execution.js';
 import { getTeam, resolveTeamAgents, type Team } from './team-registry.js';
 import type { Task } from '../types.js';
 
@@ -46,11 +48,12 @@ export interface BoardItem {
 
 export class TeamCoordinator {
   private masterAgent: MasterAgent;
+  private shared = new Set<string>(); // taskIds whose finding was already broadcast
 
   constructor(private taskQueue: TaskQueue) {
     this.masterAgent = new MasterAgent(taskQueue);
-    // Reflect task lifecycle onto the owning run.
-    eventBus.on('task:done', (e: any) => this.onTaskSettled(e));
+    // Reflect task lifecycle onto the owning run + share findings across teammates.
+    eventBus.on('task:done', (e: any) => { this.shareFinding(e); this.onTaskSettled(e); });
     eventBus.on('task:failed', (e: any) => this.onTaskSettled(e));
   }
 
@@ -151,5 +154,87 @@ export class TeamCoordinator {
     db.run('UPDATE team_runs SET status = ?, result = ?, completed_at = ? WHERE id = ?',
       anyFailed ? 'failed' : 'done', result, new Date().toISOString(), run.id);
     eventBus.emit('team:run_done', { runId: run.id, teamId: run.teamId, status: anyFailed ? 'failed' : 'done', workspaceId: run.workspaceId });
+  }
+
+  /** Inter-team comms: when a teammate finishes, share a short summary of its
+   *  finding with the other still-running teammates so they can build on it. */
+  private shareFinding(event: any): void {
+    const taskId = event?.taskId || event?.payload?.taskId;
+    if (!taskId || this.shared.has(taskId)) return;
+    const task = getTask(taskId);
+    if (!task?.parentTaskId) return;
+    // Only for tasks that belong to an active team run.
+    const row = getDb().get('SELECT * FROM team_runs WHERE parent_task_id = ? AND status = ?', task.parentTaskId, 'running') as any;
+    if (!row) return;
+    this.shared.add(taskId);
+
+    const summary = (event?.output || task.output || '').toString().replace(/\s+/g, ' ').trim().slice(0, 600);
+    if (!summary) return;
+    const siblings = listTasks({ parentTaskId: task.parentTaskId })
+      .filter(t => t.id !== taskId && ['running', 'assigned', 'pending', 'queued'].includes(t.status));
+    let delivered = 0;
+    for (const sib of siblings) {
+      const exec = listExecutions({ taskId: sib.id, limit: 1 })[0];
+      if (!exec) continue; // not started yet — it'll get predecessor context via deps
+      messageBus.send(null, exec.id, 'context_update',
+        `Teammate "${task.title}" finished. Key result: ${summary}`);
+      delivered++;
+    }
+    if (delivered > 0) {
+      eventBus.emit('team:run_planned', { runId: row.id, teamId: row.team_id, shared: { from: task.title, to: delivered }, workspaceId: row.workspace_id });
+    }
+  }
+
+  /**
+   * Direct-message (or redirect) a specific teammate in a run.
+   * `target` is a taskId, an agentId, a role, or 'all'. When `redirect` is set
+   * and the teammate already finished, a fresh follow-up task is spawned for
+   * that agent with the new instruction (so it re-engages).
+   */
+  async messageTeammate(runId: string, target: string, content: string, opts?: { redirect?: boolean }): Promise<{
+    delivered: { taskId: string; agentId: string | null; live: boolean }[];
+    redirected: string[];
+  }> {
+    const run = this.getRun(runId);
+    if (!run?.parentTaskId) throw new Error('run not found or not planned yet');
+    if (!content?.trim()) throw new Error('message content is required');
+
+    const children = listTasks({ parentTaskId: run.parentTaskId });
+    const key = (target || 'all').toLowerCase();
+    const matches = key === 'all' ? children : children.filter(t =>
+      t.id === target || (t.assigneeId || '').toLowerCase() === key);
+    if (matches.length === 0) throw new Error(`no teammate matches "${target}"`);
+
+    const delivered: { taskId: string; agentId: string | null; live: boolean }[] = [];
+    const redirected: string[] = [];
+
+    for (const t of matches) {
+      const running = listExecutions({ taskId: t.id, limit: 1 }).find(e => e.status === 'running');
+      if (running) {
+        messageBus.send(null, running.id, 'task_handoff', `Message from the team lead: ${content}`);
+        delivered.push({ taskId: t.id, agentId: t.assigneeId || null, live: true });
+        continue;
+      }
+      if (opts?.redirect && ['done', 'failed', 'cancelled'].includes(t.status)) {
+        const follow = await this.taskQueue.enqueue({
+          title: `Follow-up: ${t.title}`.slice(0, 80),
+          description: content,
+          mode: 'master',
+          input: content,
+          assigneeId: t.assigneeId || undefined,
+          parentTaskId: run.parentTaskId,
+          workspaceId: run.workspaceId,
+        });
+        // Re-open the run so the new task is tracked to completion.
+        getDb().run("UPDATE team_runs SET status = 'running', completed_at = NULL WHERE id = ? AND status != 'running'", run.id);
+        redirected.push(follow.id);
+      } else {
+        // Not running and not redirecting — queue it for whenever it next runs.
+        const exec = listExecutions({ taskId: t.id, limit: 1 })[0];
+        if (exec) { messageBus.send(null, exec.id, 'task_handoff', `Message from the team lead: ${content}`); delivered.push({ taskId: t.id, agentId: t.assigneeId || null, live: false }); }
+      }
+    }
+    eventBus.emit('team:run_planned', { runId: run.id, teamId: run.teamId, message: { target, delivered: delivered.length, redirected: redirected.length }, workspaceId: run.workspaceId });
+    return { delivered, redirected };
   }
 }

@@ -256,7 +256,62 @@ function cmdTeams() {
     out(`     ${c.dim('lead ')}${c.cyan(t.lead)}${c.dim('  ·  ')}${t.members.map(m => c.cyan(m)).join(c.dim(' → '))}`);
     out('');
   }
-  out(c.gray('  Put a team to work: ') + c.cyan('@' + TEAMS[0].id + ' <task>') + c.gray('   (e.g. ') + c.cyan('@feature add a dark-mode toggle') + c.gray(')'));
+  out(c.gray('  Put a team to work: ') + c.cyan('@' + TEAMS[0].id + ' <task>') + c.gray('   ·  message a teammate: ') + c.cyan('@' + TEAMS[0].id + ':dev <note>'));
+}
+
+// Remember the most recent run per team so `@team:role <msg>` can target it.
+const lastRunByTeam: Record<string, string> = {};
+
+/** Direct-message (or redirect) a teammate of a team's most recent run. */
+async function messageTeammateCli(team: Team, target: string, content: string, redirect = false) {
+  let runId = lastRunByTeam[team.id];
+  if (!runId) {
+    // One-shot / fresh session: fall back to the team's latest server-side run.
+    try {
+      const resp: any = await api(`/teams/runs?teamId=${team.id}`);
+      const runs: any[] = resp?.runs || [];
+      const active = runs.find((r: any) => r.status === 'running') || runs[0];
+      if (active?.id) { runId = active.id; lastRunByTeam[team.id] = runId; }
+    } catch { /* ignore */ }
+  }
+  if (!runId) { out(c.red(`no recent run for ${team.name}`) + c.gray(`  (start one: @${team.id} <task>)`)); return; }
+  if (!content.trim()) { out(c.red('usage: ') + c.cyan(`@${team.id}:${target} <message>`)); return; }
+  try {
+    const r = await api(`/teams/runs/${runId}/message`, { method: 'POST', body: { to: target, content, redirect } });
+    const live = (r.delivered || []).filter((d: any) => d.live).length;
+    const queued = (r.delivered || []).length - live;
+    const red = (r.redirected || []).length;
+    const bits = [
+      live ? c.green(`→ ${live} live`) : '',
+      queued ? c.yellow(`⋯ ${queued} queued`) : '',
+      red ? c.cyan(`↻ ${red} redirected`) : '',
+    ].filter(Boolean).join(c.gray(' · '));
+    out(c.gray(`  ✉  to ${target}: `) + (bits || c.dim('no matching teammate')));
+  } catch (e: any) {
+    out(c.red('message failed: ') + (e?.message || String(e)));
+  }
+}
+
+/** Parse and route an `@…` input:
+ *   @team <goal>          dispatch a goal to the team
+ *   @team:role <message>  message (or @team:role! to redirect) a teammate
+ *   @team                 show the team's latest board / roster */
+async function handleAt(input: string): Promise<void> {
+  const sp = input.indexOf(' ');
+  const head = (sp < 0 ? input : input.slice(0, sp)).slice(1); // drop '@'
+  const rest = sp < 0 ? '' : input.slice(sp + 1).trim();
+  const [teamId, rawTarget] = head.split(':');
+  const team = findTeam(teamId);
+  if (!team) { out(c.red(`unknown team: @${teamId}`) + c.gray('  (try /teams)')); return; }
+
+  if (rawTarget !== undefined && rawTarget !== '') {
+    const redirect = rawTarget.endsWith('!');
+    const target = rawTarget.replace(/!$/, '');
+    await messageTeammateCli(team, target, rest, redirect);
+    return;
+  }
+  if (!rest) { out(`${team.emoji}  ${c.bold(team.name)} ${c.gray('· ' + team.members.join(', '))}`); return; }
+  await runTeam(team, rest);
 }
 
 /** Dispatch a goal to a team. Prefers the server's parallel team coordinator
@@ -278,9 +333,20 @@ async function runTeam(team: Team, input: string) {
 
     if (dispatched?.run?.id) {
       const runId = dispatched.run.id;
+      lastRunByTeam[team.id] = runId;
       const mark = (st: string) => st === 'done' ? c.green('✓') : st === 'failed' ? c.red('✗')
         : st === 'running' ? c.yellow('▸') : st === 'assigned' ? c.cyan('◆')
         : st === 'queued' ? c.gray('⋯') : c.gray('·');
+
+      // Allow detaching the live board (run keeps going server-side) so you can
+      // message a teammate. Esc / Ctrl+C / 'd' detaches in a real terminal.
+      let detached = false;
+      const stdin = process.stdin as any;
+      const canDetach = process.stdin.isTTY && INTERACTIVE;
+      const onKey = (d: string) => { if (d === '\x1b' || d === '\x03' || d === 'd') detached = true; };
+      if (canDetach) { try { stdin.setRawMode(true); stdin.resume(); stdin.on('data', onKey); } catch { /* noop */ } }
+      const stopKeys = () => { if (canDetach) { try { stdin.setRawMode(false); stdin.removeListener('data', onKey); } catch { /* noop */ } } };
+
       const seen = new Map<string, string>();
       let run: any;
       let planned = false;
@@ -288,7 +354,10 @@ async function runTeam(team: Team, input: string) {
         const snap = one(await api(`/teams/runs/${runId}`));
         run = snap.run;
         const board: any[] = snap.board || [];
-        if (board.length && !planned) { planned = true; out(c.gray(`  the lead split the goal into ${board.length} parallel tasks:`)); }
+        if (board.length && !planned) {
+          planned = true;
+          out(c.gray(`  the lead split the goal into ${board.length} parallel tasks` + (canDetach ? ' — press esc to detach & message' : '') + ':'));
+        }
         let activeN = 0;
         for (const b of board) {
           const st = String(b.status || '').toLowerCase();
@@ -301,9 +370,11 @@ async function runTeam(team: Team, input: string) {
         }
         const done = board.filter((b: any) => ['done', 'failed'].includes(String(b.status).toLowerCase())).length;
         footerSet(`${team.name} · ${activeN} working · ${done}/${board.length || '?'} done`);
+        if (detached) { stopKeys(); out(c.gray(`  detached — board runs on. Message it: `) + c.cyan(`@${team.id}:<role> <note>`) + c.gray('  ·  status: ') + c.cyan(`@${team.id}`)); return; }
         if (['done', 'failed'].includes(String(run.status).toLowerCase())) break;
         await sleep(2500);
       }
+      stopKeys();
       out('');
       out(`${c.bold(team.name)} ${statusColor(run.status)}`);
       if (run.result) out(indent(String(run.result).slice(0, 1600)));
@@ -675,6 +746,7 @@ function slashHelp() {
   const rows: Array<[string, string]> = [
     ['/teams', 'list agent teams (squads)'],
     ['@team <task>', 'put a team to work (e.g. @feature …)'],
+    ['@team:role <msg>', 'message a teammate (add ! to redirect)'],
     ['/agents', 'list the agent colony'],
     ['/model [id]', 'show models / switch the active model'],
     ['/models', 'list models + routing status'],
@@ -925,12 +997,7 @@ async function cmdChat() {
       if (input.startsWith('/')) {
         if ((await handleSlash(input)) === false) return false;
       } else if (input.startsWith('@')) {
-        const sp = input.indexOf(' ');
-        const id = (sp < 0 ? input : input.slice(0, sp)).slice(1);
-        const rest = sp < 0 ? '' : input.slice(sp + 1).trim();
-        const team = findTeam(id);
-        if (!team) { out(c.red(`unknown team: @${id}`) + c.gray('  (try /teams)')); }
-        else await runTeam(team, rest);
+        await handleAt(input);
       } else {
         await dispatchInteractive(input);
       }
@@ -1017,15 +1084,15 @@ async function main() {
   const rest = positionals.slice(1);
   if (flags.help) return help();
   if (!cmd) return cmdChat();
-  // One-shot team dispatch: `myrmecia @feature build X`
+  // One-shot team dispatch / messaging: `myrmecia @feature build X` or `@feature:dev note`
   if (cmd.startsWith('@')) {
-    const team = findTeam(cmd.slice(1));
-    if (!team) return die(`unknown team: ${cmd}\nrun \`myrmecia teams\` to list teams`);
+    const head = cmd.slice(1).split(':')[0];
+    if (!findTeam(head)) return die(`unknown team: ${cmd}\nrun \`myrmecia teams\` to list teams`);
     INTERACTIVE = true;
     const h = await quietHealth();
     if (h) { connected = true; agentCount = Number(h.agents?.total ?? 0) || 0; }
     if (flags.model) await setModel(String(flags.model), true).catch(() => {});
-    return runTeam(team, rest.join(' ').trim());
+    return handleAt([cmd, ...rest].join(' '));
   }
   // Apply --model for one-shot commands that run agents.
   if (flags.model && ['ask', 'run', 'exec', 'pipeline', 'pipe'].includes(cmd)) {
