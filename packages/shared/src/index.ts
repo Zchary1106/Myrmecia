@@ -695,6 +695,7 @@ export type WSEventType =
   | 'artifact:published' | 'artifact:read'
   | 'graph:run_started' | 'graph:run_done' | 'graph:run_failed' | 'graph:run_cancelled'
   | 'graph:node_started' | 'graph:node_done' | 'graph:node_failed' | 'graph:node_skipped'
+  | 'team:run_created' | 'team:run_planned' | 'team:run_done' | 'team:run_failed'
   | 'token:delta';
 
 export interface WSEvent<TPayload = unknown> {

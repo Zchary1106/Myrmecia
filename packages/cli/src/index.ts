@@ -259,16 +259,63 @@ function cmdTeams() {
   out(c.gray('  Put a team to work: ') + c.cyan('@' + TEAMS[0].id + ' <task>') + c.gray('   (e.g. ') + c.cyan('@feature add a dark-mode toggle') + c.gray(')'));
 }
 
-/** Dispatch a task to a team: runs the team's pipeline template as a live board. */
+/** Dispatch a goal to a team. Prefers the server's parallel team coordinator
+ *  (shared task board); falls back to the team's pipeline template if the
+ *  /teams API isn't available. */
 async function runTeam(team: Team, input: string) {
   if (!input) { out(c.red('usage: ') + c.cyan('@' + team.id + ' <task>')); return; }
   footerMount(`${team.name} · assembling`);
   try {
-    const tpls = listOf(await api('/templates'));
-    const tpl = tpls.find((t: any) => (t.name || '').toLowerCase() === team.template.toLowerCase());
-    if (!tpl) { out(c.red(`team template not found: ${team.template}`)); return; }
-
     out(`${team.emoji}  ${c.bold(team.name)} ${c.gray('· lead ')}${c.cyan(team.lead)} ${c.gray('· ' + team.members.length + ' teammates')}`);
+
+    // Try the parallel team coordinator first.
+    let dispatched: any;
+    try {
+      dispatched = one(await api(`/teams/${team.id}/dispatch`, { method: 'POST', body: { goal: input } }));
+    } catch {
+      dispatched = null;
+    }
+
+    if (dispatched?.run?.id) {
+      const runId = dispatched.run.id;
+      const mark = (st: string) => st === 'done' ? c.green('✓') : st === 'failed' ? c.red('✗')
+        : st === 'running' ? c.yellow('▸') : st === 'assigned' ? c.cyan('◆')
+        : st === 'queued' ? c.gray('⋯') : c.gray('·');
+      const seen = new Map<string, string>();
+      let run: any;
+      let planned = false;
+      for (;;) {
+        const snap = one(await api(`/teams/runs/${runId}`));
+        run = snap.run;
+        const board: any[] = snap.board || [];
+        if (board.length && !planned) { planned = true; out(c.gray(`  the lead split the goal into ${board.length} parallel tasks:`)); }
+        let activeN = 0;
+        for (const b of board) {
+          const st = String(b.status || '').toLowerCase();
+          if (['running', 'assigned'].includes(st)) activeN++;
+          if (seen.get(b.taskId) !== b.status) {
+            seen.set(b.taskId, b.status);
+            const dep = (b.dependsOn || []).length ? c.dim(`  ⟂ waits on ${b.dependsOn.length}`) : '';
+            out(`  ${mark(st)} ${c.gray((b.assigneeId || '?').padEnd(7))} ${String(b.title).slice(0, 52)}${dep}`);
+          }
+        }
+        const done = board.filter((b: any) => ['done', 'failed'].includes(String(b.status).toLowerCase())).length;
+        footerSet(`${team.name} · ${activeN} working · ${done}/${board.length || '?'} done`);
+        if (['done', 'failed'].includes(String(run.status).toLowerCase())) break;
+        await sleep(2500);
+      }
+      out('');
+      out(`${c.bold(team.name)} ${statusColor(run.status)}`);
+      if (run.result) out(indent(String(run.result).slice(0, 1600)));
+      if (String(run.status).toLowerCase() === 'failed') process.exitCode = 1;
+      return;
+    }
+
+    // Fallback: run the team's pipeline template sequentially.
+    out(c.dim('  (teams API unavailable — running the team pipeline)'));
+    const tpls = listOf(await api('/templates'));
+    const tpl = tpls.find((t: any) => (t.name || '').toLowerCase() === (team.template || '').toLowerCase());
+    if (!tpl) { out(c.red(`team template not found: ${team.template}`)); return; }
     const gateMode = (flags.gate === 'manual' ? 'manual' : 'auto');
     const created = one(await api('/pipelines', { method: 'POST', body: { name: `${team.name}: ${input.slice(0, 40)}`, templateId: tpl.id, input, gateMode } }));
     const pid = created.id;
@@ -975,6 +1022,8 @@ async function main() {
     const team = findTeam(cmd.slice(1));
     if (!team) return die(`unknown team: ${cmd}\nrun \`myrmecia teams\` to list teams`);
     INTERACTIVE = true;
+    const h = await quietHealth();
+    if (h) { connected = true; agentCount = Number(h.agents?.total ?? 0) || 0; }
     if (flags.model) await setModel(String(flags.model), true).catch(() => {});
     return runTeam(team, rest.join(' ').trim());
   }

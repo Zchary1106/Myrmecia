@@ -371,6 +371,10 @@ function applyModuleSchemas(db: DbDriver) {
     // Orchestrations
     `CREATE TABLE IF NOT EXISTS orchestrations (id TEXT PRIMARY KEY, input TEXT NOT NULL, intent JSON NOT NULL, status TEXT NOT NULL DEFAULT 'planning', task_ids JSON NOT NULL DEFAULT '[]', result TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, completed_at DATETIME);
      CREATE INDEX IF NOT EXISTS idx_orchestrations_status ON orchestrations(status);`,
+    // Team runs (agent teams: a shared, parallel task board per dispatch)
+    `CREATE TABLE IF NOT EXISTS team_runs (id TEXT PRIMARY KEY, team_id TEXT NOT NULL, goal TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'planning', parent_task_id TEXT, result TEXT, workspace_id TEXT NOT NULL DEFAULT 'default', created_at DATETIME DEFAULT CURRENT_TIMESTAMP, completed_at DATETIME);
+     CREATE INDEX IF NOT EXISTS idx_team_runs_team ON team_runs(team_id);
+     CREATE INDEX IF NOT EXISTS idx_team_runs_status ON team_runs(status);`,
     // Coverage reports
     `CREATE TABLE IF NOT EXISTS coverage_reports (
   id TEXT PRIMARY KEY,

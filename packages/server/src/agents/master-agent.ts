@@ -20,8 +20,10 @@ export class MasterAgent {
     this.taskQueue = taskQueue;
   }
 
-  /** Decompose a high-level task into subtasks using Claude */
-  async decompose(parentTask: Task): Promise<Task[]> {
+  /** Decompose a high-level task into subtasks using Claude.
+   *  When `options.allowedRoles` is set (team mode), the breakdown is restricted
+   *  to those roles and subtasks are only assigned to agents in that roster. */
+  async decompose(parentTask: Task, options?: { allowedRoles?: string[]; teamName?: string }): Promise<Task[]> {
     const masterAgent = listAgents().find(a => a.role === 'orchestrator' || a.id === 'master');
     if (!masterAgent) throw new Error('Master agent not found');
 
@@ -37,13 +39,22 @@ export class MasterAgent {
       tokenBudget: 800,
     }).catch(() => '');
 
-    const prompt = `You are a project manager AI. Analyze the following task and break it down into atomic subtasks.
+    const allowedRoles = options?.allowedRoles && options.allowedRoles.length
+      ? options.allowedRoles
+      : ['pm', 'ui', 'dev', 'qa', 'ops', 'review'];
+    const teamLine = options?.teamName
+      ? `You are coordinating the "${options.teamName}". Assign every subtask to one of YOUR teammates only.\n`
+      : '';
 
+    const prompt = `You are a project manager AI. Analyze the following task and break it down into atomic subtasks.
+${teamLine}
 For each subtask, provide:
 - title: short descriptive title
 - description: detailed prompt for the agent who will execute it
-- role: one of [pm, ui, dev, qa, ops, review]
+- role: one of [${allowedRoles.join(', ')}]
 - dependencies: array of subtask indices (0-based) that must complete before this one
+
+Maximize parallelism: only add a dependency when a subtask truly needs another's output.
 
 IMPORTANT: Output ONLY a valid JSON array. No markdown, no explanation.
 ${memoryBlock ? `\n${memoryBlock}\n` : ''}
@@ -51,10 +62,13 @@ Task: ${parentTask.description || parentTask.title}
 
 Example output:
 [
-  {"title": "Write PRD", "description": "Write a detailed product spec for...", "role": "pm", "dependencies": []},
-  {"title": "Design UI", "description": "Design the UI based on the spec...", "role": "ui", "dependencies": [0]},
-  {"title": "Implement", "description": "Implement the code based on...", "role": "dev", "dependencies": [1]}
+  {"title": "Write PRD", "description": "Write a detailed product spec for...", "role": "${allowedRoles[0]}", "dependencies": []},
+  {"title": "Implement", "description": "Implement the code based on...", "role": "${allowedRoles[Math.min(1, allowedRoles.length - 1)]}", "dependencies": [0]}
 ]`;
+
+    const roleFilter = options?.allowedRoles && options.allowedRoles.length
+      ? new Set(options.allowedRoles)
+      : null;
 
     try {
       // Run the decomposition on a real (standalone) task row so the execution's
@@ -88,12 +102,15 @@ Example output:
           .filter(idx => idx < taskIdMap.length)
           .map(idx => taskIdMap[idx]);
 
-        // Find available agent for this role
+        // Find available agent for this role (restricted to the team roster in team mode)
+        const def_role = roleFilter && !roleFilter.has(def.role) ? allowedRoles[0] : def.role;
         const agent = listAgents().find(a =>
-          a.role === def.role ||
-          a.role.includes(def.role) ||
-          a.id === def.role
-        );
+          (!roleFilter || roleFilter.has(a.role)) && (
+            a.role === def_role ||
+            a.role.includes(def_role) ||
+            a.id === def_role
+          )
+        ) || listAgents().find(a => a.role === def_role || a.id === def_role);
 
         const task = await this.taskQueue.enqueue({
           title: def.title,
