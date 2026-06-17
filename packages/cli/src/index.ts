@@ -206,6 +206,105 @@ async function cmdTask(id: string) {
   if (t.output) { out(c.gray('  output:')); out(indent(String(t.output))); }
 }
 
+// --------------------------------------------------------------------- teams
+// Canonical roster lives in agents/teams.yaml; embedded here so the CLI stays
+// dependency-free. Each team maps to an existing pipeline template by name.
+interface Team { id: string; name: string; emoji: string; lead: string; members: string[]; template: string; triggers: string[]; blurb: string; }
+const TEAMS: Team[] = [
+  { id: 'feature', name: 'Feature Team', emoji: '🛠️', lead: 'master',
+    members: ['product-manager', 'designer', 'developer', 'tester', 'devops'],
+    template: 'Full Product', triggers: ['feature', 'build', 'add', 'implement', 'ship', 'product'],
+    blurb: 'Ship a feature end-to-end — spec, design, code, test, deploy.' },
+  { id: 'bugfix', name: 'Bugfix Team', emoji: '🐛', lead: 'master',
+    members: ['product-manager', 'developer', 'tester'],
+    template: 'Bugfix', triggers: ['bug', 'fix', 'broken', 'error', 'crash', 'regression', 'hotfix'],
+    blurb: 'Triage, fix, and verify a defect fast.' },
+  { id: 'quality', name: 'Quality Team', emoji: '🔍', lead: 'master',
+    members: ['accessibility-tester', 'react-dashboard-auditor', 'performance-investigator', 'release-notes'],
+    template: 'Product Quality', triggers: ['audit', 'accessibility', 'performance', 'quality', 'a11y', 'lighthouse'],
+    blurb: 'Audit accessibility, UI, and performance, then summarize.' },
+  { id: 'release', name: 'Release & Security Team', emoji: '🔒', lead: 'master',
+    members: ['issue-refiner', 'qa-automation', 'security-reviewer', 'gitops', 'release-compliance'],
+    template: 'Release Compliance', triggers: ['release', 'security', 'compliance', 'gate', 'vulnerability'],
+    blurb: 'Refine, test, security-audit, and gate a release.' },
+  { id: 'content', name: 'Content Team', emoji: '✍️', lead: 'master',
+    members: ['product-manager', 'content-writer', 'reviewer'],
+    template: 'WeChat Article', triggers: ['article', 'post', 'blog', 'write', '公众号', '文章', 'content'],
+    blurb: 'Plan, write, and review long-form content.' },
+];
+const findTeam = (id: string): Team | undefined =>
+  TEAMS.find(t => t.id === (id || '').toLowerCase().replace(/^@/, ''));
+
+/** Suggest a team for a plain-language task from trigger keywords. */
+function suggestTeam(input: string): Team | undefined {
+  const low = input.toLowerCase();
+  let best: Team | undefined; let bestScore = 0;
+  for (const t of TEAMS) {
+    const score = t.triggers.reduce((n, kw) => n + (low.includes(kw) ? 1 : 0), 0);
+    if (score > bestScore) { bestScore = score; best = t; }
+  }
+  return bestScore > 0 ? best : undefined;
+}
+
+function cmdTeams() {
+  if (JSON_OUT) return out(JSON.stringify(TEAMS, null, 2));
+  out(c.bold(`Teams (${TEAMS.length})`) + c.gray('   —  squads of specialists with a lead'));
+  out('');
+  for (const t of TEAMS) {
+    out(`  ${t.emoji}  ${c.bold(t.name)} ${c.gray('· @' + t.id)}`);
+    out(`     ${c.gray(t.blurb)}`);
+    out(`     ${c.dim('lead ')}${c.cyan(t.lead)}${c.dim('  ·  ')}${t.members.map(m => c.cyan(m)).join(c.dim(' → '))}`);
+    out('');
+  }
+  out(c.gray('  Put a team to work: ') + c.cyan('@' + TEAMS[0].id + ' <task>') + c.gray('   (e.g. ') + c.cyan('@feature add a dark-mode toggle') + c.gray(')'));
+}
+
+/** Dispatch a task to a team: runs the team's pipeline template as a live board. */
+async function runTeam(team: Team, input: string) {
+  if (!input) { out(c.red('usage: ') + c.cyan('@' + team.id + ' <task>')); return; }
+  footerMount(`${team.name} · assembling`);
+  try {
+    const tpls = listOf(await api('/templates'));
+    const tpl = tpls.find((t: any) => (t.name || '').toLowerCase() === team.template.toLowerCase());
+    if (!tpl) { out(c.red(`team template not found: ${team.template}`)); return; }
+
+    out(`${team.emoji}  ${c.bold(team.name)} ${c.gray('· lead ')}${c.cyan(team.lead)} ${c.gray('· ' + team.members.length + ' teammates')}`);
+    const gateMode = (flags.gate === 'manual' ? 'manual' : 'auto');
+    const created = one(await api('/pipelines', { method: 'POST', body: { name: `${team.name}: ${input.slice(0, 40)}`, templateId: tpl.id, input, gateMode } }));
+    const pid = created.id;
+
+    // Live team board — print each teammate's status as it changes.
+    const printed = new Map<string, string>();
+    let p: any;
+    for (;;) {
+      p = one(await api(`/pipelines/${pid}`));
+      let active: any;
+      for (const s of p.stages || []) {
+        const st = String(s.status || '').toLowerCase();
+        if (['running', 'assigned', 'pending'].includes(st) && !active) active = s;
+        if (printed.get(s.name) !== s.status) {
+          printed.set(s.name, s.status);
+          const mark = st === 'done' || st === 'completed' ? c.green('✓')
+            : st === 'failed' ? c.red('✗')
+            : st === 'running' ? c.yellow('▸') : c.gray('·');
+          out(`  ${mark} ${String(s.name).padEnd(14)} ${c.gray(s.agentRole || '')}`);
+        }
+      }
+      footerSet(active ? `${team.name} · ${active.name} (${active.agentRole || '…'})` : `${team.name} · working`);
+      const pst = (p.status || '').toLowerCase();
+      if (['completed', 'failed', 'cancelled', 'blocked'].includes(pst)) break;
+      await sleep(2500);
+    }
+    out('');
+    out(`${c.bold(team.name)} ${statusColor(p.status)}`);
+    const last = (p.stages || []).filter((s: any) => s.output).slice(-1)[0];
+    if (last?.output) { out(c.gray(`  ── ${last.name} ──`)); out(indent(String(last.output).slice(0, 1400))); }
+    if (['failed', 'blocked'].includes((p.status || '').toLowerCase())) process.exitCode = 1;
+  } finally {
+    footerUnmount();
+  }
+}
+
 const indent = (s: string, pad = '    ') => s.split('\n').map(l => pad + l).join('\n');
 
 let cursorHidden = false;
@@ -510,8 +609,9 @@ async function welcome() {
     connected = false;
     out('  ' + c.red('●') + ' ' + c.gray('offline — start the server with ') + c.cyan('pnpm dev') + c.gray(' (or pass --server)'));
   }
-  out('  ' + c.gray('Type a task, or ') + c.cyan('/help') + c.gray(' · ')
-    + c.cyan('/agents') + c.gray(' · ') + c.cyan('/model') + c.gray(' · ') + c.cyan('/exit'));
+  out('  ' + c.gray(`${TEAMS.length} teams ready — `) + TEAMS.map(t => t.emoji + ' ' + c.cyan('@' + t.id)).join(c.gray('  '))) ;
+  out('  ' + c.gray('Type a task, or ') + c.cyan('/teams') + c.gray(' · ')
+    + c.cyan('/agents') + c.gray(' · ') + c.cyan('/model') + c.gray(' · ') + c.cyan('/help') + c.gray(' · ') + c.cyan('/exit'));
   out('');
 }
 
@@ -526,6 +626,8 @@ async function cmdPipelinesList() {
 function slashHelp() {
   out(c.bold('Slash commands'));
   const rows: Array<[string, string]> = [
+    ['/teams', 'list agent teams (squads)'],
+    ['@team <task>', 'put a team to work (e.g. @feature …)'],
     ['/agents', 'list the agent colony'],
     ['/model [id]', 'show models / switch the active model'],
     ['/models', 'list models + routing status'],
@@ -546,6 +648,7 @@ async function handleSlash(input: string): Promise<boolean> {
   const [cmd, ...rest] = input.slice(1).trim().split(/\s+/);
   switch ((cmd || '').toLowerCase()) {
     case 'help': case '?': slashHelp(); break;
+    case 'teams': case 'team': cmdTeams(); break;
     case 'agents': case 'agent': await cmdAgents(); break;
     case 'models': await cmdModels(); break;
     case 'model': case 'm': await cmdModelSwitch(rest[0]); break;
@@ -587,6 +690,8 @@ async function dispatchInteractive(input: string) {
     } else {
       out(c.gray('  (dispatched)'));
     }
+    const tip = suggestTeam(input);
+    if (tip) out(c.dim(`  tip: this looks like a job for `) + c.cyan('@' + tip.id) + c.dim(` — try `) + c.cyan(`@${tip.id} ${input.slice(0, 32)}${input.length > 32 ? '…' : ''}`));
   } finally {
     footerUnmount();
   }
@@ -772,6 +877,13 @@ async function cmdChat() {
     try {
       if (input.startsWith('/')) {
         if ((await handleSlash(input)) === false) return false;
+      } else if (input.startsWith('@')) {
+        const sp = input.indexOf(' ');
+        const id = (sp < 0 ? input : input.slice(0, sp)).slice(1);
+        const rest = sp < 0 ? '' : input.slice(sp + 1).trim();
+        const team = findTeam(id);
+        if (!team) { out(c.red(`unknown team: @${id}`) + c.gray('  (try /teams)')); }
+        else await runTeam(team, rest);
       } else {
         await dispatchInteractive(input);
       }
@@ -822,6 +934,8 @@ ${c.bold('Interactive mode')}
 
 ${c.bold('One-shot commands')}
   ${c.cyan('health')}                          server status
+  ${c.cyan('teams')}                           list agent teams (squads)
+  ${c.cyan('@team')} <task...>                 put a team to work (e.g. @feature …)
   ${c.cyan('agents')}                          list agents
   ${c.cyan('models')}                          list models
   ${c.cyan('model')} [id]                      show / switch the active model
@@ -843,6 +957,7 @@ ${c.bold('Flags')}
 
 ${c.bold('Examples')}
   myrmecia                                          # interactive shell
+  myrmecia @feature "Add a dark-mode toggle with tests"   # put a team to work
   myrmecia ask "Add a dark-mode toggle with tests"  # route + run
   myrmecia run pm "Write a spec for a dark-mode toggle"
   myrmecia pipeline Feature "Add CSV export to the reports page"
@@ -855,6 +970,14 @@ async function main() {
   const rest = positionals.slice(1);
   if (flags.help) return help();
   if (!cmd) return cmdChat();
+  // One-shot team dispatch: `myrmecia @feature build X`
+  if (cmd.startsWith('@')) {
+    const team = findTeam(cmd.slice(1));
+    if (!team) return die(`unknown team: ${cmd}\nrun \`myrmecia teams\` to list teams`);
+    INTERACTIVE = true;
+    if (flags.model) await setModel(String(flags.model), true).catch(() => {});
+    return runTeam(team, rest.join(' ').trim());
+  }
   // Apply --model for one-shot commands that run agents.
   if (flags.model && ['ask', 'run', 'exec', 'pipeline', 'pipe'].includes(cmd)) {
     await setModel(String(flags.model), true).catch(() => {});
@@ -862,6 +985,7 @@ async function main() {
   switch (cmd) {
     case 'chat': case 'repl': case 'shell': return cmdChat();
     case 'health': return cmdHealth();
+    case 'teams': case 'team': return cmdTeams();
     case 'agents': case 'agent': return cmdAgents();
     case 'models': return cmdModels();
     case 'model': await initCurrentModel(); return cmdModelSwitch(rest[0]);

@@ -239,9 +239,16 @@ myrmecia ❯ Add a dark-mode toggle to settings, with tests
   done      Spec · pm
   running   Code · dev
   …
+myrmecia ❯ @feature Add a dark-mode toggle with tests   # put a whole team on it
+🛠️  Feature Team · lead master · 5 teammates
+  ✓ Spec     pm
+  ▸ Code     dev
+myrmecia ❯ /teams              # list the squads (🛠️ @feature 🐛 @bugfix 🔍 @quality …)
 myrmecia ❯ /model              # show models, or `/model <id>` to switch the colony
 myrmecia ❯ /agents             # see the 23-specialist colony
 ```
+
+**Agent teams.** Beyond single agents, address a whole **squad** with `@team <task>`: the team's lead routes the work across its members and you watch a live team board. Built-in teams: `@feature` (PM → UI → Dev → QA → Ops), `@bugfix`, `@quality`, `@release`, `@content`. Run `/teams` to see the roster; teams are defined in [`agents/teams.yaml`](agents/teams.yaml).
 
 Or use it one-shot for scripting (every command streams live output):
 
