@@ -390,7 +390,36 @@ export const api = {
     events: (id: string, runId?: string) =>
       request<Array<{ nodeId?: string; type: string; data: any; createdAt: string }>>(`/graph-workflows/${id}/events${runId ? `?runId=${runId}` : ''}`),
   },
+  teams: {
+    list: () => request<{ teams: TeamDTO[] }>('/teams').then(r => r.teams),
+    get: (id: string) => request<TeamDTO>(`/teams/${id}`),
+    dispatch: (id: string, goal: string) =>
+      request<{ run: TeamRunDTO; team: TeamDTO; board: TeamBoardItem[] }>(`/teams/${id}/dispatch`, { method: 'POST', body: JSON.stringify({ goal }) }),
+    runs: (teamId?: string) =>
+      request<{ runs: TeamRunDTO[] }>(`/teams/runs${teamId ? `?teamId=${teamId}` : ''}`).then(r => r.runs),
+    run: (runId: string) => request<{ run: TeamRunDTO; board: TeamBoardItem[] }>(`/teams/runs/${runId}`),
+    message: (runId: string, data: { to: string; content: string; redirect?: boolean }) =>
+      request<{ delivered: { taskId: string; agentId: string | null; live: boolean }[]; redirected: string[] }>(
+        `/teams/runs/${runId}/message`, { method: 'POST', body: JSON.stringify(data) }),
+  },
 };
+
+export interface TeamRosterMember { role: string; agentId: string; name: string }
+export interface TeamDTO {
+  id: string; name: string; emoji: string; lead: string;
+  members: string[]; template?: string; triggers: string[]; blurb: string;
+  roster?: TeamRosterMember[];
+}
+export interface TeamRunDTO {
+  id: string; teamId: string; goal: string;
+  status: 'planning' | 'running' | 'done' | 'failed';
+  parentTaskId?: string; result?: string; workspaceId: string;
+  createdAt: string; completedAt?: string;
+}
+export interface TeamBoardItem {
+  taskId: string; title: string; role: string | null; assigneeId: string | null;
+  status: string; dependsOn: string[]; output?: string;
+}
 
 export interface GraphNodeDTO {
   id: string;
