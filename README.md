@@ -21,6 +21,7 @@
 Myrmecia is a self-hosted, code-first platform that manages a pool of specialized AI agents and runs them — independently, in coordinated pipelines, or on a **drag-and-drop canvas** — from product spec through design, code, test, and deploy. It pairs a complete agent **harness** (tool-calling loop, memory, context management, model routing) with enterprise-grade governance, observability, and a real-time dashboard.
 
 ## News
+- [2026-06] **Agent Teams** — address a named **squad** (`@feature`, `@bugfix`, …) and the lead splits the goal across the roster so teammates run **in parallel on a shared task board**. Teammates share findings over the message bus, you can message/redirect any of them, and a dashboard **Teams** page lets you watch the live board and build custom squads. [See ↓](#agent-teams)
 - [2026-06] **Coding tools + TDD** — agents get a sandboxed engineering toolset (`file_read` / `file_write` / `file_list` / `apply_patch` / `shell_exec` / `grep`, workspace-confined, path-traversal-proof, governed). The dev agent runs a full **test-driven** loop (write failing tests → implement → refactor) and produces working code that passes its own tests.
 - [2026-06] **Auto-compact context** — long tool-calling loops summarize older turns before each model call, bounding per-call context to ~O(1) and total usage to ~O(N) so runs no longer hit the token budget.
 - [2026-06] **Interactive CLI** — a zero-dependency `myrmecia` terminal shell: a welcome banner, natural-language input *routed live to the right specialist*, and `/slash` commands. Same backend as the dashboard. [See usage ↓](#command-line-cli)
@@ -67,11 +68,28 @@ A registry of role-specialized agents (`agents/registry.yaml` + skill markdown).
 | **Pipeline** | Fixed YAML stage sequence (PM → Design → Code → Test → Deploy) with manual gating, loop stages, and rollback. |
 | **Dynamic Workflow** | A plan generated at runtime that fans out across agents with dependency tracking and validation. |
 | **Visual Orchestration** | Drag agents onto a canvas and connect them; the `GraphWorkflowEngine` runs the DAG with live status, replay, and resume. |
+| **Agent Teams** | Address a named **squad** (`@feature`, `@bugfix`, …); the lead splits the goal across the roster and teammates run **in parallel on a shared task board**, share findings, and stay steerable. |
 | **Supervisor** | One-line intake; intent classification + semantic routing pick the mode/agent automatically. |
 
 <p align="center">
   <img src="docs/diagrams/dynamic-workflow-lifecycle.svg" alt="Workflow Lifecycle" width="85%">
 </p>
+
+### Agent Teams
+
+Beyond single agents, put a whole **squad** to work. You address a team (in the CLI with `@feature <goal>`, or from the dashboard's **Teams** page); the team's **lead** splits the goal into atomic subtasks constrained to the roster, and the teammates run **in parallel on one shared task board** — dependency-gated, so independent work happens at the same time while dependents wait.
+
+<p align="center">
+  <img src="docs/diagrams/teams-board.gif" alt="Agent Teams — live parallel shared board" width="92%">
+</p>
+
+It's a real collaboration model, not just fan-out:
+
+- **Parallel shared board** — every teammate is a card with live status (`running` / `assigned` / `queued` / `done`) and `⟂` dependency hints; multiple run at once.
+- **Inter-team comms** — when a teammate finishes, its key finding is shared with the others still working (over the agent message bus), so they build on each other.
+- **Talk to a teammate** — message any teammate directly (`@team:role <note>`, or click a card on the dashboard); add `!` to **redirect** a finished teammate into a fresh follow-up task.
+- **Detachable & steerable** — press `Esc` to detach the live board (it keeps running) and steer from the prompt.
+- **Built-in & custom** — `@feature` · `@bugfix` · `@quality` · `@release` · `@content` ship in [`agents/teams.yaml`](agents/teams.yaml); create your own squads in the dashboard (ordered role roster, triggers, emoji) — they persist and merge over the built-ins.
 
 ### Unified Memory
 
