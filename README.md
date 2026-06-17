@@ -224,7 +224,7 @@ Open `http://localhost:5173`. Key pages: **Command Center**, **Interaction Conso
 Prefer the terminal? The `myrmecia` CLI drives the same server the dashboard uses — **zero install, zero dependencies** (Node ≥ 22 built-ins only).
 
 <p align="center">
-  <img src="docs/diagrams/cli-demo.svg" alt="Myrmecia interactive CLI" width="68%">
+  <img src="docs/diagrams/cli-demo.gif" alt="Myrmecia interactive CLI" width="78%">
 </p>
 
 Run it with no arguments to open the **interactive colony shell** — a welcome banner, a Copilot-CLI-style **input frame** (with the active model and connection shown around it), then natural-language input that's *routed to the right specialist* live (the differentiator vs. single-agent tools), plus `/slash` commands to inspect and steer the colony:
