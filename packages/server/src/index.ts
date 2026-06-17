@@ -9,6 +9,9 @@ import { getDb } from './db/database.js';
 import { AgentManager } from './agents/agent-manager.js';
 import { TaskQueue } from './queue/task-queue.js';
 import { PipelineEngine } from './pipelines/pipeline-engine.js';
+import { loadTeams, listTeams } from './agents/team-registry.js';
+import { TeamCoordinator } from './agents/team-coordinator.js';
+import { createTeamRoutes } from './routes/teams.js';
 
 import { NotifierService } from './notifications/notifier.js';
 import { createTaskRoutes } from './routes/tasks.js';
@@ -146,6 +149,11 @@ async function main() {
   // Visual graph workflow engine (drag-and-drop manual orchestration)
   const graphWorkflowEngine = new GraphWorkflowEngine(taskQueue, agentManager);
 
+  // Agent teams (parallel squads with a shared task board)
+  loadTeams();
+  const teamCoordinator = new TeamCoordinator(taskQueue);
+  logger.info({ teams: listTeams().length }, 'Agent teams ready');
+
   // Connect configured MCP servers (best-effort; from MCP_SERVERS env)
   await getMcpManager().init().catch(() => undefined);
 
@@ -229,6 +237,7 @@ async function main() {
   app.use('/api/v1/knowledge', createKnowledgeRoutes());
   app.use('/api/v1/memory', createMemoryRoutes());
   app.use('/api/v1/graph-workflows', createGraphWorkflowRoutes(graphWorkflowEngine));
+  app.use('/api/v1/teams', createTeamRoutes(teamCoordinator));
   app.use('/api/v1/mcp', createMcpRoutes());
   app.use('/api/v1/audit', createAuditRoutes());
   app.use('/api/v1/usage', createUsageRoutes());
