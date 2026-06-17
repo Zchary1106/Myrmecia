@@ -9,6 +9,12 @@ const dispatchSchema = z.object({
   workspaceId: z.string().trim().optional(),
 });
 
+const messageSchema = z.object({
+  to: z.string().trim().min(1, 'to is required'),       // taskId | agentId | role | 'all'
+  content: z.string().trim().min(1, 'content is required'),
+  redirect: z.boolean().optional(),
+});
+
 export function createTeamRoutes(coordinator: TeamCoordinator): Router {
   const router = Router();
 
@@ -35,6 +41,19 @@ export function createTeamRoutes(coordinator: TeamCoordinator): Router {
       const run = coordinator.getRun(req.params.runId);
       if (!run) notFound('TEAM_RUN_NOT_FOUND', 'Team run not found');
       res.json({ run, board: coordinator.board(run!.id) });
+    } catch (err) {
+      sendError(res, err);
+    }
+  });
+
+  // POST /teams/runs/:runId/message — message or redirect a teammate
+  router.post('/runs/:runId/message', async (req, res) => {
+    try {
+      const run = coordinator.getRun(req.params.runId);
+      if (!run) notFound('TEAM_RUN_NOT_FOUND', 'Team run not found');
+      const body = parseBody(messageSchema, req);
+      const result = await coordinator.messageTeammate(run!.id, body.to, body.content, { redirect: body.redirect });
+      res.status(202).json(result);
     } catch (err) {
       sendError(res, err);
     }
