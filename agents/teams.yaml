@@ -1,0 +1,67 @@
+# Myrmecia — Agent Teams
+#
+# A "team" is a named squad of specialist agents with a lead (the orchestrator)
+# and a coordination strategy. Teams are how you put the colony to work as a
+# unit: address one with `@team-id <task>` in the CLI and the lead routes the
+# work across the team's members.
+#
+# This file is the canonical spec. The CLI currently embeds the same roster
+# (dependency-free); the server/dashboard will read this file when the
+# `/api/v1/teams` endpoint lands. Each team maps to an existing pipeline
+# template (templates/*.yaml) so no orchestration code is duplicated.
+#
+# Fields:
+#   id        short handle used as `@id` in the CLI
+#   name      display name
+#   emoji     glyph shown in listings
+#   lead      the coordinating agent (orchestrator/master)
+#   members   member roles (must exist in agents/registry.yaml)
+#   template  the pipeline template `name` this team runs (templates/*.yaml)
+#   triggers  keywords that hint this team for a plain-language task
+#   blurb     one-line description
+
+teams:
+  - id: feature
+    name: Feature Team
+    emoji: "🛠️"
+    lead: master
+    members: [product-manager, designer, developer, tester, devops]
+    template: Full Product
+    triggers: [feature, build, add, implement, ship, product]
+    blurb: Ship a feature end-to-end — spec, design, code, test, deploy.
+
+  - id: bugfix
+    name: Bugfix Team
+    emoji: "🐛"
+    lead: master
+    members: [product-manager, developer, tester]
+    template: Bugfix
+    triggers: [bug, fix, broken, error, crash, regression, hotfix]
+    blurb: Triage, fix, and verify a defect fast.
+
+  - id: quality
+    name: Quality Team
+    emoji: "🔍"
+    lead: master
+    members: [accessibility-tester, react-dashboard-auditor, performance-investigator, release-notes]
+    template: Product Quality
+    triggers: [audit, accessibility, performance, quality, a11y, lighthouse]
+    blurb: Audit accessibility, UI, and performance, then summarize.
+
+  - id: release
+    name: Release & Security Team
+    emoji: "🔒"
+    lead: master
+    members: [issue-refiner, qa-automation, security-reviewer, gitops, release-compliance]
+    template: Release Compliance
+    triggers: [release, security, compliance, gate, audit, vulnerability]
+    blurb: Refine, test, security-audit, and gate a release.
+
+  - id: content
+    name: Content Team
+    emoji: "✍️"
+    lead: master
+    members: [product-manager, content-writer, reviewer]
+    template: WeChat Article
+    triggers: [article, post, blog, write, 公众号, 文章, content]
+    blurb: Plan, write, and review long-form content.
