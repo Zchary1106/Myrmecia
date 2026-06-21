@@ -1,11 +1,11 @@
-import { useState, useEffect, useCallback } from 'react';
+import { lazy, Suspense, useState, useEffect, useCallback } from 'react';
 import { CostSummaryCards } from '../components/cost/CostSummaryCards';
-import { AgentCostChart } from '../components/cost/AgentCostChart';
-import { ModelDistChart } from '../components/cost/ModelDistChart';
 import { TaskCostTable } from '../components/cost/TaskCostTable';
 import { getApiAuthToken } from '../lib/auth';
 
 const API = '/api/v1/cost-dashboard';
+const AgentCostChart = lazy(() => import('../components/cost/AgentCostChart').then(m => ({ default: m.AgentCostChart })));
+const ModelDistChart = lazy(() => import('../components/cost/ModelDistChart').then(m => ({ default: m.ModelDistChart })));
 
 type Period = 'day' | 'week' | 'month';
 
@@ -87,11 +87,13 @@ export function CostDashboardPage() {
       ) : (
         <>
           <CostSummaryCards data={summary} />
-          <AgentCostChart agents={agents} />
-          <div className="grid grid-cols-2 gap-4">
-            <ModelDistChart models={models} />
-            <TaskCostTable tasks={tasks} />
-          </div>
+          <Suspense fallback={<div className="text-center text-gray-500 py-12">Loading charts...</div>}>
+            <AgentCostChart agents={agents} />
+            <div className="grid grid-cols-2 gap-4">
+              <ModelDistChart models={models} />
+              <TaskCostTable tasks={tasks} />
+            </div>
+          </Suspense>
         </>
       )}
     </div>

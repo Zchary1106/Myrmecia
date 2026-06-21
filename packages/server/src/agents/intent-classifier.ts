@@ -17,15 +17,15 @@ export interface TaskIntent {
 /**
  * Intent Classifier for Supervisor Mode
  * Analyzes user input and determines the best execution strategy.
- * Uses semantic routing (vector similarity) when historical data is available,
- * falls back to keyword regex for trivial cases, then LLM for ambiguous ones.
+ * Uses explicit keyword regex first, semantic routing for ambiguous inputs when
+ * historical data is available, then LLM as the final fallback.
  */
 export class IntentClassifier {
   /** Classify user input into execution intent */
   async classify(input: string): Promise<TaskIntent> {
-    // 1. Fast-path: regex for high-confidence trivial cases only
+    // 1. Fast-path: explicit keyword intent should not be overwritten by history.
     const fast = this.fastClassify(input);
-    if (fast && fast.complexity === 'trivial') {
+    if (fast) {
       return { ...fast, routingSource: 'regex' };
     }
 
@@ -48,10 +48,7 @@ export class IntentClassifier {
       // Semantic routing not available yet, continue to fallback
     }
 
-    // 3. Fallback: regex classification
-    if (fast) return { ...fast, routingSource: 'regex' };
-
-    // 4. LLM fallback
+    // 3. LLM fallback
     const llmResult = await this.llmClassify(input);
     return { ...llmResult, routingSource: 'llm' };
   }

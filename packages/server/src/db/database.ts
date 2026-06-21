@@ -10,6 +10,7 @@
  *
  * Set DATABASE_URL=postgres://... to use PostgreSQL.
  * Without DATABASE_URL, falls back to SQLite (DB_PATH or default file).
+ * Tests may set AGENT_FACTORY_TEST_DB_PATH to avoid touching the local dev DB.
  */
 
 import Database from 'better-sqlite3';
@@ -270,7 +271,10 @@ export function getDb(): DbDriver {
     throw postgresBoundaryError('getDb()');
   }
   if (!syncDriver) {
-    const dbPath = process.env.DB_PATH || join(__dirname, '../../data/agent-factory.db');
+    const dbPath =
+      process.env.DB_PATH
+      || process.env.AGENT_FACTORY_TEST_DB_PATH
+      || join(__dirname, '../../data/agent-factory.db');
     activeDbPath = dbPath;
     logger.info({ path: basename(dbPath) }, 'Using SQLite database');
     syncDriver = new SqliteDriver(dbPath);
@@ -311,8 +315,9 @@ export function listAppliedMigrations(): RuntimeDiagnostics['database']['migrati
 
 export function getDatabaseDiagnostics(): RuntimeDiagnostics['database'] {
   const pathHint = activeDbPath ? basename(activeDbPath) : 'agent-factory.db';
+  const pathFromEnv = process.env.DB_PATH || process.env.AGENT_FACTORY_TEST_DB_PATH;
   return {
-    pathSource: process.env.DATABASE_URL ? 'env' : process.env.DB_PATH ? 'env' : 'default',
+    pathSource: process.env.DATABASE_URL ? 'env' : pathFromEnv ? 'env' : 'default',
     pathHint,
     migrations: listAppliedMigrations(),
   };
