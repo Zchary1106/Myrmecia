@@ -12,6 +12,8 @@ import { PipelineEngine } from './pipelines/pipeline-engine.js';
 import { loadTeams, listTeams } from './agents/team-registry.js';
 import { TeamCoordinator } from './agents/team-coordinator.js';
 import { createTeamRoutes } from './routes/teams.js';
+import { loadDomains, listDomains } from './agents/domain-registry.js';
+import { createDomainRoutes } from './routes/domains.js';
 
 import { NotifierService } from './notifications/notifier.js';
 import { createTaskRoutes } from './routes/tasks.js';
@@ -154,6 +156,10 @@ async function main() {
   const teamCoordinator = new TeamCoordinator(taskQueue);
   logger.info({ teams: listTeams().length }, 'Agent teams ready');
 
+  // Domain packs (domain-specialized persona + knowledge overlay)
+  loadDomains();
+  logger.info({ domains: listDomains().length }, 'Domain packs ready');
+
   // Connect configured MCP servers (best-effort; from MCP_SERVERS env)
   await getMcpManager().init().catch(() => undefined);
 
@@ -238,6 +244,7 @@ async function main() {
   app.use('/api/v1/memory', createMemoryRoutes());
   app.use('/api/v1/graph-workflows', createGraphWorkflowRoutes(graphWorkflowEngine));
   app.use('/api/v1/teams', createTeamRoutes(teamCoordinator));
+  app.use('/api/v1/domains', createDomainRoutes());
   app.use('/api/v1/mcp', createMcpRoutes());
   app.use('/api/v1/audit', createAuditRoutes());
   app.use('/api/v1/usage', createUsageRoutes());

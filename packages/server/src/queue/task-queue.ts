@@ -91,6 +91,7 @@ export class TaskQueue {
     workdir?: string;
     workspacePath?: string;
     workspaceId?: string;
+    domainId?: string;
   }): Promise<Task> {
     const task = createTask({
       ...data,

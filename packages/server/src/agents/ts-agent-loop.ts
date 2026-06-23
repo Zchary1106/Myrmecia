@@ -24,6 +24,7 @@ import { buildSandboxToolDefinition, executeTool, isSandboxTool } from '../skill
 import { isMcpTool } from '../tools/mcp-manager.js';
 import { getMcpToolDefinitions, executeMcpTool } from '../tools/mcp-tools.js';
 import { appendExecutionAuditEvent, recordExecutionPolicySnapshot } from '../audit/execution-audit.js';
+import { resolveDomainForTask, applyDomainOverlay, applyDomainKnowledge } from './domain-context.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MAX_RECENT_ACTIVITIES = 5;
@@ -162,7 +163,13 @@ export class TsAgentLoop {
       eventBus.emit('tool:blocked', { toolId: decision.toolId, taskId: task.id, workspaceId: task.workspaceId, executionId, agentId: agent.id, reason: decision.reason });
     }
 
-    const systemPrompt = buildSystemPrompt(agent, toolPolicy, runtimeSkill);
+    const baseSystemPrompt = buildSystemPrompt(agent, toolPolicy, runtimeSkill);
+
+    // Domain Pack overlay: prepend domain persona/guidelines/disclaimer if this
+    // task (or the agent) is bound to a domain.
+    const domain = resolveDomainForTask(agent, task);
+    const systemPrompt = applyDomainOverlay(baseSystemPrompt, domain);
+    if (domain) addTaskLog(task.id, 'info', `Domain Pack applied: ${domain.emoji} ${domain.name}`, 'system');
 
     // Check if the resolved skill is structured (step-driven)
     let parsedSkill = runtimeSkill
@@ -206,11 +213,21 @@ export class TsAgentLoop {
 
     // Inject messages before model routing so long-context escalation sees the real prompt size.
     let enrichedInput = task.input;
+    // Domain knowledge: retrieve and prepend the domain's knowledge-base chunks.
+    if (domain) {
+      try {
+        const withKnowledge = await applyDomainKnowledge(enrichedInput, domain, task.workspaceId);
+        if (withKnowledge !== enrichedInput) {
+          enrichedInput = withKnowledge;
+          addTaskLog(task.id, 'info', `Injected domain knowledge from "${domain.name}"`, 'system');
+        }
+      } catch { /* non-critical */ }
+    }
     try {
       const pendingMsgs = messageBus.drain(executionId);
       if (pendingMsgs.length > 0) {
         const msgContext = pendingMsgs.map(m => `[${m.messageType}] ${m.content}`).join('\n');
-        enrichedInput = `${task.input}\n\n## Context from other agents:\n${msgContext}`;
+        enrichedInput = `${enrichedInput}\n\n## Context from other agents:\n${msgContext}`;
         addTaskLog(task.id, 'info', `Injected ${pendingMsgs.length} message(s) from other agents`, 'system');
       }
     } catch {}

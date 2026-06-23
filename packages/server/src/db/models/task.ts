@@ -13,6 +13,7 @@ function rowToTask(row: any): Task {
     stageIndex: row.stage_index,
     workspacePath: row.workspace_path,
     workspaceId: row.workspace_id || 'default',
+    domainId: row.domain_id || undefined,
     retryCount: row.retry_count,
     maxRetries: row.max_retries,
     createdAt: row.created_at,
@@ -35,6 +36,7 @@ export function createTask(data: {
   workdir?: string;
   workspacePath?: string;
   workspaceId?: string;
+  domainId?: string;
   dependsOn?: string[];
   maxRetries?: number;
 }): Task {
@@ -43,14 +45,14 @@ export function createTask(data: {
 
   db.run(`
     INSERT INTO tasks (id, title, description, mode, priority, assignee_id, created_by,
-      parent_task_id, pipeline_id, stage_index, input, workdir, workspace_path, workspace_id, depends_on, max_retries)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      parent_task_id, pipeline_id, stage_index, input, workdir, workspace_path, workspace_id, domain_id, depends_on, max_retries)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
     id, data.title, data.description, data.mode,
     data.priority || 'normal', data.assigneeId || null, data.createdBy || 'user',
     data.parentTaskId || null, data.pipelineId || null, data.stageIndex ?? null,
     data.input, data.workdir || null, data.workspacePath || null,
-    data.workspaceId || 'default',
+    data.workspaceId || 'default', data.domainId || null,
     JSON.stringify(data.dependsOn || []), data.maxRetries ?? 2
   );
 

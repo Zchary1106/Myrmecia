@@ -382,6 +382,9 @@ function applyModuleSchemas(db: DbDriver) {
      CREATE INDEX IF NOT EXISTS idx_team_runs_status ON team_runs(status);`,
     // Custom (user-defined) team definitions — merged over the teams.yaml built-ins
     `CREATE TABLE IF NOT EXISTS team_definitions (id TEXT PRIMARY KEY, name TEXT NOT NULL, emoji TEXT NOT NULL DEFAULT '•', lead TEXT NOT NULL DEFAULT 'master', members JSON NOT NULL DEFAULT '[]', template TEXT, triggers JSON NOT NULL DEFAULT '[]', blurb TEXT NOT NULL DEFAULT '', workspace_id TEXT NOT NULL DEFAULT 'default', created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP);`,
+    // Custom (user-defined) domain packs — merged over the domains.yaml built-ins
+    `CREATE TABLE IF NOT EXISTS domain_packs (id TEXT PRIMARY KEY, name TEXT NOT NULL, emoji TEXT NOT NULL DEFAULT '📘', persona TEXT NOT NULL DEFAULT '', guidelines JSON NOT NULL DEFAULT '[]', terminology JSON NOT NULL DEFAULT '{}', disclaimer TEXT, tone TEXT, retrieval JSON NOT NULL DEFAULT '{}', knowledge_ids JSON NOT NULL DEFAULT '[]', agent_ids JSON NOT NULL DEFAULT '[]', workspace_id TEXT NOT NULL DEFAULT 'default', created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP);
+     CREATE INDEX IF NOT EXISTS idx_domain_packs_workspace ON domain_packs(workspace_id);`,
     // Coverage reports
     `CREATE TABLE IF NOT EXISTS coverage_reports (
   id TEXT PRIMARY KEY,

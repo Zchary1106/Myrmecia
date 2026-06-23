@@ -407,11 +407,43 @@ export const api = {
       request<{ delivered: { taskId: string; agentId: string | null; live: boolean }[]; redirected: string[] }>(
         `/teams/runs/${runId}/message`, { method: 'POST', body: JSON.stringify(data) }),
   },
+  domains: {
+    list: () => request<{ domains: DomainPackDTO[] }>('/domains').then(r => r.domains),
+    get: (id: string) => request<DomainPackDTO>(`/domains/${id}`),
+    create: (data: DomainPackInputDTO) =>
+      request<DomainPackDTO>('/domains', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id: string, data: Partial<DomainPackInputDTO>) =>
+      request<DomainPackDTO>(`/domains/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+    remove: (id: string) => request<{ ok: boolean; reverted: boolean }>(`/domains/${id}`, { method: 'DELETE' }),
+    uploadKnowledge: (id: string, data: { title: string; content: string }) =>
+      request<{ document: { id: string; title: string; chunkCount: number }; domain: DomainPackDTO }>(
+        `/domains/${id}/knowledge`, { method: 'POST', body: JSON.stringify(data) }),
+  },
 };
 
 export interface TeamInputDTO {
   id?: string; name: string; emoji?: string; lead?: string;
   members: string[]; template?: string; triggers?: string[]; blurb?: string;
+}
+
+export interface DomainRetrievalDTO { enabled: boolean; topK: number; minScore: number }
+export interface DomainDocumentDTO { id: string; title: string; chunkCount: number }
+export interface DomainPackDTO {
+  id: string; name: string; emoji: string; persona: string;
+  guidelines: string[]; terminology: Record<string, string>;
+  disclaimer?: string; tone?: string;
+  retrieval: DomainRetrievalDTO;
+  knowledgeIds: string[]; agentIds: string[];
+  workspaceId?: string; builtin?: boolean;
+  documents?: DomainDocumentDTO[];
+  createdAt?: string; updatedAt?: string;
+}
+export interface DomainPackInputDTO {
+  id?: string; name: string; emoji?: string; persona: string;
+  guidelines?: string[]; terminology?: Record<string, string>;
+  disclaimer?: string; tone?: string;
+  retrieval?: Partial<DomainRetrievalDTO>;
+  knowledgeIds?: string[]; agentIds?: string[];
 }
 export interface TeamRosterMember { role: string; agentId: string; name: string }
 export interface TeamDTO {
