@@ -48,6 +48,7 @@ export interface Chunk {
 export interface SearchResult {
   chunkId: string;
   documentId: string;
+  title: string;
   content: string;
   score: number;
   metadata: Record<string, unknown>;
@@ -246,6 +247,7 @@ export async function searchKnowledge(workspaceId: string, query: string, topK =
     return {
       chunkId: r.id,
       documentId: docId,
+      title: doc?.title || docId,
       content: chunks[chunkIndex] || '',
       score: r.score,
       metadata: doc?.metadata ? JSON.parse(doc.metadata) : {},

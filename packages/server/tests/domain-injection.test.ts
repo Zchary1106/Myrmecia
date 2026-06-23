@@ -66,6 +66,10 @@ describe('domain injection', () => {
     const block = await buildDomainKnowledgeBlock(domain, '付款是怎么约定的', 'default');
     expect(block).toContain('领域知识');
     expect(block).toContain('30日内支付款项');
+    // Source citation: the bound document title is surfaced for traceability.
+    expect(block).toContain('付款条款');     // document title
+    expect(block).toContain('引用来源');     // sources section
+    expect(block).toMatch(/\[1\]/);          // citation marker
 
     const injected = await applyDomainKnowledge('原始任务：请说明付款约定', domain, 'default');
     expect(injected).toContain('30日内支付款项'); // knowledge injected
