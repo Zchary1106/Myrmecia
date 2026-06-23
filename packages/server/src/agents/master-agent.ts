@@ -122,6 +122,7 @@ Example output:
           dependsOn: depTaskIds,
           workdir: parentTask.workdir,
           workspaceId: parentTask.workspaceId,
+          domainId: parentTask.domainId,
         });
 
         createdTasks.push(task);
