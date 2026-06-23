@@ -23,9 +23,14 @@ describe('database migrations', () => {
     expect(rows.map(row => row.id)).toContain('202604260001_add_workspace_path_to_tasks');
     expect(rows.map(row => row.id)).toContain('202604270001_add_operator_preferences');
     expect(rows.map(row => row.id)).toContain('202605100001_expand_operator_action_targets');
+    expect(rows.map(row => row.id)).toContain('202606230001_add_domain_id_to_tasks');
+    expect(rows.map(row => row.id)).toContain('202606240001_add_domain_id_to_pipelines');
 
     const columns = db.all('PRAGMA table_info(tasks)') as { name: string }[];
     expect(columns.map(column => column.name)).toContain('workspace_path');
+    expect(columns.map(column => column.name)).toContain('domain_id');
+    const pipelineColumns = db.all('PRAGMA table_info(pipelines)') as { name: string }[];
+    expect(pipelineColumns.map(column => column.name)).toContain('domain_id');
     const preferenceTables = db.all(`
       SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'operator_preferences'
     `);

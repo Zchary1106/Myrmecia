@@ -424,6 +424,8 @@ export interface Pipeline {
   gateMode: 'auto' | 'manual';
   input: string;
   workspaceId?: string;
+  /** Optional Domain Pack id — inherited by every stage task for persona + knowledge injection. */
+  domainId?: string;
   createdAt: string;
   completedAt?: string;
 }

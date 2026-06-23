@@ -70,6 +70,7 @@ export function WorkLauncher({
           templateId,
           input: description.trim(),
           gateMode,
+          domainId: domainId || undefined,
         });
         await loadPipelines();
       } else {
@@ -180,7 +181,7 @@ export function WorkLauncher({
             </div>
           )}
 
-          {mode !== 'pipeline' && domains.length > 0 && (
+          {domains.length > 0 && (
             <div>
               <label className="text-[11px] text-gray-500 mb-1 block">
                 Domain Pack <span className="text-gray-600">（领域人设 + 知识库注入，可选）</span>
@@ -200,7 +201,9 @@ export function WorkLauncher({
               </select>
               {domainId && (
                 <div className="text-[11px] text-gray-500 mt-1">
-                  执行时将注入该领域的人设、准则与知识库检索结果。
+                  {mode === 'pipeline'
+                    ? '流水线每个阶段任务都会继承该领域，注入人设与知识库。'
+                    : '执行时将注入该领域的人设、准则与知识库检索结果。'}
                 </div>
               )}
             </div>

@@ -13,6 +13,7 @@ const createPipelineSchema = z.object({
   templateId: z.string().trim().min(1),
   input: z.string().trim().min(1),
   gateMode: z.enum(['auto', 'manual']).optional(),
+  domainId: z.string().trim().min(1).optional(),
 });
 const listPipelinesQuerySchema = z.object({
   status: pipelineStatusSchema.optional(),
@@ -37,8 +38,8 @@ export function createPipelineRoutes(pipelineEngine: PipelineEngine): Router {
   router.post('/', async (req, res) => {
     try {
       const actor = requireOperatorRole(req, 'pipeline.create', ['admin', 'operator']);
-      const { name, templateId, input, gateMode } = parseBody(createPipelineSchema, req);
-      const pipeline = await pipelineEngine.create({ name, templateId, input, gateMode, workspaceId: workspaceIdFromRequest(req) });
+      const { name, templateId, input, gateMode, domainId } = parseBody(createPipelineSchema, req);
+      const pipeline = await pipelineEngine.create({ name, templateId, input, gateMode, domainId, workspaceId: workspaceIdFromRequest(req) });
       createOperatorAction({
         action: 'pipeline.create',
         actor,

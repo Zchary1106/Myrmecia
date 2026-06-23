@@ -10,6 +10,7 @@ function rowToPipeline(row: any): Pipeline {
     gateMode: row.gate_mode,
     templateId: row.template_id,
     workspaceId: row.workspace_id || 'default',
+    domainId: row.domain_id || undefined,
     createdAt: row.created_at,
     completedAt: row.completed_at,
     stageCheckpoints: row.stage_checkpoints,
@@ -23,14 +24,15 @@ export function createPipeline(data: {
   gateMode?: 'auto' | 'manual';
   input: string;
   workspaceId?: string;
+  domainId?: string;
 }): Pipeline {
   const db = getDb();
   const id = `pipe_${uuid().slice(0, 8)}`;
 
   db.run(`
-    INSERT INTO pipelines (id, name, template_id, stages, gate_mode, input, workspace_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `, id, data.name, data.templateId || null, JSON.stringify(data.stages), data.gateMode || 'auto', data.input, data.workspaceId || 'default');
+    INSERT INTO pipelines (id, name, template_id, stages, gate_mode, input, workspace_id, domain_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `, id, data.name, data.templateId || null, JSON.stringify(data.stages), data.gateMode || 'auto', data.input, data.workspaceId || 'default', data.domainId || null);
 
   return getPipeline(id)!;
 }
