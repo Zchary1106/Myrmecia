@@ -62,10 +62,23 @@ export async function buildDomainKnowledgeBlock(domain: DomainPack | undefined, 
     );
     const usable = hits.filter(h => h.score >= (domain.retrieval.minScore ?? 0) && h.content.trim());
     if (!usable.length) return '';
+    // Label each chunk with a citation marker [n] tied to its source document so
+    // the agent can cite, and surface a sources list for traceability.
     const body = usable
-      .map((h, i) => `[${i + 1}] (score ${h.score.toFixed(2)})\n${h.content.trim()}`)
+      .map((h, i) => `[${i + 1}] 来源：《${h.title}》（相关度 ${h.score.toFixed(2)}）\n${h.content.trim()}`)
       .join('\n\n');
-    return `## 领域知识（检索自「${domain.name}」知识库）\n${body}`;
+    const sources = usable
+      .map((h, i) => `[${i + 1}] 《${h.title}》（${h.documentId}）`)
+      .join('\n');
+    return [
+      `## 领域知识（检索自「${domain.name}」知识库）`,
+      '回答时请用 [编号] 标注你引用的来源片段。',
+      '',
+      body,
+      '',
+      '### 引用来源',
+      sources,
+    ].join('\n');
   } catch (err: any) {
     logger.warn({ err: err.message, domainId: domain.id }, 'domain knowledge retrieval failed');
     return '';
