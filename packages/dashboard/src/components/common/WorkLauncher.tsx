@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useStore } from '../../stores/store';
-import { api } from '../../lib/api';
+import { api, type DomainPackDTO } from '../../lib/api';
 import { cn } from '../../lib/utils';
 import { readOnlyControlMessage, runtimeControlsAllowed } from '../../lib/permissions';
 import type { Priority, TaskMode } from '@myrmecia/shared';
@@ -27,12 +27,15 @@ export function WorkLauncher({
   const [templateId, setTemplateId] = useState('');
   const [gateMode, setGateMode] = useState<'auto' | 'manual'>('auto');
   const [priority, setPriority] = useState<Priority>('normal');
+  const [domains, setDomains] = useState<DomainPackDTO[]>([]);
+  const [domainId, setDomainId] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const canLaunch = runtimeControlsAllowed(diagnostics);
 
   useEffect(() => {
     if (templates.length === 0) void loadTemplates();
+    api.domains.list().then(setDomains).catch(() => { /* domains optional */ });
   }, []);
 
   useEffect(() => {
@@ -77,6 +80,7 @@ export function WorkLauncher({
           priority,
           assigneeId: mode === 'direct' ? assigneeId : undefined,
           input: description.trim(),
+          domainId: domainId || undefined,
         });
         await loadTasks();
       }
@@ -173,6 +177,32 @@ export function WorkLauncher({
                 <option value="high">High</option>
                 <option value="urgent">Urgent</option>
               </select>
+            </div>
+          )}
+
+          {mode !== 'pipeline' && domains.length > 0 && (
+            <div>
+              <label className="text-[11px] text-gray-500 mb-1 block">
+                Domain Pack <span className="text-gray-600">（领域人设 + 知识库注入，可选）</span>
+              </label>
+              <select
+                value={domainId}
+                onChange={event => setDomainId(event.target.value)}
+                disabled={!canLaunch}
+                className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm focus:border-accent outline-none disabled:opacity-50"
+              >
+                <option value="">无 / 自动（按 agent 绑定）</option>
+                {domains.map(domain => (
+                  <option key={domain.id} value={domain.id}>
+                    {domain.emoji} {domain.name}{domain.builtin ? '（示例）' : ''}
+                  </option>
+                ))}
+              </select>
+              {domainId && (
+                <div className="text-[11px] text-gray-500 mt-1">
+                  执行时将注入该领域的人设、准则与知识库检索结果。
+                </div>
+              )}
             </div>
           )}
 
