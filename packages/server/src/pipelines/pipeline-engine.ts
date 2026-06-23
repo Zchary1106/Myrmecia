@@ -65,7 +65,7 @@ export class PipelineEngine {
   }
 
   /** Create a new pipeline from a template */
-  async create(data: { name: string; templateId: string; input: string; gateMode?: 'auto' | 'manual'; workspaceId?: string }): Promise<Pipeline> {
+  async create(data: { name: string; templateId: string; input: string; gateMode?: 'auto' | 'manual'; workspaceId?: string; domainId?: string }): Promise<Pipeline> {
     const template = getTemplate(data.templateId);
     if (!template) throw new Error(`Template ${data.templateId} not found`);
 
@@ -85,6 +85,7 @@ export class PipelineEngine {
       gateMode: data.gateMode,
       input: data.input,
       workspaceId: data.workspaceId,
+      domainId: data.domainId,
     });
 
     // Create isolated workspace for this pipeline
@@ -179,6 +180,7 @@ export class PipelineEngine {
       workdir,
       workspacePath,
       workspaceId: pipeline.workspaceId,
+      domainId: pipeline.domainId,
     });
 
     stages[stageIndex] = { ...stage, status: 'running', taskId: task.id, input: prompt };

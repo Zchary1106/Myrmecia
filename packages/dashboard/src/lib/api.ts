@@ -173,7 +173,7 @@ export const api = {
   pipelines: {
     list: () => request<Pipeline[]>('/pipelines'),
     get: (id: string) => request<Pipeline>(`/pipelines/${id}`),
-    create: (data: { name: string; templateId: string; input: string; gateMode?: Pipeline['gateMode'] }) =>
+    create: (data: { name: string; templateId: string; input: string; gateMode?: Pipeline['gateMode']; domainId?: string }) =>
       request<Pipeline>('/pipelines', { method: 'POST', body: JSON.stringify(data) }),
     approve: (id: string) => request<{ success: boolean }>(`/pipelines/${id}/approve`, { method: 'POST' }),
     skip: (id: string) => request<{ success: boolean }>(`/pipelines/${id}/skip`, { method: 'POST' }),
