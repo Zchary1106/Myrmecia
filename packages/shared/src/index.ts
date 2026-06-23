@@ -44,6 +44,54 @@ export interface AgentSummary extends AgentDefinition {
   activeExecutions: number;
 }
 
+export interface DomainRetrievalConfig {
+  enabled: boolean;
+  topK: number;
+  minScore: number;
+}
+
+/**
+ * A Domain Pack turns the platform into a domain-specialized assistant:
+ * a persona + guidelines + disclaimer overlay injected into the system prompt,
+ * plus an optional knowledge base retrieved and injected at execution time.
+ * Built-ins come from agents/domains.yaml; custom packs live in the DB and
+ * override built-ins with the same id.
+ */
+export interface DomainPack {
+  id: string;
+  name: string;
+  emoji: string;
+  persona: string;
+  guidelines: string[];
+  terminology: Record<string, string>;
+  disclaimer?: string;
+  tone?: string;
+  retrieval: DomainRetrievalConfig;
+  /** Knowledge document ids bound to this domain (retrieval scope). */
+  knowledgeIds: string[];
+  /** Agent ids for which this domain is enabled. */
+  agentIds: string[];
+  workspaceId?: string;
+  /** true for domains.yaml defaults (not deletable, only override-able). */
+  builtin?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface DomainPackInput {
+  id?: string;
+  name: string;
+  emoji?: string;
+  persona: string;
+  guidelines?: string[];
+  terminology?: Record<string, string>;
+  disclaimer?: string;
+  tone?: string;
+  retrieval?: Partial<DomainRetrievalConfig>;
+  knowledgeIds?: string[];
+  agentIds?: string[];
+}
+
 export type SkillVersionStatus = 'draft' | 'published' | 'archived';
 
 export interface SkillDefinition {
@@ -136,6 +184,8 @@ export interface Task {
   workdir?: string;
   workspacePath?: string;
   workspaceId?: string;
+  /** Optional Domain Pack id — injects domain persona + knowledge at execution. */
+  domainId?: string;
   error?: string;
   retryCount: number;
   maxRetries: number;

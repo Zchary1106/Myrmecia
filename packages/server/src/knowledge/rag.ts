@@ -183,14 +183,15 @@ CREATE INDEX IF NOT EXISTS idx_agent_memories_agent ON agent_memories(agent_id, 
 
 // ---------- Public API ----------
 
-export async function ingestDocument(workspaceId: string, title: string, content: string, metadata: Record<string, unknown> = {}): Promise<Document> {
+export async function ingestDocument(workspaceId: string, title: string, content: string, metadata: Record<string, unknown> = {}, domainId?: string): Promise<Document> {
   const db = getDb();
   const id = `doc_${uuid().slice(0, 8)}`;
   const chunks = chunkText(content);
+  const docMetadata = domainId ? { ...metadata, domainId } : metadata;
 
   db.run(
     'INSERT INTO knowledge_documents (id, workspace_id, title, content, metadata, chunk_count) VALUES (?, ?, ?, ?, ?, ?)',
-    id, workspaceId, title, content, JSON.stringify(metadata), chunks.length
+    id, workspaceId, title, content, JSON.stringify(docMetadata), chunks.length
   );
 
   // Embed and store each chunk
@@ -198,7 +199,9 @@ export async function ingestDocument(workspaceId: string, title: string, content
   for (let i = 0; i < chunks.length; i++) {
     const chunkId = `${id}_chunk_${i}`;
     const embedding = await getEmbedding(chunks[i]);
-    store.upsert(chunkId, embedding, { documentId: id, workspaceId, index: i });
+    const chunkMeta: Record<string, unknown> = { documentId: id, workspaceId, index: i };
+    if (domainId) chunkMeta.domainId = domainId;
+    store.upsert(chunkId, embedding, chunkMeta);
 
     // Bridge knowledge into the unified memory so it participates in recall /
     // context injection (reuses the embedding — no extra cost).
@@ -212,7 +215,7 @@ export async function ingestDocument(workspaceId: string, title: string, content
           importance: 0.5,
           sourceType: 'document',
           sourceId: id,
-          metadata: { documentId: id, index: i, title },
+          metadata: { documentId: id, index: i, title, ...(domainId ? { domainId } : {}) },
         });
       } catch (err: any) {
         logger.warn({ err: err.message, docId: id }, 'knowledge→memory bridge failed');
@@ -220,14 +223,16 @@ export async function ingestDocument(workspaceId: string, title: string, content
     }
   }
 
-  logger.info({ docId: id, chunks: chunks.length }, 'Document ingested');
-  return { id, workspaceId, title, content, metadata, chunkCount: chunks.length, createdAt: new Date().toISOString() };
+  logger.info({ docId: id, chunks: chunks.length, domainId }, 'Document ingested');
+  return { id, workspaceId, title, content, metadata: docMetadata, chunkCount: chunks.length, createdAt: new Date().toISOString() };
 }
 
-export async function searchKnowledge(workspaceId: string, query: string, topK = 5): Promise<SearchResult[]> {
+export async function searchKnowledge(workspaceId: string, query: string, topK = 5, filter?: { domainId?: string }): Promise<SearchResult[]> {
   const store = getVectorStore();
   const queryEmbedding = await getEmbedding(query);
-  const results = store.search(queryEmbedding, topK, { workspaceId });
+  const storeFilter: Record<string, string> = { workspaceId };
+  if (filter?.domainId) storeFilter.domainId = filter.domainId;
+  const results = store.search(queryEmbedding, topK, storeFilter);
 
   const db = getDb();
   return results.map(r => {
@@ -280,29 +285,42 @@ export function listAgentMemories(agentId: string, workspaceId: string): MemoryE
 export function createKnowledgeRoutes(): Router {
   const router = Router();
 
-  // POST /knowledge/documents — upload and ingest a document
+  // POST /knowledge/documents — upload and ingest a document (optionally bound to a domain)
   router.post('/documents', async (req, res) => {
-    const { title, content, metadata } = req.body;
+    const { title, content, metadata, domainId } = req.body;
     if (!title || !content) return res.status(400).json({ error: { message: 'title and content required' } });
     const workspaceId = (req as any).tenantContext?.workspaceId || 'default';
-    const doc = await ingestDocument(workspaceId, title, content, metadata);
+    const doc = await ingestDocument(workspaceId, title, content, metadata, domainId);
+    // If bound to a domain, register the document id on that domain pack.
+    if (domainId) {
+      try {
+        const { bindKnowledge } = await import('../agents/domain-registry.js');
+        bindKnowledge(domainId, [doc.id], workspaceId);
+      } catch (err: any) {
+        logger.warn({ err: err.message, domainId }, 'failed to bind knowledge to domain');
+      }
+    }
     res.status(201).json(doc);
   });
 
-  // POST /knowledge/search — semantic search
+  // POST /knowledge/search — semantic search (optionally domain-scoped)
   router.post('/search', async (req, res) => {
-    const { query, topK } = req.body;
+    const { query, topK, domainId } = req.body;
     if (!query) return res.status(400).json({ error: { message: 'query required' } });
     const workspaceId = (req as any).tenantContext?.workspaceId || 'default';
-    const results = await searchKnowledge(workspaceId, query, topK);
+    const results = await searchKnowledge(workspaceId, query, topK, domainId ? { domainId } : undefined);
     res.json(results);
   });
 
-  // GET /knowledge/documents — list documents
+  // GET /knowledge/documents — list documents (optionally filter by ?domainId=)
   router.get('/documents', (req, res) => {
     const workspaceId = (req as any).tenantContext?.workspaceId || 'default';
+    const domainId = req.query.domainId ? String(req.query.domainId) : undefined;
     const db = getDb();
-    const docs = db.all('SELECT id, workspace_id, title, chunk_count, created_at FROM knowledge_documents WHERE workspace_id = ? ORDER BY created_at DESC', workspaceId);
+    const rows = db.all('SELECT id, workspace_id, title, metadata, chunk_count, created_at FROM knowledge_documents WHERE workspace_id = ? ORDER BY created_at DESC', workspaceId) as any[];
+    const docs = domainId
+      ? rows.filter(r => { try { return JSON.parse(r.metadata || '{}').domainId === domainId; } catch { return false; } })
+      : rows;
     res.json(docs);
   });
 

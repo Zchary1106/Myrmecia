@@ -613,3 +613,7 @@ ALTER TABLE model_usage_stats ADD COLUMN pipeline_id TEXT;
 ALTER TABLE model_usage_stats ADD COLUMN stage_index INTEGER;
 CREATE INDEX IF NOT EXISTS idx_model_usage_workspace ON model_usage_stats(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_model_usage_pipeline ON model_usage_stats(pipeline_id, stage_index);
+
+-- Migration: 202606230001_add_domain_id_to_tasks
+ALTER TABLE tasks ADD COLUMN domain_id TEXT;
+CREATE INDEX IF NOT EXISTS idx_tasks_domain ON tasks(domain_id);

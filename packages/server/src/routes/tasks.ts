@@ -19,6 +19,7 @@ const createTaskSchema = z.object({
   priority: prioritySchema.optional(),
   assigneeId: z.string().trim().min(1).optional(),
   input: z.string().trim().min(1).optional(),
+  domainId: z.string().trim().min(1).optional(),
 });
 
 const listTasksQuerySchema = z.object({
@@ -59,7 +60,7 @@ export function createTaskRoutes(taskQueue: TaskQueue): Router {
   // Create task
   router.post('/', async (req, res) => {
     try {
-      const { title, description, mode, priority, assigneeId, input } = parseBody(createTaskSchema, req);
+      const { title, description, mode, priority, assigneeId, input, domainId } = parseBody(createTaskSchema, req);
       const actor = requireOperatorRole(req, 'task.create', ['admin', 'operator']);
       const workspaceId = workspaceIdFromRequest(req);
       const task = await taskQueue.enqueue({
@@ -70,6 +71,7 @@ export function createTaskRoutes(taskQueue: TaskQueue): Router {
         assigneeId,
         input: input || description || title,
         workspaceId,
+        domainId,
       });
       createOperatorAction({
         action: 'task.create',

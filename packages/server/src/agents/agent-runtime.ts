@@ -25,6 +25,7 @@ import type { SkillDefinition, SkillVersion } from '../types.js';
 import { assertExecutionTokenBudget, estimateTokenCount, getRuntimeLimits, resolveAgentRuntimeLimits } from './runtime-limits.js';
 import { sanitizeAgentOutput } from '../security/dlp-runtime.js';
 import { appendExecutionAuditEvent, recordExecutionPolicySnapshot } from '../audit/execution-audit.js';
+import { resolveDomainForTask, applyDomainOverlay, applyDomainKnowledge } from './domain-context.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MAX_RECENT_ACTIVITIES = 5;
@@ -454,6 +455,11 @@ export class AgentRuntime {
         systemPrompt = `${skillPrompt}\n\n## Runtime Profile Override\n${runtimeProfile}`;
       } catch {}
     }
+
+    // Domain Pack overlay (same as the TS loop path).
+    const domain = resolveDomainForTask(agent, task);
+    systemPrompt = applyDomainOverlay(systemPrompt, domain);
+    if (domain) addTaskLog(task.id, 'info', `Domain Pack applied: ${domain.emoji} ${domain.name}`, 'system');
     completeTraceSpan(promptSpan.id, {
       status: 'done',
       metadata: {
@@ -469,13 +475,18 @@ export class AgentRuntime {
 
     // Inject pending messages before model routing so long-context escalation sees the real prompt size.
     let enrichedInput = task.input;
+    if (domain) {
+      try {
+        enrichedInput = await applyDomainKnowledge(enrichedInput, domain, task.workspaceId);
+      } catch { /* non-critical */ }
+    }
     try {
       const pendingMsgs = messageBus.drain(executionId);
       if (pendingMsgs.length > 0) {
         const msgContext = pendingMsgs
           .map(m => `[${m.messageType}] ${m.content}`)
           .join('\n');
-        enrichedInput = `${task.input}\n\n## Context from other agents:\n${msgContext}`;
+        enrichedInput = `${enrichedInput}\n\n## Context from other agents:\n${msgContext}`;
         addTaskLog(task.id, 'info', `Injected ${pendingMsgs.length} message(s) from other agents`, 'system');
       }
     } catch { /* non-critical */ }
