@@ -21,7 +21,7 @@
 Myrmecia is a self-hosted, code-first platform that manages a pool of specialized AI agents and runs them — independently, in coordinated pipelines, or on a **drag-and-drop canvas** — from product spec through design, code, test, and deploy. It pairs a complete agent **harness** (tool-calling loop, memory, context management, model routing) with enterprise-grade governance, observability, and a real-time dashboard.
 
 ## News
-- [2026-06] **Domain Packs** — turn generic agents into **domain specialists** (medical, legal, philosophy, internal knowledge…). Define a domain's **persona + guidelines + disclaimer**, upload **your own knowledge base**, and bind it to agents — the platform injects the persona overlay and retrieves domain knowledge (RAG) at execution time. The platform ships **one example pack**; everything else is yours to customize. A dashboard **Domains** page with a first-run guided wizard walks you through it.
+- [2026-06] **Domain Packs** — turn generic agents into **domain specialists** (medical, legal, philosophy, internal knowledge…). Define a domain's **persona + guidelines + disclaimer**, upload **your own knowledge base**, and bind it to agents — the platform injects the persona overlay and retrieves domain knowledge (RAG) at execution time. The platform ships **one example pack**; everything else is yours to customize. A dashboard **Domains** page with a first-run guided wizard walks you through it. [See ↓](#domain-packs)
 - [2026-06] **Agent Teams** — address a named **squad** (`@feature`, `@bugfix`, …) and the lead splits the goal across the roster so teammates run **in parallel on a shared task board**. Teammates share findings over the message bus, you can message/redirect any of them, and a dashboard **Teams** page lets you watch the live board and build custom squads. [See ↓](#agent-teams)
 - [2026-06] **Coding tools + TDD** — agents get a sandboxed engineering toolset (`file_read` / `file_write` / `file_list` / `apply_patch` / `shell_exec` / `grep`, workspace-confined, path-traversal-proof, governed). The dev agent runs a full **test-driven** loop (write failing tests → implement → refactor) and produces working code that passes its own tests.
 - [2026-06] **Auto-compact context** — long tool-calling loops summarize older turns before each model call, bounding per-call context to ~O(1) and total usage to ~O(N) so runs no longer hit the token budget.
@@ -91,6 +91,26 @@ It's a real collaboration model, not just fan-out:
 - **Talk to a teammate** — message any teammate directly (`@team:role <note>`, or click a card on the dashboard); add `!` to **redirect** a finished teammate into a fresh follow-up task.
 - **Detachable & steerable** — press `Esc` to detach the live board (it keeps running) and steer from the prompt.
 - **Built-in & custom** — `@feature` · `@bugfix` · `@quality` · `@release` · `@content` ship in [`agents/teams.yaml`](agents/teams.yaml); create your own squads in the dashboard (ordered role roster, triggers, emoji) — they persist and merge over the built-ins.
+
+### Domain Packs
+
+Turn generic agents into **domain specialists** — medical, legal, philosophy, an internal knowledge base, anything — *without the platform shipping any specific domain*. A **Domain Pack** is a thin, governed overlay you define yourself; Myrmecia ships exactly **one example pack** ([`agents/domains.yaml`](agents/domains.yaml)) for you to copy and make your own.
+
+A domain is three things:
+
+- **Persona + guidelines + disclaimer** — a system-prompt overlay that sets the expert voice, hard rules ("retrieve before answering", "cite sources", "don't go out of scope"), terminology, and a **mandatory disclaimer** (important for medical/legal).
+- **Your knowledge base** — upload your own docs (regulations, manuals, papers, internal specs). They're chunked, embedded, and **bound to the domain**; at execution time the agent retrieves the top‑K relevant chunks and the answer is grounded in *your* material, with **`[n]` source citations** back to the originating document.
+- **Agent bindings** — choose which agents work in the domain; when a task carries that domain, work is **routed to the bound specialist** for the role.
+
+It plugs into the whole platform, not a corner of it:
+
+- **Everywhere it executes** — the persona overlay + knowledge retrieval inject into both the TypeScript loop and the Python runtime, across **direct, master, and pipeline** modes (pipeline stages inherit the domain; the master propagates it to subtasks).
+- **Pick per task** — a domain dropdown in the launch dialog, or rely on agent bindings; explicit `domainId` always wins.
+- **Built-in + custom** — the example pack lives in YAML; your domains live in the DB and override built-ins of the same id (same model as Agent Teams).
+- **Governed & traceable** — disclaimers are enforced, sources are cited, and a **per-domain usage panel** shows tasks, tokens, and cost for each pack.
+- **Guided setup** — a dashboard **Domains** page with a first-run wizard walks you from persona → knowledge → agent binding.
+
+> The platform provides the *mechanism*; the accuracy and responsibility for a domain stay with your knowledge base and disclaimer — so high-stakes fields like medicine and law are owned by you, not implied by us.
 
 ### Unified Memory
 
