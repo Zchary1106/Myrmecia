@@ -17,5 +17,7 @@ here. They illustrate what an end-to-end run produces, stage by stage:
 | 2 | [`stage-2-test`](stage-2-test/) | Test (with test report) |
 | 3 | [`stage-3-review`](stage-3-review/) | Review |
 
+The run's overall code-review summary sits at [`summary.md`](summary.md).
+
 > Live runs write to ephemeral workspaces under `.agent-factory/workspaces/`
 > (git-ignored); the files here are a committed snapshot for reference.
