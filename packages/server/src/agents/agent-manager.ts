@@ -4,6 +4,7 @@ import { parse as parseYaml } from 'yaml';
 import { createAgent, listAgents, getAgent, updateAgent } from '../db/models/agent.js';
 import { getActiveExecutionCount } from '../db/models/execution.js';
 import { agentRuntime } from './agent-runtime.js';
+import { domainAgentForRole } from './domain-registry.js';
 import type { AgentDefinition, Task } from '../types.js';
 
 export class AgentManager {
@@ -96,8 +97,9 @@ export class AgentManager {
     return result.output;
   }
 
-  /** Find an available agent for a role (with capacity) */
-  findAvailableAgent(role: string): AgentDefinition | undefined {
+  /** Find an available agent for a role (with capacity). When a domainId is given,
+   *  prefer an available agent bound to that domain. */
+  findAvailableAgent(role: string, domainId?: string): AgentDefinition | undefined {
     let agents = listAgents({ role });
     if (agents.length === 0) {
       // Templates/workflows often reference an agent by its id (e.g. "pm",
@@ -106,12 +108,21 @@ export class AgentManager {
       const byId = getAgent(role);
       if (byId) agents = [byId];
     }
-    const available = agents.filter(a => {
+    let available = agents.filter(a => {
       const active = getActiveExecutionCount(a.id);
       return active < (a.config.maxConcurrent || 1);
     });
 
     if (available.length === 0) return undefined;
+
+    // Domain routing: if this work belongs to a domain, prefer the domain's
+    // bound agents (when any are available for this role).
+    if (domainId) {
+      const preferredId = domainAgentForRole(domainId, role);
+      const domainScoped = preferredId ? available.filter(a => a.id === preferredId) : [];
+      if (domainScoped.length) available = domainScoped;
+    }
+
     if (available.length === 1) return available[0];
 
     // Weighted random selection based on route_weight

@@ -1,6 +1,7 @@
 import { agentRuntime } from './agent-runtime.js';
 import { createTask, getTask, updateTask, listTasks, addTaskLog } from '../db/models/task.js';
 import { getAgent, listAgents } from '../db/models/agent.js';
+import { domainAgentForRole } from './domain-registry.js';
 import { eventBus } from '../events/event-bus.js';
 import { TaskQueue } from '../queue/task-queue.js';
 import { getMemoryService } from '../memory/memory-service.js';
@@ -102,9 +103,14 @@ Example output:
           .filter(idx => idx < taskIdMap.length)
           .map(idx => taskIdMap[idx]);
 
-        // Find available agent for this role (restricted to the team roster in team mode)
+        // Find available agent for this role (restricted to the team roster in team mode).
+        // When the parent task carries a domain, prefer the domain's bound agent for the role.
         const def_role = roleFilter && !roleFilter.has(def.role) ? allowedRoles[0] : def.role;
-        const agent = listAgents().find(a =>
+        const domainAgentId = domainAgentForRole(parentTask.domainId, def_role, parentTask.workspaceId);
+        const domainAgent = domainAgentId
+          ? listAgents().find(a => a.id === domainAgentId && (!roleFilter || roleFilter.has(a.role)))
+          : undefined;
+        const agent = domainAgent || listAgents().find(a =>
           (!roleFilter || roleFilter.has(a.role)) && (
             a.role === def_role ||
             a.role.includes(def_role) ||

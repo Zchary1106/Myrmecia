@@ -156,8 +156,8 @@ export class PipelineEngine {
       // Stage output will be written here after completion
     }
 
-    // Find an available agent for this role
-    const agent = this.agentManager.findAvailableAgent(stage.agentRole);
+    // Find an available agent for this role (prefer the pipeline's domain agents)
+    const agent = this.agentManager.findAvailableAgent(stage.agentRole, pipeline.domainId);
     if (!agent) {
       stages[stageIndex] = { ...stage, status: 'pending' };
       updatePipeline(pipelineId, { stages, status: 'blocked' });
@@ -198,7 +198,7 @@ export class PipelineEngine {
     const stage = pipeline.stages[stageIndex];
     if (stage.status !== 'pending') return;
 
-    const agent = this.agentManager.findAvailableAgent(stage.agentRole);
+    const agent = this.agentManager.findAvailableAgent(stage.agentRole, pipeline.domainId);
     if (agent) {
       updatePipeline(pipelineId, { status: 'running' });
       await this.startStage(pipelineId, stageIndex);
