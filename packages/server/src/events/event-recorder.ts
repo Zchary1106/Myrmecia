@@ -1,12 +1,13 @@
 import { eventBus, type BusEvent } from './event-bus.js';
 import { recordPlatformEvent } from '../db/models/platform-event.js';
+import { logger } from '../lib/logger.js';
 
 export class EventRecorder {
   private handler = (event: BusEvent) => {
     try {
       recordPlatformEvent(event);
     } catch (err: any) {
-      console.warn(`[event-recorder] Failed to persist ${event.type}: ${err.message}`);
+      logger.warn({ type: event.type, err: err.message }, 'Failed to persist platform event');
     }
   };
 

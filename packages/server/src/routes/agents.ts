@@ -9,6 +9,7 @@ import type { AgentDefinition } from '../types.js';
 import type { TaskQueue } from '../queue/task-queue.js';
 import { createOperatorAction } from '../db/models/operator-action.js';
 import { eventBus } from '../events/event-bus.js';
+import { logger } from '../lib/logger.js';
 import { HttpError, notFound, parseBody, requireOperatorRole, sendError } from './http.js';
 import { workspaceIdFromRequest } from '../auth/tenant.js';
 
@@ -187,7 +188,7 @@ export function createAgentRoutes(taskQueue?: TaskQueue): Router {
         // Fire-and-forget if no queue (queue handles execution internally)
         if (!taskQueue) {
           forkExecutor.fork(parentExecutionId, prompt, agent.id).catch(err => {
-            console.error(`[execute] Fork failed for ${agent.id}:`, err.message);
+            logger.error({ agentId: agent.id, err: err.message }, 'Fork execution failed');
           });
         }
 
@@ -220,7 +221,7 @@ export function createAgentRoutes(taskQueue?: TaskQueue): Router {
             createdBy: 'user',
           });
           forkExecutor.spawn(agent.id, prompt, { workdir, priority, workspaceId }).catch(err => {
-            console.error(`[execute] Spawn failed for ${agent.id}:`, err.message);
+            logger.error({ agentId: agent.id, err: err.message }, 'Spawn execution failed');
           });
           taskId = task.id;
         }

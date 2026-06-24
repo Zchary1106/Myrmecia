@@ -9,9 +9,6 @@ import { createToolExecution, completeToolExecution, summarizeToolPayload } from
 import { estimateModelCost, recordModelUsage, selectModelForAgent } from '../models/model-registry.js';
 import { getModelGateway, streamChatCompletion } from '../models/gateway.js';
 import { messageBus } from './message-bus.js';
-import { readFileSync } from 'fs';
-import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
 import type { SkillDefinition, SkillVersion, SkillExecutorConfig } from '../types.js';
 import { parseSkillContent } from '../skills/skill-parser.js';
 import { SkillExecutor } from '../skills/skill-executor.js';
@@ -25,8 +22,8 @@ import { isMcpTool } from '../tools/mcp-manager.js';
 import { getMcpToolDefinitions, executeMcpTool } from '../tools/mcp-tools.js';
 import { appendExecutionAuditEvent, recordExecutionPolicySnapshot } from '../audit/execution-audit.js';
 import { resolveDomainForTask, applyDomainOverlay, applyDomainKnowledge } from './domain-context.js';
+import { buildAgentSystemPrompt } from './agent-prompt.js';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
 const MAX_RECENT_ACTIVITIES = 5;
 
 function buildModelToolName(toolId: string, index: number): string {
@@ -99,36 +96,6 @@ function estimateCost(model: string, inputTokens: number, outputTokens: number):
   return estimateModelCost(model, inputTokens, outputTokens);
 }
 
-function buildSystemPrompt(
-  agent: AgentDefinition,
-  toolPolicy: ReturnType<typeof resolveAllowedToolsForAgent>,
-  runtimeSkill?: { skill: SkillDefinition; version: SkillVersion; source: string },
-): string {
-  const runtimeProfile = [
-    `You are ${agent.name}, a ${agent.role} agent.`,
-    agent.description ? `Mission: ${agent.description}` : '',
-    agent.whenToUse ? `When to use: ${agent.whenToUse}` : '',
-    agent.capabilities?.length ? `Capabilities: ${agent.capabilities.join(', ')}` : '',
-    toolPolicy.allowedTools.length
-      ? `Allowed tools: ${toolPolicy.allowedTools.join(', ')}. Use them when they improve factual accuracy, research depth, formatting, or generated assets.`
-      : '',
-  ].filter(Boolean).join('\n\n');
-
-  let systemPrompt = runtimeSkill
-    ? `${runtimeSkill.version.content}\n\n## Runtime Profile Override\n${runtimeProfile}`
-    : runtimeProfile;
-
-  if (!runtimeSkill && agent.skillPath) {
-    try {
-      const skillRoot = join(__dirname, '../../../../');
-      const skillPrompt = readFileSync(join(skillRoot, agent.skillPath), 'utf-8');
-      systemPrompt = `${skillPrompt}\n\n## Runtime Profile Override\n${runtimeProfile}`;
-    } catch {}
-  }
-
-  return systemPrompt;
-}
-
 export class TsAgentLoop {
   private getClient(modelId?: string): OpenAI {
     // Delegate to the provider-agnostic gateway (defaults to the platform base URL).
@@ -163,7 +130,7 @@ export class TsAgentLoop {
       eventBus.emit('tool:blocked', { toolId: decision.toolId, taskId: task.id, workspaceId: task.workspaceId, executionId, agentId: agent.id, reason: decision.reason });
     }
 
-    const baseSystemPrompt = buildSystemPrompt(agent, toolPolicy, runtimeSkill);
+    const baseSystemPrompt = buildAgentSystemPrompt(agent, toolPolicy.allowedTools, runtimeSkill?.version.content);
 
     // Domain Pack overlay: prepend domain persona/guidelines/disclaimer if this
     // task (or the agent) is bound to a domain.
