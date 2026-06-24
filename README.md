@@ -35,13 +35,13 @@ Myrmecia is a self-hosted, code-first platform that manages a pool of specialize
 
 <div align="center">
 
-🚀 [Framework](#agent-factory-framework) | ⚖️ [Compare](#how-myrmecia-compares) | ⚡ [Installation](#installation) | 🎛️ [Usage](#usage) | 🧠 [Memory](#unified-memory) | 🔌 [MCP](#tooling--mcp) | 🛠️ [Commands](#commands) | 🤝 [Contributing](#contributing)
+🚀 [Framework](#myrmecia-framework) | 🐜 [Teams](#agent-teams) | 📘 [Domains](#domain-packs) | 🧠 [Memory](#unified-memory) | 🔌 [MCP](#tooling--mcp) | ⚖️ [Compare](#how-myrmecia-compares) | ⚡ [Installation](#installation) | 🎛️ [Usage](#usage) | 🛠️ [Commands](#commands) | 🤝 [Contributing](#contributing)
 
 </div>
 
 ## Myrmecia Framework
 
-Myrmecia mirrors a real engineering org: specialized agents (PM, design, dev, QA, ops, review, content) collaborate through templated pipelines, dynamic fan-out workflows, a supervisor that decomposes one-line requests, or a manual canvas you wire yourself. Every run flows through tool governance, guardrails, and full tracing, and feeds a shared long-term memory so the platform gets better at routing and decomposing similar work over time.
+Myrmecia mirrors a real engineering org: specialized agents (PM, design, dev, QA, ops, review, content) collaborate through templated pipelines, dynamic fan-out workflows, a supervisor that decomposes one-line requests, or a manual canvas you wire yourself. Put a whole **squad** to work in parallel, or specialize any agent to your **domain** — its own persona, rules, and knowledge base. Every run flows through tool governance, guardrails, and full tracing, and feeds a shared long-term memory so the platform gets better at routing and decomposing similar work over time.
 
 <p align="center">
   <img src="docs/diagrams/schema.svg" alt="Myrmecia schema" style="width: 100%; height: auto;">
