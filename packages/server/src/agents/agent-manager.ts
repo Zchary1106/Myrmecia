@@ -5,6 +5,7 @@ import { createAgent, listAgents, getAgent, updateAgent } from '../db/models/age
 import { getActiveExecutionCount } from '../db/models/execution.js';
 import { agentRuntime } from './agent-runtime.js';
 import { domainAgentForRole } from './domain-registry.js';
+import { logger } from '../lib/logger.js';
 import type { AgentDefinition, Task } from '../types.js';
 
 export class AgentManager {
@@ -58,7 +59,7 @@ export class AgentManager {
               allowedTools,
             },
           });
-          console.log(`  Registered agent: ${def.emoji} ${def.name}`);
+          logger.info({ id: def.id, name: def.name }, 'Registered agent');
         } else {
           updateAgent(def.id, {
             description: def.description,
@@ -79,7 +80,7 @@ export class AgentManager {
         }
       }
     } catch (err: any) {
-      console.error('Failed to load agent registry:', err.message);
+      logger.error({ err: err.message }, 'Failed to load agent registry');
     }
   }
 

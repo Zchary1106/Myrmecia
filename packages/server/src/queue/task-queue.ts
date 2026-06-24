@@ -4,6 +4,7 @@ import { eventBus } from '../events/event-bus.js';
 import { createTask, getTask, updateTask, addTaskLog, listTasks } from '../db/models/task.js';
 import { AgentManager } from '../agents/agent-manager.js';
 import { metrics } from '../observability/telemetry.js';
+import { logger } from '../lib/logger.js';
 import type { Task, TaskMode, Priority } from '../types.js';
 
 const QUEUE_NAME = 'agent-factory-tasks';
@@ -31,7 +32,7 @@ export class TaskQueue {
     if (this.useRedis) {
       this.initBullMQ();
     } else {
-      console.log('  ℹ️  Redis not configured — using in-memory queue (set REDIS_URL for persistence)');
+      logger.info('Redis not configured — using in-memory queue (set REDIS_URL for persistence)');
     }
 
     // Listen for task completions to process waiting tasks
@@ -73,7 +74,7 @@ export class TaskQueue {
 
     this.queueEvents = new QueueEvents(QUEUE_NAME, { connection });
 
-    console.log('  ✅ BullMQ connected to Redis');
+    logger.info('BullMQ connected to Redis');
   }
 
   /** Enqueue a new task */
@@ -190,7 +191,7 @@ export class TaskQueue {
 
     // Execute asynchronously
     this.agentManager.executeTask(agentId, getTask(task.id)!).catch(err => {
-      console.error(`Task ${task.id} failed:`, err.message);
+      logger.error({ taskId: task.id, err: err.message }, 'Task execution failed');
       const current = getTask(task.id)!;
       if (current.retryCount < current.maxRetries) {
         updateTask(task.id, { status: 'pending', retryCount: current.retryCount + 1 });
@@ -292,7 +293,7 @@ export class TaskQueue {
 
     if (toRecover.length === 0) return;
 
-    console.log(`  🔄 Recovering ${toRecover.length} interrupted tasks...`);
+    logger.info({ count: toRecover.length }, 'Recovering interrupted tasks');
 
     for (const task of toRecover) {
       addTaskLog(task.id, 'warn', 'Task interrupted by server restart — re-queuing', 'system');

@@ -9,6 +9,7 @@ import { getTask } from '../db/models/task.js';
 import { eventBus } from '../events/event-bus.js';
 import { TaskQueue } from '../queue/task-queue.js';
 import { AgentManager } from '../agents/agent-manager.js';
+import { logger } from '../lib/logger.js';
 import { contextManager } from './context-manager.js';
 import { getReflectionService } from '../memory/reflection.js';
 import { workspaceManager } from '../workspace/workspace-manager.js';
@@ -56,11 +57,11 @@ export class PipelineEngine {
               dependsOn: s.depends_on,
             })),
           });
-          console.log(`  Loaded template: ${tmpl.name}`);
+          logger.info({ template: tmpl.name }, 'Loaded pipeline template');
         }
       }
     } catch (err: any) {
-      console.error('Failed to load templates:', err.message);
+      logger.error({ err: err.message }, 'Failed to load pipeline templates');
     }
   }
 
@@ -91,9 +92,9 @@ export class PipelineEngine {
     // Create isolated workspace for this pipeline
     try {
       const ws = await workspaceManager.createPipelineWorkspace(pipeline.id);
-      console.log(`  📁 Created workspace: ${ws.path} (git worktree: ${ws.isGitWorktree})`);
+      logger.info({ path: ws.path, gitWorktree: ws.isGitWorktree }, 'Created pipeline workspace');
     } catch (err: any) {
-      console.warn(`  ⚠️ Workspace creation failed: ${err.message} — using default cwd`);
+      logger.warn({ err: err.message }, 'Pipeline workspace creation failed; using default cwd');
     }
 
     // Start all stages that have no dependencies (or depend only on completed stages)
@@ -276,7 +277,7 @@ export class PipelineEngine {
           `Agent Factory: ${pipeline.name} complete`
         );
         if (!mergeResult.success) {
-          console.warn(`  ⚠️ Workspace merge failed: ${mergeResult.error}`);
+          logger.warn({ err: mergeResult.error }, 'Pipeline workspace merge failed');
         }
       }
       return;

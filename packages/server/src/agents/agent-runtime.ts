@@ -1,4 +1,3 @@
-import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import type { AgentDefinition, Task, AgentProgress, ToolActivity, ProgressTracker } from '../types.js';
@@ -26,6 +25,8 @@ import { assertExecutionTokenBudget, estimateTokenCount, getRuntimeLimits, resol
 import { sanitizeAgentOutput } from '../security/dlp-runtime.js';
 import { appendExecutionAuditEvent, recordExecutionPolicySnapshot } from '../audit/execution-audit.js';
 import { resolveDomainForTask, applyDomainOverlay, applyDomainKnowledge } from './domain-context.js';
+import { buildAgentSystemPrompt } from './agent-prompt.js';
+import { logger } from '../lib/logger.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MAX_RECENT_ACTIVITIES = 5;
@@ -436,25 +437,7 @@ export class AgentRuntime {
     });
 
     // Build system prompt from the skill file plus DB-editable profile fields.
-    const runtimeProfile = [
-      `You are ${agent.name}, a ${agent.role} agent.`,
-      agent.description ? `Mission: ${agent.description}` : '',
-      agent.whenToUse ? `When to use: ${agent.whenToUse}` : '',
-      agent.capabilities?.length ? `Capabilities: ${agent.capabilities.join(', ')}` : '',
-      toolPolicy.allowedTools.length
-        ? `Allowed tools: ${toolPolicy.allowedTools.join(', ')}. Use them when they improve factual accuracy, research depth, formatting, or generated assets.`
-        : '',
-    ].filter(Boolean).join('\n\n');
-    let systemPrompt = runtimeSkill
-      ? `${runtimeSkill.version.content}\n\n## Runtime Profile Override\n${runtimeProfile}`
-      : runtimeProfile;
-    if (!runtimeSkill && agent.skillPath) {
-      try {
-        const skillRoot = join(__dirname, '../../../../');
-        const skillPrompt = readFileSync(join(skillRoot, agent.skillPath), 'utf-8');
-        systemPrompt = `${skillPrompt}\n\n## Runtime Profile Override\n${runtimeProfile}`;
-      } catch {}
-    }
+    let systemPrompt = buildAgentSystemPrompt(agent, toolPolicy.allowedTools, runtimeSkill?.version.content);
 
     // Domain Pack overlay (same as the TS loop path).
     const domain = resolveDomainForTask(agent, task);
@@ -717,7 +700,7 @@ export class AgentRuntime {
           stderrBuffer += t;
           // Only log meaningful stderr (skip Python warnings/noise)
           if (t.trim() && !t.includes('UserWarning') && !t.includes('DeprecationWarning')) {
-            console.error(`[Python runtime stderr] ${t.slice(0, 500)}`);
+            logger.error({ taskId: task.id, stderr: t.slice(0, 500) }, 'Python runtime stderr');
             addTaskLog(task.id, 'warn', `stderr: ${t.slice(0, 300)}`, agent.id);
           }
         } catch (err: any) {
