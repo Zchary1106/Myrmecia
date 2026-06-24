@@ -418,6 +418,7 @@ export const api = {
     uploadKnowledge: (id: string, data: { title: string; content: string }) =>
       request<{ document: { id: string; title: string; chunkCount: number }; domain: DomainPackDTO }>(
         `/domains/${id}/knowledge`, { method: 'POST', body: JSON.stringify(data) }),
+    usage: () => request<{ usage: Record<string, DomainUsageDTO> }>('/domains/usage').then(r => r.usage),
   },
 };
 
@@ -444,6 +445,9 @@ export interface DomainPackInputDTO {
   disclaimer?: string; tone?: string;
   retrieval?: Partial<DomainRetrievalDTO>;
   knowledgeIds?: string[]; agentIds?: string[];
+}
+export interface DomainUsageDTO {
+  taskCount: number; executionCount: number; costUSD: number; tokens: number;
 }
 export interface TeamRosterMember { role: string; agentId: string; name: string }
 export interface TeamDTO {
