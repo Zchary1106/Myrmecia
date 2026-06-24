@@ -3,6 +3,7 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { parse as parseYaml } from 'yaml';
 import { logger } from '../lib/logger.js';
+import { listAgents } from '../db/models/agent.js';
 import {
   listDomainRows, getDomainRow, insertDomainRow, updateDomainRow, deleteDomainRow,
 } from '../db/models/domain.js';
@@ -161,6 +162,22 @@ export function bindKnowledge(id: string, documentIds: string[], workspaceId = '
 export function resolveDomainForAgent(agentId: string, domainId?: string, workspaceId?: string): DomainPack | undefined {
   if (domainId) return getDomain(domainId, workspaceId);
   return listDomains(workspaceId).find(d => d.agentIds.includes(agentId));
+}
+
+/**
+ * Pick an agent bound to a domain that matches the requested role. Used to route
+ * work to domain specialists when a task/pipeline carries a domainId. Returns the
+ * agent id, or undefined when the domain has no matching bound agent.
+ */
+export function domainAgentForRole(domainId: string | undefined, role: string, workspaceId?: string): string | undefined {
+  if (!domainId || !role) return undefined;
+  const domain = getDomain(domainId, workspaceId);
+  if (!domain || !domain.agentIds.length) return undefined;
+  const agents = listAgents();
+  const match = agents.find(a =>
+    domain.agentIds.includes(a.id) && (a.role === role || a.role.includes(role) || a.id === role),
+  );
+  return match?.id;
 }
 
 export { getDomainRow };
