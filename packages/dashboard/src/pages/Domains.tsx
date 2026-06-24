@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { api, type DomainPackDTO, type DomainPackInputDTO } from '../lib/api';
+import { api, type DomainPackDTO, type DomainPackInputDTO, type DomainUsageDTO } from '../lib/api';
 import { useStore } from '../stores/store';
 import { cn } from '../lib/utils';
 
@@ -74,8 +74,12 @@ export function DomainsPage() {
   const [toast, setToast] = useState('');
   const [showWizard, setShowWizard] = useState(false);
   const [uploadFor, setUploadFor] = useState<DomainPackDTO | null>(null);
+  const [usage, setUsage] = useState<Record<string, DomainUsageDTO>>({});
 
-  const reload = () => api.domains.list().then(setDomains).catch(e => setError(e.message));
+  const reload = () => {
+    api.domains.list().then(setDomains).catch(e => setError(e.message));
+    api.domains.usage().then(setUsage).catch(() => { /* usage optional */ });
+  };
 
   useEffect(() => {
     if (!agents?.length) loadAgents?.();
@@ -173,6 +177,7 @@ export function DomainsPage() {
           <DomainCard
             key={d.id}
             domain={d}
+            usage={usage[d.id]}
             onEdit={() => setEditing(toForm(d))}
             onCopy={() => copyFrom(d)}
             onDelete={() => remove(d)}
@@ -220,8 +225,9 @@ export function DomainsPage() {
   );
 }
 
-function DomainCard({ domain, onEdit, onCopy, onDelete, onUpload }: {
+function DomainCard({ domain, usage, onEdit, onCopy, onDelete, onUpload }: {
   domain: DomainPackDTO;
+  usage?: DomainUsageDTO;
   onEdit: () => void; onCopy: () => void; onDelete: () => void; onUpload: () => void;
 }) {
   const docCount = domain.documents?.length ?? domain.knowledgeIds.length;
@@ -267,6 +273,13 @@ function DomainCard({ domain, onEdit, onCopy, onDelete, onUpload }: {
           </span>
         )}
       </div>
+      {usage && usage.taskCount > 0 && (
+        <div className="flex items-center gap-3 mt-3 pt-3 border-t border-border text-[11px] text-gray-400">
+          <span title="该领域累计花费">💰 ${usage.costUSD.toFixed(3)}</span>
+          <span title="任务数">📋 {usage.taskCount} 任务</span>
+          <span title="累计 tokens">🔢 {formatTokens(usage.tokens)} tokens</span>
+        </div>
+      )}
       <div className="flex gap-2 mt-3.5 text-xs">
         <button onClick={onEdit} className="px-2.5 py-1.5 rounded-lg bg-surface-hover hover:bg-accent/15 hover:text-accent-light text-gray-300">编辑</button>
         <button onClick={onUpload} className="px-2.5 py-1.5 rounded-lg bg-surface-hover hover:bg-cyan-500/15 hover:text-cyan-300 text-gray-300">＋ 知识库</button>
@@ -498,6 +511,12 @@ function FirstRunWizard({ onClose, hasExample }: { onClose: (seed?: { name: stri
 }
 
 // ---------- shared UI bits ----------
+
+function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return String(n);
+}
 
 const inputCls = 'w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-gray-200 placeholder:text-gray-600 focus:border-accent focus:outline-none';
 

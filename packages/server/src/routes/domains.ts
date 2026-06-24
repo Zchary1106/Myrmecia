@@ -81,6 +81,38 @@ export function createDomainRoutes(): Router {
     }
   });
 
+  // GET /domains/usage — per-domain task/execution/token/cost aggregates
+  router.get('/usage', (req, res) => {
+    try {
+      const ws = workspaceOf(req);
+      const db = getDb();
+      const rows = db.all(
+        `SELECT t.domain_id AS domainId,
+                COUNT(DISTINCT t.id) AS taskCount,
+                COUNT(te.id) AS executionCount,
+                COALESCE(SUM(te.cost_usd), 0) AS costUSD,
+                COALESCE(SUM(te.token_count), 0) AS tokens
+           FROM tasks t
+           JOIN task_executions te ON te.task_id = t.id
+          WHERE t.domain_id IS NOT NULL AND t.workspace_id = ?
+          GROUP BY t.domain_id`,
+        ws,
+      ) as any[];
+      const usage: Record<string, { taskCount: number; executionCount: number; costUSD: number; tokens: number }> = {};
+      for (const r of rows) {
+        usage[r.domainId] = {
+          taskCount: Number(r.taskCount) || 0,
+          executionCount: Number(r.executionCount) || 0,
+          costUSD: Number(r.costUSD) || 0,
+          tokens: Number(r.tokens) || 0,
+        };
+      }
+      res.json({ usage });
+    } catch (err) {
+      sendError(res, err);
+    }
+  });
+
   // GET /domains/:id — one domain with bound documents
   router.get('/:id', (req, res) => {
     try {
