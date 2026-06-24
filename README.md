@@ -96,6 +96,14 @@ It's a real collaboration model, not just fan-out:
 
 Turn generic agents into **domain specialists** — medical, legal, philosophy, an internal knowledge base, anything — *without the platform shipping any specific domain*. A **Domain Pack** is a thin, governed overlay you define yourself; Myrmecia ships exactly **one example pack** ([`agents/domains.yaml`](agents/domains.yaml)) for you to copy and make your own.
 
+<p align="center">
+  <img src="docs/diagrams/screenshots/domains-list.png" alt="Domains — your domain packs, each with persona, knowledge base, agent bindings" width="100%">
+</p>
+
+| First-run guided setup | Define a domain — persona · rules · disclaimer · knowledge · agents |
+| --- | --- |
+| ![Domains first-run wizard](docs/diagrams/screenshots/domains-wizard.png) | ![Domain editor](docs/diagrams/screenshots/domains-editor.png) |
+
 A domain is three things:
 
 - **Persona + guidelines + disclaimer** — a system-prompt overlay that sets the expert voice, hard rules ("retrieve before answering", "cite sources", "don't go out of scope"), terminology, and a **mandatory disclaimer** (important for medical/legal).
