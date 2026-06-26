@@ -68,7 +68,7 @@ export interface MemoryEntry {
 
 interface VectorStore {
   upsert(id: string, embedding: number[], metadata: Record<string, unknown>): void;
-  search(embedding: number[], topK: number, filter?: Record<string, string>): Array<{ id: string; score: number }>;
+  search(embedding: number[], topK: number, filter?: Record<string, string>): Array<{ id: string; score: number; content?: string }>;
   delete(id: string): void;
 }
 
@@ -81,8 +81,8 @@ class InMemoryVectorStore implements VectorStore {
     this.vectors.set(id, { embedding, metadata });
   }
 
-  search(embedding: number[], topK: number, filter?: Record<string, string>): Array<{ id: string; score: number }> {
-    const results: Array<{ id: string; score: number }> = [];
+  search(embedding: number[], topK: number, filter?: Record<string, string>): Array<{ id: string; score: number; content?: string }> {
+    const results: Array<{ id: string; score: number; content?: string }> = [];
 
     for (const [id, entry] of this.vectors) {
       if (filter) {
@@ -90,7 +90,7 @@ class InMemoryVectorStore implements VectorStore {
         if (!match) continue;
       }
       const score = cosineSimilarity(embedding, entry.embedding);
-      results.push({ id, score });
+      results.push({ id, score, content: entry.metadata.content as string | undefined });
     }
 
     return results.sort((a, b) => b.score - a.score).slice(0, topK);
@@ -200,7 +200,7 @@ export async function ingestDocument(workspaceId: string, title: string, content
   for (let i = 0; i < chunks.length; i++) {
     const chunkId = `${id}_chunk_${i}`;
     const embedding = await getEmbedding(chunks[i]);
-    const chunkMeta: Record<string, unknown> = { documentId: id, workspaceId, index: i };
+    const chunkMeta: Record<string, unknown> = { documentId: id, workspaceId, index: i, content: chunks[i] };
     if (domainId) chunkMeta.domainId = domainId;
     store.upsert(chunkId, embedding, chunkMeta);
 
@@ -236,21 +236,32 @@ export async function searchKnowledge(workspaceId: string, query: string, topK =
   const results = store.search(queryEmbedding, topK, storeFilter);
 
   const db = getDb();
+  // Cache document rows so multiple hits from the same doc don't re-query the DB.
+  const docCache = new Map<string, { title?: string; metadata?: string; content?: string }>();
+  const getDoc = (docId: string) => {
+    let doc = docCache.get(docId);
+    if (!doc) {
+      doc = (db.get('SELECT title, metadata, content FROM knowledge_documents WHERE id = ?', docId) as any) || {};
+      docCache.set(docId, doc!);
+    }
+    return doc!;
+  };
+
   return results.map(r => {
     const [docId] = r.id.split('_chunk_');
-    const doc = db.get('SELECT title, metadata FROM knowledge_documents WHERE id = ?', `doc_${docId.replace('doc_', '')}`) as any;
-    // Retrieve chunk content from the original document
-    const fullDoc = db.get('SELECT content FROM knowledge_documents WHERE id = ?', `doc_${docId.replace('doc_', '')}`) as any;
     const chunkIndex = parseInt(r.id.split('_chunk_')[1] || '0');
-    const chunks = fullDoc ? chunkText(fullDoc.content) : [];
+    const doc = getDoc(docId);
+    // Prefer the chunk text stored alongside the vector at ingest time; only
+    // fall back to deterministic re-chunking if it's missing (legacy entries).
+    const content = r.content ?? (doc.content ? chunkText(doc.content)[chunkIndex] : '') ?? '';
 
     return {
       chunkId: r.id,
       documentId: docId,
-      title: doc?.title || docId,
-      content: chunks[chunkIndex] || '',
+      title: doc.title || docId,
+      content,
       score: r.score,
-      metadata: doc?.metadata ? JSON.parse(doc.metadata) : {},
+      metadata: doc.metadata ? JSON.parse(doc.metadata) : {},
     };
   });
 }

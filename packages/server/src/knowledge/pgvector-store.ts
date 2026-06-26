@@ -12,7 +12,7 @@ import { getEmbeddingService } from '../memory/embedding.js';
 
 export interface VectorStore {
   upsert(id: string, embedding: number[], metadata: Record<string, unknown>): void;
-  search(embedding: number[], topK: number, filter?: Record<string, string>): Array<{ id: string; score: number }>;
+  search(embedding: number[], topK: number, filter?: Record<string, string>): Array<{ id: string; score: number; content?: string }>;
   delete(id: string): void;
   deleteByDocument?(documentId: string): void;
 }
@@ -114,18 +114,18 @@ export class PgVectorStore implements VectorStore {
     );
   }
 
-  search(embedding: number[], topK: number, filter?: Record<string, string>): Array<{ id: string; score: number }> {
+  search(embedding: number[], topK: number, filter?: Record<string, string>): Array<{ id: string; score: number; content?: string }> {
     // Return empty for sync call; use searchAsync for real results
     // This maintains interface compat; the RAG layer should prefer searchAsync
     logger.warn('PgVectorStore.search() called synchronously — use searchAsync() for actual results');
     return [];
   }
 
-  async searchAsync(embedding: number[], topK: number, filter?: Record<string, string>): Promise<Array<{ id: string; score: number }>> {
+  async searchAsync(embedding: number[], topK: number, filter?: Record<string, string>): Promise<Array<{ id: string; score: number; content?: string }>> {
     await this.ensureSchema();
     const vectorStr = `[${embedding.join(',')}]`;
 
-    let sql = `SELECT id, 1 - (embedding <=> $1::vector) as score FROM embeddings`;
+    let sql = `SELECT id, content, 1 - (embedding <=> $1::vector) as score FROM embeddings`;
     const params: any[] = [vectorStr];
     const conditions: string[] = [];
 
@@ -149,7 +149,7 @@ export class PgVectorStore implements VectorStore {
     sql += ` ORDER BY embedding <=> $1::vector LIMIT $${params.length}`;
 
     const result = await this.pool.query(sql, params);
-    return result.rows.map((row: any) => ({ id: row.id, score: parseFloat(row.score) }));
+    return result.rows.map((row: any) => ({ id: row.id, score: parseFloat(row.score), content: row.content ?? undefined }));
   }
 
   delete(id: string): void {
