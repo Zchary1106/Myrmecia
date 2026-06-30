@@ -13,7 +13,7 @@ CUSTOM_DB_PATH=""
 
 usage() {
   cat <<'EOF'
-Agent Factory one-click launcher
+Myrmecia one-click launcher
 
 Usage:
   ./scripts/start.sh [options]
@@ -150,7 +150,7 @@ EOF
 fi
 
 echo ""
-echo "Starting Agent Factory..."
+echo "Starting Myrmecia..."
 echo "  API server:  http://localhost:${PORT:-3000}"
 echo "  Dashboard:   http://localhost:5173"
 if [[ -n "${DB_PATH:-}" ]]; then
