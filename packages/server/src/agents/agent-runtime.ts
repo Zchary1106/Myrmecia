@@ -5,6 +5,7 @@ import { eventBus } from '../events/event-bus.js';
 import { updateTask, addTaskLog } from '../db/models/task.js';
 import { updateAgent } from '../db/models/agent.js';
 import { createExecution, updateExecution, addExecutionMessage } from '../db/models/execution.js';
+import { recordLedgerEntry } from '../db/models/execution-ledger.js';
 import { guardrails } from './safety-guardrails.js';
 import { workspaceManager } from '../workspace/workspace-manager.js';
 import { createToolExecution, completeToolExecution, summarizeToolPayload } from '../tools/tool-execution.js';
@@ -26,6 +27,7 @@ import { sanitizeAgentOutput } from '../security/dlp-runtime.js';
 import { appendExecutionAuditEvent, recordExecutionPolicySnapshot } from '../audit/execution-audit.js';
 import { resolveDomainForTask, applyDomainOverlay, applyDomainKnowledge } from './domain-context.js';
 import { buildAgentSystemPrompt } from './agent-prompt.js';
+import { agentHasNoTools, selectRuntimeAdapter, type RuntimeAdapter } from './runtime-adapter.js';
 import { logger } from '../lib/logger.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -34,15 +36,6 @@ const MAX_RECENT_ACTIVITIES = 5;
 // Path to Agent Factory Python runtime.
 const PYTHON_RUNTIME_RUNNER = join(__dirname, '../../../../packages/python-runtime/runtime_runner.py');
 
-function shouldUseTsLoop(agent: AgentDefinition): boolean {
-  const executor = process.env.AGENT_EXECUTOR;
-  if (executor === 'ts') return true;
-  if (executor === 'python') return false;
-
-  // Default: use TS loop when agent has no tools (no Python dependency)
-  const tools = agent.allowedTools || agent.config.allowedTools || [];
-  return tools.length === 0;
-}
 
 export interface TaskResult {
   output: string;
@@ -78,6 +71,35 @@ function getProgressSnapshot(tracker: ProgressTracker, summary?: string): AgentP
 export class AgentRuntime {
   private abortControllers = new Map<string, AbortController>();
   private agentExecutionWindows = new Map<string, number[]>();
+  private runtimeAdapters: RuntimeAdapter[];
+
+  constructor() {
+    // Built-in adapters in priority order: the TS loop handles tool-free agents,
+    // the Python runtime is the catch-all. External runtimes can be inserted
+    // before the fallback via registerRuntimeAdapter().
+    this.runtimeAdapters = [
+      {
+        name: 'ts-agent-loop',
+        canHandle: (agent) => agentHasNoTools(agent),
+        execute: (ctx) => tsAgentLoop.execute(
+          ctx.agent, ctx.task, ctx.abortController, ctx.executionId, ctx.traceId, ctx.spanId, ctx.tracker, ctx.runtimeSkill,
+        ),
+      },
+      {
+        name: 'python-runtime',
+        canHandle: () => true,
+        execute: (ctx) => this.executeWithPythonRuntime(
+          ctx.agent, ctx.task, ctx.abortController, ctx.executionId, ctx.traceId, ctx.spanId, ctx.tracker, ctx.runtimeSkill,
+        ),
+      },
+    ];
+  }
+
+  /** Register an additional runtime adapter (inserted before the fallback). */
+  registerRuntimeAdapter(adapter: RuntimeAdapter): void {
+    if (this.runtimeAdapters.some(a => a.name === adapter.name)) return;
+    this.runtimeAdapters.splice(this.runtimeAdapters.length - 1, 0, adapter);
+  }
 
   async execute(agent: AgentDefinition, task: Task): Promise<TaskResult> {
     const abortController = new AbortController();
@@ -127,13 +149,29 @@ export class AgentRuntime {
 
       const budget = guardrails.checkBudget();
       if (!budget.allowed) throw new Error(`Budget exceeded: ${budget.reason}`);
+      recordLedgerEntry({
+        executionId: execution.id, taskId: task.id, agentId: agent.id, workspaceId: task.workspaceId,
+        type: 'budget.checked', decision: 'allowed',
+        summary: 'Budget check passed before execution',
+      });
 
-      const useTs = shouldUseTsLoop(agent);
-      addTaskLog(task.id, 'info', `Executor: ${useTs ? 'TS Agent Loop' : 'Agent Factory Python Runtime'}`, 'system');
+      const adapter = selectRuntimeAdapter(agent, this.runtimeAdapters) || this.runtimeAdapters[this.runtimeAdapters.length - 1];
+      addTaskLog(task.id, 'info', `Executor: ${adapter.name}`, 'system');
+      recordLedgerEntry({
+        executionId: execution.id, taskId: task.id, agentId: agent.id, workspaceId: task.workspaceId,
+        type: 'runtime.selected', decision: adapter.name,
+        summary: `Selected ${adapter.name} runtime for ${agent.name}`,
+        metadata: { runtime: adapter.name, role: agent.role },
+      });
 
-      const result = useTs
-        ? await tsAgentLoop.execute(agent, task, abortController, execution.id, trace.id, agentSpan.id, tracker, runtimeSkill)
-        : await this.executeWithPythonRuntime(agent, task, abortController, execution.id, trace.id, agentSpan.id, tracker, runtimeSkill);
+      const result = await adapter.execute({
+        agent, task, abortController,
+        executionId: execution.id,
+        traceId: trace.id,
+        spanId: agentSpan.id,
+        tracker,
+        runtimeSkill,
+      });
       const safeOutput = sanitizeAgentOutput(result.output, {
         agentId: agent.id,
         taskId: task.id,
@@ -141,7 +179,7 @@ export class AgentRuntime {
         executionId: execution.id,
         purpose: 'task output',
       });
-      const safeResult = { ...result, output: safeOutput };
+      const safeResult: TaskResult = { ...result, output: safeOutput, executionId: execution.id };
       assertExecutionTokenBudget(safeResult.inputTokens, safeResult.outputTokens, safeResult.output, 'agent execution');
 
       guardrails.trackCost(task.id, safeResult.costUSD);
@@ -154,6 +192,18 @@ export class AgentRuntime {
       });
 
       updateTask(task.id, { status: 'done', output: safeResult.output, completedAt: new Date().toISOString() });
+      recordLedgerEntry({
+        executionId: execution.id, taskId: task.id, agentId: agent.id, workspaceId: task.workspaceId,
+        type: 'execution.completed', decision: 'done',
+        summary: `Execution completed in ${Math.round(safeResult.durationMs / 1000)}s`,
+        metadata: {
+          costUSD: safeResult.costUSD,
+          inputTokens: safeResult.inputTokens,
+          outputTokens: safeResult.outputTokens,
+          numTurns: safeResult.numTurns,
+          durationMs: safeResult.durationMs,
+        },
+      });
 
       // Write output summary to workspace
       if (workspacePath) {
@@ -200,6 +250,12 @@ export class AgentRuntime {
       updateAgent(agent.id, { stats });
 
       addTaskLog(task.id, 'error', `Failed: ${errorMsg}`, agent.id);
+      recordLedgerEntry({
+        executionId: execution.id, taskId: task.id, agentId: agent.id, workspaceId: task.workspaceId,
+        type: 'execution.failed', decision: 'failed',
+        summary: `Execution failed: ${errorMsg}`.slice(0, 500),
+        metadata: { error: errorMsg },
+      });
       completeTraceSpan(agentSpan.id, { status: 'failed', error: errorMsg });
       completeRunTrace(trace.id, { status: 'failed', summary: errorMsg });
       eventBus.emit('task:failed', { taskId: task.id, agentId: agent.id, workspaceId: task.workspaceId, error: errorMsg });

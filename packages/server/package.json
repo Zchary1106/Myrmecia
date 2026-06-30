@@ -9,7 +9,8 @@
     "lint": "tsc --noEmit",
     "start": "node dist/index.js",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "harness:eval": "tsx src/testing/harness-eval.ts"
   },
   "dependencies": {
     "@myrmecia/shared": "workspace:*",

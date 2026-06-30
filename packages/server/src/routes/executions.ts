@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import type { Router as ExpressRouter } from 'express';
 import { getExecution, listExecutions, listExecutionMessages, updateExecution } from '../db/models/execution.js';
+import { listLedgerEntries } from '../db/models/execution-ledger.js';
 import { addTaskLog, getTask, updateTask } from '../db/models/task.js';
 import { agentRuntime } from '../agents/agent-runtime.js';
 import { messageBus } from '../agents/message-bus.js';
@@ -58,6 +59,13 @@ router.get('/:id/trace', (req, res) => {
   const execution = getAccessibleExecution(req, req.params.id);
   if (!execution) return res.status(404).json({ error: { message: 'Execution not found' } });
   res.json(getRunTraceByExecution(req.params.id) || null);
+});
+
+// GET /api/executions/:id/ledger — get the ordered decision ledger for replay/audit
+router.get('/:id/ledger', (req, res) => {
+  const execution = getAccessibleExecution(req, req.params.id);
+  if (!execution) return res.status(404).json({ error: { message: 'Execution not found' } });
+  res.json(listLedgerEntries({ executionId: req.params.id }));
 });
 
 // POST /api/executions/:id/cancel — cancel a running execution

@@ -169,6 +169,15 @@ Retrieval is a hybrid score (relevance + recency + importance + success) with MM
 
 Budget/cost guardrails, DLP redaction, policy snapshots, operator audit, multi-tenant org/workspace isolation, API keys + RBAC, OpenTelemetry traces & metrics, run traces/spans, quality loops, self-healing, and checkpoint-based rollback.
 
+### Harness internals
+
+The agent harness is built to be governed, observed, and swappable:
+
+- **Runtime adapters** — every runtime (TypeScript loop, Python runtime, or a future Claude Code / Codex / Gemini CLI bridge) implements one `RuntimeAdapter` contract, so orchestration, governance, ledger, and tracing stay identical regardless of who runs the turn loop. Force one with `AGENT_EXECUTOR=ts|python`.
+- **Execution ledger** — an ordered, durable record of the key decisions in a run (runtime selected, model selected, tools allowed/blocked, per-tool results, retries, outcome). Read it at `GET /api/v1/executions/:id/ledger` for replay, audit, and debugging.
+- **Sandbox profile** — the in-process tool sandbox resolves a `strict` / `standard` / `permissive` profile (strict by default in production): `shell_exec` and network tools are denied unless explicitly granted, so untrusted agents can't reach the host.
+- **Harness eval** — a deterministic, model-free benchmark over a fixed scenario set that reports success rate, cost, duration, tool calls, turns, and human interventions. Run `pnpm --filter @myrmecia/server harness:eval` or `POST /api/v1/harness/eval`.
+
 ## Screenshots
 
 | Command Center | Unified Memory |
@@ -277,7 +286,11 @@ docker compose up -d
 | `AGENT_STREAMING` | `true` to stream token deltas over WebSocket (default off) |
 | `MCP_SERVERS` | JSON array of MCP stdio servers, e.g. `[{"name":"fs","command":"npx","args":["-y","@modelcontextprotocol/server-filesystem","/tmp"]}]` |
 | `MCP_TOOLS_IN_AGENTS` | `false` to hide MCP tools from the agent loop (default on) |
-| `WEB_TOOLS_ENABLED` | `false` to disable built-in web research tools (`web.search`, `web.fetch`, `web.extract`) |
+| `WEB_TOOLS_ENABLED` | `false` to disable built-in web research tools (`web.search`, `web.fetch`, `web.extract`); also flips the sandbox profile's network lever |
+| `SANDBOX_PROFILE` | `strict` / `standard` / `permissive` for the in-process tool sandbox (default: `strict` in production, `standard` otherwise) |
+| `EXECUTOR_MODE` | `local` / `docker` for the agent subprocess executor (`docker` for container isolation) |
+| `AGENT_EXECUTOR` | Force a runtime adapter: `ts` (TS agent loop) or `python` (Python runtime) |
+| `ALLOW_LOCAL_SHELL` | `true` to grant a controlled `shell_exec` exception under the strict sandbox profile |
 | `EMBEDDING_BACKEND` | `openai` / `local` / `pseudo` for the memory vector store |
 | `MEMORY_DECAY_INTERVAL_MS` | Periodic memory decay interval (0 disables) |
 | `REDIS_URL` / `REDIS_HOST` | Redis connection (in-memory queue fallback if unset) |

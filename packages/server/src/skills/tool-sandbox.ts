@@ -8,6 +8,7 @@ import { readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, existsSy
 import { resolve, normalize, dirname, relative, isAbsolute, join } from 'path';
 import { guardrails } from '../agents/safety-guardrails.js';
 import { getRuntimeLimits } from '../agents/runtime-limits.js';
+import { assertLocalShellAllowed, assertNetworkToolAllowed } from '../agents/sandbox-profile.js';
 import { formatToolGuardianDecision, formatToolGuardianWarnings, redactSecrets, reviewToolCall } from './tool-guardian.js';
 
 const execAsync = promisify(exec);
@@ -142,6 +143,7 @@ export function assertShellCommandAllowed(command: string): void {
   if (!command.trim()) {
     throw new Error('shell_exec requires a non-empty command');
   }
+  assertLocalShellAllowed();
   const guardianDecision = reviewToolCall('shell_exec', { command });
   if (!guardianDecision.allowed) {
     throw new Error(formatToolGuardianDecision(guardianDecision));
@@ -199,6 +201,7 @@ function safeUrl(value: string): URL {
 
 async function fetchText(urlValue: string, timeoutMs: number, maxOutputChars: number): Promise<string> {
   assertWebToolsEnabled();
+  assertNetworkToolAllowed('web');
   assertNetworkAllowed();
   const url = safeUrl(urlValue);
   const controller = new AbortController();
