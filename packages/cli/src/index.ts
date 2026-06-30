@@ -4,8 +4,8 @@
  *
  * Talks to the same REST API + WebSocket the dashboard uses, so it works
  * against any running Myrmecia server. Zero runtime dependencies: it relies
- * only on Node built-ins (global fetch + WebSocket, node:util parseArgs), so
- * it runs with `node src/index.ts` on Node >= 22 without an install step.
+ * only on Node built-ins (global fetch + WebSocket, node:util parseArgs).
+ * In this monorepo it is launched through tsx so CI and local dev work on Node >= 20.
  */
 import { parseArgs } from 'node:util';
 import * as readline from 'node:readline';
