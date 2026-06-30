@@ -1,0 +1,9 @@
+[
+  { "id": "command", "nav": "Command Center", "caption": "One control plane for your agent fleet" },
+  { "id": "tasks", "nav": "Work Queue", "caption": "Queue, route, and track every task" },
+  { "id": "pipelines", "nav": "Pipelines", "caption": "PM → Design → Dev → QA → Review pipelines" },
+  { "id": "teams", "nav": "Teams", "caption": "Agent teams collaborate on a shared board" },
+  { "id": "memory", "nav": "Memory", "caption": "Four-layer memory + domain knowledge" },
+  { "id": "cost", "nav": "Costs", "caption": "Token and cost tracking on every run" },
+  { "id": "audit", "nav": "Audit", "caption": "Full audit trail and governance" }
+]

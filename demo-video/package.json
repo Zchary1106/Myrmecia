@@ -1,0 +1,21 @@
+{
+  "name": "myrmecia-demo-video",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Playwright capture + Remotion render pipeline for the Myrmecia demo video.",
+  "scripts": {
+    "capture": "node capture.mjs",
+    "render": "node render.mjs",
+    "studio": "remotion studio src/index.ts"
+  },
+  "dependencies": {
+    "@remotion/bundler": "4.0.295",
+    "@remotion/cli": "4.0.295",
+    "@remotion/renderer": "4.0.295",
+    "playwright": "1.60.0",
+    "react": "19.0.0",
+    "react-dom": "19.0.0",
+    "remotion": "4.0.295"
+  }
+}
