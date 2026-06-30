@@ -1,0 +1,7 @@
+node_modules/
+public/frames/
+out/
+demo.db
+demo.db-wal
+demo.db-shm
+*.log
