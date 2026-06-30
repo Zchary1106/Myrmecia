@@ -6,6 +6,8 @@ import { resolveApiAuthContext, tokenFromAuthorizationHeader, type ApiAuthContex
 import { getTask } from '../db/models/task.js';
 import { getPipeline } from '../db/models/pipeline.js';
 import { getExecution } from '../db/models/execution.js';
+import { getGraphWorkflow } from '../agents/graph-workflow.js';
+import { getDb } from '../db/database.js';
 
 interface ClientState {
   ws: WebSocket;
@@ -146,7 +148,7 @@ export class WSHub {
   private canSubscribe(client: ClientState, channel: string): boolean {
     const [kind, id] = channel.split(':', 2);
     if (!id) return true;
-    if (!['task', 'pipeline', 'execution'].includes(kind)) return true;
+    if (!['task', 'pipeline', 'execution', 'graph', 'team'].includes(kind)) return true;
 
     const workspaceId = this.workspaceIdForChannel(kind, id);
     if (!workspaceId) return false;
@@ -160,6 +162,11 @@ export class WSHub {
       const execution = getExecution(id);
       if (!execution) return undefined;
       return execution.workspaceId || getTask(execution.taskId)?.workspaceId || 'default';
+    }
+    if (kind === 'graph') return getGraphWorkflow(id)?.workspaceId || 'default';
+    if (kind === 'team') {
+      const row = getDb().get<{ workspace_id?: string }>('SELECT workspace_id FROM team_runs WHERE id = ?', id);
+      return row?.workspace_id || 'default';
     }
     return 'default';
   }
@@ -184,6 +191,11 @@ export class WSHub {
     }
     if (p?.entry?.workspaceId) return p.entry.workspaceId;
     if (p?.notification?.workspaceId) return p.notification.workspaceId;
+    if (p?.workflowId) return getGraphWorkflow(p.workflowId)?.workspaceId || 'default';
+    if (p?.runId) {
+      const row = getDb().get<{ workspace_id?: string }>('SELECT workspace_id FROM team_runs WHERE id = ?', p.runId);
+      if (row) return row.workspace_id || 'default';
+    }
     return undefined;
   }
 
@@ -194,6 +206,8 @@ export class WSHub {
       || event.type.startsWith('tool:')
       || event.type.startsWith('quality:')
       || event.type.startsWith('inbox:')
+      || event.type.startsWith('graph:')
+      || event.type.startsWith('team:')
       || event.type === 'notification'
       || event.type === 'agent:message';
   }

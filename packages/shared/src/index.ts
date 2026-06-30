@@ -437,6 +437,21 @@ export interface PipelineTemplate {
   stages: { name: string; role: AgentRole; promptTemplate: string }[];
 }
 
+export interface PipelineTemplateGalleryItem {
+  id: string;
+  templateId?: string;
+  templateName: string;
+  title: string;
+  category: string;
+  summary: string;
+  tags: string[];
+  recommendedAgents: string[];
+  inputExample: string;
+  outputExample: string;
+  risk: string;
+  stages: PipelineTemplate['stages'];
+}
+
 export type TestReportStatus = 'passed' | 'failed' | 'skipped' | 'unknown';
 
 export interface TestReport {
@@ -464,6 +479,7 @@ export interface Notification {
   message: string;
   taskId?: string;
   pipelineId?: string;
+  workspaceId?: string;
   read: boolean;
   createdAt: string;
 }
@@ -482,6 +498,7 @@ export interface InboxEntry {
   taskId?: string;
   pipelineId?: string;
   executionId?: string;
+  workspaceId?: string;
   createdBy: 'system' | 'agent' | 'user';
   createdAt: string;
   respondedAt?: string;
@@ -518,6 +535,7 @@ export interface PlatformEvent {
   executionId?: string;
   inboxEntryId?: string;
   qualityAttemptId?: string;
+  workspaceId?: string;
   payload: unknown;
   createdAt: string;
 }

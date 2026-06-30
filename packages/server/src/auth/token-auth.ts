@@ -18,13 +18,17 @@ function isExplicitlyEnabled(): boolean {
   return ['1', 'true', 'yes'].includes((process.env.API_AUTH_ENABLED || '').toLowerCase());
 }
 
+function isProduction(): boolean {
+  return process.env.NODE_ENV === 'production';
+}
+
 export function isApiAuthEnabled(): boolean {
-  return !!configuredToken() || isExplicitlyEnabled();
+  return isProduction() || !!configuredToken() || isExplicitlyEnabled();
 }
 
 export function isTokenAuthorized(candidate?: string): boolean {
   const expected = configuredToken();
-  if (!expected) return true;
+  if (!expected) return !isApiAuthEnabled();
   if (!candidate) return false;
 
   const expectedBuffer = Buffer.from(expected);

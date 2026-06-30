@@ -14,24 +14,46 @@
 
 ---
 
-# Myrmecia — Autonomous Multi-Agent Orchestration Platform
+# Myrmecia — Self-hosted Agent Ops for AI agent teams
 
-> *Formerly **Agent Factory**.* A colony of specialized agents, coordinated through a shared memory. See [Why Myrmecia](#why-myrmecia--the-colony-model).
+> *Formerly **Agent Factory**.* Myrmecia is a local-first control plane for running, governing, observing, and improving fleets of AI agents.
 
-Myrmecia is a self-hosted, code-first platform that manages a pool of specialized AI agents and runs them — independently, in coordinated pipelines, or on a **drag-and-drop canvas** — from product spec through design, code, test, and deploy. It pairs a complete agent **harness** (tool-calling loop, memory, context management, model routing) with enterprise-grade governance, observability, and a real-time dashboard.
+Myrmecia is not another agent SDK and it is not a single coding assistant. It is the **Agent Ops layer** around the agents you already use or build: queue work, route it to specialist agents, run PM → Design → Dev → QA pipelines, inspect every trace, control tool permissions, manage memory, and keep humans in the loop from one self-hosted dashboard.
 
-## News
-- [2026-06] **Domain Packs** — turn generic agents into **domain specialists** (medical, legal, philosophy, internal knowledge…). Define a domain's **persona + guidelines + disclaimer**, upload **your own knowledge base**, and bind it to agents — the platform injects the persona overlay and retrieves domain knowledge (RAG) at execution time. The platform ships **one example pack**; everything else is yours to customize. A dashboard **Domains** page with a first-run guided wizard walks you through it. [See ↓](#domain-packs)
-- [2026-06] **Agent Teams** — address a named **squad** (`@feature`, `@bugfix`, …) and the lead splits the goal across the roster so teammates run **in parallel on a shared task board**. Teammates share findings over the message bus, you can message/redirect any of them, and a dashboard **Teams** page lets you watch the live board and build custom squads. [See ↓](#agent-teams)
-- [2026-06] **Coding tools + TDD** — agents get a sandboxed engineering toolset (`file_read` / `file_write` / `file_list` / `apply_patch` / `shell_exec` / `grep`, workspace-confined, path-traversal-proof, governed). The dev agent runs a full **test-driven** loop (write failing tests → implement → refactor) and produces working code that passes its own tests.
-- [2026-06] **Auto-compact context** — long tool-calling loops summarize older turns before each model call, bounding per-call context to ~O(1) and total usage to ~O(N) so runs no longer hit the token budget.
-- [2026-06] **Interactive CLI** — a zero-dependency `myrmecia` terminal shell: a welcome banner, natural-language input *routed live to the right specialist*, and `/slash` commands. Same backend as the dashboard. [See usage ↓](#command-line-cli)
-- [2026-06] **Visual Orchestration** — a drag-and-drop canvas (`Orchestrate` page) to wire agents into a DAG; the `GraphWorkflowEngine` dispatches each node when its predecessors finish, feeds upstream outputs downstream, and **journals runs for replay/resume**. Live node status streams over WebSocket.
-- [2026-06] **MCP (Model Context Protocol)** — a dependency-free stdio client connects external MCP tool servers and **surfaces their tools inside the agent tool-calling loop** (`mcp__server__tool`).
-- [2026-06] **Unified Memory** — four-layer memory (working / episodic / semantic / procedural) + a bi-temporal entity graph, with extraction → consolidation → reflection → decay, injected into context, routing, and decomposition.
-- [2026-06] **Model Gateway & Token Streaming** — provider-agnostic client routing (`MODEL_PROVIDERS`) and opt-in `token:delta` streaming over WebSocket.
-- [2026-05] **Dynamic Workflow Runtime** — runtime-generated executable plans that fan out across agents with dependency tracking and validation.
-- [2026-05] **Supervisor Mode** — one-line task intake with intent classification and semantic routing learned from past executions.
+| If you have... | Myrmecia gives you... |
+| --- | --- |
+| Claude Code, Gemini CLI, Codex, OpenCode, or custom agents | A control plane to schedule, govern, observe, and coordinate them |
+| Multi-step product/engineering work | Agent teams, pipelines, DAG orchestration, shared boards, and resumable runs |
+| Security or compliance requirements | Tool policy, DLP, audit trails, RBAC, workspace isolation, and cost guardrails |
+| Long-running agent workflows | Durable tasks, execution timelines, memory, checkpoints, and recovery hooks |
+
+## Why teams use it
+
+- **Run agent teams, not just prompts** — built-in PM, UI, Dev, QA, Ops, Review, content, security, accessibility, and domain-specialist agents.
+- **Govern every tool call** — workspace-confined engineering tools, per-agent allowlists, approval gates, DLP, audit logs, and policy snapshots.
+- **Observe the whole run** — live WebSocket events, execution timelines, trace spans, cost dashboards, task logs, inbox decisions, and rollback checkpoints.
+- **Keep context alive** — four-layer memory, domain packs, RAG citations, context compaction, and post-run reflection.
+- **Stay self-hosted** — SQLite by default, Redis when configured, optional model gateway, and no mandatory hosted control plane.
+
+## Quickstart
+
+```bash
+git clone https://github.com/Zchary1106/agent-factory.git
+cd agent-factory
+
+pnpm install
+pnpm demo
+# Seeds deterministic demo data, starts the API + dashboard, then opens http://localhost:5173
+```
+
+The demo does **not** require a model API key. It uses a seeded SQLite database at `packages/server/data/demo.db` so you can inspect completed agent-team work, pipeline stages, memory, cost, audit, and trace data immediately.
+
+For live agent execution, install the optional Python runtime deps and run dev mode with your model endpoint:
+
+```bash
+pip install -r packages/python-runtime/requirements.txt
+pnpm dev
+```
 
 <div align="center">
 
@@ -177,22 +199,24 @@ This isn't a decorative metaphor; ant-colony mechanics map onto components we ac
 
 **Etymology & lineage:** from Greek *myrmex* (μύρμηξ, "ant") — the same root as the mythological **Myrmidons**, the fiercely disciplined warrior-people Zeus formed from ants: a fitting image for a disciplined fleet of agents working as one.
 
-> Brand name **Myrmecia**; package scope migrates gradually from `@myrmecia/*` to `@myrmecia/*`, so the rename stays low-risk.
+> Brand name **Myrmecia**; package scope uses `@myrmecia/*`.
 
 ## How Myrmecia compares
 
-Most tools in this space give you **one slice** of the problem. Myrmecia's differentiator is packaging the agent **engine** *and* the production **platform** around it — queue, orchestration, governance, observability, memory, and a real-time dashboard — as a single self-hosted system.
+Most tools in this space give you **one slice** of the problem. Myrmecia packages the agent **runtime** and the production **control plane** around it — queue, orchestration, governance, observability, memory, and a real-time dashboard — as a single self-hosted system.
 
 <p align="center">
   <img src="docs/diagrams/comparison.svg" alt="How Myrmecia compares — capability matrix" width="100%">
 </p>
 
-| Category | Representative tools | What they give | What Myrmecia adds on top |
+| Category | Representative tools | What they give | Where Myrmecia fits |
 | --- | --- | --- | --- |
-| **Orchestration libraries** | LangGraph · AutoGen · CrewAI | An SDK to wire agents; you build the rest | Built-in queue, pipelines, governance, observability, and live WebSocket events — a product, not a library |
-| **Visual workflow builders** | Dify · n8n · Flowise | Drag-and-drop flows, shallow agent depth | Drag-drop **and** code **and** a one-line *Supervisor* that decomposes tasks — plus run replay/resume |
-| **Memory services** | Mem0 · Zep | A bolt-on memory store | Four-layer memory + bi-temporal graph wired **into** context, routing, and decomposition |
-| **Hosted platforms** | OpenAI Assistants · vendor clouds | Closed, data leaves your infra | **Local-first, self-hosted**, data stays on your machines |
+| **Agent SDKs** | LangChain · LangGraph · AutoGen · CrewAI | Libraries for building agents and flows | The operational layer after agents exist: queue, run, observe, audit, recover |
+| **Coding agents / CLIs** | Claude Code · Gemini CLI · Codex · OpenCode | A single developer-facing agent runtime | A fleet control plane that can coordinate multiple specialist agents and tools |
+| **Visual workflow builders** | Dify · Langflow · n8n · Flowise | Drag-and-drop app/workflow assembly | Code-first pipelines, visual DAGs, team boards, live traces, and governance |
+| **Memory / RAG services** | Mem0 · RAGFlow · Zep | Context and retrieval components | Memory wired into routing, decomposition, domain packs, and execution history |
+| **Sandbox / infra layers** | E2B · Daytona | Secure execution environments | Tool policy, approvals, audit, and workspace-scoped orchestration around execution |
+| **Hosted agent platforms** | OpenAI Assistants · vendor clouds | Managed agent runtime | Local-first, self-hosted control plane; data and policy stay with you |
 
 **Where Myrmecia is strong**
 
@@ -200,13 +224,13 @@ Most tools in this space give you **one slice** of the problem. Myrmecia's diffe
 - **Governance is built in** — tool registry with per-agent permissions, risk levels, approval gates, parameter constraints, cost guardrails, and audit.
 - **Observability-first** — trace spans, execution scoring, token/cost tracking, and a real-time dashboard for debugging multi-agent runs.
 - **Memory as a designed subsystem** — not a vector store bolted on; it feeds routing and task decomposition so the system gets better at dispatching similar work.
-- **Pluggable runtimes & tools** — TypeScript loop or Python runtime, a provider-agnostic model gateway with token streaming, **MCP tools in the loop**, and a `browser.query` tool that drives a real browser.
+- **Pluggable runtimes & tools** — TypeScript loop or Python runtime, a provider-agnostic model gateway with token streaming, MCP tools in the loop, and workspace-scoped engineering tools.
 
 **Where it's young (being honest)**
 
 - Smaller community and ecosystem than LangGraph/CrewAI, and less battle-tested at scale.
-- Some known engineering debt (a few TypeScript build errors and a `db.test` schema conflict) is still being cleaned up.
-- The moat is **integration + governance + observability + memory** combined, not a single novel algorithm — so depth in those areas is where Myrmecia keeps its edge.
+- The current default is SQLite for local/self-hosted use. Full PostgreSQL production hardening is planned but intentionally separated from the local-first path.
+- The moat is **integration + governance + observability + memory** combined, not a single novel algorithm; depth in those areas is where Myrmecia keeps its edge.
 
 ## Installation
 
@@ -253,6 +277,7 @@ docker compose up -d
 | `AGENT_STREAMING` | `true` to stream token deltas over WebSocket (default off) |
 | `MCP_SERVERS` | JSON array of MCP stdio servers, e.g. `[{"name":"fs","command":"npx","args":["-y","@modelcontextprotocol/server-filesystem","/tmp"]}]` |
 | `MCP_TOOLS_IN_AGENTS` | `false` to hide MCP tools from the agent loop (default on) |
+| `WEB_TOOLS_ENABLED` | `false` to disable built-in web research tools (`web.search`, `web.fetch`, `web.extract`) |
 | `EMBEDDING_BACKEND` | `openai` / `local` / `pseudo` for the memory vector store |
 | `MEMORY_DECAY_INTERVAL_MS` | Periodic memory decay interval (0 disables) |
 | `REDIS_URL` / `REDIS_HOST` | Redis connection (in-memory queue fallback if unset) |

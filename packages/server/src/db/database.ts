@@ -485,6 +485,12 @@ function applyMigrations(db: DbDriver, migrations: Migration[]) {
   for (const migration of migrations) {
     if (applied.has(migration.id)) continue;
 
+    if (migration.id === '202606280001_allow_pipeline_awaiting_retry_status') {
+      applyPipelineAwaitingRetryMigration(db);
+      db.run('INSERT INTO schema_migrations (id) VALUES (?) ON CONFLICT DO NOTHING', migration.id);
+      continue;
+    }
+
     const sql = db.backend === 'postgres' ? convertToPostgres(migration.sql) : migration.sql;
 
     try {
@@ -499,6 +505,56 @@ function applyMigrations(db: DbDriver, migrations: Migration[]) {
         continue;
       }
       throw err;
+    }
+  }
+
+  function applyPipelineAwaitingRetryMigration(db: DbDriver) {
+    const row = db.get<{ sql: string }>("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'pipelines'");
+    if (!row || row.sql.includes("'awaiting_retry'")) return;
+
+    if (db.backend === 'postgres') {
+      db.exec(`
+        ALTER TABLE pipelines DROP CONSTRAINT IF EXISTS pipelines_status_check;
+        ALTER TABLE pipelines ADD CONSTRAINT pipelines_status_check
+          CHECK(status IN ('running','paused','blocked','done','failed','awaiting_retry'));
+      `);
+      return;
+    }
+
+    db.exec('PRAGMA foreign_keys = OFF');
+    try {
+      db.transaction(() => {
+        db.exec(`
+          CREATE TABLE pipelines_migrated (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            template_id TEXT,
+            status TEXT NOT NULL DEFAULT 'running' CHECK(status IN ('running','paused','blocked','done','failed','awaiting_retry')),
+            stages JSON NOT NULL DEFAULT '[]',
+            current_stage_index INTEGER DEFAULT 0,
+            gate_mode TEXT NOT NULL DEFAULT 'auto' CHECK(gate_mode IN ('auto','manual')),
+            input TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            completed_at DATETIME,
+            workspace_id TEXT NOT NULL DEFAULT 'default',
+            stage_checkpoints TEXT DEFAULT '{}',
+            domain_id TEXT
+          );
+          INSERT INTO pipelines_migrated (
+            id, name, template_id, status, stages, current_stage_index, gate_mode, input,
+            created_at, completed_at, workspace_id, stage_checkpoints, domain_id
+          )
+          SELECT
+            id, name, template_id, status, stages, current_stage_index, gate_mode, input,
+            created_at, completed_at, COALESCE(workspace_id, 'default'), COALESCE(stage_checkpoints, '{}'), domain_id
+          FROM pipelines;
+          DROP TABLE pipelines;
+          ALTER TABLE pipelines_migrated RENAME TO pipelines;
+          CREATE INDEX IF NOT EXISTS idx_pipelines_workspace ON pipelines(workspace_id);
+        `);
+      });
+    } finally {
+      db.exec('PRAGMA foreign_keys = ON');
     }
   }
 }

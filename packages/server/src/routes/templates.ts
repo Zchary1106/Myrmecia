@@ -1,10 +1,13 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { existsSync, readFileSync } from 'fs';
+import { join } from 'path';
+import { parse as parseYaml } from 'yaml';
 import { listAgents } from '../db/models/agent.js';
 import { createOperatorAction } from '../db/models/operator-action.js';
 import { listTemplates, createTemplate, getTemplate, updateTemplate } from '../db/models/pipeline.js';
 import { notFound, parseBody, requireOperatorRole, sendError } from './http.js';
-import type { PipelineTemplateValidationResult } from '../types.js';
+import type { PipelineTemplateGalleryItem, PipelineTemplateValidationResult } from '../types.js';
 
 const templateStageSchema = z.object({
   name: z.string().trim().min(1),
@@ -44,6 +47,7 @@ function validateTemplateShape(data: { stages: { name?: string; role?: string; p
     } else if (!roles.has(stage.role)) {
       errors.push({ stageIndex: index, field: 'role', message: `No available Agent has role "${stage.role}"` });
     }
+
     if (!stage.promptTemplate?.trim()) {
       errors.push({ stageIndex: index, field: 'promptTemplate', message: 'Prompt template is required' });
     } else if (!stage.promptTemplate.includes('{input}')) {
@@ -53,11 +57,47 @@ function validateTemplateShape(data: { stages: { name?: string; role?: string; p
   return { valid: errors.length === 0, errors, warnings };
 }
 
+function loadTemplateGallery(): PipelineTemplateGalleryItem[] {
+  const galleryPath = [
+    join(process.cwd(), 'templates/gallery.yaml'),
+    join(process.cwd(), '../../templates/gallery.yaml'),
+    join(process.cwd(), '../templates/gallery.yaml'),
+  ].find(path => existsSync(path));
+  if (!galleryPath) return [];
+  const parsed = parseYaml(readFileSync(galleryPath, 'utf-8')) as { items?: any[] } | undefined;
+  const templates = listTemplates();
+  const byName = new Map(templates.map(template => [template.name.toLowerCase(), template]));
+  return (parsed?.items || []).map(item => {
+    const templateName = String(item.template_name || item.templateName || item.title || item.id);
+    const template = byName.get(templateName.toLowerCase());
+    return {
+      id: String(item.id),
+      templateId: template?.id,
+      templateName,
+      title: String(item.title || templateName),
+      category: String(item.category || 'general'),
+      summary: String(item.summary || template?.description || ''),
+      tags: Array.isArray(item.tags) ? item.tags.map(String) : [],
+      recommendedAgents: Array.isArray(item.recommended_agents || item.recommendedAgents)
+        ? (item.recommended_agents || item.recommendedAgents).map(String)
+        : [],
+      inputExample: String(item.input_example || item.inputExample || ''),
+      outputExample: String(item.output_example || item.outputExample || ''),
+      risk: String(item.risk || 'Review generated output before applying changes.'),
+      stages: template?.stages || [],
+    };
+  });
+}
+
 export function createTemplateRoutes(): Router {
   const router = Router();
 
   router.get('/', (req, res) => {
     res.json(listTemplates());
+  });
+
+  router.get('/gallery', (_req, res) => {
+    res.json(loadTemplateGallery());
   });
 
   router.get('/:id', (req, res) => {

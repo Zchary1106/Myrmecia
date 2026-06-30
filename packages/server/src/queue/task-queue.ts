@@ -58,7 +58,7 @@ export class TaskQueue {
       QUEUE_NAME,
       async (job: Job) => {
         const { taskId } = job.data;
-        await this.processJob(taskId);
+        await this.processJob(taskId, job);
       },
       {
         connection,
@@ -121,7 +121,7 @@ export class TaskQueue {
   }
 
   /** Process a BullMQ job */
-  private async processJob(taskId: string) {
+  private async processJob(taskId: string, job?: Job) {
     const task = getTask(taskId);
     if (!task) throw new Error(`Task ${taskId} not found`);
     if (task.status === 'cancelled') return;
@@ -158,7 +158,42 @@ export class TaskQueue {
     updateTask(taskId, { status: 'assigned', assigneeId: agentId });
     eventBus.emit('task:assigned', { taskId, agentId, workspaceId: getTask(taskId)?.workspaceId });
 
-    await this.agentManager.executeTask(agentId, getTask(taskId)!);
+    try {
+      await this.agentManager.executeTask(agentId, getTask(taskId)!);
+    } catch (err: any) {
+      this.recordExecutionFailure(taskId, err, job);
+      throw err;
+    }
+  }
+
+  private recordExecutionFailure(taskId: string, err: any, job?: Job) {
+    const current = getTask(taskId);
+    if (!current || ['done', 'failed', 'cancelled'].includes(current.status)) return;
+
+    const attemptsMade = job ? job.attemptsMade + 1 : current.retryCount + 1;
+    const maxAttempts = job?.opts.attempts ?? (current.maxRetries + 1);
+    const willRetry = attemptsMade < maxAttempts;
+    const error = err?.message || String(err);
+
+    const updated = updateTask(taskId, {
+      status: willRetry ? 'queued' : 'failed',
+      retryCount: Math.max(current.retryCount, attemptsMade - 1),
+      error,
+      completedAt: willRetry ? null : new Date().toISOString(),
+    });
+
+    addTaskLog(
+      taskId,
+      willRetry ? 'warn' : 'error',
+      willRetry
+        ? `Execution attempt failed; retrying (${attemptsMade}/${maxAttempts}): ${error}`
+        : `Execution failed after ${attemptsMade}/${maxAttempts} attempts: ${error}`,
+      'system',
+    );
+
+    if (!willRetry && updated) {
+      eventBus.emit('task:failed', { taskId, task: updated, error, workspaceId: updated.workspaceId });
+    }
   }
 
   /** Check if a task's dependencies are met */
@@ -197,6 +232,8 @@ export class TaskQueue {
         updateTask(task.id, { status: 'pending', retryCount: current.retryCount + 1 });
         addTaskLog(task.id, 'warn', `Retrying (${current.retryCount + 1}/${current.maxRetries})`, 'system');
         this.tryExecute(getTask(task.id)!);
+      } else {
+        this.recordExecutionFailure(task.id, err);
       }
     });
   }

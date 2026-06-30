@@ -108,7 +108,7 @@ export interface TeamInput {
 export function createTeam(input: TeamInput, workspaceId = 'default'): Team {
   const id = slug(input.id || input.name);
   if (!id) throw new Error('team id/name is required');
-  if (BUILTIN.some(t => t.id === id) || listCustom().some(t => t.id === id)) {
+  if (BUILTIN.some(t => t.id === id) || listCustom(workspaceId).some(t => t.id === id)) {
     throw new Error(`team "${id}" already exists`);
   }
   if (!input.members?.length) throw new Error('a team needs at least one member role');
@@ -119,12 +119,12 @@ export function createTeam(input: TeamInput, workspaceId = 'default'): Team {
     JSON.stringify(input.members), input.template || null,
     JSON.stringify(input.triggers || []), input.blurb || '', workspaceId,
   );
-  return getTeam(id)!;
+  return getTeam(id, workspaceId)!;
 }
 
 export function updateTeam(id: string, patch: Partial<TeamInput>, workspaceId = 'default'): Team {
   const db = getDb();
-  const existing = listCustom().find(t => t.id === id);
+  const existing = listCustom(workspaceId).find(t => t.id === id);
   if (!existing) {
     // Editing a built-in: materialize it as a custom override.
     const base = BUILTIN.find(t => t.id === id);
@@ -133,12 +133,12 @@ export function updateTeam(id: string, patch: Partial<TeamInput>, workspaceId = 
   }
   const merged = { ...existing, ...patch };
   db.run(
-    'UPDATE team_definitions SET name = ?, emoji = ?, lead = ?, members = ?, template = ?, triggers = ?, blurb = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+    'UPDATE team_definitions SET name = ?, emoji = ?, lead = ?, members = ?, template = ?, triggers = ?, blurb = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND workspace_id = ?',
     merged.name, merged.emoji, merged.lead,
     JSON.stringify(merged.members), merged.template || null,
-    JSON.stringify(merged.triggers || []), merged.blurb || '', id,
+    JSON.stringify(merged.triggers || []), merged.blurb || '', id, workspaceId,
   );
-  return getTeam(id)!;
+  return getTeam(id, workspaceId)!;
 }
 
 function createTeamOverride(base: Team, patch: Partial<TeamInput>, workspaceId: string): Team {
@@ -149,13 +149,13 @@ function createTeamOverride(base: Team, patch: Partial<TeamInput>, workspaceId: 
     JSON.stringify(merged.members), merged.template || null,
     JSON.stringify(merged.triggers || []), merged.blurb || '', workspaceId,
   );
-  return getTeam(base.id)!;
+  return getTeam(base.id, workspaceId)!;
 }
 
-export function deleteTeam(id: string): { reverted: boolean } {
-  const custom = listCustom().find(t => t.id === id);
+export function deleteTeam(id: string, workspaceId = 'default'): { reverted: boolean } {
+  const custom = listCustom(workspaceId).find(t => t.id === id);
   if (!custom) throw new Error(`team "${id}" is not a custom team`);
-  getDb().run('DELETE FROM team_definitions WHERE id = ?', id);
+  getDb().run('DELETE FROM team_definitions WHERE id = ? AND workspace_id = ?', id, workspaceId);
   // If a built-in with this id exists, deletion just reverts to the built-in.
   return { reverted: BUILTIN.some(t => t.id === id) };
 }
@@ -172,11 +172,11 @@ export function resolveTeamAgents(team: Team): { role: string; agentId: string; 
 }
 
 /** Suggest a team for a free-text goal from trigger keywords. */
-export function suggestTeam(goal: string): Team | undefined {
+export function suggestTeam(goal: string, workspaceId?: string): Team | undefined {
   const low = (goal || '').toLowerCase();
   let best: Team | undefined;
   let score = 0;
-  for (const t of listTeams()) {
+  for (const t of listTeams(workspaceId)) {
     const s = t.triggers.reduce((n, kw) => n + (low.includes(kw.toLowerCase()) ? 1 : 0), 0);
     if (s > score) { score = s; best = t; }
   }

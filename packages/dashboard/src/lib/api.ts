@@ -14,6 +14,7 @@ import type {
   OperatorPreference,
   Pipeline,
   PipelineTemplate,
+  PipelineTemplateGalleryItem,
   PipelineTemplateValidationResult,
   PlatformEvent,
   QualityLoopAttempt,
@@ -182,6 +183,7 @@ export const api = {
   },
   templates: {
     list: () => request<PipelineTemplate[]>('/templates'),
+    gallery: () => request<PipelineTemplateGalleryItem[]>('/templates/gallery'),
     get: (id: string) => request<PipelineTemplate>(`/templates/${id}`),
     create: (data: { name: string; description?: string; stages: PipelineTemplate['stages'] }) =>
       request<PipelineTemplate>('/templates', { method: 'POST', body: JSON.stringify(data) }),

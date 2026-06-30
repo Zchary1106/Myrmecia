@@ -10,13 +10,16 @@ import { join } from 'path';
 import { closeDb, getDb } from '../src/db/database.js';
 import { resetEmbeddingService } from '../src/memory/embedding.js';
 import { resetMemoryStore } from '../src/memory/memory-store.js';
-import { ingestDocument, searchKnowledge } from '../src/knowledge/rag.js';
+import { ingestDocument, resetKnowledgeVectorStoreForTests, searchKnowledge } from '../src/knowledge/rag.js';
 
 beforeEach(() => {
   process.env.EMBEDDING_BACKEND = 'pseudo';
+  delete process.env.VECTOR_BACKEND;
+  delete process.env.DATABASE_URL;
   delete process.env.OPENAI_API_KEY;
   resetEmbeddingService();
   resetMemoryStore();
+  resetKnowledgeVectorStoreForTests();
   closeDb();
   process.env.DB_PATH = join(mkdtempSync(join(tmpdir(), 'agent-factory-rag-')), 'test.db');
   getDb();
@@ -26,6 +29,9 @@ afterEach(() => {
   closeDb();
   delete process.env.DB_PATH;
   delete process.env.EMBEDDING_BACKEND;
+  delete process.env.VECTOR_BACKEND;
+  delete process.env.DATABASE_URL;
+  resetKnowledgeVectorStoreForTests();
 });
 
 describe('knowledge RAG retrieval', () => {
@@ -54,5 +60,13 @@ describe('knowledge RAG retrieval', () => {
     const a = await searchKnowledge('default', 'content', 5, { domainId: 'domain-a' });
     expect(a.map(h => h.content).join('\n')).toContain('SECRET_ALPHA');
     expect(a.map(h => h.content).join('\n')).not.toContain('SECRET_BETA');
+  });
+
+  it('fails explicitly when pgvector backend is selected without DATABASE_URL', async () => {
+    process.env.VECTOR_BACKEND = 'pgvector';
+    resetKnowledgeVectorStoreForTests();
+
+    await expect(ingestDocument('default', 'Doc', 'content'))
+      .rejects.toThrow(/PgVectorStore requires DATABASE_URL/);
   });
 });

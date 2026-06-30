@@ -46,6 +46,10 @@ export class PipelineEngine {
       for (const file of files) {
         const content = readFileSync(join(templatesDir, file), 'utf-8');
         const tmpl = parseYaml(content);
+        if (!tmpl?.stages || !Array.isArray(tmpl.stages)) {
+          logger.debug({ file }, 'Skipping non-pipeline template metadata file');
+          continue;
+        }
         if (!existingNames.has(tmpl.name)) {
           createTemplate({
             name: tmpl.name,
@@ -211,7 +215,7 @@ export class PipelineEngine {
 
   /** Handle task completion — write artifacts, advance pipeline */
   private async onTaskComplete(taskId: string) {
-    const ref = this.taskToPipeline.get(taskId);
+    const ref = this.resolveTaskPipelineRef(taskId);
     if (!ref) return;
     this.taskToPipeline.delete(taskId);
 
@@ -291,6 +295,22 @@ export class PipelineEngine {
 
     // Advance: start all stages whose dependencies are now satisfied
     this.startReadyStages(pipeline.id);
+  }
+
+  private resolveTaskPipelineRef(taskId: string): { pipelineId: string; stageIndex: number } | undefined {
+    const mapped = this.taskToPipeline.get(taskId);
+    if (mapped) return mapped;
+
+    const task = getTask(taskId);
+    if (task?.pipelineId && typeof task.stageIndex === 'number') {
+      return { pipelineId: task.pipelineId, stageIndex: task.stageIndex };
+    }
+
+    const pipeline = listPipelines({ status: 'running' })
+      .find(candidate => candidate.stages.some(stage => stage.taskId === taskId));
+    if (!pipeline) return undefined;
+    const stageIndex = pipeline.stages.findIndex(stage => stage.taskId === taskId);
+    return stageIndex >= 0 ? { pipelineId: pipeline.id, stageIndex } : undefined;
   }
 
   /** Rebuild in-memory timers/progress after a server restart. */

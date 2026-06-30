@@ -193,9 +193,8 @@ export const metricsHandler: RequestHandler = async (_req, res) => {
 
     const agentStats = db.get(`
       SELECT
-        COUNT(*) as total,
-        SUM(CASE WHEN active_executions > 0 THEN 1 ELSE 0 END) as active
-      FROM agents
+        (SELECT COUNT(*) FROM agents) as total,
+        (SELECT COUNT(DISTINCT agent_def_id) FROM task_executions WHERE status = 'running') as active
     `) as any;
 
     // Prometheus text format

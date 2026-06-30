@@ -1,0 +1,112 @@
+version: 1
+items:
+  - id: feature-delivery
+    template_name: Feature
+    title: Feature Delivery
+    category: engineering
+    summary: Standard feature workflow with product spec, implementation, test, and review.
+    tags: [feature, engineering, delivery]
+    recommended_agents: [pm, dev, qa, review]
+    input_example: Add CSV export to the reports dashboard with tests.
+    output_example: Feature spec, implementation summary, QA report, and review sign-off.
+    risk: Medium. Generated code must be reviewed before merge.
+  - id: bug-triage-fix
+    template_name: Bugfix
+    title: Bug Triage and Fix
+    category: engineering
+    summary: Triage a bug, implement a targeted fix, and produce a regression test plan.
+    tags: [bugfix, regression, qa]
+    recommended_agents: [pm, dev, qa]
+    input_example: Users cannot save settings when the workspace name contains spaces.
+    output_example: Root-cause analysis, patch summary, and regression verification.
+    risk: Medium. Reproduction quality determines fix confidence.
+  - id: full-product
+    template_name: Full Product
+    title: Full Product Delivery
+    category: product
+    summary: End-to-end product delivery from spec through deployment.
+    tags: [product, design, deploy]
+    recommended_agents: [pm, ui, dev, qa, ops]
+    input_example: Build a lightweight customer feedback portal.
+    output_example: PRD, UX plan, implementation, QA report, and deployment checklist.
+    risk: High. Scope should be constrained before live execution.
+  - id: parallel-feature
+    template_name: parallel-feature
+    title: Parallel Feature Build
+    category: engineering
+    summary: Run UI design and testing work in parallel where dependencies allow it.
+    tags: [parallel, feature, speed]
+    recommended_agents: [pm, ui, dev, qa]
+    input_example: Add a profile page with avatar upload.
+    output_example: Parallel stage outputs with dependency-gated implementation.
+    risk: Medium. Requires clear stage dependencies.
+  - id: feature-with-qa-loop
+    template_name: Feature with QA Loop
+    title: Feature with QA Loop
+    category: quality
+    summary: Iterate implementation through QA until validation passes or the retry limit is reached.
+    tags: [feature, qa, loop]
+    recommended_agents: [dev, qa, review]
+    input_example: Add keyboard shortcuts to the command center.
+    output_example: Implementation summary, repeated QA attempts, final pass/fail result.
+    risk: Medium. Looping work can consume extra tokens and time.
+  - id: structured-autonomy
+    template_name: Structured Autonomy
+    title: Structured Autonomy
+    category: governance
+    summary: Plan with a strong model, implement with a coding agent, then gate with QA, security, and GitOps review.
+    tags: [governance, security, gitops]
+    recommended_agents: [architecture-planner, dev, qa, security-reviewer, gitops-reviewer]
+    input_example: Refactor the task queue to support durable retries.
+    output_example: Architecture plan, code summary, test report, security review, and GitOps gate.
+    risk: High. Best for changes that require formal review.
+  - id: product-quality
+    template_name: Product Quality
+    title: Product Quality Audit
+    category: quality
+    summary: Audit dashboard quality across accessibility, React correctness, performance, and release notes.
+    tags: [quality, accessibility, performance]
+    recommended_agents: [accessibility-tester, react-dashboard-auditor, performance-investigator, release-notes-writer]
+    input_example: Audit the dashboard before the next public demo.
+    output_example: Quality report with issues, severity, and release notes.
+    risk: Low. Primarily produces analysis and recommendations.
+  - id: release-compliance
+    template_name: Release Compliance
+    title: Release Compliance Gate
+    category: release
+    summary: Run QA, security, GitOps, dependency, license, and rollback checks before release.
+    tags: [release, compliance, security]
+    recommended_agents: [qa, security-reviewer, gitops-reviewer, release-compliance]
+    input_example: Prepare v0.2.0 for a public demo release.
+    output_example: Release readiness report with blockers and rollback plan.
+    risk: Medium. Release gates should block on unresolved high-risk findings.
+  - id: qa-validation
+    template_name: QA Validation
+    title: QA Validation
+    category: quality
+    summary: Focused validation workflow that produces a standardized test-report artifact.
+    tags: [qa, tests, validation]
+    recommended_agents: [qa, qa-automation]
+    input_example: Validate the new template gallery API and dashboard view.
+    output_example: Test report with commands, failures, changed files, and coverage notes.
+    risk: Low. Requires a clear feature or fix target.
+  - id: content-wechat
+    template_name: WeChat Article
+    title: WeChat Article Pipeline
+    category: content
+    summary: Create, review, and format a WeChat article through a governed content workflow.
+    tags: [content, wechat, marketing]
+    recommended_agents: [wechat-writer, review]
+    input_example: Write a launch article for Myrmecia Agent Ops.
+    output_example: Article draft, review notes, and formatted publishing copy.
+    risk: Low. Human editorial review recommended before publishing.
+  - id: content-xiaohongshu
+    template_name: Xiaohongshu Note
+    title: Xiaohongshu Note Pipeline
+    category: content
+    summary: Produce and optimize a Xiaohongshu note for a product or release story.
+    tags: [content, social, xiaohongshu]
+    recommended_agents: [xiaohongshu-writer, review]
+    input_example: Promote the one-command Myrmecia demo.
+    output_example: Social note draft, title options, hashtags, and optimization notes.
+    risk: Low. Human brand review recommended before publishing.

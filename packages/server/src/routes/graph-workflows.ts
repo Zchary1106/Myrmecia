@@ -14,12 +14,19 @@ import {
   deleteGraphWorkflow,
   listGraphRunEvents,
   type GraphWorkflowEngine,
+  type GraphWorkflow,
 } from '../agents/graph-workflow.js';
+import { requestCanAccessWorkspace, workspaceIdFromRequest } from '../auth/tenant.js';
 
 export function createGraphWorkflowRoutes(engine: GraphWorkflowEngine): Router {
   const router = Router();
 
-  const ws = (req: any): string | undefined => req.tenantContext?.workspaceId || undefined;
+  const ws = (req: any): string => workspaceIdFromRequest(req) || 'default';
+  const canAccess = (req: any, wf: GraphWorkflow): boolean => requestCanAccessWorkspace(req, wf.workspaceId || 'default');
+  const getAccessibleWorkflow = (req: any, id: string): GraphWorkflow | undefined => {
+    const wf = getGraphWorkflow(id);
+    return wf && canAccess(req, wf) ? wf : undefined;
+  };
 
   // GET / — list graphs
   router.get('/', (req, res) => {
@@ -28,7 +35,7 @@ export function createGraphWorkflowRoutes(engine: GraphWorkflowEngine): Router {
 
   // GET /:id — get one
   router.get('/:id', (req, res) => {
-    const wf = getGraphWorkflow(req.params.id);
+    const wf = getAccessibleWorkflow(req, req.params.id);
     if (!wf) return res.status(404).json({ error: { message: 'workflow not found' } });
     res.json(wf);
   });
@@ -43,7 +50,7 @@ export function createGraphWorkflowRoutes(engine: GraphWorkflowEngine): Router {
 
   // PATCH /:id — update (canvas save)
   router.patch('/:id', (req, res) => {
-    const existing = getGraphWorkflow(req.params.id);
+    const existing = getAccessibleWorkflow(req, req.params.id);
     if (!existing) return res.status(404).json({ error: { message: 'workflow not found' } });
     const { name, description, graph, input } = req.body || {};
     const wf = updateGraphWorkflow(req.params.id, { name, description, graph, input });
@@ -52,6 +59,8 @@ export function createGraphWorkflowRoutes(engine: GraphWorkflowEngine): Router {
 
   // DELETE /:id
   router.delete('/:id', (req, res) => {
+    const existing = getAccessibleWorkflow(req, req.params.id);
+    if (!existing) return res.status(404).json({ error: { message: 'workflow not found' } });
     const ok = deleteGraphWorkflow(req.params.id);
     if (!ok) return res.status(404).json({ error: { message: 'workflow not found' } });
     res.json({ ok: true, id: req.params.id });
@@ -60,6 +69,8 @@ export function createGraphWorkflowRoutes(engine: GraphWorkflowEngine): Router {
   // POST /:id/run
   router.post('/:id/run', async (req, res) => {
     try {
+      const existing = getAccessibleWorkflow(req, req.params.id);
+      if (!existing) return res.status(404).json({ error: { message: 'workflow not found' } });
       const wf = await engine.run(req.params.id, req.body?.input);
       res.json(wf);
     } catch (err: any) {
@@ -70,6 +81,8 @@ export function createGraphWorkflowRoutes(engine: GraphWorkflowEngine): Router {
   // POST /:id/replay
   router.post('/:id/replay', async (req, res) => {
     try {
+      const existing = getAccessibleWorkflow(req, req.params.id);
+      if (!existing) return res.status(404).json({ error: { message: 'workflow not found' } });
       res.json(await engine.replay(req.params.id, req.body?.input));
     } catch (err: any) {
       res.status(400).json({ error: { message: err.message } });
@@ -79,6 +92,8 @@ export function createGraphWorkflowRoutes(engine: GraphWorkflowEngine): Router {
   // POST /:id/resume
   router.post('/:id/resume', async (req, res) => {
     try {
+      const existing = getAccessibleWorkflow(req, req.params.id);
+      if (!existing) return res.status(404).json({ error: { message: 'workflow not found' } });
       res.json(await engine.resume(req.params.id));
     } catch (err: any) {
       res.status(400).json({ error: { message: err.message } });
@@ -87,6 +102,8 @@ export function createGraphWorkflowRoutes(engine: GraphWorkflowEngine): Router {
 
   // POST /:id/cancel
   router.post('/:id/cancel', (req, res) => {
+    const existing = getAccessibleWorkflow(req, req.params.id);
+    if (!existing) return res.status(404).json({ error: { message: 'workflow not found' } });
     const wf = engine.cancel(req.params.id);
     if (!wf) return res.status(404).json({ error: { message: 'workflow not found' } });
     res.json(wf);
@@ -94,7 +111,7 @@ export function createGraphWorkflowRoutes(engine: GraphWorkflowEngine): Router {
 
   // GET /:id/events?runId=... — run journal
   router.get('/:id/events', (req, res) => {
-    const wf = getGraphWorkflow(req.params.id);
+    const wf = getAccessibleWorkflow(req, req.params.id);
     if (!wf) return res.status(404).json({ error: { message: 'workflow not found' } });
     const runId = (req.query.runId as string) || wf.runState?.runId;
     if (!runId) return res.json([]);

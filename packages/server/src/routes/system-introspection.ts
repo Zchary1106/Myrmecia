@@ -9,6 +9,7 @@ import { createOperatorAction } from '../db/models/operator-action.js';
 import { listOperatorPreferences, upsertOperatorPreference } from '../db/models/operator-preference.js';
 import { getDatabaseDiagnostics } from '../db/database.js';
 import { isApiAuthEnabled } from '../auth/token-auth.js';
+import { workspaceIdFromRequest } from '../auth/tenant.js';
 import { actorFromRequest, requireOperatorRole } from './http.js';
 import type {
   ObservabilitySummary,
@@ -54,10 +55,10 @@ export const preferenceRestoreBodySchema = z.object({
 
 // ---------- Observability & diagnostics ----------
 
-export function buildObservabilitySummary(): ObservabilitySummary {
-  const tasks = listTasks();
-  const pipelines = listPipelines();
-  const errorEvents = listPlatformEvents({ severity: 'error', limit: 100 });
+export function buildObservabilitySummary(workspaceId?: string): ObservabilitySummary {
+  const tasks = listTasks({ workspaceId });
+  const pipelines = listPipelines({ workspaceId });
+  const errorEvents = listPlatformEvents({ severity: 'error', workspaceId, limit: 100 });
   const taskById = new Map(tasks.map(task => [task.id, task]));
 
   const failures = new Map<string, { taskId: string; title: string; count: number; lastFailureAt?: string }>();
@@ -82,7 +83,7 @@ export function buildObservabilitySummary(): ObservabilitySummary {
 
   return {
     totals: {
-      events: countPlatformEvents(),
+      events: countPlatformEvents(workspaceId),
       tasks: tasks.length,
       failedTasks: tasks.filter(task => task.status === 'failed').length,
       cancelledTasks: tasks.filter(task => task.status === 'cancelled').length,
@@ -148,6 +149,7 @@ function redactSensitiveValue(value: unknown): unknown {
 
 export function buildWorkspaceSnapshot(req: Request): WorkspaceSnapshot {
   const actor = actorFromRequest(req);
+  const workspaceId = workspaceIdFromRequest(req) || 'default';
   return {
     version: 1,
     generatedAt: new Date().toISOString(),
@@ -157,12 +159,12 @@ export function buildWorkspaceSnapshot(req: Request): WorkspaceSnapshot {
       diagnostics: 'sanitized',
     },
     data: {
-      tasks: listTasks({ limit: 500 }),
-      pipelines: listPipelines(),
-      inboxEntries: listInboxEntries({ limit: 500 }),
-      notifications: listNotifications({ limit: 500 }),
-      platformEvents: listPlatformEvents({ limit: 500 }),
-      observability: buildObservabilitySummary(),
+      tasks: listTasks({ workspaceId, limit: 500 }),
+      pipelines: listPipelines({ workspaceId }),
+      inboxEntries: listInboxEntries({ workspaceId, limit: 500 }),
+      notifications: listNotifications({ workspaceId, limit: 500 }),
+      platformEvents: listPlatformEvents({ workspaceId, limit: 500 }),
+      observability: buildObservabilitySummary(workspaceId),
       preferences: listOperatorPreferences(actor).map(preference => ({
         ...preference,
         value: redactSensitiveValue(preference.value),
@@ -304,6 +306,7 @@ export function buildRestorePlan(req: Request, snapshot: z.infer<typeof workspac
   const actions: WorkspaceRestoreAction[] = [];
   const warnings = [...preview.warnings];
   const data = snapshot.data || {};
+  const workspaceId = workspaceIdFromRequest(req) || 'default';
   const snapshotPipelineIds = new Set((data.pipelines || []).map(objectId).filter((id): id is string => Boolean(id)));
   const snapshotTaskIds = new Set((data.tasks || []).map(objectId).filter((id): id is string => Boolean(id)));
 
@@ -357,7 +360,7 @@ export function buildRestorePlan(req: Request, snapshot: z.infer<typeof workspac
     },
   });
 
-  const currentNotificationIds = new Set(listNotifications({ limit: 10000 }).map(notification => notification.id));
+  const currentNotificationIds = new Set(listNotifications({ workspaceId, limit: 10000 }).map(notification => notification.id));
   addCollectionActions({
     actions,
     warnings,
@@ -366,7 +369,7 @@ export function buildRestorePlan(req: Request, snapshot: z.infer<typeof workspac
     exists: id => currentNotificationIds.has(id),
   });
 
-  const currentEventIds = new Set(listPlatformEvents({ limit: 10000 }).map(event => String(event.id)));
+  const currentEventIds = new Set(listPlatformEvents({ workspaceId, limit: 10000 }).map(event => String(event.id)));
   addCollectionActions({
     actions,
     warnings,
