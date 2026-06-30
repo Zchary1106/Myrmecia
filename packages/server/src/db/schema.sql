@@ -628,3 +628,21 @@ SELECT 1;
 -- Migration: 202606280002_add_workspace_id_to_platform_events
 ALTER TABLE platform_events ADD COLUMN workspace_id TEXT DEFAULT 'default';
 CREATE INDEX IF NOT EXISTS idx_platform_events_workspace ON platform_events(workspace_id);
+
+-- Migration: 202606300001_add_execution_ledger
+CREATE TABLE IF NOT EXISTS execution_ledger (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  execution_id TEXT NOT NULL,
+  task_id TEXT,
+  agent_id TEXT,
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  seq INTEGER NOT NULL,
+  type TEXT NOT NULL,
+  decision TEXT,
+  summary TEXT NOT NULL DEFAULT '',
+  metadata JSON NOT NULL DEFAULT '{}',
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_execution_ledger_execution ON execution_ledger(execution_id, seq);
+CREATE INDEX IF NOT EXISTS idx_execution_ledger_task ON execution_ledger(task_id);
+CREATE INDEX IF NOT EXISTS idx_execution_ledger_workspace ON execution_ledger(workspace_id);

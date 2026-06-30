@@ -27,6 +27,7 @@ describe('database migrations', () => {
     expect(rows.map(row => row.id)).toContain('202606240001_add_domain_id_to_pipelines');
     expect(rows.map(row => row.id)).toContain('202606280001_allow_pipeline_awaiting_retry_status');
     expect(rows.map(row => row.id)).toContain('202606280002_add_workspace_id_to_platform_events');
+    expect(rows.map(row => row.id)).toContain('202606300001_add_execution_ledger');
 
     const columns = db.all('PRAGMA table_info(tasks)') as { name: string }[];
     expect(columns.map(column => column.name)).toContain('workspace_path');
@@ -45,6 +46,10 @@ describe('database migrations', () => {
     expect(preferenceTables).toHaveLength(1);
     const platformEventColumns = db.all('PRAGMA table_info(platform_events)') as { name: string }[];
     expect(platformEventColumns.map(column => column.name)).toContain('workspace_id');
+    const ledgerTables = db.all(`
+      SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'execution_ledger'
+    `);
+    expect(ledgerTables).toHaveLength(1);
   });
 
   it('does not re-run tracked migrations on restart', () => {

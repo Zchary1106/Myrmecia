@@ -60,6 +60,7 @@ import { createUsageRoutes } from './billing/usage.js';
 import { createPluginRoutes } from './plugins/registry.js';
 import { createBillingRoutes } from './billing/metering.js';
 import { createEvalRoutes } from './evaluation/eval-framework.js';
+import { createHarnessRoutes } from './testing/harness-eval.js';
 import { openApiHandler } from './openapi/spec-generator.js';
 import { createReleaseRoutes } from './deploy/release-manager.js';
 import { createApiKeyRoutes } from './auth/api-keys.js';
@@ -253,6 +254,7 @@ async function main() {
   app.use('/api/v1/plugins', createPluginRoutes());
   app.use('/api/v1/billing', createBillingRoutes());
   app.use('/api/v1/eval', createEvalRoutes());
+  app.use('/api/v1/harness', createHarnessRoutes());
   app.use('/api/v1/releases', createReleaseRoutes());
   app.use('/api/v1/api-keys', createApiKeyRoutes());
   app.use('/api/v1/dlp-rules', createDLPRoutes());

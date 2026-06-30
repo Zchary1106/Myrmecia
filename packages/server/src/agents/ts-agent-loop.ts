@@ -21,8 +21,10 @@ import { buildSandboxToolDefinition, executeTool, isSandboxTool } from '../skill
 import { isMcpTool } from '../tools/mcp-manager.js';
 import { getMcpToolDefinitions, executeMcpTool } from '../tools/mcp-tools.js';
 import { appendExecutionAuditEvent, recordExecutionPolicySnapshot } from '../audit/execution-audit.js';
+import { recordLedgerEntry } from '../db/models/execution-ledger.js';
 import { resolveDomainForTask, applyDomainOverlay, applyDomainKnowledge } from './domain-context.js';
 import { buildAgentSystemPrompt } from './agent-prompt.js';
+import { getSandboxProfile } from './sandbox-profile.js';
 
 const MAX_RECENT_ACTIVITIES = 5;
 
@@ -221,7 +223,7 @@ export class TsAgentLoop {
         toolPolicy,
         workspaceScope: { workspaceId: task.workspaceId, workdir: task.workdir },
         dlp: { enabled: true, mode: 'scan-redact-block' },
-        sandbox: { enabled: true, guardian: true },
+        sandbox: { enabled: true, guardian: true, profile: getSandboxProfile() },
       },
     });
     for (const decision of toolPolicy.decisions.filter(d => !d.allowed)) {
@@ -232,6 +234,26 @@ export class TsAgentLoop {
         metadata: { decision },
       });
     }
+    recordLedgerEntry({
+      executionId, taskId: task.id, agentId: agent.id, workspaceId: task.workspaceId,
+      type: 'model.selected', decision: selectedModel,
+      summary: `Model ${selectedModel} via ${modelSelection.source} (${modelSelection.reason})`,
+      metadata: {
+        modelId: selectedModel,
+        tier: modelSelection.modelTier,
+        source: modelSelection.source,
+        reason: modelSelection.reason,
+      },
+    });
+    recordLedgerEntry({
+      executionId, taskId: task.id, agentId: agent.id, workspaceId: task.workspaceId,
+      type: 'tool.policy', decision: `${toolPolicy.allowedTools.length} allowed`,
+      summary: `Tool policy resolved: ${toolPolicy.allowedTools.length} allowed, ${toolPolicy.decisions.filter(d => !d.allowed).length} blocked`,
+      metadata: {
+        allowed: toolPolicy.allowedTools,
+        blocked: toolPolicy.decisions.filter(d => !d.allowed).map(d => ({ toolId: d.toolId, reason: d.reason })),
+      },
+    });
     const modelSpan = createTraceSpan({
       traceId, parentSpanId: rootSpanId, type: 'model.route', name: 'Select model',
       metadata: modelSelection as unknown as Record<string, unknown>,
@@ -454,6 +476,12 @@ export class TsAgentLoop {
 
             const durationMs = Date.now() - toolStartTime;
             totalToolRuntimeMs += durationMs;
+            recordLedgerEntry({
+              executionId, taskId: task.id, agentId: agent.id, workspaceId: task.workspaceId,
+              type: 'tool.executed', decision: toolStatus,
+              summary: `Tool ${toolName} ${toolStatus} in ${durationMs}ms`,
+              metadata: { toolName, status: toolStatus, durationMs, inputSummary: summarizeToolPayload(toolInput) },
+            });
             if (toolStatus === 'failed') {
               appendExecutionAuditEvent(executionId, {
                 type: 'tool.failed',
@@ -578,7 +606,7 @@ export class TsAgentLoop {
         toolPolicy,
         workspaceScope: { workspaceId: task.workspaceId, workdir: task.workdir },
         dlp: { enabled: true, mode: 'scan-redact-block' },
-        sandbox: { enabled: true, guardian: true },
+        sandbox: { enabled: true, guardian: true, profile: getSandboxProfile() },
       },
     });
     let inputTokens = 0;
