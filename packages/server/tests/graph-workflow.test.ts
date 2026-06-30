@@ -154,4 +154,24 @@ describe('GraphWorkflowEngine', () => {
     expect(replayed.runState!.input).toBe('v2');
     expect(replayed.runState!.nodes.A.status).toBe('running');
   });
+
+  it('resolves task completion from persisted run state after engine restart', async () => {
+    const wf = createGraphWorkflow({
+      name: 'Restartable',
+      graph: { nodes: [{ id: 'A', agentRole: 'developer' }], edges: [] },
+      workspaceId: 'ws-1',
+    });
+    await engine.run(wf.id, 'goal');
+    const taskId = getGraphWorkflow(wf.id)!.runState!.nodes.A.taskId!;
+
+    engine.dispose();
+    engine = new GraphWorkflowEngine(fakeQueue, fakeAgentManager);
+    eventBus.emit('task:done', { taskId, output: 'done after restart', workspaceId: 'ws-1' } as any);
+    await flush();
+
+    const updated = getGraphWorkflow(wf.id)!;
+    expect(updated.status).toBe('done');
+    expect(updated.runState!.nodes.A.status).toBe('done');
+    expect(updated.runState!.nodes.A.output).toBe('done after restart');
+  });
 });

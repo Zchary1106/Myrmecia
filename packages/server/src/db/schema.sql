@@ -269,7 +269,7 @@ CREATE TABLE IF NOT EXISTS pipelines (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   template_id TEXT,
-  status TEXT NOT NULL DEFAULT 'running' CHECK(status IN ('running','paused','blocked','done','failed')),
+  status TEXT NOT NULL DEFAULT 'running' CHECK(status IN ('running','paused','blocked','done','failed','awaiting_retry')),
   stages JSON NOT NULL DEFAULT '[]',
   current_stage_index INTEGER DEFAULT 0,
   gate_mode TEXT NOT NULL DEFAULT 'auto' CHECK(gate_mode IN ('auto','manual')),
@@ -620,3 +620,11 @@ CREATE INDEX IF NOT EXISTS idx_tasks_domain ON tasks(domain_id);
 
 -- Migration: 202606240001_add_domain_id_to_pipelines
 ALTER TABLE pipelines ADD COLUMN domain_id TEXT;
+
+-- Migration: 202606280001_allow_pipeline_awaiting_retry_status
+-- Runtime handles this migration by rebuilding the pipelines table because SQLite cannot ALTER CHECK constraints.
+SELECT 1;
+
+-- Migration: 202606280002_add_workspace_id_to_platform_events
+ALTER TABLE platform_events ADD COLUMN workspace_id TEXT DEFAULT 'default';
+CREATE INDEX IF NOT EXISTS idx_platform_events_workspace ON platform_events(workspace_id);

@@ -25,16 +25,26 @@ describe('database migrations', () => {
     expect(rows.map(row => row.id)).toContain('202605100001_expand_operator_action_targets');
     expect(rows.map(row => row.id)).toContain('202606230001_add_domain_id_to_tasks');
     expect(rows.map(row => row.id)).toContain('202606240001_add_domain_id_to_pipelines');
+    expect(rows.map(row => row.id)).toContain('202606280001_allow_pipeline_awaiting_retry_status');
+    expect(rows.map(row => row.id)).toContain('202606280002_add_workspace_id_to_platform_events');
 
     const columns = db.all('PRAGMA table_info(tasks)') as { name: string }[];
     expect(columns.map(column => column.name)).toContain('workspace_path');
     expect(columns.map(column => column.name)).toContain('domain_id');
     const pipelineColumns = db.all('PRAGMA table_info(pipelines)') as { name: string }[];
     expect(pipelineColumns.map(column => column.name)).toContain('domain_id');
+    expect(() => {
+      db.run(`
+        INSERT INTO pipelines (id, name, status, stages, input)
+        VALUES ('pipeline-awaiting-retry', 'Awaiting Retry', 'awaiting_retry', '[]', 'input')
+      `);
+    }).not.toThrow();
     const preferenceTables = db.all(`
       SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'operator_preferences'
     `);
     expect(preferenceTables).toHaveLength(1);
+    const platformEventColumns = db.all('PRAGMA table_info(platform_events)') as { name: string }[];
+    expect(platformEventColumns.map(column => column.name)).toContain('workspace_id');
   });
 
   it('does not re-run tracked migrations on restart', () => {

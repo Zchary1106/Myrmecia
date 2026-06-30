@@ -57,6 +57,32 @@ export const BUILTIN_TOOLS: BuiltinToolDefinition[] = [
     },
   },
   {
+    id: 'web.extract',
+    name: 'Web Extract',
+    description: 'Fetch an absolute http/https URL and return structured page text with source citation metadata.',
+    category: 'research',
+    riskLevel: 'medium',
+    version: '1.0.0',
+    implementationRef: 'packages/server/src/skills/tool-sandbox.ts:executeTool',
+    inputSchema: {
+      type: 'object',
+      required: ['url'],
+      properties: {
+        url: { type: 'string', format: 'uri' },
+        maxChars: { type: 'integer', minimum: 500, maximum: 20000 },
+      },
+    },
+    outputSchema: { type: 'object' },
+    metadata: { network: true, readOnly: true, citations: true, allowedDomains: ['*'], destructive: false, writesWorkspace: false, writesOutsideWorkspace: false },
+    paramConstraints: {
+      url: {
+        allowedDomains: ['*'],
+        pattern: '^https?://',
+        maxLength: 2048,
+      },
+    },
+  },
+  {
     id: 'crawler.extract_links',
     name: 'Crawler Link Extractor',
     description: 'Fetch a page and extract visible links for lightweight crawling.',

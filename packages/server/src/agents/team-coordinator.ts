@@ -62,11 +62,17 @@ export class TeamCoordinator {
     return row ? rowToRun(row) : undefined;
   }
 
-  listRuns(teamId?: string, limit = 50): TeamRun[] {
+  listRuns(teamId?: string, workspaceId?: string, limit = 50): TeamRun[] {
     const db = getDb();
-    const rows = (teamId
-      ? db.all('SELECT * FROM team_runs WHERE team_id = ? ORDER BY created_at DESC LIMIT ?', teamId, limit)
-      : db.all('SELECT * FROM team_runs ORDER BY created_at DESC LIMIT ?', limit)) as any[];
+    const conditions: string[] = [];
+    const params: any[] = [];
+    if (teamId) { conditions.push('team_id = ?'); params.push(teamId); }
+    if (workspaceId) { conditions.push('workspace_id = ?'); params.push(workspaceId); }
+    let sql = 'SELECT * FROM team_runs';
+    if (conditions.length) sql += ' WHERE ' + conditions.join(' AND ');
+    sql += ' ORDER BY created_at DESC LIMIT ?';
+    params.push(limit);
+    const rows = db.all(sql, ...params) as any[];
     return rows.map(rowToRun);
   }
 

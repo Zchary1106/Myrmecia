@@ -15,12 +15,14 @@ describe('engineering sandbox tools', () => {
   });
 
   it('registers the new tools as sandbox tools with schemas', () => {
-    for (const t of ['file_read', 'file_write', 'file_list', 'apply_patch', 'shell_exec', 'grep']) {
+    for (const t of ['file_read', 'file_write', 'file_list', 'apply_patch', 'shell_exec', 'grep', 'web.extract']) {
       expect(isSandboxTool(t)).toBe(true);
     }
     const def = buildSandboxToolDefinition('apply_patch');
     expect(def.function.parameters.required).toEqual(['path', 'old_str', 'new_str']);
     expect((def.function.parameters.properties as any).old_str).toBeDefined();
+    const webDef = buildSandboxToolDefinition('web.extract');
+    expect(webDef.function.parameters.required).toEqual(['url']);
   });
 
   it('file_write then file_read round-trips inside the workspace', async () => {
@@ -72,5 +74,13 @@ describe('engineering sandbox tools', () => {
     expect(ok.output).toContain('hello-colony');
     const bad = await executeTool('shell_exec', { command: 'sudo rm -rf /' }, workdir);
     expect(bad.status).toBe('failed');
+  });
+
+  it('web tools fail explicitly when disabled by policy', async () => {
+    process.env.WEB_TOOLS_ENABLED = 'false';
+    const result = await executeTool('web.extract', { url: 'https://example.com' }, workdir);
+    delete process.env.WEB_TOOLS_ENABLED;
+    expect(result.status).toBe('failed');
+    expect(result.output).toContain('Web tools are disabled');
   });
 });

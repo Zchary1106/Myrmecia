@@ -14,7 +14,7 @@ COPY packages/server packages/server
 COPY packages/python-runtime packages/python-runtime
 COPY tsconfig.base.json .
 
-RUN pnpm --filter @agent-factory/shared build && pnpm --filter @agent-factory/server build
+RUN pnpm --filter @myrmecia/shared build && pnpm --filter @myrmecia/server build
 
 FROM node:20-slim
 WORKDIR /app

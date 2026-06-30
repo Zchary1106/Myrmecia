@@ -34,6 +34,7 @@ export const SANDBOX_TOOL_NAMES = [
   'search',
   'web.fetch',
   'web.search',
+  'web.extract',
   'crawler.extract_links',
   'content.wechat_layout',
   'content.hashtag_plan',
@@ -57,6 +58,7 @@ export function buildSandboxToolDefinition(toolName: string, modelToolName = too
     search: 'Search workspace text files for a pattern.',
     'web.fetch': 'Fetch an absolute http/https URL and return compact text.',
     'web.search': 'Search the public web and return compact result titles and URLs.',
+    'web.extract': 'Fetch a page and return structured text with source citations.',
     'crawler.extract_links': 'Fetch a page and extract visible links.',
     'content.wechat_layout': 'Convert a markdown draft into WeChat layout recommendations and HTML blocks.',
     'content.hashtag_plan': 'Generate platform hashtag and keyword suggestions.',
@@ -77,6 +79,15 @@ export function buildSandboxToolDefinition(toolName: string, modelToolName = too
     shell_exec: { properties: { command: { type: 'string' } }, required: ['command'] },
     grep: { properties: { pattern: { type: 'string' }, glob: { type: 'string', description: 'Optional file glob, e.g. *.ts' } }, required: ['pattern'] },
     search: { properties: { pattern: { type: 'string' } }, required: ['pattern'] },
+    'web.fetch': { properties: { url: { type: 'string', description: 'Absolute http/https URL' } }, required: ['url'] },
+    'web.search': { properties: { query: { type: 'string' } }, required: ['query'] },
+    'web.extract': {
+      properties: {
+        url: { type: 'string', description: 'Absolute http/https URL' },
+        maxChars: { type: 'integer', description: 'Maximum extracted text length, capped by runtime limits' },
+      },
+      required: ['url'],
+    },
   };
   const schema = schemaByTool[toolName];
   return {
@@ -154,6 +165,12 @@ function assertNetworkAllowed(): void {
   }
 }
 
+function assertWebToolsEnabled(): void {
+  if ((process.env.WEB_TOOLS_ENABLED || '').toLowerCase() === 'false') {
+    throw new Error('Web tools are disabled. Set WEB_TOOLS_ENABLED=true to allow web research tools.');
+  }
+}
+
 function capOutput(output: string, maxOutputChars: number): string {
   const capped = output.length > maxOutputChars ? output.slice(0, maxOutputChars) : output;
   return redactSecrets(capped);
@@ -181,6 +198,7 @@ function safeUrl(value: string): URL {
 }
 
 async function fetchText(urlValue: string, timeoutMs: number, maxOutputChars: number): Promise<string> {
+  assertWebToolsEnabled();
   assertNetworkAllowed();
   const url = safeUrl(urlValue);
   const controller = new AbortController();
@@ -196,6 +214,7 @@ async function fetchText(urlValue: string, timeoutMs: number, maxOutputChars: nu
     if (!response.ok) {
       throw new Error(`Fetch failed: ${response.status} ${response.statusText}`);
     }
+
     const contentType = response.headers.get('content-type') || '';
     const buffer = Buffer.from(await response.arrayBuffer());
     const text = buffer.toString(contentType.includes('charset=') ? undefined : 'utf-8');
@@ -203,6 +222,24 @@ async function fetchText(urlValue: string, timeoutMs: number, maxOutputChars: nu
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function extractTitle(page: string, fallbackUrl: string): string {
+  const titleMatch = page.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  const raw = titleMatch?.[1]?.replace(/<[^>]+>/g, ' ') || fallbackUrl;
+  return compactText(raw, 180);
+}
+
+function htmlToReadableText(page: string, limit: number): string {
+  const text = page
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>');
+  return compactText(text, limit);
 }
 
 function parseLinks(page: string, baseUrl: string, maxLinks: number): Array<{ title: string; url: string }> {
@@ -368,6 +405,27 @@ export async function executeTool(
       return { output, status: 'done' };
     } catch (err: any) {
       return { output: `Fetch failed: ${err.message}`, status: 'failed' };
+    }
+  }
+
+  if (toolName === 'web.extract') {
+    try {
+      const url = safeUrl(String(toolInput.url || '')).toString();
+      const maxChars = Math.min(Number(toolInput.maxChars || 6000), maxOutputChars);
+      const page = await fetchText(url, Math.min(timeoutMs, 15_000), Math.max(maxChars * 3, 20_000));
+      const title = extractTitle(page, url);
+      const content = htmlToReadableText(page, maxChars);
+      return {
+        output: jsonToolOutput({
+          url,
+          title,
+          content,
+          citations: [{ url, title }],
+        }, maxOutputChars),
+        status: 'done',
+      };
+    } catch (err: any) {
+      return { output: `Extract failed: ${err.message}`, status: 'failed' };
     }
   }
 

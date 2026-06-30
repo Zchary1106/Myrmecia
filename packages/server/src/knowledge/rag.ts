@@ -24,6 +24,7 @@ import { logger } from '../lib/logger.js';
 import { getEmbeddingService } from '../memory/embedding.js';
 import { getMemoryStore } from '../memory/memory-store.js';
 import { Router } from 'express';
+import { PgVectorStore } from './pgvector-store.js';
 
 // ---------- Types ----------
 
@@ -68,7 +69,9 @@ export interface MemoryEntry {
 
 interface VectorStore {
   upsert(id: string, embedding: number[], metadata: Record<string, unknown>): void;
+  upsertAsync?(id: string, embedding: number[], metadata: Record<string, unknown>): Promise<void>;
   search(embedding: number[], topK: number, filter?: Record<string, string>): Array<{ id: string; score: number; content?: string }>;
+  searchAsync?(embedding: number[], topK: number, filter?: Record<string, string>): Promise<Array<{ id: string; score: number; content?: string }>>;
   delete(id: string): void;
 }
 
@@ -140,9 +143,6 @@ function getVectorStore(): VectorStore {
   if (!vectorStore) {
     const backend = process.env.VECTOR_BACKEND || 'memory';
     if (backend === 'pgvector') {
-      // PgVectorStore is imported dynamically to avoid requiring 'pg' when not needed
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { PgVectorStore } = require('./pgvector-store.js');
       vectorStore = new PgVectorStore() as VectorStore;
       logger.info('Using pgvector vector store');
     } else if (backend === 'memory') {
@@ -154,6 +154,26 @@ function getVectorStore(): VectorStore {
     }
   }
   return vectorStore;
+}
+
+async function upsertVector(store: VectorStore, id: string, embedding: number[], metadata: Record<string, unknown>): Promise<void> {
+  if (store.upsertAsync) await store.upsertAsync(id, embedding, metadata);
+  else store.upsert(id, embedding, metadata);
+}
+
+async function searchVector(
+  store: VectorStore,
+  embedding: number[],
+  topK: number,
+  filter?: Record<string, string>,
+): Promise<Array<{ id: string; score: number; content?: string }>> {
+  return store.searchAsync
+    ? store.searchAsync(embedding, topK, filter)
+    : store.search(embedding, topK, filter);
+}
+
+export function resetKnowledgeVectorStoreForTests(): void {
+  vectorStore = undefined;
 }
 
 export const RAG_SCHEMA = `
@@ -186,6 +206,7 @@ CREATE INDEX IF NOT EXISTS idx_agent_memories_agent ON agent_memories(agent_id, 
 
 export async function ingestDocument(workspaceId: string, title: string, content: string, metadata: Record<string, unknown> = {}, domainId?: string): Promise<Document> {
   const db = getDb();
+  const store = getVectorStore();
   const id = `doc_${uuid().slice(0, 8)}`;
   const chunks = chunkText(content);
   const docMetadata = domainId ? { ...metadata, domainId } : metadata;
@@ -194,15 +215,14 @@ export async function ingestDocument(workspaceId: string, title: string, content
     'INSERT INTO knowledge_documents (id, workspace_id, title, content, metadata, chunk_count) VALUES (?, ?, ?, ?, ?, ?)',
     id, workspaceId, title, content, JSON.stringify(docMetadata), chunks.length
   );
-
   // Embed and store each chunk
-  const store = getVectorStore();
+  // Embed and store each chunk
   for (let i = 0; i < chunks.length; i++) {
     const chunkId = `${id}_chunk_${i}`;
     const embedding = await getEmbedding(chunks[i]);
     const chunkMeta: Record<string, unknown> = { documentId: id, workspaceId, index: i, content: chunks[i] };
     if (domainId) chunkMeta.domainId = domainId;
-    store.upsert(chunkId, embedding, chunkMeta);
+    await upsertVector(store, chunkId, embedding, chunkMeta);
 
     // Bridge knowledge into the unified memory so it participates in recall /
     // context injection (reuses the embedding — no extra cost).
@@ -233,7 +253,7 @@ export async function searchKnowledge(workspaceId: string, query: string, topK =
   const queryEmbedding = await getEmbedding(query);
   const storeFilter: Record<string, string> = { workspaceId };
   if (filter?.domainId) storeFilter.domainId = filter.domainId;
-  const results = store.search(queryEmbedding, topK, storeFilter);
+  const results = await searchVector(store, queryEmbedding, topK, storeFilter);
 
   const db = getDb();
   // Cache document rows so multiple hits from the same doc don't re-query the DB.

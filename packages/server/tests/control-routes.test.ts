@@ -14,6 +14,7 @@ import { createSkillRoutes } from '../src/routes/skills.js';
 import { createTemplateRoutes } from '../src/routes/templates.js';
 import { createApiAuthMiddleware } from '../src/auth/token-auth.js';
 import { createApiKey } from '../src/auth/api-keys.js';
+import { metricsHandler } from '../src/observability/telemetry.js';
 import { addWorkspaceMember, createOrganization, createUser, createWorkspace, tenantMiddleware } from '../src/auth/tenant.js';
 import { createTask, updateTask } from '../src/db/models/task.js';
 import { createInboxEntry } from '../src/db/models/inbox.js';
@@ -1143,6 +1144,62 @@ describe('control routes', () => {
       });
       expect(valid.status).toBe(200);
       expect(valid.body).toEqual([]);
+    });
+  });
+
+  it('requires API auth in production even without a static token', async () => {
+    const previousNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    const key = createApiKey({
+      workspaceId: 'default',
+      name: 'production-read',
+      scopes: ['tasks:read'],
+    });
+
+    const app = express();
+    app.use(express.json());
+    app.use('/api', createApiAuthMiddleware());
+    app.use('/api/tasks', createTaskRoutes({} as unknown as TaskQueue));
+
+    try {
+      await withApp(app, async (baseUrl) => {
+        const missing = await jsonFetch<any>(baseUrl, '/api/tasks');
+        expect(missing.status).toBe(401);
+        expect(missing.body.error.code).toBe('AUTH_REQUIRED');
+
+        const valid = await jsonFetch<any[]>(baseUrl, '/api/tasks', {
+          headers: { Authorization: `Bearer ${key.plaintext}` },
+        });
+        expect(valid.status).toBe(200);
+      });
+    } finally {
+      if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previousNodeEnv;
+    }
+  });
+
+  it('collects metrics from current schema without querying stale agent columns', async () => {
+    const agent = createAgent({ id: 'metrics-agent', name: 'Metrics Agent', role: 'dev' });
+    const task = createTask({
+      title: 'Metrics task',
+      description: 'Metrics task',
+      input: 'run',
+      mode: 'direct',
+      assigneeId: agent.id,
+    });
+    getDb().run(`
+      INSERT INTO task_executions (id, task_id, agent_def_id, status, workspace_id)
+      VALUES (?, ?, ?, 'running', 'default')
+    `, 'metrics-exec', task.id, agent.id);
+
+    const app = express();
+    app.get('/metrics', metricsHandler);
+
+    await withApp(app, async (baseUrl) => {
+      const result = await jsonFetch<any>(baseUrl, '/metrics');
+      expect(result.status).toBe(200);
+      expect(result.body.agents.total).toBe(1);
+      expect(result.body.agents.active).toBe(1);
     });
   });
 

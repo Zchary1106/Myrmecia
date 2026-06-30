@@ -7,12 +7,17 @@
 
 import { logger } from '../lib/logger.js';
 import { getEmbeddingService } from '../memory/embedding.js';
+import { createRequire } from 'module';
+
+const require = createRequire(import.meta.url);
 
 // ---------- Interface (mirrors rag.ts VectorStore) ----------
 
 export interface VectorStore {
   upsert(id: string, embedding: number[], metadata: Record<string, unknown>): void;
+  upsertAsync?(id: string, embedding: number[], metadata: Record<string, unknown>): Promise<void>;
   search(embedding: number[], topK: number, filter?: Record<string, string>): Array<{ id: string; score: number; content?: string }>;
+  searchAsync?(embedding: number[], topK: number, filter?: Record<string, string>): Promise<Array<{ id: string; score: number; content?: string }>>;
   delete(id: string): void;
   deleteByDocument?(documentId: string): void;
 }
@@ -90,12 +95,12 @@ export class PgVectorStore implements VectorStore {
 
   upsert(id: string, embedding: number[], metadata: Record<string, unknown>): void {
     // Fire-and-forget async init + upsert
-    this._upsertAsync(id, embedding, metadata).catch(err =>
+    this.upsertAsync(id, embedding, metadata).catch(err =>
       logger.error({ err, id }, 'PgVectorStore upsert failed')
     );
   }
 
-  private async _upsertAsync(id: string, embedding: number[], metadata: Record<string, unknown>): Promise<void> {
+  async upsertAsync(id: string, embedding: number[], metadata: Record<string, unknown>): Promise<void> {
     await this.ensureSchema();
     const vectorStr = `[${embedding.join(',')}]`;
     const documentId = (metadata.documentId as string) || null;
@@ -105,20 +110,20 @@ export class PgVectorStore implements VectorStore {
 
     await this.pool.query(
       `INSERT INTO embeddings (id, document_id, chunk_index, embedding, content, metadata, workspace_id)
-       VALUES ($1, $2, $3, $4::vector, $5, $6, $7)
+       VALUES ($1, $2, $3, $4::vector, $5, $6::jsonb, $7)
        ON CONFLICT (id) DO UPDATE SET
+         document_id = $2,
+         chunk_index = $3,
          embedding = $4::vector,
-         metadata = $6,
-         content = $5`,
+         content = $5,
+         metadata = $6::jsonb,
+         workspace_id = $7`,
       [id, documentId, chunkIndex, vectorStr, content, JSON.stringify(metadata), workspaceId]
     );
   }
 
   search(embedding: number[], topK: number, filter?: Record<string, string>): Array<{ id: string; score: number; content?: string }> {
-    // Return empty for sync call; use searchAsync for real results
-    // This maintains interface compat; the RAG layer should prefer searchAsync
-    logger.warn('PgVectorStore.search() called synchronously — use searchAsync() for actual results');
-    return [];
+    throw new Error('PgVectorStore.search() is async-only; use searchAsync()');
   }
 
   async searchAsync(embedding: number[], topK: number, filter?: Record<string, string>): Promise<Array<{ id: string; score: number; content?: string }>> {
@@ -138,8 +143,8 @@ export class PgVectorStore implements VectorStore {
           params.push(value);
           conditions.push(`document_id = $${params.length}`);
         } else {
-          params.push(value);
-          conditions.push(`metadata->>$${params.length} IS NOT NULL`);
+          params.push(key, value);
+          conditions.push(`(metadata ->> $${params.length - 1}) = $${params.length}`);
         }
       }
     }

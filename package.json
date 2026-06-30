@@ -9,6 +9,9 @@
     "build": "pnpm -r build",
     "dev:server": "pnpm --filter @myrmecia/server dev",
     "dev:dashboard": "pnpm --filter @myrmecia/dashboard dev",
+    "demo": "bash scripts/demo.sh",
+    "demo:seed": "AGENT_FACTORY_DEMO_MODE=true DB_PATH=packages/server/data/demo.db pnpm --filter @myrmecia/server exec tsx src/demo/seed-demo.ts",
+    "demo:clean": "rm -f packages/server/data/demo.db packages/server/data/demo.db-wal packages/server/data/demo.db-shm",
     "cli": "node packages/cli/src/index.ts",
     "lint": "pnpm -r --if-present lint"
   },

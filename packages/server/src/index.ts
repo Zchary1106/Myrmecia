@@ -199,6 +199,8 @@ async function main() {
   app.use(cors(corsOrigins ? {
     origin: corsOrigins.split(',').map(o => o.trim()),
     credentials: true,
+  } : process.env.NODE_ENV === 'production' ? {
+    origin: false,
   } : undefined));
 
   // HSTS — enforce HTTPS in production
@@ -223,8 +225,8 @@ async function main() {
   app.use('/api/v1', createApiAuthMiddleware({ publicPaths: ['/health'] }));
   app.use('/api/v1', tenantMiddleware());
 
-  // Metrics endpoint (no auth required)
-  app.get('/metrics', metricsHandler);
+  // Metrics endpoint uses the same auth policy as API routes. In local mode this remains open.
+  app.get('/metrics', createApiAuthMiddleware(), metricsHandler);
 
   // Auth routes (no auth required)
   app.use('/auth', createAuthRoutes());

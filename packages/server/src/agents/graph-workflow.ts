@@ -139,7 +139,7 @@ export function createGraphWorkflow(data: { name: string; description?: string; 
   getDb().run(
     `INSERT INTO graph_workflows (id, name, description, workspace_id, graph, status, input)
      VALUES (?, ?, ?, ?, ?, 'draft', ?)`,
-    id, data.name, data.description ?? null, data.workspaceId ?? null,
+    id, data.name, data.description ?? null, data.workspaceId ?? 'default',
     JSON.stringify(data.graph ?? { nodes: [], edges: [] }), data.input ?? null
   );
   return getGraphWorkflow(id)!;
@@ -155,7 +155,7 @@ export function listGraphWorkflows(filter?: { workspaceId?: string; limit?: numb
   ensureSchema();
   const limit = Math.min(Math.max(filter?.limit ?? 100, 1), 500);
   const rows = filter?.workspaceId
-    ? getDb().all('SELECT * FROM graph_workflows WHERE workspace_id = ? OR workspace_id IS NULL ORDER BY updated_at DESC LIMIT ?', filter.workspaceId, limit)
+    ? getDb().all('SELECT * FROM graph_workflows WHERE COALESCE(workspace_id, ?) = ? ORDER BY updated_at DESC LIMIT ?', 'default', filter.workspaceId, limit)
     : getDb().all('SELECT * FROM graph_workflows ORDER BY updated_at DESC LIMIT ?', limit);
   return (rows as any[]).map(rowToWorkflow);
 }
@@ -187,6 +187,19 @@ export function listGraphRunEvents(runId: string): Array<{ nodeId?: string; type
   ensureSchema();
   const rows = getDb().all('SELECT * FROM graph_run_events WHERE run_id = ? ORDER BY id ASC', runId) as any[];
   return rows.map(r => ({ nodeId: r.node_id ?? undefined, type: r.type, data: parseJson(r.data, {}), createdAt: r.created_at }));
+}
+
+function findRunningGraphTaskRef(taskId: string): { workflowId: string; nodeId: string; runId: string } | undefined {
+  ensureSchema();
+  const rows = getDb().all('SELECT id, run_state FROM graph_workflows WHERE status = ? AND run_state IS NOT NULL', 'running') as any[];
+  for (const row of rows) {
+    const runState = parseJson<RunState | undefined>(row.run_state, undefined);
+    if (!runState?.nodes) continue;
+    for (const [nodeId, state] of Object.entries(runState.nodes)) {
+      if (state.taskId === taskId) return { workflowId: row.id, nodeId, runId: runState.runId };
+    }
+  }
+  return undefined;
 }
 
 // ---------- Engine ----------
@@ -326,7 +339,7 @@ export class GraphWorkflowEngine {
   }
 
   private onTaskDone(payload: any): void {
-    const ref = this.taskToNode.get(payload?.taskId);
+    const ref = this.resolveTaskNodeRef(payload?.taskId);
     if (!ref) return;
     this.taskToNode.delete(payload.taskId);
 
@@ -343,7 +356,7 @@ export class GraphWorkflowEngine {
   }
 
   private onTaskFailed(payload: any): void {
-    const ref = this.taskToNode.get(payload?.taskId);
+    const ref = this.resolveTaskNodeRef(payload?.taskId);
     if (!ref) return;
     this.taskToNode.delete(payload.taskId);
 
@@ -358,6 +371,11 @@ export class GraphWorkflowEngine {
 
     this.cascadeSkip(wf.id, ref.nodeId);
     this.checkComplete(wf.id);
+  }
+
+  private resolveTaskNodeRef(taskId?: string): { workflowId: string; nodeId: string; runId: string } | undefined {
+    if (!taskId) return undefined;
+    return this.taskToNode.get(taskId) || findRunningGraphTaskRef(taskId);
   }
 
   /** Dispatch every pending node whose predecessors are all done. */

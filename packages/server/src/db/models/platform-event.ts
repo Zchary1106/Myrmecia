@@ -1,6 +1,9 @@
 import { getDb } from '../database.js';
 import type { PlatformEvent, PlatformEventSeverity, WSEventType } from '../../types.js';
 import type { BusEvent } from '../../events/event-bus.js';
+import { getTask } from './task.js';
+import { getPipeline } from './pipeline.js';
+import { getExecution } from './execution.js';
 
 function rowToPlatformEvent(row: any): PlatformEvent {
   return {
@@ -13,9 +16,22 @@ function rowToPlatformEvent(row: any): PlatformEvent {
     executionId: row.execution_id || undefined,
     inboxEntryId: row.inbox_entry_id || undefined,
     qualityAttemptId: row.quality_attempt_id || undefined,
+    workspaceId: row.workspace_id || undefined,
     payload: JSON.parse(row.payload || '{}'),
     createdAt: row.created_at,
   };
+}
+
+function eventWorkspaceId(payload: any, refs: ReturnType<typeof eventRefs>): string {
+  return payload?.workspaceId
+    || payload?.task?.workspaceId
+    || payload?.pipeline?.workspaceId
+    || payload?.entry?.workspaceId
+    || payload?.notification?.workspaceId
+    || (refs.taskId ? getTask(refs.taskId)?.workspaceId : undefined)
+    || (refs.pipelineId ? getPipeline(refs.pipelineId)?.workspaceId : undefined)
+    || (refs.executionId ? getExecution(refs.executionId)?.workspaceId : undefined)
+    || 'default';
 }
 
 function eventSeverity(type: WSEventType, payload: any): PlatformEventSeverity {
@@ -39,12 +55,13 @@ export function recordPlatformEvent(event: BusEvent): PlatformEvent {
   const db = getDb();
   const payload = event.payload as any;
   const refs = eventRefs(payload);
+  const workspaceId = eventWorkspaceId(payload, refs);
   const result = db.run(`
     INSERT INTO platform_events (
       event_type, severity, task_id, pipeline_id, agent_id, execution_id,
-      inbox_entry_id, quality_attempt_id, payload, created_at
+      inbox_entry_id, quality_attempt_id, workspace_id, payload, created_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
     event.type,
     eventSeverity(event.type, payload),
@@ -54,6 +71,7 @@ export function recordPlatformEvent(event: BusEvent): PlatformEvent {
     refs.executionId || null,
     refs.inboxEntryId || null,
     refs.qualityAttemptId || null,
+    workspaceId,
     JSON.stringify(payload || {}),
     event.timestamp,
   );
@@ -71,6 +89,7 @@ export function listPlatformEvents(filter?: {
   severity?: PlatformEventSeverity;
   taskId?: string;
   pipelineId?: string;
+  workspaceId?: string;
   limit?: number;
 }): PlatformEvent[] {
   const db = getDb();
@@ -82,6 +101,7 @@ export function listPlatformEvents(filter?: {
   if (filter?.severity) { conditions.push('severity = ?'); params.push(filter.severity); }
   if (filter?.taskId) { conditions.push('task_id = ?'); params.push(filter.taskId); }
   if (filter?.pipelineId) { conditions.push('pipeline_id = ?'); params.push(filter.pipelineId); }
+  if (filter?.workspaceId) { conditions.push('workspace_id = ?'); params.push(filter.workspaceId); }
   if (conditions.length) sql += ' WHERE ' + conditions.join(' AND ');
   sql += ' ORDER BY id DESC';
   sql += ' LIMIT ?';
@@ -90,8 +110,10 @@ export function listPlatformEvents(filter?: {
   return db.all(sql, ...params).map(rowToPlatformEvent);
 }
 
-export function countPlatformEvents(): number {
+export function countPlatformEvents(workspaceId?: string): number {
   const db = getDb();
-  const row = db.get('SELECT COUNT(*) AS count FROM platform_events');
+  const row = workspaceId
+    ? db.get('SELECT COUNT(*) AS count FROM platform_events WHERE workspace_id = ?', workspaceId)
+    : db.get('SELECT COUNT(*) AS count FROM platform_events');
   return row?.count || 0;
 }

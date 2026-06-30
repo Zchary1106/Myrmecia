@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { listTeams, getTeam, resolveTeamAgents, suggestTeam, createTeam, updateTeam, deleteTeam } from '../agents/team-registry.js';
 import type { TeamCoordinator } from '../agents/team-coordinator.js';
 import { notFound, parseBody, sendError } from './http.js';
+import { requestCanAccessWorkspace, workspaceIdFromRequest } from '../auth/tenant.js';
 
 const dispatchSchema = z.object({
   goal: z.string().trim().min(1, 'goal is required'),
@@ -29,17 +30,18 @@ const teamPatchSchema = teamSchema.partial().refine(d => Object.keys(d).length >
 
 export function createTeamRoutes(coordinator: TeamCoordinator): Router {
   const router = Router();
+  const ws = (req: any): string => workspaceIdFromRequest(req) || 'default';
 
   // GET /teams — list all teams with their resolved roster
-  router.get('/', (_req, res) => {
-    res.json({ teams: listTeams().map(t => ({ ...t, roster: resolveTeamAgents(t) })) });
+  router.get('/', (req, res) => {
+    res.json({ teams: listTeams(ws(req)).map(t => ({ ...t, roster: resolveTeamAgents(t) })) });
   });
 
   // POST /teams — create a custom team
   router.post('/', (req, res) => {
     try {
       const body = parseBody(teamSchema, req);
-      const team = createTeam(body);
+      const team = createTeam(body, ws(req));
       res.status(201).json({ ...team, roster: resolveTeamAgents(team) });
     } catch (err) {
       sendError(res, err);
@@ -48,21 +50,21 @@ export function createTeamRoutes(coordinator: TeamCoordinator): Router {
 
   // GET /teams/suggest?goal=... — keyword hint for a free-text goal
   router.get('/suggest', (req, res) => {
-    const team = suggestTeam(String(req.query.goal || ''));
+    const team = suggestTeam(String(req.query.goal || ''), ws(req));
     res.json({ team: team ? team.id : null, name: team?.name || null });
   });
 
   // GET /teams/runs — recent runs (optionally ?teamId=)
   router.get('/runs', (req, res) => {
     const teamId = req.query.teamId ? String(req.query.teamId) : undefined;
-    res.json({ runs: coordinator.listRuns(teamId) });
+    res.json({ runs: coordinator.listRuns(teamId, ws(req)) });
   });
 
   // GET /teams/runs/:runId — a run + its shared task board
   router.get('/runs/:runId', (req, res) => {
     try {
       const run = coordinator.getRun(req.params.runId);
-      if (!run) notFound('TEAM_RUN_NOT_FOUND', 'Team run not found');
+      if (!run || !requestCanAccessWorkspace(req, run.workspaceId)) notFound('TEAM_RUN_NOT_FOUND', 'Team run not found');
       res.json({ run, board: coordinator.board(run!.id) });
     } catch (err) {
       sendError(res, err);
@@ -73,7 +75,7 @@ export function createTeamRoutes(coordinator: TeamCoordinator): Router {
   router.post('/runs/:runId/message', async (req, res) => {
     try {
       const run = coordinator.getRun(req.params.runId);
-      if (!run) notFound('TEAM_RUN_NOT_FOUND', 'Team run not found');
+      if (!run || !requestCanAccessWorkspace(req, run.workspaceId)) notFound('TEAM_RUN_NOT_FOUND', 'Team run not found');
       const body = parseBody(messageSchema, req);
       const result = await coordinator.messageTeammate(run!.id, body.to, body.content, { redirect: body.redirect });
       res.status(202).json(result);
@@ -85,7 +87,7 @@ export function createTeamRoutes(coordinator: TeamCoordinator): Router {
   // GET /teams/:id — one team
   router.get('/:id', (req, res) => {
     try {
-      const team = getTeam(req.params.id);
+      const team = getTeam(req.params.id, ws(req));
       if (!team) notFound('TEAM_NOT_FOUND', 'Team not found');
       res.json({ ...team!, roster: resolveTeamAgents(team!) });
     } catch (err) {
@@ -96,10 +98,10 @@ export function createTeamRoutes(coordinator: TeamCoordinator): Router {
   // PATCH /teams/:id — edit a team (built-ins are materialized as a custom override)
   router.patch('/:id', (req, res) => {
     try {
-      const team = getTeam(req.params.id);
+      const team = getTeam(req.params.id, ws(req));
       if (!team) notFound('TEAM_NOT_FOUND', 'Team not found');
       const body = parseBody(teamPatchSchema, req);
-      const updated = updateTeam(req.params.id, body);
+      const updated = updateTeam(req.params.id, body, ws(req));
       res.json({ ...updated, roster: resolveTeamAgents(updated) });
     } catch (err) {
       sendError(res, err);
@@ -109,7 +111,7 @@ export function createTeamRoutes(coordinator: TeamCoordinator): Router {
   // DELETE /teams/:id — delete a custom team (or revert a built-in override)
   router.delete('/:id', (req, res) => {
     try {
-      const result = deleteTeam(req.params.id);
+      const result = deleteTeam(req.params.id, ws(req));
       res.json({ ok: true, ...result });
     } catch (err) {
       sendError(res, err);
@@ -119,10 +121,10 @@ export function createTeamRoutes(coordinator: TeamCoordinator): Router {
   // POST /teams/:id/dispatch — put the team to work on a goal (parallel board)
   router.post('/:id/dispatch', async (req, res) => {
     try {
-      const team = getTeam(req.params.id);
+      const team = getTeam(req.params.id, ws(req));
       if (!team) notFound('TEAM_NOT_FOUND', 'Team not found');
       const body = parseBody(dispatchSchema, req);
-      const result = await coordinator.dispatch(team!.id, body.goal, body.workspaceId || 'default');
+      const result = await coordinator.dispatch(team!.id, body.goal, ws(req));
       res.status(201).json(result);
     } catch (err) {
       sendError(res, err);

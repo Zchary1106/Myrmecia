@@ -17,6 +17,7 @@ import {
 } from '../db/models/operator-preference.js';
 import { eventBus } from '../events/event-bus.js';
 import { actorFromRequest, HttpError, notFound, parseBody, parseQuery, requireConfirmation, requireOperatorRole, sendError } from './http.js';
+import { requestCanAccessWorkspace, workspaceIdFromRequest } from '../auth/tenant.js';
 import {
   buildObservabilitySummary,
   buildRuntimeDiagnostics,
@@ -92,11 +93,13 @@ function parsePreferenceParams(params: unknown): z.infer<typeof preferenceParams
 
 export function createSystemRoutes(): Router {
   const router = Router();
+  const ws = (req: any): string => workspaceIdFromRequest(req) || 'default';
 
   router.get('/health', (req, res) => {
-    const agents = listAgents();
-    const tasks = listTasks();
-    const pipelines = listPipelines();
+    const workspaceId = ws(req);
+    const agents = listAgents({ workspaceId });
+    const tasks = listTasks({ workspaceId });
+    const pipelines = listPipelines({ workspaceId });
     const activeAgents = agents.filter(a => getActiveExecutionCount(a.id) > 0).length;
     res.json({
       status: 'ok',
@@ -115,7 +118,7 @@ export function createSystemRoutes(): Router {
   });
 
   router.get('/stats', (req, res) => {
-    const tasks = listTasks();
+    const tasks = listTasks({ workspaceId: ws(req) });
     res.json({
       totalTasks: tasks.length,
       completedTasks: tasks.filter(t => t.status === 'done').length,
@@ -132,6 +135,7 @@ export function createSystemRoutes(): Router {
         severity,
         taskId,
         pipelineId,
+        workspaceId: ws(req),
         limit,
       }));
     } catch (err) {
@@ -139,8 +143,8 @@ export function createSystemRoutes(): Router {
     }
   });
 
-  router.get('/observability', (_req, res) => {
-    res.json(buildObservabilitySummary());
+  router.get('/observability', (req, res) => {
+    res.json(buildObservabilitySummary(ws(req)));
   });
 
   router.get('/diagnostics', (req, res) => {
@@ -231,16 +235,16 @@ export function createSystemRoutes(): Router {
   // Notifications
   router.get('/notifications', (req, res) => {
     const { unread } = req.query;
-    res.json(listNotifications({ unreadOnly: unread === 'true', limit: 50 }));
+    res.json(listNotifications({ unreadOnly: unread === 'true', workspaceId: ws(req), limit: 50 }));
   });
 
   router.post('/notifications/:id/read', (req, res) => {
-    markNotificationRead(req.params.id);
+    markNotificationRead(req.params.id, ws(req));
     res.json({ success: true });
   });
 
   router.post('/notifications/read-all', (req, res) => {
-    markAllNotificationsRead();
+    markAllNotificationsRead(ws(req));
     res.json({ success: true });
   });
 
@@ -248,7 +252,7 @@ export function createSystemRoutes(): Router {
   router.get('/inbox', (req, res) => {
     try {
       const { status, taskId, pipelineId, executionId, limit } = parseQuery(inboxListQuerySchema, req);
-      res.json(listInboxEntries({ status, taskId, pipelineId, executionId, limit }));
+      res.json(listInboxEntries({ status, taskId, pipelineId, executionId, workspaceId: ws(req), limit }));
     } catch (err) {
       sendError(res, err);
     }
@@ -258,7 +262,7 @@ export function createSystemRoutes(): Router {
     try {
       const { type, title, message, options, taskId, pipelineId, executionId, createdBy } = parseBody(createInboxSchema, req);
       const entry = createInboxEntry({
-        type, title, message, options, taskId, pipelineId, executionId, createdBy,
+        type, title, message, options, taskId, pipelineId, executionId, workspaceId: ws(req), createdBy,
       });
       const notification = createNotification({
         type: 'needs_input',
@@ -266,9 +270,10 @@ export function createSystemRoutes(): Router {
         message: entry.message,
         taskId: entry.taskId,
         pipelineId: entry.pipelineId,
+        workspaceId: entry.workspaceId,
       });
-      eventBus.emit('inbox:created', { inboxEntryId: entry.id, entry });
-      eventBus.emit('notification', { notification });
+      eventBus.emit('inbox:created', { inboxEntryId: entry.id, entry, workspaceId: entry.workspaceId });
+      eventBus.emit('notification', { notification, workspaceId: notification.workspaceId });
       res.status(201).json(entry);
     } catch (err) {
       sendError(res, err);
@@ -278,7 +283,7 @@ export function createSystemRoutes(): Router {
   router.get('/inbox/:id', (req, res) => {
     try {
       const entry = getInboxEntry(req.params.id);
-      if (!entry) notFound('INBOX_ENTRY_NOT_FOUND', 'Inbox entry not found');
+      if (!entry || !requestCanAccessWorkspace(req, entry.workspaceId || 'default')) notFound('INBOX_ENTRY_NOT_FOUND', 'Inbox entry not found');
       res.json(entry);
     } catch (err) {
       sendError(res, err);
@@ -288,7 +293,7 @@ export function createSystemRoutes(): Router {
   router.post('/inbox/:id/respond', (req, res) => {
     try {
       const entry = getInboxEntry(req.params.id);
-      if (!entry) notFound('INBOX_ENTRY_NOT_FOUND', 'Inbox entry not found');
+      if (!entry || !requestCanAccessWorkspace(req, entry.workspaceId || 'default')) notFound('INBOX_ENTRY_NOT_FOUND', 'Inbox entry not found');
       if (entry.status !== 'pending') {
         throw new HttpError(400, 'INBOX_ENTRY_RESOLVED', 'Inbox entry is already resolved');
       }
@@ -310,7 +315,7 @@ export function createSystemRoutes(): Router {
           hasResponse: !!response,
         },
       });
-      eventBus.emit('inbox:updated', { inboxEntryId: req.params.id, entry: updated });
+      eventBus.emit('inbox:updated', { inboxEntryId: req.params.id, entry: updated, workspaceId: entry.workspaceId });
       res.json(updated);
     } catch (err) {
       sendError(res, err);
