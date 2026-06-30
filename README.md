@@ -48,7 +48,14 @@ pnpm demo
 
 The demo does **not** require a model API key. It uses a seeded SQLite database at `packages/server/data/demo.db` so you can inspect completed agent-team work, pipeline stages, memory, cost, audit, and trace data immediately.
 
-> 🎬 **Demo video:** a 37s walkthrough of the seeded dashboard lives at [`docs/demo/myrmecia-demo.mp4`](docs/demo/myrmecia-demo.mp4). It's produced by a reproducible Playwright + Remotion pipeline in [`demo-video/`](demo-video/).
+> 🎬 **Demo video** — a 37s walkthrough of the seeded dashboard, produced by a reproducible Playwright + Remotion pipeline in [`demo-video/`](demo-video/).
+
+<div align="center">
+  <video src="https://github.com/Zchary1106/Myrmecia/raw/main/docs/demo/myrmecia-demo.mp4" controls muted width="80%"></video>
+</div>
+
+> If the player above doesn't load (e.g. on a private repo while signed out), open it directly: [`docs/demo/myrmecia-demo.mp4`](docs/demo/myrmecia-demo.mp4).
+
 
 For live agent execution, install the optional Python runtime deps and run dev mode with your model endpoint:
 
