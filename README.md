@@ -50,11 +50,12 @@ The demo does **not** require a model API key. It uses a seeded SQLite database 
 
 > 🎬 **Demo video** — a 37s walkthrough of the seeded dashboard, produced by a reproducible Playwright + Remotion pipeline in [`demo-video/`](demo-video/).
 
-<div align="center">
-  <video src="https://github.com/Zchary1106/Myrmecia/raw/main/docs/demo/myrmecia-demo.mp4" controls muted width="80%"></video>
-</div>
+<p align="center">
+  <img src="docs/demo/myrmecia-demo.gif" alt="Myrmecia dashboard demo" width="80%">
+</p>
 
-> If the player above doesn't load (e.g. on a private repo while signed out), open it directly: [`docs/demo/myrmecia-demo.mp4`](docs/demo/myrmecia-demo.mp4).
+> Full-quality video with audio: [`docs/demo/myrmecia-demo.mp4`](docs/demo/myrmecia-demo.mp4).
+
 
 
 For live agent execution, install the optional Python runtime deps and run dev mode with your model endpoint:
