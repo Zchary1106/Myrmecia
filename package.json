@@ -1,5 +1,5 @@
 {
-  "name": "agent-factory",
+  "name": "myrmecia",
   "version": "0.1.0",
   "private": true,
   "description": "Myrmecia — autonomous multi-agent orchestration platform (formerly Agent Factory)",

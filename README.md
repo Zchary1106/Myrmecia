@@ -38,8 +38,8 @@ Myrmecia is not another agent SDK and it is not a single coding assistant. It is
 ## Quickstart
 
 ```bash
-git clone https://github.com/Zchary1106/agent-factory.git
-cd agent-factory
+git clone https://github.com/Zchary1106/Myrmecia.git
+cd Myrmecia
 
 pnpm install
 pnpm demo
@@ -237,8 +237,8 @@ Most tools in this space give you **one slice** of the problem. Myrmecia package
 **Prerequisites:** Node.js >= 20, pnpm >= 9, Python 3 (for the optional Python runtime).
 
 ```bash
-git clone https://github.com/Zchary1106/agent-factory.git
-cd agent-factory
+git clone https://github.com/Zchary1106/Myrmecia.git
+cd Myrmecia
 
 pnpm install
 pip install -r packages/python-runtime/requirements.txt
@@ -445,18 +445,18 @@ If Myrmecia is useful in your work, a citation is appreciated:
   title  = {Myrmecia: Autonomous Multi-Agent Orchestration Platform},
   author = {Myrmecia contributors},
   year   = {2026},
-  url    = {https://github.com/Zchary1106/agent-factory}
+  url    = {https://github.com/Zchary1106/Myrmecia}
 }
 ```
 
 ## Star History
 
 <div align="center">
-<a href="https://star-history.com/#Zchary1106/agent-factory&Date">
+<a href="https://star-history.com/#Zchary1106/Myrmecia&Date">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=Zchary1106/agent-factory&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=Zchary1106/agent-factory&type=Date" />
-   <img alt="Myrmecia Star History" src="https://api.star-history.com/svg?repos=Zchary1106/agent-factory&type=Date" style="width: 80%; height: auto;" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=Zchary1106/Myrmecia&type=Date&theme=dark" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=Zchary1106/Myrmecia&type=Date" />
+   <img alt="Myrmecia Star History" src="https://api.star-history.com/svg?repos=Zchary1106/Myrmecia&type=Date" style="width: 80%; height: auto;" />
  </picture>
 </a>
 </div>
