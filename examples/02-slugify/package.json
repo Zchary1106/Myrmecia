@@ -1,0 +1,13 @@
+{
+  "name": "slugify-lib",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A dependency-free TypeScript slugify utility (URL slugs with accent transliteration).",
+  "scripts": {
+    "test": "node --import tsx --test test/slugify.test.ts"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0"
+  }
+}
