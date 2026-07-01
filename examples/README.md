@@ -47,6 +47,24 @@ cd examples/01-json2csv-cli && npm install && npm test   # 12/12 pass
 See [`01-json2csv-cli/README.md`](01-json2csv-cli/README.md) for the exact
 command that generated it.
 
+## More generated examples (real artifacts) ✅
+
+Each of these was **written end-to-end by the Myrmecia dev agent** and is
+committed verbatim; all tests pass.
+
+| Example | What it is | Tests |
+| --- | --- | --- |
+| [`01-json2csv-cli/`](01-json2csv-cli/) | JSON→CSV CLI (file/stdin, escaping) | 12/12 |
+| [`02-slugify/`](02-slugify/) | URL-slug library (options + accent transliteration) | 7/7 |
+| [`03-temperature-cli/`](03-temperature-cli/) | C/F/K converter library + CLI | 10/10 |
+
+```bash
+# run any example's tests
+cd examples/02-slugify && npm install && npm test
+cd examples/03-temperature-cli && npm install && npm test
+```
+
+
 ---
 
 ## Runnable recipes

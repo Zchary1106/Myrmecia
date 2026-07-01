@@ -1,0 +1,13 @@
+{
+  "name": "tempconvert-cli",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A dependency-free TypeScript CLI to convert temperatures between C, F, and K.",
+  "bin": { "tempconvert": "src/tempconvert.ts" },
+  "scripts": {
+    "test": "node --import tsx --test test/tempconvert.test.ts",
+    "start": "tsx src/tempconvert.ts"
+  },
+  "devDependencies": { "tsx": "^4.19.0" }
+}
