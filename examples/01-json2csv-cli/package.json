@@ -1,0 +1,17 @@
+{
+  "name": "json2csv-cli",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A small, dependency-free CLI that converts a JSON array of objects into CSV.",
+  "bin": {
+    "json2csv": "src/json2csv.ts"
+  },
+  "scripts": {
+    "test": "node --import tsx --test test/json2csv.test.ts",
+    "start": "tsx src/json2csv.ts"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0"
+  }
+}
