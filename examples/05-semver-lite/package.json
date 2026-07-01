@@ -1,0 +1,9 @@
+{
+  "name": "semver-lite",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A dependency-free TypeScript semantic-version parser/comparator.",
+  "scripts": { "test": "node --import tsx --test test/semver.test.ts" },
+  "devDependencies": { "tsx": "^4.19.0" }
+}
