@@ -1,0 +1,9 @@
+{
+  "name": "typed-emitter",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A dependency-free, strongly-typed event emitter (pub/sub) for TypeScript.",
+  "scripts": { "test": "node --import tsx --test test/emitter.test.ts" },
+  "devDependencies": { "tsx": "^4.19.0" }
+}
