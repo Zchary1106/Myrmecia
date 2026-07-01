@@ -12,3 +12,6 @@ __pycache__/
 packages/server/data/
 packages/server/.agent-factory/
 .vite/
+
+# Sample pipeline run artifacts (kept locally, not tracked)
+reviews/
