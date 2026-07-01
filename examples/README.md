@@ -57,11 +57,15 @@ committed verbatim; all tests pass.
 | [`01-json2csv-cli/`](01-json2csv-cli/) | JSON→CSV CLI (file/stdin, escaping) | 12/12 |
 | [`02-slugify/`](02-slugify/) | URL-slug library (options + accent transliteration) | 7/7 |
 | [`03-temperature-cli/`](03-temperature-cli/) | C/F/K converter library + CLI | 10/10 |
+| [`04-event-emitter/`](04-event-emitter/) | Typed pub/sub event emitter | 8/8 |
+| [`05-semver-lite/`](05-semver-lite/) | Semantic-version parser + comparator | 10/10 |
 
 ```bash
 # run any example's tests
 cd examples/02-slugify && npm install && npm test
 cd examples/03-temperature-cli && npm install && npm test
+cd examples/04-event-emitter && npm install && npm test
+cd examples/05-semver-lite && npm install && npm test
 ```
 
 
