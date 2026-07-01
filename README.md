@@ -56,6 +56,8 @@ The demo does **not** require a model API key. It uses a seeded SQLite database 
 
 > Full-quality video with audio: [`docs/demo/myrmecia-demo.mp4`](docs/demo/myrmecia-demo.mp4).
 
+> 🧪 **Examples** — see [`examples/`](examples/) for a customer-facing tutorial (Direct / Pipeline / Teams / Supervisor / Web research / Domains) plus [`examples/01-json2csv-cli/`](examples/01-json2csv-cli/), a JSON→CSV CLI with 12 passing tests **written end-to-end by a Myrmecia pipeline**.
+
 
 
 For live agent execution, install the optional Python runtime deps and run dev mode with your model endpoint:
