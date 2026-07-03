@@ -69,10 +69,21 @@ function collectTestFiles(dir: string, pattern: RegExp, depth: number, acc: stri
  * shell-command allow-list used by validateStep.
  */
 export function resolveTestCommand(workdir: string): string {
+  // In a repo git-worktree (how pipeline stages run) the workspace is a copy of
+  // the whole monorepo. Running its root `test` script would execute the entire
+  // suite (until the 30s timeout) and discovery would scan the whole tree — both
+  // wasteful and misleading. Since dev.md's test validation is advisory anyway,
+  // treat a monorepo root as "nothing scoped to run" and pass trivially.
+  const isMonorepoRoot =
+    existsSync(join(workdir, 'pnpm-workspace.yaml')) ||
+    existsSync(join(workdir, 'lerna.json'));
+  if (isMonorepoRoot) return 'true';
+
   const pkgPath = join(workdir, 'package.json');
   if (existsSync(pkgPath)) {
     try {
       const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+      if (Array.isArray(pkg?.workspaces) || pkg?.workspaces?.packages) return 'true';
       const testScript = pkg?.scripts?.test;
       if (typeof testScript === 'string' && testScript.trim() && !/no test specified/i.test(testScript)) {
         const runner = existsSync(join(workdir, 'pnpm-lock.yaml')) ? 'pnpm'
