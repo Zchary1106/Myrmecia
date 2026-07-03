@@ -1,10 +1,15 @@
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
-import { join } from 'path';
+import { join, relative } from 'path';
 import { assertShellCommandAllowed } from './tool-sandbox.js';
 
 const execAsync = promisify(exec);
+
+/** POSIX single-quote escaping — makes backticks, $, spaces, and quotes literal. */
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
 
 export interface ValidateStepInput {
   command: string;
@@ -99,13 +104,13 @@ export function resolveTestCommand(workdir: string): string {
   const tsTests: string[] = [];
   collectTestFiles(workdir, /\.test\.(ts|tsx|mts|cts)$/, 0, tsTests);
   if (tsTests.length) {
-    return `node --import tsx --test ${tsTests.map(f => JSON.stringify(f)).join(' ')}`;
+    return `node --import tsx --test ${tsTests.map(f => shellQuote(relative(workdir, f))).join(' ')}`;
   }
 
   const jsTests: string[] = [];
   collectTestFiles(workdir, /\.test\.(js|mjs|cjs|jsx)$/, 0, jsTests);
   if (jsTests.length) {
-    return `node --test ${jsTests.map(f => JSON.stringify(f)).join(' ')}`;
+    return `node --test ${jsTests.map(f => shellQuote(relative(workdir, f))).join(' ')}`;
   }
 
   return 'true';

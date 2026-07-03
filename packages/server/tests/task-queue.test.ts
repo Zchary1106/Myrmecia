@@ -126,4 +126,30 @@ describe('TaskQueue failure state handling', () => {
     // ...but the independent, still-running task is left alone.
     expect(getTask(indep.id)!.status).toBe('running');
   });
+
+  it('cancels dependents that do not share a parent (dynamic-workflow / graph style)', () => {
+    const a = createTask({ title: 'A', description: 'a', input: 'a', mode: 'direct' });
+    const b = createTask({ title: 'B', description: 'b', input: 'b', mode: 'direct', dependsOn: [a.id] });
+    updateTask(b.id, { status: 'queued' });
+    updateTask(a.id, { status: 'failed', error: 'x' });
+
+    const queue = new TaskQueue({ executeTask: vi.fn() } as unknown as AgentManager);
+    (queue as any).cascadeDependentFailure({ payload: { taskId: a.id } });
+
+    expect(getTask(b.id)!.status).toBe('cancelled');
+  });
+
+  it('does not execute a coordination parent as a leaf task (processJob guard)', async () => {
+    const parent = createTask({ title: 'parent', description: 'p', input: 'p', mode: 'master' });
+    updateTask(parent.id, { status: 'queued' });
+
+    const executed: string[] = [];
+    const manager = { executeTask: vi.fn(async (_a: string, t: any) => { executed.push(t.id); }) } as unknown as AgentManager;
+    const queue = new TaskQueue(manager);
+
+    await (queue as any).processJob(parent.id);
+
+    expect(executed).not.toContain(parent.id);
+    expect(getTask(parent.id)!.assigneeId).toBeFalsy();
+  });
 });

@@ -55,6 +55,7 @@ export class TeamCoordinator {
     // Reflect task lifecycle onto the owning run + share findings across teammates.
     eventBus.on('task:done', (e: any) => { this.shareFinding(e); this.onTaskSettled(e); });
     eventBus.on('task:failed', (e: any) => this.onTaskSettled(e));
+    eventBus.on('task:cancelled', (e: any) => this.onTaskSettled(e));
   }
 
   getRun(runId: string): TeamRun | undefined {
@@ -168,7 +169,7 @@ export class TeamCoordinator {
     const allDone = children.every(t => ['done', 'failed', 'cancelled'].includes(t.status));
     if (!allDone) return;
 
-    const anyFailed = children.some(t => t.status === 'failed');
+    const anyFailed = children.some(t => t.status === 'failed' || t.status === 'cancelled');
     const result = children.map(t => `## ${t.title}\n${(t.output || '(no output)').slice(0, 4000)}`).join('\n\n---\n\n');
     db.run('UPDATE team_runs SET status = ?, result = ?, completed_at = ? WHERE id = ?',
       anyFailed ? 'failed' : 'done', result, new Date().toISOString(), run.id);

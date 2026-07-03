@@ -801,6 +801,12 @@ export class TsAgentLoop {
       onStepFailed: (idx, step, error) => {
         addTaskLog(task.id, 'warn', `✗ Step "${step.name}" failed: ${error}`, agent.id);
       },
+      onStepWarning: (idx, step, message) => {
+        // Advisory (optional) validation failure — surfaced to the operator via
+        // task logs and the execution stream, but does not fail the task.
+        addTaskLog(task.id, 'warn', `⚠ Step "${step.name}" advisory: ${message}`, agent.id);
+        addExecutionMessage({ executionId, type: 'progress', content: `Advisory (step "${step.name}"): ${message}` });
+      },
     });
 
     const result = await executor.run(task.input);
