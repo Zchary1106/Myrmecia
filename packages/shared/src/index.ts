@@ -134,10 +134,16 @@ export interface SkillDetail extends SkillDefinition {
 }
 
 export interface SkillStepValidation {
-  /** Shell command to run. Supports ${workdir}, ${output}, ${stepName} variables */
+  /** Shell command to run. Supports ${workdir}, ${output}, ${stepName}, ${testCmd} variables */
   command: string;
   /** Message shown on validation failure */
   failMessage?: string;
+  /**
+   * When true, a failing validation is advisory only: it is recorded and logged
+   * but does NOT fail the step or the task. Use for checks (e.g. running tests in
+   * a shared repo worktree) whose result should be surfaced without gating success.
+   */
+  optional?: boolean;
 }
 
 export interface SkillStep {

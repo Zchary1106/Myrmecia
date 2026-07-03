@@ -71,9 +71,9 @@ agents:
       model: gpt-5.3-codex
       tier: balanced
       fallbackModel: gpt-5.4
-      maxTokens: 120000
+      maxTokens: 200000
       maxResponseTokens: 8192
-      maxToolCalls: 48
+      maxToolCalls: 64
       maxWallClockMs: 600000
     capabilities: [typescript, react, express, database, api, frontend, backend, web-research]
     allowed_tools: [file_read, file_list, grep, file_write, apply_patch, shell_exec, web.search, web.fetch]

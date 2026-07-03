@@ -126,6 +126,16 @@ export class SkillExecutor {
         steps.push({ name: step.name, status: 'done', output: lastOutput, retries });
         previousOutputs.push(`[${step.name}]: ${lastOutput}`);
         this.onStepDone?.(i, step, lastOutput);
+      } else if (step.validation?.optional) {
+        // Advisory (soft) gate: the validation did not pass, but the deliverable
+        // is still accepted. Record the result and continue without failing the
+        // task. Used for checks whose signal is useful but should not gate success
+        // (e.g. running tests inside a shared repo worktree).
+        const note = `validation advisory: ${lastError}`;
+        logger.warn({ step: step.name, workdir: this.workdir, retries }, `Step "${step.name}" ${note}`);
+        steps.push({ name: step.name, status: 'done', output: lastOutput, retries, validationOutput: lastError });
+        previousOutputs.push(`[${step.name}]: ${lastOutput}\n(note: ${note})`);
+        this.onStepDone?.(i, step, lastOutput);
       } else {
         const errorMsg = `Step "${step.name}" failed after ${retries} retries: ${lastError}`;
         steps.push({ name: step.name, status: 'failed', output: lastOutput, retries, error: errorMsg });

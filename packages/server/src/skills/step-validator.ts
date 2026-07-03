@@ -1,5 +1,7 @@
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
+import { join } from 'path';
 import { assertShellCommandAllowed } from './tool-sandbox.js';
 
 const execAsync = promisify(exec);
@@ -26,6 +28,78 @@ const ENV_NAMES: Record<string, string> = {
   stepName: 'STEP_NAME',
 };
 
+const TEST_SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '.agent-factory', 'coverage', '.next', 'out']);
+
+function collectTestFiles(dir: string, pattern: RegExp, depth: number, acc: string[]): void {
+  if (depth > 4 || acc.length >= 50) return;
+  let entries: string[];
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return;
+  }
+  for (const name of entries) {
+    if (acc.length >= 50) return;
+    if (name.startsWith('.') && name !== '.') continue;
+    if (TEST_SKIP_DIRS.has(name)) continue;
+    const full = join(dir, name);
+    let st;
+    try {
+      st = statSync(full);
+    } catch {
+      continue;
+    }
+    if (st.isDirectory()) {
+      collectTestFiles(full, pattern, depth + 1, acc);
+    } else if (pattern.test(name)) {
+      acc.push(full);
+    }
+  }
+}
+
+/**
+ * Best-effort detection of the command that runs a workspace's tests. Resolution
+ * order:
+ *   1. An explicit, non-placeholder `scripts.test` in package.json (pnpm/yarn/npm).
+ *   2. Standalone `*.test.ts/js` files discovered under the workspace, run with
+ *      Node's built-in test runner (tsx loader for TypeScript).
+ *   3. `true` — nothing to run, so the check passes trivially instead of failing.
+ *
+ * The returned string never contains `$(...)`/backticks, so it stays within the
+ * shell-command allow-list used by validateStep.
+ */
+export function resolveTestCommand(workdir: string): string {
+  const pkgPath = join(workdir, 'package.json');
+  if (existsSync(pkgPath)) {
+    try {
+      const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+      const testScript = pkg?.scripts?.test;
+      if (typeof testScript === 'string' && testScript.trim() && !/no test specified/i.test(testScript)) {
+        const runner = existsSync(join(workdir, 'pnpm-lock.yaml')) ? 'pnpm'
+          : existsSync(join(workdir, 'yarn.lock')) ? 'yarn'
+          : 'npm';
+        return `${runner} test`;
+      }
+    } catch {
+      // fall through to file discovery
+    }
+  }
+
+  const tsTests: string[] = [];
+  collectTestFiles(workdir, /\.test\.(ts|tsx|mts|cts)$/, 0, tsTests);
+  if (tsTests.length) {
+    return `node --import tsx --test ${tsTests.map(f => JSON.stringify(f)).join(' ')}`;
+  }
+
+  const jsTests: string[] = [];
+  collectTestFiles(workdir, /\.test\.(js|mjs|cjs|jsx)$/, 0, jsTests);
+  if (jsTests.length) {
+    return `node --test ${jsTests.map(f => JSON.stringify(f)).join(' ')}`;
+  }
+
+  return 'true';
+}
+
 function substituteVars(command: string, vars: Record<string, string>): string {
   let result = command;
   for (const key of Object.keys(vars)) {
@@ -48,11 +122,18 @@ function substituteVars(command: string, vars: Record<string, string>): string {
 export async function validateStep(input: ValidateStepInput): Promise<ValidateStepResult> {
   const timeoutMs = input.timeoutMs ?? 30_000;
 
-  const command = substituteVars(input.command, {
+  const vars: Record<string, string> = {
     workdir: input.workdir,
     output: input.output,
     stepName: input.stepName,
-  });
+  };
+  // Resolve the workspace test command lazily — only when referenced — so we
+  // don't scan the filesystem for steps that don't need it.
+  if (input.command.includes('${testCmd}')) {
+    vars.testCmd = resolveTestCommand(input.workdir);
+  }
+
+  const command = substituteVars(input.command, vars);
 
   try {
     assertShellCommandAllowed(command);
