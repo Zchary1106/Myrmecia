@@ -4,9 +4,10 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { AgentManager } from '../src/agents/agent-manager.js';
 import { TaskQueue } from '../src/queue/task-queue.js';
+import { eventBus } from '../src/events/event-bus.js';
 import { closeDb } from '../src/db/database.js';
 import { createAgent } from '../src/db/models/agent.js';
-import { createTask, getTask, getTaskLogs, updateTask } from '../src/db/models/task.js';
+import { createTask, getTask, getTaskLogs, updateTask, listDependents } from '../src/db/models/task.js';
 
 describe('TaskQueue failure state handling', () => {
   beforeEach(() => {
@@ -133,10 +134,41 @@ describe('TaskQueue failure state handling', () => {
     updateTask(b.id, { status: 'queued' });
     updateTask(a.id, { status: 'failed', error: 'x' });
 
+    // listDependents finds the dependent via the targeted query.
+    expect(listDependents(a.id).map(t => t.id)).toContain(b.id);
+
     const queue = new TaskQueue({ executeTask: vi.fn() } as unknown as AgentManager);
     (queue as any).cascadeDependentFailure({ payload: { taskId: a.id } });
 
     expect(getTask(b.id)!.status).toBe('cancelled');
+  });
+
+  it('cancels a diamond dependent exactly once (re-entrancy safe)', () => {
+    // R -> B, R -> C, {B,C} -> D. D can be reached via two dependency paths.
+    const r = createTask({ title: 'R', description: 'r', input: 'r', mode: 'direct' });
+    const b = createTask({ title: 'B', description: 'b', input: 'b', mode: 'direct', dependsOn: [r.id] });
+    const c = createTask({ title: 'C', description: 'c', input: 'c', mode: 'direct', dependsOn: [r.id] });
+    const d = createTask({ title: 'D', description: 'd', input: 'd', mode: 'direct', dependsOn: [b.id, c.id] });
+    updateTask(b.id, { status: 'queued' });
+    updateTask(c.id, { status: 'queued' });
+    updateTask(d.id, { status: 'queued' });
+    updateTask(r.id, { status: 'failed', error: 'x' });
+
+    const dCancelEmits: string[] = [];
+    const handler = (e: any) => { if (e?.payload?.taskId === d.id) dCancelEmits.push(d.id); };
+    eventBus.on('task:cancelled', handler);
+    try {
+      const queue = new TaskQueue({ executeTask: vi.fn() } as unknown as AgentManager);
+      (queue as any).cascadeDependentFailure({ payload: { taskId: r.id } });
+
+      expect(getTask(b.id)!.status).toBe('cancelled');
+      expect(getTask(c.id)!.status).toBe('cancelled');
+      expect(getTask(d.id)!.status).toBe('cancelled');
+      // Despite two dependency paths, D is cancelled/emitted exactly once.
+      expect(dCancelEmits.length).toBe(1);
+    } finally {
+      eventBus.off('task:cancelled', handler);
+    }
   });
 
   it('does not execute a coordination parent as a leaf task (processJob guard)', async () => {

@@ -94,6 +94,27 @@ export function listTasks(filter?: {
   return db.all(sql, ...params).map(rowToTask);
 }
 
+/**
+ * Non-terminal tasks that declare a dependency on `dependencyId`. Uses a coarse
+ * LIKE pre-filter on the JSON `depends_on` column (matching the quoted id), then
+ * the caller should exact-check `dependsOn.includes(id)` to be safe against LIKE
+ * wildcard/substring matches. Far cheaper than scanning every non-terminal task.
+ */
+export function listDependents(
+  dependencyId: string,
+  statuses: TaskStatus[] = ['pending', 'queued', 'assigned'],
+): Task[] {
+  if (statuses.length === 0) return [];
+  const db = getDb();
+  const placeholders = statuses.map(() => '?').join(', ');
+  const rows = db.all(
+    `SELECT * FROM tasks WHERE status IN (${placeholders}) AND depends_on LIKE ?`,
+    ...statuses,
+    `%"${dependencyId}"%`,
+  );
+  return rows.map(rowToTask);
+}
+
 export function updateTask(id: string, updates: Partial<{
   status: TaskStatus;
   assigneeId: string | null;
