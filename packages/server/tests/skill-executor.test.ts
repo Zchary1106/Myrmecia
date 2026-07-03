@@ -1,8 +1,11 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterAll } from 'vitest';
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { SkillExecutor } from '../src/skills/skill-executor.js';
 import type { SkillExecutorConfig } from '@myrmecia/shared';
 import { parseSkillContent } from '../src/skills/skill-parser.js';
-import { validateStep } from '../src/skills/step-validator.js';
+import { validateStep, resolveTestCommand } from '../src/skills/step-validator.js';
 import { buildMatcherPrompt, parseMatcherResponse } from '../src/skills/skill-matcher.js';
 import { executeTool } from '../src/skills/tool-sandbox.js';
 import { reviewImportedSkillContent } from '../src/skills/skill-review.js';
@@ -109,6 +112,22 @@ describe('step-validator', () => {
     });
     expect(result.pass).toBe(false);
     expect(result.error).toContain('timeout');
+  });
+
+  it('substitutes ${testCmd} with the resolved workspace test command', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'rtc-val-'));
+    try {
+      // No package.json and no test files → resolves to `true` → exits 0.
+      const result = await validateStep({
+        command: 'cd ${workdir} && ${testCmd}',
+        workdir: dir,
+        output: '',
+        stepName: 'implement',
+      });
+      expect(result.pass).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('blocks validation commands that violate guardrails', async () => {
@@ -278,6 +297,127 @@ describe('skill-executor', () => {
     expect(mockLlmCall).toHaveBeenCalledTimes(3);
     expect(result.steps[0].status).toBe('failed');
     expect(result.steps[0].retries).toBe(2);
+  });
+
+  it('treats a failing optional validation as advisory (task still succeeds)', async () => {
+    const softConfig: SkillExecutorConfig = {
+      executor: 'step-driven',
+      steps: [
+        { name: 'implement', instruction: 'Write code', maxTurns: 2, maxRetries: 1,
+          validation: { command: 'exit 1', failMessage: 'Tests did not pass', optional: true } },
+      ],
+      recovery: { onStepFailure: 'retry_then_fail', maxTotalRetries: 5 },
+    };
+
+    const mockLlmCall = vi.fn().mockResolvedValue('code written');
+    const warnings: string[] = [];
+    const executor = new SkillExecutor({
+      config: softConfig,
+      promptContent: 'You are a dev',
+      workdir: '/tmp',
+      llmCall: mockLlmCall,
+      onStepWarning: (_i, _s, message) => { warnings.push(message); },
+    });
+
+    const result = await executor.run('Do it');
+
+    // Advisory gate: the deliverable is accepted even though validation failed.
+    expect(result.success).toBe(true);
+    expect(result.steps[0].status).toBe('done');
+    expect(result.steps[0].validationOutput).toContain('Tests did not pass');
+    // Still retried the configured number of times before accepting.
+    expect(mockLlmCall).toHaveBeenCalledTimes(2);
+    // The advisory failure is surfaced (not silently swallowed).
+    expect(warnings.some(w => w.includes('Tests did not pass'))).toBe(true);
+  });
+});
+
+describe('resolveTestCommand', () => {
+  const dirs: string[] = [];
+  const mkTmp = () => {
+    const dir = mkdtempSync(join(tmpdir(), 'rtc-'));
+    dirs.push(dir);
+    return dir;
+  };
+  afterAll(() => {
+    for (const d of dirs) rmSync(d, { recursive: true, force: true });
+  });
+
+  it('uses the package.json test script (npm by default)', () => {
+    const dir = mkTmp();
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ scripts: { test: 'vitest run' } }));
+    expect(resolveTestCommand(dir)).toBe('npm test');
+  });
+
+  it('prefers pnpm when a pnpm lockfile is present', () => {
+    const dir = mkTmp();
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ scripts: { test: 'vitest run' } }));
+    writeFileSync(join(dir, 'pnpm-lock.yaml'), 'lockfileVersion: 9\n');
+    expect(resolveTestCommand(dir)).toBe('pnpm test');
+  });
+
+  it('ignores the npm default placeholder test script', () => {
+    const dir = mkTmp();
+    writeFileSync(join(dir, 'package.json'),
+      JSON.stringify({ scripts: { test: 'echo "Error: no test specified" && exit 1' } }));
+    // No real test script and no test files → nothing to run.
+    expect(resolveTestCommand(dir)).toBe('true');
+  });
+
+  it('discovers standalone TypeScript test files', () => {
+    const dir = mkTmp();
+    mkdirSync(join(dir, 'test'));
+    writeFileSync(join(dir, 'test', 'slug.test.ts'), 'test("x", () => {});');
+    const cmd = resolveTestCommand(dir);
+    expect(cmd.startsWith('node --import tsx --test ')).toBe(true);
+    // Path is workspace-relative and single-quoted (shell-safe).
+    expect(cmd).toContain("'test/slug.test.ts'");
+  });
+
+  it('single-quotes discovered paths so filenames cannot inject shell substitution', () => {
+    const dir = mkTmp();
+    // A pathological filename that, if embedded unquoted/double-quoted, would run
+    // command substitution. Single-quoting must neutralize it.
+    const evil = 'a`touch pwned`.test.js';
+    writeFileSync(join(dir, evil), 'test("x", () => {});');
+    const cmd = resolveTestCommand(dir);
+    expect(cmd).toContain(`'${evil}'`);
+    // The backtick is only ever inside single quotes (no unquoted backtick).
+    expect(cmd.replace(/'[^']*'/g, '')).not.toContain('`');
+  });
+
+  it('discovers standalone JavaScript test files', () => {
+    const dir = mkTmp();
+    writeFileSync(join(dir, 'index.test.js'), 'test("x", () => {});');
+    const cmd = resolveTestCommand(dir);
+    expect(cmd.startsWith('node --test ')).toBe(true);
+    expect(cmd).toContain('index.test.js');
+  });
+
+  it('returns "true" when there is nothing to run', () => {
+    const dir = mkTmp();
+    expect(resolveTestCommand(dir)).toBe('true');
+  });
+
+  it('does not run the whole suite from a monorepo root (pnpm-workspace.yaml)', () => {
+    const dir = mkTmp();
+    writeFileSync(join(dir, 'pnpm-workspace.yaml'), "packages:\n  - 'packages/*'\n");
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ scripts: { test: 'vitest run' } }));
+    writeFileSync(join(dir, 'pnpm-lock.yaml'), 'lockfileVersion: 9\n');
+    expect(resolveTestCommand(dir)).toBe('true');
+  });
+
+  it('treats a package.json with a workspaces array as a monorepo root', () => {
+    const dir = mkTmp();
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ workspaces: ['packages/*'], scripts: { test: 'jest' } }));
+    expect(resolveTestCommand(dir)).toBe('true');
+  });
+
+  it('skips node_modules when discovering tests', () => {
+    const dir = mkTmp();
+    mkdirSync(join(dir, 'node_modules', 'dep'), { recursive: true });
+    writeFileSync(join(dir, 'node_modules', 'dep', 'a.test.js'), 'test("x", () => {});');
+    expect(resolveTestCommand(dir)).toBe('true');
   });
 });
 

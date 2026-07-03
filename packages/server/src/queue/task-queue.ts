@@ -1,7 +1,7 @@
 import { Queue, Worker, Job, QueueEvents } from 'bullmq';
 import IORedis from 'ioredis';
 import { eventBus } from '../events/event-bus.js';
-import { createTask, getTask, updateTask, addTaskLog, listTasks } from '../db/models/task.js';
+import { createTask, getTask, updateTask, addTaskLog, listTasks, listDependents } from '../db/models/task.js';
 import { AgentManager } from '../agents/agent-manager.js';
 import { metrics } from '../observability/telemetry.js';
 import { logger } from '../lib/logger.js';
@@ -37,7 +37,44 @@ export class TaskQueue {
 
     // Listen for task completions to process waiting tasks
     eventBus.on('task:done', () => { metrics.queueDepth.add(-1, { direction: 'dec' }); this.processNext(); });
-    eventBus.on('task:failed', () => { metrics.queueDepth.add(-1, { direction: 'dec' }); this.processNext(); });
+    eventBus.on('task:failed', (e) => {
+      metrics.queueDepth.add(-1, { direction: 'dec' });
+      this.cascadeDependentFailure(e);
+      this.processNext();
+    });
+    eventBus.on('task:cancelled', (e) => { this.cascadeDependentFailure(e); this.processNext(); });
+  }
+
+  /**
+   * When a task ends `failed` or `cancelled`, any not-yet-terminal task that
+   * depends on it can never run — `checkDependencies` only clears when a
+   * dependency is `done`. Left alone, such dependents sit in `queued` forever,
+   * which prevents parents (evaluateParentOutcome), team runs (onTaskSettled),
+   * orchestrations, and dynamic workflows from ever settling. Cancel the direct
+   * dependents; transitive dependents are handled by re-entry via the
+   * `task:cancelled` listener above. Graph-workflow / pipeline tasks carry no
+   * `dependsOn`, so they are unaffected.
+   */
+  private cascadeDependentFailure(event: any): void {
+    const rootId = event?.payload?.taskId ?? event?.taskId;
+    if (!rootId) return;
+    const root = getTask(rootId);
+    if (!root || !['failed', 'cancelled'].includes(root.status)) return;
+
+    // Targeted lookup of the tasks that actually depend on `root` (single query,
+    // usually empty for a leaf failure) instead of scanning every non-terminal
+    // task. Transitive dependents are handled by re-entry via the task:cancelled
+    // listener above.
+    for (const dep of listDependents(root.id)) {
+      if (!(dep.dependsOn || []).includes(root.id)) continue; // exact-match guard for the LIKE pre-filter
+      // Re-read: a re-entrant pass may have already settled it (diamond deps).
+      const fresh = getTask(dep.id);
+      if (!fresh || !['pending', 'queued', 'assigned'].includes(fresh.status)) continue;
+      const reason = `Dependency "${root.title}" did not complete`;
+      const updated = updateTask(dep.id, { status: 'cancelled', error: reason, completedAt: new Date().toISOString() });
+      addTaskLog(dep.id, 'warn', `Cancelled — ${reason}`, 'system');
+      eventBus.emit('task:cancelled', { taskId: dep.id, task: updated, workspaceId: dep.workspaceId });
+    }
   }
 
   /** Initialize BullMQ with Redis */
@@ -125,6 +162,12 @@ export class TaskQueue {
     const task = getTask(taskId);
     if (!task) throw new Error(`Task ${taskId} not found`);
     if (task.status === 'cancelled') return;
+
+    // Coordination parents (top-level decomposed `master` tasks) are settled by
+    // MasterAgent.monitorSubtasks, never executed as a leaf. Without this guard a
+    // BullMQ worker would grab the unassigned parent, assign it a `dev` agent,
+    // and run the whole goal as one task — racing the decompose/monitor flow.
+    if (task.mode === 'master' && !task.parentTaskId) return;
 
     // Check dependencies
     if (!this.checkDependencies(task)) {
@@ -333,6 +376,16 @@ export class TaskQueue {
     logger.info({ count: toRecover.length }, 'Recovering interrupted tasks');
 
     for (const task of toRecover) {
+      // Parent (decomposed) tasks are not executed directly — they are settled
+      // by MasterAgent.monitorSubtasks once their children finish. Re-queuing
+      // them would run the parent as if it were a leaf task AND would flip its
+      // status out from under resumeMonitoring(). Leave them running so the
+      // master monitor can re-arm and finalize them (see TeamCoordinator.recover).
+      if (listTasks({ parentTaskId: task.id }).length > 0) {
+        addTaskLog(task.id, 'info', 'Parent task left for master monitor to reconcile after restart', 'system');
+        continue;
+      }
+
       addTaskLog(task.id, 'warn', 'Task interrupted by server restart — re-queuing', 'system');
       updateTask(task.id, { status: 'pending' });
 

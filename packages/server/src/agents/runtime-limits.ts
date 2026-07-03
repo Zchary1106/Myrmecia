@@ -25,8 +25,8 @@ export interface RuntimeLimits {
 
 export function getRuntimeLimits(): RuntimeLimits {
   return {
-    maxExecutionTokens: parsePositiveInt(process.env.AGENT_MAX_EXECUTION_TOKENS, 120_000),
-    maxModelResponseTokens: parsePositiveInt(process.env.AGENT_MAX_RESPONSE_TOKENS, 4_096),
+    maxExecutionTokens: parsePositiveInt(process.env.AGENT_MAX_EXECUTION_TOKENS, 200_000),
+    maxModelResponseTokens: parsePositiveInt(process.env.AGENT_MAX_RESPONSE_TOKENS, 8_192),
     maxOutputChars: parsePositiveInt(process.env.AGENT_MAX_OUTPUT_CHARS, 120_000),
     maxToolCallsPerExecution: parsePositiveInt(process.env.AGENT_MAX_TOOL_CALLS, 80),
     maxToolCallTimeoutMs: parsePositiveInt(process.env.AGENT_TOOL_TIMEOUT_MS, 60_000),

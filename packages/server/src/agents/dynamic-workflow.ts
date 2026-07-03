@@ -216,11 +216,13 @@ export class DynamicWorkflowRuntime {
   constructor(private taskQueue: TaskQueue, private agentManager: AgentManager) {
     eventBus.on('task:done', this.onTaskDoneHandler);
     eventBus.on('task:failed', this.onTaskFailedHandler);
+    eventBus.on('task:cancelled', this.onTaskFailedHandler);
   }
 
   dispose(): void {
     eventBus.off('task:done', this.onTaskDoneHandler);
     eventBus.off('task:failed', this.onTaskFailedHandler);
+    eventBus.off('task:cancelled', this.onTaskFailedHandler);
   }
 
   async start(data: { goal: string; plan?: DynamicWorkflowPlan; workspaceId?: string }): Promise<DynamicWorkflowRun> {

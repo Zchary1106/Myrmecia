@@ -309,6 +309,7 @@ async function main() {
     await taskQueue.recoverRunningTasks();
     await pipelineEngine.recoverInterruptedPipelines();
     await qualityLoop.recoverInterruptedAttempts();
+    teamCoordinator.recover();
   });
 
   // Graceful shutdown

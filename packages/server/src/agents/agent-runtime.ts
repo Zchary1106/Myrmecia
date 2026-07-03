@@ -2,7 +2,7 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import type { AgentDefinition, Task, AgentProgress, ToolActivity, ProgressTracker } from '../types.js';
 import { eventBus } from '../events/event-bus.js';
-import { updateTask, addTaskLog } from '../db/models/task.js';
+import { updateTask, addTaskLog, getTask } from '../db/models/task.js';
 import { updateAgent } from '../db/models/agent.js';
 import { createExecution, updateExecution, addExecutionMessage } from '../db/models/execution.js';
 import { recordLedgerEntry } from '../db/models/execution-ledger.js';
@@ -191,7 +191,14 @@ export class AgentRuntime {
         completedAt: new Date().toISOString(),
       });
 
-      updateTask(task.id, { status: 'done', output: safeResult.output, completedAt: new Date().toISOString() });
+      // Guard against resurrecting a task that reached a terminal state (e.g.
+      // cancelled by the user or the dependency cascade) while this execution
+      // was completing. Mirrors the catch path's terminal check.
+      const priorStatus = getTask(task.id)?.status;
+      const settledDuringRun = priorStatus === 'cancelled' || priorStatus === 'failed' || priorStatus === 'done';
+      if (!settledDuringRun) {
+        updateTask(task.id, { status: 'done', output: safeResult.output, completedAt: new Date().toISOString() });
+      }
       recordLedgerEntry({
         executionId: execution.id, taskId: task.id, agentId: agent.id, workspaceId: task.workspaceId,
         type: 'execution.completed', decision: 'done',
@@ -225,7 +232,9 @@ export class AgentRuntime {
       addTaskLog(task.id, 'info', `Done ${Math.round(safeResult.durationMs / 1000)}s | $${safeResult.costUSD.toFixed(4)} | ${safeResult.numTurns} turns`, agent.id);
       completeTraceSpan(agentSpan.id, { status: 'done', metadata: { durationMs: safeResult.durationMs, numTurns: safeResult.numTurns } });
       completeRunTrace(trace.id, { status: 'done', summary: 'Completed' });
-      eventBus.emit('task:done', { taskId: task.id, agentId: agent.id, workspaceId: task.workspaceId, output: safeResult.output, cost: safeResult.costUSD });
+      if (!settledDuringRun) {
+        eventBus.emit('task:done', { taskId: task.id, agentId: agent.id, workspaceId: task.workspaceId, output: safeResult.output, cost: safeResult.costUSD });
+      }
       eventBus.emit('execution:done', { executionId: execution.id, taskId: task.id, workspaceId: task.workspaceId, progress: finalProgress });
 
       // Record trajectory for semantic routing learning
@@ -243,13 +252,24 @@ export class AgentRuntime {
       const errorMsg = err.message || 'Unknown error';
       updateExecution(execution.id, { status: 'failed', progress: getProgressSnapshot(tracker), completedAt: new Date().toISOString() });
       addExecutionMessage({ executionId: execution.id, type: 'error', content: errorMsg });
-      updateTask(task.id, { status: 'failed', error: errorMsg });
+
+      // If the task was already settled (cancelled by the user or the dependency
+      // cascade, which aborts the in-flight execution), don't overwrite that
+      // terminal state or re-emit task:failed — doing so would re-trigger the
+      // cascade and flip an already-final status.
+      const priorStatus = getTask(task.id)?.status;
+      const alreadyTerminal = priorStatus === 'cancelled' || priorStatus === 'failed' || priorStatus === 'done';
+      if (!alreadyTerminal) {
+        updateTask(task.id, { status: 'failed', error: errorMsg });
+      }
 
       const stats = { ...agent.stats };
       stats.tasksFailed++;
       updateAgent(agent.id, { stats });
 
-      addTaskLog(task.id, 'error', `Failed: ${errorMsg}`, agent.id);
+      addTaskLog(task.id, alreadyTerminal ? 'warn' : 'error',
+        alreadyTerminal ? `Execution stopped (task already ${priorStatus}): ${errorMsg}` : `Failed: ${errorMsg}`,
+        agent.id);
       recordLedgerEntry({
         executionId: execution.id, taskId: task.id, agentId: agent.id, workspaceId: task.workspaceId,
         type: 'execution.failed', decision: 'failed',
@@ -258,7 +278,9 @@ export class AgentRuntime {
       });
       completeTraceSpan(agentSpan.id, { status: 'failed', error: errorMsg });
       completeRunTrace(trace.id, { status: 'failed', summary: errorMsg });
-      eventBus.emit('task:failed', { taskId: task.id, agentId: agent.id, workspaceId: task.workspaceId, error: errorMsg });
+      if (!alreadyTerminal) {
+        eventBus.emit('task:failed', { taskId: task.id, agentId: agent.id, workspaceId: task.workspaceId, error: errorMsg });
+      }
       eventBus.emit('execution:failed', { executionId: execution.id, taskId: task.id, workspaceId: task.workspaceId, error: errorMsg });
 
       // Record failed trajectory too (for learning what doesn't work)

@@ -121,6 +121,7 @@ export class Orchestrator {
     // Listen for task completions to advance orchestrations
     eventBus.on('task:done', (event) => this.onTaskDone(event));
     eventBus.on('task:failed', (event) => this.onTaskFailed(event));
+    eventBus.on('task:cancelled', (event) => this.onTaskFailed(event));
   }
 
   /**
@@ -309,6 +310,11 @@ export class Orchestrator {
         taskId,
         error,
       });
+
+      // A failed/cancelled task is terminal; re-evaluate completion so the
+      // orchestration can settle instead of waiting for a task:done that a
+      // failing run will never produce.
+      this.checkCompletion(orch);
     }
   }
 
@@ -357,7 +363,7 @@ export class Orchestrator {
     const tasks = orch.taskIds.map(id => getTask(id)).filter(Boolean) as Task[];
     if (tasks.length === 0) return;
 
-    const allTerminal = tasks.every(t => t.status === 'done' || t.status === 'failed');
+    const allTerminal = tasks.every(t => t.status === 'done' || t.status === 'failed' || t.status === 'cancelled');
     if (!allTerminal) return;
 
     const allDone = tasks.every(t => t.status === 'done');

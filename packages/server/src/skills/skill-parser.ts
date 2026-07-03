@@ -36,6 +36,7 @@ export function parseSkillContent(content: string): ParsedSkill {
     validation: s.validation ? {
       command: s.validation.command,
       failMessage: s.validation.failMessage,
+      optional: s.validation.optional === true,
     } : undefined,
   }));
 

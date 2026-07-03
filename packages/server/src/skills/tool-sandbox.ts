@@ -116,7 +116,7 @@ function assertSafePath(workdir: string, inputPath: string): string {
 }
 
 /** Block dangerous shell command patterns */
-const BLOCKED_COMMANDS = /\b(rm\s+-rf\s+\/|sudo|chmod\s+777|curl.*\|\s*(?:sh|bash)|wget.*\|\s*(?:sh|bash)|eval|exec\s)|\$\{[^}]+@P\}|\$\{![^}]+\}|\$\(/i;
+const BLOCKED_COMMANDS = /\b(rm\s+-rf\s+\/|sudo|chmod\s+777|curl.*\|\s*(?:sh|bash)|wget.*\|\s*(?:sh|bash)|eval\b|exec\s)|\$\{[^}]+@P\}|\$\{![^}]+\}|\$\(|`/i;
 
 function uniqueOperations(operations: string[]): string[] {
   return Array.from(new Set(operations));

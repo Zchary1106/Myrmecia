@@ -55,11 +55,25 @@ export class TeamCoordinator {
     // Reflect task lifecycle onto the owning run + share findings across teammates.
     eventBus.on('task:done', (e: any) => { this.shareFinding(e); this.onTaskSettled(e); });
     eventBus.on('task:failed', (e: any) => this.onTaskSettled(e));
+    eventBus.on('task:cancelled', (e: any) => this.onTaskSettled(e));
   }
 
   getRun(runId: string): TeamRun | undefined {
     const row = getDb().get('SELECT * FROM team_runs WHERE id = ?', runId) as any;
     return row ? rowToRun(row) : undefined;
+  }
+
+  /**
+   * Recover after a restart: re-arm parent-task monitors for interrupted work
+   * and reconcile any team runs whose board finished while the server was down.
+   */
+  recover(): void {
+    this.masterAgent.resumeMonitoring();
+    const rows = getDb().all("SELECT * FROM team_runs WHERE status = 'running'") as any[];
+    for (const row of rows) {
+      const run = rowToRun(row);
+      if (run.parentTaskId) this.onTaskSettled({ taskId: run.parentTaskId });
+    }
   }
 
   listRuns(teamId?: string, workspaceId?: string, limit = 50): TeamRun[] {
@@ -155,7 +169,7 @@ export class TeamCoordinator {
     const allDone = children.every(t => ['done', 'failed', 'cancelled'].includes(t.status));
     if (!allDone) return;
 
-    const anyFailed = children.some(t => t.status === 'failed');
+    const anyFailed = children.some(t => t.status === 'failed' || t.status === 'cancelled');
     const result = children.map(t => `## ${t.title}\n${(t.output || '(no output)').slice(0, 4000)}`).join('\n\n---\n\n');
     db.run('UPDATE team_runs SET status = ?, result = ?, completed_at = ? WHERE id = ?',
       anyFailed ? 'failed' : 'done', result, new Date().toISOString(), run.id);
