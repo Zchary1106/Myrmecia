@@ -22,6 +22,7 @@ export interface SkillExecutorOptions {
   onStepStart?: (stepIndex: number, step: SkillStep) => void;
   onStepDone?: (stepIndex: number, step: SkillStep, output: string) => void;
   onStepFailed?: (stepIndex: number, step: SkillStep, error: string) => void;
+  onStepWarning?: (stepIndex: number, step: SkillStep, message: string) => void;
   abortSignal?: AbortSignal;
 }
 
@@ -48,6 +49,7 @@ export class SkillExecutor {
   private onStepStart?: SkillExecutorOptions['onStepStart'];
   private onStepDone?: SkillExecutorOptions['onStepDone'];
   private onStepFailed?: SkillExecutorOptions['onStepFailed'];
+  private onStepWarning?: SkillExecutorOptions['onStepWarning'];
   private abortSignal?: AbortSignal;
 
   constructor(options: SkillExecutorOptions) {
@@ -58,6 +60,7 @@ export class SkillExecutor {
     this.onStepStart = options.onStepStart;
     this.onStepDone = options.onStepDone;
     this.onStepFailed = options.onStepFailed;
+    this.onStepWarning = options.onStepWarning;
     this.abortSignal = options.abortSignal;
   }
 
@@ -133,6 +136,7 @@ export class SkillExecutor {
         // (e.g. running tests inside a shared repo worktree).
         const note = `validation advisory: ${lastError}`;
         logger.warn({ step: step.name, workdir: this.workdir, retries }, `Step "${step.name}" ${note}`);
+        this.onStepWarning?.(i, step, lastError);
         steps.push({ name: step.name, status: 'done', output: lastOutput, retries, validationOutput: lastError });
         previousOutputs.push(`[${step.name}]: ${lastOutput}\n(note: ${note})`);
         this.onStepDone?.(i, step, lastOutput);

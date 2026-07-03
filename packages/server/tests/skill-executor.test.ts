@@ -310,11 +310,13 @@ describe('skill-executor', () => {
     };
 
     const mockLlmCall = vi.fn().mockResolvedValue('code written');
+    const warnings: string[] = [];
     const executor = new SkillExecutor({
       config: softConfig,
       promptContent: 'You are a dev',
       workdir: '/tmp',
       llmCall: mockLlmCall,
+      onStepWarning: (_i, _s, message) => { warnings.push(message); },
     });
 
     const result = await executor.run('Do it');
@@ -325,6 +327,8 @@ describe('skill-executor', () => {
     expect(result.steps[0].validationOutput).toContain('Tests did not pass');
     // Still retried the configured number of times before accepting.
     expect(mockLlmCall).toHaveBeenCalledTimes(2);
+    // The advisory failure is surfaced (not silently swallowed).
+    expect(warnings.some(w => w.includes('Tests did not pass'))).toBe(true);
   });
 });
 
@@ -366,7 +370,20 @@ describe('resolveTestCommand', () => {
     writeFileSync(join(dir, 'test', 'slug.test.ts'), 'test("x", () => {});');
     const cmd = resolveTestCommand(dir);
     expect(cmd.startsWith('node --import tsx --test ')).toBe(true);
-    expect(cmd).toContain('slug.test.ts');
+    // Path is workspace-relative and single-quoted (shell-safe).
+    expect(cmd).toContain("'test/slug.test.ts'");
+  });
+
+  it('single-quotes discovered paths so filenames cannot inject shell substitution', () => {
+    const dir = mkTmp();
+    // A pathological filename that, if embedded unquoted/double-quoted, would run
+    // command substitution. Single-quoting must neutralize it.
+    const evil = 'a`touch pwned`.test.js';
+    writeFileSync(join(dir, evil), 'test("x", () => {});');
+    const cmd = resolveTestCommand(dir);
+    expect(cmd).toContain(`'${evil}'`);
+    // The backtick is only ever inside single quotes (no unquoted backtick).
+    expect(cmd.replace(/'[^']*'/g, '')).not.toContain('`');
   });
 
   it('discovers standalone JavaScript test files', () => {
