@@ -191,9 +191,11 @@ export class AgentRuntime {
         completedAt: new Date().toISOString(),
       });
 
-      // Guard against resurrecting a task that was cancelled (e.g. by the user or
-      // the dependency cascade) while this execution was completing.
-      const settledDuringRun = getTask(task.id)?.status === 'cancelled';
+      // Guard against resurrecting a task that reached a terminal state (e.g.
+      // cancelled by the user or the dependency cascade) while this execution
+      // was completing. Mirrors the catch path's terminal check.
+      const priorStatus = getTask(task.id)?.status;
+      const settledDuringRun = priorStatus === 'cancelled' || priorStatus === 'failed' || priorStatus === 'done';
       if (!settledDuringRun) {
         updateTask(task.id, { status: 'done', output: safeResult.output, completedAt: new Date().toISOString() });
       }

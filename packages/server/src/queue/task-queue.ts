@@ -1,7 +1,7 @@
 import { Queue, Worker, Job, QueueEvents } from 'bullmq';
 import IORedis from 'ioredis';
 import { eventBus } from '../events/event-bus.js';
-import { createTask, getTask, updateTask, addTaskLog, listTasks } from '../db/models/task.js';
+import { createTask, getTask, updateTask, addTaskLog, listTasks, listDependents } from '../db/models/task.js';
 import { AgentManager } from '../agents/agent-manager.js';
 import { metrics } from '../observability/telemetry.js';
 import { logger } from '../lib/logger.js';
@@ -61,14 +61,13 @@ export class TaskQueue {
     const root = getTask(rootId);
     if (!root || !['failed', 'cancelled'].includes(root.status)) return;
 
-    const candidates = [
-      ...listTasks({ status: 'pending' }),
-      ...listTasks({ status: 'queued' }),
-      ...listTasks({ status: 'assigned' }),
-    ];
-    for (const dep of candidates) {
-      if (!(dep.dependsOn || []).includes(root.id)) continue;
-      // Re-read: another cascade pass may have already settled it.
+    // Targeted lookup of the tasks that actually depend on `root` (single query,
+    // usually empty for a leaf failure) instead of scanning every non-terminal
+    // task. Transitive dependents are handled by re-entry via the task:cancelled
+    // listener above.
+    for (const dep of listDependents(root.id)) {
+      if (!(dep.dependsOn || []).includes(root.id)) continue; // exact-match guard for the LIKE pre-filter
+      // Re-read: a re-entrant pass may have already settled it (diamond deps).
       const fresh = getTask(dep.id);
       if (!fresh || !['pending', 'queued', 'assigned'].includes(fresh.status)) continue;
       const reason = `Dependency "${root.title}" did not complete`;
