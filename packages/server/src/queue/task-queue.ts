@@ -37,7 +37,52 @@ export class TaskQueue {
 
     // Listen for task completions to process waiting tasks
     eventBus.on('task:done', () => { metrics.queueDepth.add(-1, { direction: 'dec' }); this.processNext(); });
-    eventBus.on('task:failed', () => { metrics.queueDepth.add(-1, { direction: 'dec' }); this.processNext(); });
+    eventBus.on('task:failed', (e) => {
+      metrics.queueDepth.add(-1, { direction: 'dec' });
+      this.cascadeDependentFailure(e);
+      this.processNext();
+    });
+  }
+
+  /**
+   * When a decomposition subtask fails (or is cancelled), any sibling that is
+   * still waiting on it can never run — `checkDependencies` only clears when a
+   * dependency is `done`. Left alone, such siblings sit in `queued` forever,
+   * which prevents the parent (evaluateParentOutcome) and the team run
+   * (onTaskSettled) from ever settling. Cascade-cancel the unmet dependents
+   * (transitively) so the board reaches a terminal state promptly instead of
+   * hanging until the master monitor's 30-minute deadline.
+   */
+  private cascadeDependentFailure(event: any): void {
+    const taskId = event?.payload?.taskId ?? event?.taskId;
+    if (!taskId) return;
+    const failed = getTask(taskId);
+    if (!failed?.parentTaskId) return; // only decomposition subtasks form dependency chains here
+    if (!['failed', 'cancelled'].includes(failed.status)) return;
+
+    const siblings = listTasks({ parentTaskId: failed.parentTaskId });
+    const blocked = new Set<string>();
+    const blockers: { id: string; title: string }[] = [{ id: failed.id, title: failed.title }];
+
+    while (blockers.length) {
+      const blocker = blockers.shift()!;
+      for (const sib of siblings) {
+        if (blocked.has(sib.id)) continue;
+        if (!['pending', 'queued', 'assigned'].includes(sib.status)) continue;
+        if (!(sib.dependsOn || []).includes(blocker.id)) continue;
+
+        const reason = `Dependency "${blocker.title}" did not complete`;
+        const updated = updateTask(sib.id, {
+          status: 'cancelled',
+          error: reason,
+          completedAt: new Date().toISOString(),
+        });
+        addTaskLog(sib.id, 'warn', `Cancelled — ${reason}`, 'system');
+        blocked.add(sib.id);
+        eventBus.emit('task:cancelled', { taskId: sib.id, task: updated, workspaceId: sib.workspaceId });
+        blockers.push({ id: sib.id, title: sib.title }); // transitive dependents
+      }
+    }
   }
 
   /** Initialize BullMQ with Redis */
@@ -333,6 +378,16 @@ export class TaskQueue {
     logger.info({ count: toRecover.length }, 'Recovering interrupted tasks');
 
     for (const task of toRecover) {
+      // Parent (decomposed) tasks are not executed directly — they are settled
+      // by MasterAgent.monitorSubtasks once their children finish. Re-queuing
+      // them would run the parent as if it were a leaf task AND would flip its
+      // status out from under resumeMonitoring(). Leave them running so the
+      // master monitor can re-arm and finalize them (see TeamCoordinator.recover).
+      if (listTasks({ parentTaskId: task.id }).length > 0) {
+        addTaskLog(task.id, 'info', 'Parent task left for master monitor to reconcile after restart', 'system');
+        continue;
+      }
+
       addTaskLog(task.id, 'warn', 'Task interrupted by server restart — re-queuing', 'system');
       updateTask(task.id, { status: 'pending' });
 

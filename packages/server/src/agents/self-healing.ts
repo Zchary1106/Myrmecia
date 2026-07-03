@@ -27,8 +27,19 @@ export class SelfHealingEngine {
     const task = getTask(taskId);
     if (!task) return;
 
-    // Don't self-heal decomposition subtasks or already-cancelled tasks
+    // Don't self-heal already-cancelled tasks.
     if (task.status === 'cancelled') return;
+
+    // Don't self-heal tasks that are part of a decomposition: coordination
+    // parents (tasks that own subtasks) are settled by MasterAgent.monitorSubtasks,
+    // and their subtasks are recovered at the parent level. Retrying either here
+    // would flip a just-settled task back to `pending` (a zombie) and race the
+    // monitor / dependency-cascade. This matches the engine's stated intent.
+    const isParent = listTasks({ parentTaskId: task.id }).length > 0;
+    if (task.parentTaskId || isParent) {
+      addTaskLog(taskId, 'info', 'Self-healing skipped: task is part of a decomposition (handled by master coordinator)', 'self-healing');
+      return;
+    }
 
     const healingLevel = this.getHealingLevel(task);
     addTaskLog(taskId, 'info', `Self-healing: attempting level ${healingLevel} recovery`, 'system');

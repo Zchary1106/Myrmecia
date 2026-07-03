@@ -382,6 +382,20 @@ describe('resolveTestCommand', () => {
     expect(resolveTestCommand(dir)).toBe('true');
   });
 
+  it('does not run the whole suite from a monorepo root (pnpm-workspace.yaml)', () => {
+    const dir = mkTmp();
+    writeFileSync(join(dir, 'pnpm-workspace.yaml'), "packages:\n  - 'packages/*'\n");
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ scripts: { test: 'vitest run' } }));
+    writeFileSync(join(dir, 'pnpm-lock.yaml'), 'lockfileVersion: 9\n');
+    expect(resolveTestCommand(dir)).toBe('true');
+  });
+
+  it('treats a package.json with a workspaces array as a monorepo root', () => {
+    const dir = mkTmp();
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ workspaces: ['packages/*'], scripts: { test: 'jest' } }));
+    expect(resolveTestCommand(dir)).toBe('true');
+  });
+
   it('skips node_modules when discovering tests', () => {
     const dir = mkTmp();
     mkdirSync(join(dir, 'node_modules', 'dep'), { recursive: true });
