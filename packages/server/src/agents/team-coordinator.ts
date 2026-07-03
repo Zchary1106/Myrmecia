@@ -62,6 +62,19 @@ export class TeamCoordinator {
     return row ? rowToRun(row) : undefined;
   }
 
+  /**
+   * Recover after a restart: re-arm parent-task monitors for interrupted work
+   * and reconcile any team runs whose board finished while the server was down.
+   */
+  recover(): void {
+    this.masterAgent.resumeMonitoring();
+    const rows = getDb().all("SELECT * FROM team_runs WHERE status = 'running'") as any[];
+    for (const row of rows) {
+      const run = rowToRun(row);
+      if (run.parentTaskId) this.onTaskSettled({ taskId: run.parentTaskId });
+    }
+  }
+
   listRuns(teamId?: string, workspaceId?: string, limit = 50): TeamRun[] {
     const db = getDb();
     const conditions: string[] = [];

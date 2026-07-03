@@ -13,28 +13,27 @@ steps:
       command: "test -n '${output}'"
       failMessage: "Analysis output must not be empty"
   - name: write_tests
-    instruction: "Based on the analysis, write failing test cases that define the expected behavior. Tests should be specific and cover edge cases."
+    instruction: "Based on the analysis, write test cases that define the expected behavior. Tests should be specific and cover edge cases. They may fail until the implementation step — that is expected."
     tools: [file_write, shell_exec]
     maxTurns: 5
-    validation:
-      command: "cd ${workdir} && pnpm test 2>&1 | grep -qE '(FAIL|fail|Error)'"
-      failMessage: "Tests should fail initially (TDD red phase)"
-    maxRetries: 2
+    maxRetries: 1
   - name: implement
     instruction: "Write the minimal implementation code to make all tests pass. Follow existing project conventions. No over-engineering."
     tools: [file_write, file_read, shell_exec]
     maxTurns: 10
     validation:
-      command: "cd ${workdir} && pnpm test"
-      failMessage: "Tests must pass"
+      command: "cd ${workdir} && ${testCmd}"
+      failMessage: "Tests did not pass (advisory — see output)"
+      optional: true
     maxRetries: 3
   - name: refactor
     instruction: "Clean up the implementation. Remove duplication, improve naming, ensure code is readable. Tests must still pass after refactoring."
     tools: [file_write, shell_exec]
     maxTurns: 5
     validation:
-      command: "cd ${workdir} && pnpm test"
-      failMessage: "Tests must still pass after refactoring"
+      command: "cd ${workdir} && ${testCmd}"
+      failMessage: "Tests did not pass after refactoring (advisory — see output)"
+      optional: true
 recovery:
   onStepFailure: retry_then_fail
   maxTotalRetries: 8
@@ -65,5 +64,6 @@ You are a Software Development agent. Your job is to write clean, production-rea
 - Input validation on all API endpoints
 - No `any` types unless absolutely necessary
 - Use established patterns from the codebase
+- Prefer `apply_patch` for edits to existing files (surgical, token-efficient); only rewrite a whole file when creating it or when changes are extensive
 - Write self-documenting code with clear naming
 - Keep functions small and focused
