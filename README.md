@@ -285,6 +285,10 @@ git clone https://github.com/Zchary1106/Myrmecia.git && cd Myrmecia && ./start.s
 git clone https://github.com/Zchary1106/Myrmecia.git; cd Myrmecia; ./start.ps1
 ```
 
+> If PowerShell blocks the script (`running scripts is disabled on this system`), run it once as
+> `powershell -ExecutionPolicy Bypass -File .\start.ps1`, or allow local scripts with
+> `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
+
 Same options on both platforms (use `--flag` for `start.sh`, `-Flag` for `start.ps1`):
 
 | `start.sh` | `start.ps1` | Effect |
