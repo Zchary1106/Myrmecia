@@ -420,7 +420,7 @@ curl -s localhost:3000/api/v1/mcp/tools   # aggregated tools as mcp__fs__*
 This is a **pnpm monorepo** combining a TypeScript orchestrator, a React dashboard, and a Python agent runtime.
 
 ```
-agent-factory/
+myrmecia/
 ├── packages/
 │   ├── server/         # Express 5 orchestrator — agents, memory, pipelines, graph engine, MCP, queue, routes, WebSocket
 │   ├── dashboard/      # React 19 SPA — command center, agents, pipelines, Orchestrate canvas, Memory, costs
