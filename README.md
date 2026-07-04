@@ -3,13 +3,15 @@
 </p>
 
 <div align="center" style="line-height: 1;">
+  <a href="https://github.com/Zchary1106/Myrmecia/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Zchary1106/Myrmecia/actions/workflows/ci.yml/badge.svg"/></a>
+  <a href="https://github.com/Zchary1106/Myrmecia/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/Zchary1106/Myrmecia?logo=github&color=1f6feb"/></a>
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/github/license/Zchary1106/Myrmecia?color=2ea44f"/></a>
   <img alt="Node" src="https://img.shields.io/badge/Node-%3E%3D20-339933?logo=node.js&logoColor=white"/>
   <img alt="pnpm" src="https://img.shields.io/badge/pnpm-%3E%3D9-F69220?logo=pnpm&logoColor=white"/>
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-ESM-3178C6?logo=typescript&logoColor=white"/>
   <img alt="React" src="https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black"/>
   <img alt="Express" src="https://img.shields.io/badge/Express-5-000000?logo=express&logoColor=white"/>
   <img alt="MCP" src="https://img.shields.io/badge/MCP-enabled-7C3AED"/>
-  <img alt="License" src="https://img.shields.io/badge/License-MIT-green"/>
 </div>
 
 ---
