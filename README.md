@@ -476,7 +476,7 @@ myrmecia/
 
 ## Contributing
 
-Contributions are welcome — bug fixes, documentation, new agents/skills, and feature ideas. Please run the type-check and tests (`pnpm lint`, `pnpm --filter @myrmecia/server test`) before opening a PR.
+Contributions are welcome — bug fixes, documentation, new agents/skills, and feature ideas. See **[CONTRIBUTING.md](CONTRIBUTING.md)** for setup, project layout, testing, and the PR process. In short: run `pnpm lint`, `pnpm build`, and `pnpm --filter @myrmecia/server test` before opening a PR against `main`.
 
 ## Acknowledgements
 

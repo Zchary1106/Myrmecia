@@ -34,7 +34,7 @@ jobs:
           node-version: 20
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @agent-factory/server test
+      - run: pnpm --filter @myrmecia/server test
 
   test-dashboard:
     runs-on: ubuntu-latest
@@ -48,8 +48,7 @@ jobs:
           node-version: 20
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @agent-factory/dashboard test
-        continue-on-error: true  # Until dashboard tests are added
+      - run: pnpm --filter @myrmecia/dashboard test
 
   e2e:
     runs-on: ubuntu-latest
@@ -64,6 +63,6 @@ jobs:
           node-version: 20
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @agent-factory/dashboard exec playwright install --with-deps chromium
-      - run: pnpm --filter @agent-factory/dashboard test:e2e
+      - run: pnpm --filter @myrmecia/dashboard exec playwright install --with-deps chromium
+      - run: pnpm --filter @myrmecia/dashboard test:e2e
         continue-on-error: true  # Until E2E tests are added
