@@ -22,13 +22,29 @@ BLUE='\033[0;34m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-echo -e "${GREEN}🏭 Agent Factory${NC}"
+echo -e "${GREEN}🐜 Myrmecia${NC}"
 echo ""
 
-# 检查 node
+# 检查 node（需要 >= 20）
 if ! command -v node >/dev/null 2>&1; then
-  echo -e "${YELLOW}❌ Node.js not found. Install it first.${NC}"
+  echo -e "${YELLOW}❌ Node.js not found. Install Node >= 20 from https://nodejs.org${NC}"
   exit 1
+fi
+NODE_MAJOR="$(node -p 'Number(process.versions.node.split(".")[0])')"
+if [ "$NODE_MAJOR" -lt 20 ]; then
+  echo -e "${YELLOW}❌ Node >= 20 required. Current: $(node -v)${NC}"
+  exit 1
+fi
+
+# 确保 pnpm（用 corepack 自动装）
+if ! command -v pnpm >/dev/null 2>&1; then
+  echo -e "${BLUE}📦 Provisioning pnpm via corepack...${NC}"
+  corepack enable pnpm 2>/dev/null || true
+  corepack prepare pnpm@latest --activate 2>/dev/null || true
+  if ! command -v pnpm >/dev/null 2>&1; then
+    echo -e "${YELLOW}❌ pnpm unavailable. Run: npm install -g pnpm${NC}"
+    exit 1
+  fi
 fi
 
 # 检查依赖
@@ -40,7 +56,7 @@ fi
 # 构建 shared types（确保类型定义最新）
 if [ ! -d "packages/shared/dist" ] || [ "packages/shared/src/index.ts" -nt "packages/shared/dist/index.js" ]; then
   echo -e "${BLUE}🔨 Building shared types...${NC}"
-  pnpm --filter @agent-factory/shared build 2>/dev/null || npx tsc --project packages/shared/tsconfig.json
+  pnpm --filter @myrmecia/shared build 2>/dev/null || npx tsc --project packages/shared/tsconfig.json
 fi
 
 # 传递参数给原有脚本

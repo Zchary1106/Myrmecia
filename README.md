@@ -269,14 +269,31 @@ pnpm dev
 # Dashboard: http://localhost:5173   ·   API: http://localhost:3000
 ```
 
-### Startup options
+### One-command launch (install + start)
+
+Only **Node.js ≥ 20** is required up front — the launcher auto-provisions pnpm (via corepack), installs dependencies, builds shared types, then starts the API + dashboard and opens the browser.
+
+**macOS / Linux**
 
 ```bash
-./start.sh --clean-db        # fresh SQLite database
-./start.sh --install-python  # install Python runtime deps automatically
-./start.sh --server-only     # API server only (port 3000)
-./start.sh --dashboard-only  # dashboard only (port 5173)
+git clone https://github.com/Zchary1106/Myrmecia.git && cd Myrmecia && ./start.sh
 ```
+
+**Windows (PowerShell)**
+
+```powershell
+git clone https://github.com/Zchary1106/Myrmecia.git; cd Myrmecia; ./start.ps1
+```
+
+Same options on both platforms (use `--flag` for `start.sh`, `-Flag` for `start.ps1`):
+
+| `start.sh` | `start.ps1` | Effect |
+|------------|-------------|--------|
+| `--clean-db` | `-CleanDb` | fresh SQLite database |
+| `--install-python` | `-InstallPython` | install the Python runtime deps |
+| `--server-only` | `-ServerOnly` | API server only (port 3000) |
+| `--dashboard-only` | `-DashboardOnly` | dashboard only (port 5173) |
+| `--no-open` | `-NoOpen` | don't open the browser |
 
 ### Docker
 
