@@ -1,5 +1,7 @@
 import { test, expect } from '@playwright/test';
 
+const loadedAgentSummary = /\d+ running \/ [1-9]\d* agents/;
+
 /**
  * Test that the dashboard reliably loads agents and diagnostics,
  * even after multiple page refreshes.
@@ -8,41 +10,31 @@ test.describe('Dashboard stability', () => {
   test('agents load and persist across refreshes', async ({ page }) => {
     await page.goto('/');
 
-    // Wait for agents to appear (retry logic should handle slow server)
-    const agentText = page.locator('text=/\\d+ agents/');
-    await expect(agentText).toBeVisible({ timeout: 15000 });
-
-    // Verify it's not "0 agents"
-    const text = await agentText.textContent();
-    expect(text).not.toContain('0 agents');
+    // Wait for a loaded count rather than the initial "0 agents" placeholder.
+    const agentSummary = page.getByTestId('agent-summary');
+    await expect(agentSummary).toHaveText(loadedAgentSummary, { timeout: 15000 });
 
     // Reload page 3 times and verify agents remain
     for (let i = 0; i < 3; i++) {
       await page.reload();
-      // Wait for agents to reappear
-      await expect(agentText).toBeVisible({ timeout: 10000 });
-      const reloadText = await agentText.textContent();
-      expect(reloadText).not.toContain('0 agents');
+      await expect(agentSummary).toHaveText(loadedAgentSummary, { timeout: 10000 });
     }
   });
 
   test('diagnostics loads (no "unknown operator")', async ({ page }) => {
     await page.goto('/');
 
-    // Wait for diagnostics to resolve
-    // The "unknown operator" text should disappear within retry window
-    await expect(page.locator('text=unknown operator')).toBeHidden({ timeout: 15000 });
-
-    // Should show actual operator info
-    await expect(page.locator('text=/local-admin|admin|operator/')).toBeVisible({ timeout: 5000 });
+    const operatorIdentity = page.getByTestId('operator-identity');
+    await expect(operatorIdentity).not.toHaveText(/unknown operator/, { timeout: 15000 });
+    await expect(operatorIdentity).toHaveText(/local-admin|admin|operator/, { timeout: 5000 });
   });
 
   test('agents recover after temporary API failure', async ({ page }) => {
     await page.goto('/');
 
     // Wait for initial load
-    const agentText = page.locator('text=/\\d+ agents/');
-    await expect(agentText).toBeVisible({ timeout: 15000 });
+    const agentSummary = page.getByTestId('agent-summary');
+    await expect(agentSummary).toHaveText(loadedAgentSummary, { timeout: 15000 });
 
     // Simulate network interruption by blocking API briefly
     await page.route('**/api/v1/agents', async (route) => {
@@ -56,9 +48,8 @@ test.describe('Dashboard stability', () => {
     // Unblock API
     await page.unroute('**/api/v1/agents');
 
-    // Retry logic should recover within 3-6 seconds
-    await expect(agentText).toBeVisible({ timeout: 10000 });
-    const recovered = await agentText.textContent();
-    expect(recovered).not.toContain('0 agents');
+    // The store retries failed loads; wait for the recovered API state, not the
+    // always-visible initial placeholder.
+    await expect(agentSummary).toHaveText(loadedAgentSummary, { timeout: 10000 });
   });
 });

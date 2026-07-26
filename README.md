@@ -308,6 +308,8 @@ docker compose up -d
 # Server: http://localhost:3000   ·   Dashboard: http://localhost:5173
 ```
 
+The server image includes the built-in `agents/` registry and `templates/`; the Compose bind mounts intentionally override them during local development.
+
 ### Environment Variables
 
 | Variable | Purpose |

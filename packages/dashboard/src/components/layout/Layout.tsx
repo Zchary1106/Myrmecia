@@ -57,14 +57,17 @@ function AgentSidebar() {
         </h1>
         <div className="flex items-center gap-1.5 mt-1">
           <span className={cn('w-1.5 h-1.5 rounded-full', health?.status === 'ok' ? 'bg-green-500' : 'bg-gray-500')} />
-          <span className="text-[10px] text-gray-500">
+          <span data-testid="agent-summary" className="text-[10px] text-gray-500">
             {agents.filter((a: any) => (a.activeExecutions || 0) > 0).length} running / {agents.length} agents
           </span>
         </div>
-        <div className={cn(
+        <div
+          data-testid="operator-identity"
+          className={cn(
           'mt-2 rounded-md px-2 py-1 text-[10px] truncate',
           canControl ? 'bg-green-500/10 text-green-400' : 'bg-yellow-500/10 text-yellow-400',
-        )}>
+          )}
+        >
           {canControl ? 'Control' : 'Read-only'} · {operatorRoleLabel(diagnostics)}
         </div>
       </div>
