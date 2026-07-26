@@ -4,7 +4,7 @@ import { parse as parseYaml } from 'yaml';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { createPipeline, getPipeline, listPipelines, updatePipeline } from '../db/models/pipeline.js';
-import { createTemplate, listTemplates, getTemplate } from '../db/models/pipeline.js';
+import { createTemplate, listTemplates, getTemplate, updateTemplate } from '../db/models/pipeline.js';
 import { getTask } from '../db/models/task.js';
 import { eventBus } from '../events/event-bus.js';
 import { TaskQueue } from '../queue/task-queue.js';
@@ -15,9 +15,31 @@ import { getReflectionService } from '../memory/reflection.js';
 import { workspaceManager } from '../workspace/workspace-manager.js';
 import { createTestReportFromOutput, isTestingStage } from '../testing/test-report.js';
 import { saveCheckpoint, getCompletedStageIndices } from './checkpoint.js';
-import type { Pipeline, PipelineStage } from '../types.js';
+import type { Pipeline, PipelineStage, PipelineTemplate } from '../types.js';
 
 const execAsync = promisify(exec);
+
+interface PipelineTemplateYaml {
+  name?: string;
+  description?: string;
+  stages?: PipelineTemplateYamlStage[];
+}
+
+interface PipelineTemplateYamlStage {
+  name: string;
+  role: string;
+  prompt_template: string;
+  depends_on?: number[];
+}
+
+function toTemplateStages(stages: PipelineTemplateYamlStage[]): PipelineTemplate['stages'] {
+  return stages.map((stage) => ({
+    name: stage.name,
+    role: stage.role,
+    promptTemplate: stage.prompt_template,
+    ...(stage.depends_on?.length ? { dependsOn: stage.depends_on } : {}),
+  }));
+}
 
 export class PipelineEngine {
   private taskQueue: TaskQueue;
@@ -40,28 +62,35 @@ export class PipelineEngine {
   async loadTemplates(templatesDir: string) {
     try {
       const files = readdirSync(templatesDir).filter(f => f.endsWith('.yaml') || f.endsWith('.yml'));
-      const existing = listTemplates();
-      const existingNames = new Set(existing.map(t => t.name));
+      const existingByName = new Map(listTemplates().map(template => [template.name, template]));
 
       for (const file of files) {
         const content = readFileSync(join(templatesDir, file), 'utf-8');
-        const tmpl = parseYaml(content);
-        if (!tmpl?.stages || !Array.isArray(tmpl.stages)) {
+        const tmpl = parseYaml(content) as PipelineTemplateYaml | undefined;
+        if (!tmpl?.name || !Array.isArray(tmpl.stages)) {
           logger.debug({ file }, 'Skipping non-pipeline template metadata file');
           continue;
         }
-        if (!existingNames.has(tmpl.name)) {
-          createTemplate({
-            name: tmpl.name,
-            description: tmpl.description,
-            stages: tmpl.stages.map((s: any) => ({
-              name: s.name,
-              role: s.role,
-              promptTemplate: s.prompt_template,
-              dependsOn: s.depends_on,
-            })),
-          });
+        const data = {
+          name: tmpl.name,
+          description: tmpl.description || '',
+          stages: toTemplateStages(tmpl.stages),
+        };
+        const existing = existingByName.get(data.name);
+
+        if (!existing) {
+          const created = createTemplate(data);
+          existingByName.set(data.name, created);
           logger.info({ template: tmpl.name }, 'Loaded pipeline template');
+          continue;
+        }
+
+        if (
+          existing.description !== data.description
+          || JSON.stringify(existing.stages) !== JSON.stringify(data.stages)
+        ) {
+          updateTemplate(existing.id, data);
+          logger.info({ template: tmpl.name }, 'Synced pipeline template');
         }
       }
     } catch (err: any) {
@@ -80,7 +109,7 @@ export class PipelineEngine {
       agentRole: s.role,
       status: 'pending' as const,
       promptTemplate: s.promptTemplate,
-      dependsOn: (s as any).dependsOn,
+      dependsOn: s.dependsOn,
     }));
 
     const pipeline = createPipeline({

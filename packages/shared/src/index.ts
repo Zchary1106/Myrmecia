@@ -436,11 +436,18 @@ export interface Pipeline {
   completedAt?: string;
 }
 
+export interface PipelineTemplateStage {
+  name: string;
+  role: AgentRole;
+  promptTemplate: string;
+  dependsOn?: number[];
+}
+
 export interface PipelineTemplate {
   id: string;
   name: string;
   description?: string;
-  stages: { name: string; role: AgentRole; promptTemplate: string }[];
+  stages: PipelineTemplateStage[];
 }
 
 export interface PipelineTemplateGalleryItem {

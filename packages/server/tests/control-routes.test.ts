@@ -320,10 +320,17 @@ describe('control routes', () => {
 
       const created = await jsonFetch<any>(baseUrl, '/templates', {
         method: 'POST',
-        body: JSON.stringify({ name: 'Builder', stages: [{ name: 'Build', role: 'developer', promptTemplate: 'Use {input}' }] }),
+        body: JSON.stringify({
+          name: 'Builder',
+          stages: [
+            { name: 'Build', role: 'developer', promptTemplate: 'Use {input}' },
+            { name: 'Verify', role: 'developer', promptTemplate: 'Verify {input}', dependsOn: [0] },
+          ],
+        }),
         headers: { 'x-operator-id': 'ops1', 'x-operator-role': 'operator' },
       });
       expect(created.status).toBe(201);
+      expect(created.body.stages[1].dependsOn).toEqual([0]);
 
       const updated = await jsonFetch<any>(baseUrl, `/templates/${created.body.id}`, {
         method: 'PATCH',

@@ -79,7 +79,7 @@ export function updatePipeline(id: string, updates: Partial<{
 }
 
 // Templates
-export function createTemplate(data: { name: string; description?: string; stages: any[] }): PipelineTemplate {
+export function createTemplate(data: { name: string; description?: string; stages: PipelineTemplate['stages'] }): PipelineTemplate {
   const db = getDb();
   const id = `tmpl_${uuid().slice(0, 8)}`;
   db.run(`
@@ -105,7 +105,7 @@ export function listTemplates(): PipelineTemplate[] {
 export function updateTemplate(id: string, updates: Partial<{
   name: string;
   description: string;
-  stages: { name: string; role: string; promptTemplate: string }[];
+  stages: PipelineTemplate['stages'];
 }>): PipelineTemplate | undefined {
   const db = getDb();
   const sets: string[] = [];

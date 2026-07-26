@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtempSync } from 'fs';
+import { mkdtempSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { AgentManager } from '../src/agents/agent-manager.js';
 import { closeDb, getDb } from '../src/db/database.js';
-import { createPipeline, getPipeline, updatePipeline } from '../src/db/models/pipeline.js';
+import { createPipeline, getPipeline, listTemplates, updatePipeline } from '../src/db/models/pipeline.js';
 import { createTask, updateTask } from '../src/db/models/task.js';
 import { PipelineEngine } from '../src/pipelines/pipeline-engine.js';
 import { TaskQueue } from '../src/queue/task-queue.js';
@@ -50,5 +50,51 @@ describe('PipelineEngine durable task resolution', () => {
     expect(updated.status).toBe('done');
     expect(updated.stages[0].status).toBe('done');
     expect(updated.stages[0].output).toBe('built');
+  });
+
+  it('syncs changed YAML templates without replacing their persisted IDs', async () => {
+    const templatesDir = mkdtempSync(join(tmpdir(), 'agent-factory-pipeline-templates-'));
+    const templatePath = join(templatesDir, 'feature.yaml');
+    const engine = new PipelineEngine({} as TaskQueue, {} as AgentManager);
+
+    writeFileSync(templatePath, `
+name: Feature
+description: Initial version
+stages:
+  - name: Spec
+    role: product-manager
+    prompt_template: "Write a spec for {input}"
+`, 'utf-8');
+    await engine.loadTemplates(templatesDir);
+
+    const initial = listTemplates().find(template => template.name === 'Feature');
+    expect(initial).toMatchObject({
+      description: 'Initial version',
+      stages: [{ name: 'Spec', role: 'product-manager', promptTemplate: 'Write a spec for {input}' }],
+    });
+
+    writeFileSync(templatePath, `
+name: Feature
+description: Updated version
+stages:
+  - name: Spec
+    role: product-manager
+    prompt_template: "Write a spec for {input}"
+  - name: Implement
+    role: developer
+    depends_on: [0]
+    prompt_template: "Implement {input}"
+`, 'utf-8');
+    await engine.loadTemplates(templatesDir);
+
+    const synced = listTemplates().find(template => template.name === 'Feature');
+    expect(synced?.id).toBe(initial?.id);
+    expect(synced).toMatchObject({
+      description: 'Updated version',
+      stages: [
+        { name: 'Spec', role: 'product-manager', promptTemplate: 'Write a spec for {input}' },
+        { name: 'Implement', role: 'developer', promptTemplate: 'Implement {input}', dependsOn: [0] },
+      ],
+    });
   });
 });
