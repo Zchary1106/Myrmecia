@@ -358,11 +358,11 @@ agents:
       tier: balanced
       fallbackModel: gpt-5.4
       maxTokens: 40000
-      maxResponseTokens: 2048
+      maxResponseTokens: 8192
       maxToolCalls: 16
-      maxWallClockMs: 300000
+      maxWallClockMs: 600000
     capabilities: [xiaohongshu, rednote, social-media, chinese-content, lifestyle, web-research, hashtag-planning, image-generation]
-    allowed_tools: [web.search, web.fetch, content.hashtag_plan, image.generate_svg]
+    allowed_tools: [web.search, web.fetch, content.hashtag_plan, image.generate_svg, image.generate_cards]
     triggers: [小红书, 笔记, 种草, 小红书文案, rednote]
 
   - id: douyin-writer
@@ -377,9 +377,9 @@ agents:
       tier: balanced
       fallbackModel: gpt-5.4
       maxTokens: 40000
-      maxResponseTokens: 2048
+      maxResponseTokens: 8192
       maxToolCalls: 16
-      maxWallClockMs: 300000
+      maxWallClockMs: 600000
     capabilities: [douyin, tiktok, short-video, script-writing, chinese-content, web-research, hashtag-planning, image-generation]
     allowed_tools: [web.search, web.fetch, content.hashtag_plan, image.generate_svg]
     triggers: [抖音, 短视频, 脚本, 分镜, douyin, tiktok script]
@@ -475,10 +475,14 @@ agents:
       fallbackModel: claude-haiku-4.5
       maxTokens: 200000
       maxResponseTokens: 4096
-      maxToolCalls: 30
-      maxWallClockMs: 600000
+      maxToolCalls: 12
+      maxWallClockMs: 900000
     capabilities: [trend-research, social-media, xiaohongshu, douyin, web-research, competitive-analysis]
-    allowed_tools: [web.search, web.fetch, mcp__douyin-search__search_videos, mcp__douyin-search__get_homefeed, mcp__douyin-search__get_video_comments, mcp__xiaohongshu__search_feeds, mcp__xiaohongshu__list_feeds]
+    # NOTE: mcp__xiaohongshu__search_feeds / list_feeds are deliberately NOT granted here.
+    # They routinely take >10min per call against the live site, and their payloads carry
+    # xsec_token values that trip the global DLP api_key rule, so the result is blocked
+    # anyway. Xiaohongshu-side signal is gathered via web.search instead.
+    allowed_tools: [web.search, web.fetch, mcp__douyin-search__search_videos, mcp__douyin-search__get_homefeed, mcp__douyin-search__get_video_comments]
     triggers: [选题, 调研, 热点, trend, 什么内容火]
 
   - id: social-publisher

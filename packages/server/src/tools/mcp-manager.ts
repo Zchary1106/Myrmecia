@@ -90,11 +90,11 @@ export class McpManager {
   }
 
   /** Call a tool by qualified name (`mcp__server__tool`) or `server` + `tool`. */
-  async callTool(qualifiedName: string, args: Record<string, unknown> = {}): Promise<McpCallResult> {
+  async callTool(qualifiedName: string, args: Record<string, unknown> = {}, timeoutMs?: number): Promise<McpCallResult> {
     const { server, tool } = splitQualified(qualifiedName);
     const client = this.clients.get(server);
     if (!client) throw new Error(`MCP server not connected: ${server}`);
-    return client.callTool(tool, args);
+    return client.callTool(tool, args, timeoutMs);
   }
 
   dispose(): void {
