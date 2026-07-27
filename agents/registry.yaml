@@ -357,13 +357,32 @@ agents:
       model: gpt-5.3-codex
       tier: balanced
       fallbackModel: gpt-5.4
-      maxTokens: 4096
+      maxTokens: 40000
       maxResponseTokens: 2048
       maxToolCalls: 16
-      maxWallClockMs: 180000
+      maxWallClockMs: 300000
     capabilities: [xiaohongshu, rednote, social-media, chinese-content, lifestyle, web-research, hashtag-planning, image-generation]
     allowed_tools: [web.search, web.fetch, content.hashtag_plan, image.generate_svg]
     triggers: [小红书, 笔记, 种草, 小红书文案, rednote]
+
+  - id: douyin-writer
+    name: 抖音编导
+    emoji: 🎬
+    role: douyin-writer
+    description: 抖音短视频脚本创作，知识科普/生活好物/工作方法方向，分镜+口播稿+字幕
+    skill: agents/douyin-writer.md
+    model:
+      provider: openai
+      model: gpt-5.3-codex
+      tier: balanced
+      fallbackModel: gpt-5.4
+      maxTokens: 40000
+      maxResponseTokens: 2048
+      maxToolCalls: 16
+      maxWallClockMs: 300000
+    capabilities: [douyin, tiktok, short-video, script-writing, chinese-content, web-research, hashtag-planning, image-generation]
+    allowed_tools: [web.search, web.fetch, content.hashtag_plan, image.generate_svg]
+    triggers: [抖音, 短视频, 脚本, 分镜, douyin, tiktok script]
 
   # ===== 工具型 Agent =====
   - id: i18n
@@ -441,3 +460,42 @@ agents:
     capabilities: [documentation, readme, changelog, guide, adr, web-research, crawler]
     allowed_tools: [web.search, web.fetch, crawler.extract_links]
     triggers: [文档, README, docs, 使用指南, changelog]
+
+  # ===== 选题与发布 Agent =====
+  - id: trend-scout
+    name: 选题侦察
+    emoji: 🔥
+    role: trend-scout
+    description: 跨平台（小红书+抖音）真实热度调研，基于 MCP 抓取的真实数据给出选题建议
+    skill: agents/trend-scout.md
+    model:
+      provider: openai
+      model: gpt-5.4-mini
+      tier: cheap
+      fallbackModel: claude-haiku-4.5
+      maxTokens: 200000
+      maxResponseTokens: 4096
+      maxToolCalls: 30
+      maxWallClockMs: 600000
+    capabilities: [trend-research, social-media, xiaohongshu, douyin, web-research, competitive-analysis]
+    allowed_tools: [web.search, web.fetch, mcp__douyin-search__search_videos, mcp__douyin-search__get_homefeed, mcp__douyin-search__get_video_comments, mcp__xiaohongshu__search_feeds, mcp__xiaohongshu__list_feeds]
+    triggers: [选题, 调研, 热点, trend, 什么内容火]
+
+  - id: social-publisher
+    name: 社媒发布执行
+    emoji: 🚀
+    role: social-publisher
+    description: 人工确认后，将终稿实际发布到小红书/抖音；不创作、不改写内容，只做发布前置校验与执行
+    skill: agents/social-publisher.md
+    model:
+      provider: openai
+      model: claude-haiku-4.5
+      tier: cheap
+      fallbackModel: gpt-5.4-mini
+      maxTokens: 30000
+      maxResponseTokens: 2048
+      maxToolCalls: 8
+      maxWallClockMs: 180000
+    capabilities: [publishing, xiaohongshu, douyin, execution]
+    allowed_tools: [mcp__xiaohongshu__check_login_status, mcp__xiaohongshu__publish_content, mcp__xiaohongshu__publish_with_video, mcp__douyin-upload__douyin_check_login, mcp__douyin-upload__douyin_upload_video]
+    triggers: [发布, 发到小红书, 发到抖音, publish]

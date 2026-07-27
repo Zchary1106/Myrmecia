@@ -13,6 +13,11 @@ const createPipelineSchema = z.object({
   templateId: z.string().trim().min(1),
   input: z.string().trim().min(1),
   gateMode: z.enum(['auto', 'manual']).optional(),
+  // Explicit opt-in to let a publish-capable pipeline (one that can reach a real
+  // mcp__*__publish*/upload* tool) run with gateMode "auto" — i.e. write and
+  // publish with no human checkpoint. Defaults to false/off; PipelineEngine.create
+  // forces gateMode back to "manual" for such templates unless this is true.
+  confirmAutonomousPublish: z.boolean().optional(),
   domainId: z.string().trim().min(1).optional(),
 });
 const listPipelinesQuerySchema = z.object({
@@ -38,8 +43,8 @@ export function createPipelineRoutes(pipelineEngine: PipelineEngine): Router {
   router.post('/', async (req, res) => {
     try {
       const actor = requireOperatorRole(req, 'pipeline.create', ['admin', 'operator']);
-      const { name, templateId, input, gateMode, domainId } = parseBody(createPipelineSchema, req);
-      const pipeline = await pipelineEngine.create({ name, templateId, input, gateMode, domainId, workspaceId: workspaceIdFromRequest(req) });
+      const { name, templateId, input, gateMode, confirmAutonomousPublish, domainId } = parseBody(createPipelineSchema, req);
+      const pipeline = await pipelineEngine.create({ name, templateId, input, gateMode, confirmAutonomousPublish, domainId, workspaceId: workspaceIdFromRequest(req) });
       createOperatorAction({
         action: 'pipeline.create',
         actor,
