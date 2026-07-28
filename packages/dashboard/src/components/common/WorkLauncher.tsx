@@ -26,6 +26,7 @@ export function WorkLauncher({
   const [assigneeId, setAssigneeId] = useState('');
   const [templateId, setTemplateId] = useState('');
   const [gateMode, setGateMode] = useState<'auto' | 'manual'>('auto');
+  const [confirmAutonomousPublish, setConfirmAutonomousPublish] = useState(false);
   const [priority, setPriority] = useState<Priority>('normal');
   const [domains, setDomains] = useState<DomainPackDTO[]>([]);
   const [domainId, setDomainId] = useState('');
@@ -70,6 +71,7 @@ export function WorkLauncher({
           templateId,
           input: description.trim(),
           gateMode,
+          confirmAutonomousPublish,
           domainId: domainId || undefined,
         });
         await loadPipelines();
@@ -251,6 +253,22 @@ export function WorkLauncher({
                   <option value="auto">Auto</option>
                   <option value="manual">Manual</option>
                 </select>
+                {gateMode === 'auto' && (
+                  <label className="flex items-start gap-2 mt-2 p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-[11px] text-amber-200 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={confirmAutonomousPublish}
+                      onChange={event => setConfirmAutonomousPublish(event.target.checked)}
+                      disabled={!canLaunch}
+                      className="mt-0.5"
+                    />
+                    <span>
+                      <strong>Allow fully autonomous publish.</strong> Off by default — pipelines that can
+                      reach a real publish tool (Xiaohongshu / Douyin MCP) stay on Manual Gates until you
+                      check this, even if Auto is selected above.
+                    </span>
+                  </label>
+                )}
               </div>
             </div>
           )}

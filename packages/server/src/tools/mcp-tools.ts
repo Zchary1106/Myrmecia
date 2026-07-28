@@ -52,7 +52,7 @@ export async function executeMcpTool(
   timeoutMs?: number
 ): Promise<{ output: string; status: 'done' | 'failed' }> {
   try {
-    const result = await getMcpManager().callTool(qualifiedName, args || {});
+    const result = await getMcpManager().callTool(qualifiedName, args || {}, timeoutMs);
     return { output: mcpResultToString(result.content), status: result.isError ? 'failed' : 'done' };
   } catch (err: any) {
     return { output: err?.message || 'MCP tool failed', status: 'failed' };

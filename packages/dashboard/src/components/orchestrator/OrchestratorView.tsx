@@ -189,6 +189,7 @@ function PipelineBuilder() {
   const [stages, setStages] = useState<PipelineTemplate['stages']>([{ ...emptyStage }]);
   const [selectedStageIndex, setSelectedStageIndex] = useState(0);
   const [gateMode, setGateMode] = useState<'auto' | 'manual'>('auto');
+  const [confirmAutonomousPublish, setConfirmAutonomousPublish] = useState(false);
   const [runInput, setRunInput] = useState('');
   const [validation, setValidation] = useState<PipelineTemplateValidationResult | null>(null);
   const [error, setError] = useState('');
@@ -277,6 +278,7 @@ function PipelineBuilder() {
         templateId: savedId,
         input: runInput,
         gateMode,
+        confirmAutonomousPublish,
       });
       setRunInput('');
       await Promise.all([loadPipelines(), loadTasks()]);
@@ -432,6 +434,21 @@ function PipelineBuilder() {
               <option value="auto">Auto advance</option>
               <option value="manual">Manual gates</option>
             </select>
+            {gateMode === 'auto' && (
+              <label className="flex items-start gap-2 mt-2 p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-[11px] text-amber-200 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={confirmAutonomousPublish}
+                  onChange={event => setConfirmAutonomousPublish(event.target.checked)}
+                  className="mt-0.5"
+                />
+                <span>
+                  <strong>Allow fully autonomous publish.</strong> Off by default — pipelines that can
+                  reach a real publish tool (Xiaohongshu / Douyin MCP) stay on Manual gates until you
+                  check this, even with Auto advance selected.
+                </span>
+              </label>
+            )}
             <textarea
               value={runInput}
               onChange={event => setRunInput(event.target.value)}

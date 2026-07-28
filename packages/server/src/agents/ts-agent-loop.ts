@@ -389,8 +389,11 @@ export class TsAgentLoop {
               toolInput = JSON.parse(tc.function.arguments || '{}');
             } catch {}
 
-            // Validate parameter constraints FIRST
-            const constraintViolations = validateToolParams(toolName, toolInput);
+            // Validate parameter constraints FIRST (skip for MCP tools — they aren't
+            // registered in the built-in tool registry that validateToolParams checks;
+            // their schema comes from the connected MCP server's own inputSchema, and
+            // is already surfaced to the model via getMcpToolDefinitions()).
+            const constraintViolations = isMcpTool(toolName) ? [] : validateToolParams(toolName, toolInput);
             let toolOutput = '';
             let toolStatus: 'done' | 'failed' = 'done';
             const toolStartTime = Date.now();
@@ -414,12 +417,20 @@ export class TsAgentLoop {
               continue;
             }
 
-            // Record tool execution
+            // Record tool execution. Skipped for MCP tools: tool_executions.tool_id
+            // has a hard FK to the built-in `tools` registry, which MCP tools (aggregated
+            // dynamically from connected MCP servers) are never rows in — the call would
+            // fail with "FOREIGN KEY constraint failed". MCP tool calls are still fully
+            // observable via the trace span + execution message recorded below, which
+            // have no such constraint.
             const toolExecId = `ts_${executionId}_${toolCallId}`;
-            createToolExecution({
-              id: toolExecId, toolId: toolName, taskId: task.id,
-              executionId, agentId: agent.id, input: toolInput, startedAt: new Date().toISOString(),
-            });
+            const mcpTool = isMcpTool(toolName);
+            if (!mcpTool) {
+              createToolExecution({
+                id: toolExecId, toolId: toolName, taskId: task.id,
+                executionId, agentId: agent.id, input: toolInput, startedAt: new Date().toISOString(),
+              });
+            }
             tracker.toolUseCount++;
 
             const activity: ToolActivity = {
@@ -491,12 +502,14 @@ export class TsAgentLoop {
               });
             }
 
-            completeToolExecution(toolExecId, {
-              status: toolStatus, output: toolOutput,
-              outputSummary: String(toolOutput).slice(0, 200),
-              error: toolStatus === 'failed' ? toolOutput : undefined,
-              durationMs, completedAt: new Date().toISOString(),
-            });
+            if (!mcpTool) {
+              completeToolExecution(toolExecId, {
+                status: toolStatus, output: toolOutput,
+                outputSummary: String(toolOutput).slice(0, 200),
+                error: toolStatus === 'failed' ? toolOutput : undefined,
+                durationMs, completedAt: new Date().toISOString(),
+              });
+            }
             completeTraceSpan(spanId, { status: toolStatus, metadata: { outputSummary: String(toolOutput).slice(0, 200), durationMs }, error: toolStatus === 'failed' ? toolOutput : undefined, durationMs });
 
             addExecutionMessage({ executionId, type: 'tool_result', content: String(toolOutput).slice(0, 500), toolName });

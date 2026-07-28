@@ -114,13 +114,14 @@ function CreatePipelineModal({ templates, onClose, onCreated }: { templates: any
   const [templateId, setTemplateId] = useState('');
   const [input, setInput] = useState('');
   const [gateMode, setGateMode] = useState<'auto' | 'manual'>('auto');
+  const [confirmAutonomousPublish, setConfirmAutonomousPublish] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const submit = async () => {
     if (!name || !templateId || !input) return;
     setLoading(true);
     try {
-      await api.pipelines.create({ name, templateId, input, gateMode });
+      await api.pipelines.create({ name, templateId, input, gateMode, confirmAutonomousPublish });
       onCreated();
     } catch (err) {
       console.error(err);
@@ -156,6 +157,24 @@ function CreatePipelineModal({ templates, onClose, onCreated }: { templates: any
               Manual Gates
             </button>
           </div>
+
+          {gateMode === 'auto' && (
+            <label className="flex items-start gap-2 p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-xs text-amber-200 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={confirmAutonomousPublish}
+                onChange={e => setConfirmAutonomousPublish(e.target.checked)}
+                className="mt-0.5"
+              />
+              <span>
+                <strong>Allow fully autonomous publish.</strong> Off by default. Some pipelines can call a
+                real publish tool (e.g. Xiaohongshu / Douyin MCP servers) against a live account. If this
+                stays unchecked, such pipelines are always forced back to Manual Gates regardless of the
+                Auto/Manual choice above, so a human reviews the final draft before anything goes live.
+                Check this only if you want the pipeline to write <em>and</em> publish with no confirmation.
+              </span>
+            </label>
+          )}
 
           <div className="flex justify-end gap-2">
             <button onClick={onClose} className="px-4 py-2 text-sm text-gray-400">Cancel</button>
