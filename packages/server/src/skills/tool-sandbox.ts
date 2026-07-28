@@ -10,6 +10,7 @@ import { guardrails } from '../agents/safety-guardrails.js';
 import { getRuntimeLimits } from '../agents/runtime-limits.js';
 import { assertLocalShellAllowed, assertNetworkToolAllowed } from '../agents/sandbox-profile.js';
 import { formatToolGuardianDecision, formatToolGuardianWarnings, redactSecrets, reviewToolCall } from './tool-guardian.js';
+import { renderCards, CARD_HEIGHT, CARD_WIDTH, type CardRenderSpec } from '../tools/image-cards.js';
 
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
@@ -40,6 +41,7 @@ export const SANDBOX_TOOL_NAMES = [
   'content.wechat_layout',
   'content.hashtag_plan',
   'image.generate_svg',
+  'image.generate_cards',
 ] as const;
 
 const SANDBOX_TOOL_SET = new Set<string>(SANDBOX_TOOL_NAMES);
@@ -64,6 +66,7 @@ export function buildSandboxToolDefinition(toolName: string, modelToolName = too
     'content.wechat_layout': 'Convert a markdown draft into WeChat layout recommendations and HTML blocks.',
     'content.hashtag_plan': 'Generate platform hashtag and keyword suggestions.',
     'image.generate_svg': 'Generate a simple SVG cover image in the task workspace.',
+    'image.generate_cards': 'Render Xiaohongshu-style 1080x1440 PNG cards in the task workspace.',
   };
   const schemaByTool: Record<string, { properties: Record<string, unknown>; required?: string[] }> = {
     file_read: { properties: { path: { type: 'string', description: 'Workspace-relative file path' } }, required: ['path'] },
@@ -88,6 +91,31 @@ export function buildSandboxToolDefinition(toolName: string, modelToolName = too
         maxChars: { type: 'integer', description: 'Maximum extracted text length, capped by runtime limits' },
       },
       required: ['url'],
+    },
+    'image.generate_cards': {
+      properties: {
+        cards: {
+          type: 'array',
+          description: 'Ordered image cards, maximum 12.',
+          items: {
+            type: 'object',
+            properties: {
+              type: { type: 'string', enum: ['cover', 'point', 'list', 'end'] },
+              tag: { type: 'string' },
+              title: { type: 'string' },
+              subtitle: { type: 'string' },
+              index: { type: 'string' },
+              heading: { type: 'string' },
+              body: { type: 'string' },
+              tip: { type: 'string' },
+              items: { type: 'array', items: { type: 'string' } },
+            },
+            additionalProperties: false,
+          },
+        },
+        theme: { type: 'string', enum: ['warm', 'clean', 'dark'] },
+      },
+      required: ['cards'],
     },
   };
   const schema = schemaByTool[toolName];
@@ -502,6 +530,30 @@ export async function executeTool(
       return { output: jsonToolOutput({ path: outPath, format: 'svg', preview: svg.slice(0, 1000) }, maxOutputChars), status: 'done' };
     } catch (err: any) {
       return { output: `SVG generation failed: ${err.message}`, status: 'failed' };
+    }
+  }
+
+  if (toolName === 'image.generate_cards') {
+    try {
+      const outDir = assertSafePath(workdir, 'generated-assets/cards');
+      const { paths, chromeBinary } = await renderCards(
+        toolInput as unknown as CardRenderSpec,
+        outDir,
+        { timeoutMs: Math.min(timeoutMs, 60_000) },
+      );
+      return {
+        output: jsonToolOutput({
+          paths,
+          count: paths.length,
+          format: 'png',
+          size: `${CARD_WIDTH}x${CARD_HEIGHT}`,
+          renderer: chromeBinary,
+          note: 'Pass these absolute PNG paths directly to the publishing tool.',
+        }, maxOutputChars),
+        status: 'done',
+      };
+    } catch (err: any) {
+      return { output: `Image card generation failed: ${err.message}`, status: 'failed' };
     }
   }
 

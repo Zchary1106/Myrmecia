@@ -13,6 +13,7 @@ import {
   recordModelUsage,
   selectModelForAgent,
   syncBuiltinModels,
+  syncProviderModels,
   updateModel,
   upsertModelRoute,
 } from '../src/models/model-registry.js';
@@ -29,6 +30,9 @@ describe('model registry and routing', () => {
   afterEach(() => {
     closeDb();
     delete process.env.DB_PATH;
+    delete process.env.MYRMECIA_MODEL_PROVIDER;
+    delete process.env.MYRMECIA_MODEL;
+    delete process.env.AGENT_FACTORY_MODEL;
   });
 
   it('selects explicit enabled model before role route', () => {
@@ -44,6 +48,95 @@ describe('model registry and routing', () => {
     expect(selection.modelId).toBe('claude-opus-4.8');
     expect(selection.source).toBe('agent.model');
     expect(selection.modelTier).toBe('strong');
+  });
+
+  it('uses DeepSeek direct models instead of the agent registry defaults', () => {
+    process.env.MYRMECIA_MODEL_PROVIDER = 'deepseek';
+    const agent = createAgent({
+      id: 'deepseek-coding-agent',
+      name: 'DeepSeek Coding Agent',
+      role: 'developer',
+      model: 'gpt-5.3-codex',
+    });
+
+    const selection = selectModelForAgent(agent, {
+      title: 'Fix failing TypeScript tests',
+      description: 'Implement the missing API route.',
+      input: 'fix code',
+      mode: 'direct',
+    });
+
+    expect(selection.modelId).toBe('deepseek-v4-flash');
+    expect(selection.source).toBe('env.default');
+    expect(selection.reason).toContain('DeepSeek direct provider');
+  });
+
+  it('uses the configured DeepSeek model across role and task routes', () => {
+    process.env.MYRMECIA_MODEL_PROVIDER = 'deepseek';
+    process.env.MYRMECIA_MODEL = 'deepseek-v4-pro';
+    const agent = createAgent({
+      id: 'deepseek-review-agent',
+      name: 'DeepSeek Review Agent',
+      role: 'security-reviewer',
+      model: 'claude-opus-4.8',
+    });
+
+    const selection = selectModelForAgent(agent, {
+      title: 'Security review',
+      description: 'Review tenant isolation.',
+      input: 'security audit',
+      mode: 'direct',
+    });
+
+    expect(selection.modelId).toBe('deepseek-v4-pro');
+    expect(selection.source).toBe('env.default');
+  });
+
+  it('uses the Copilot SDK model instead of the agent registry defaults', () => {
+    process.env.MYRMECIA_MODEL_PROVIDER = 'copilot';
+    const agent = createAgent({
+      id: 'copilot-agent',
+      name: 'Copilot Agent',
+      role: 'developer',
+      model: 'gpt-5.3-codex',
+    });
+
+    const selection = selectModelForAgent(agent, {
+      title: 'Fix a TypeScript bug',
+      description: 'Implement the missing endpoint.',
+      input: 'fix code',
+      mode: 'direct',
+    });
+
+    expect(selection.modelId).toBe('auto');
+    expect(selection.source).toBe('env.default');
+    expect(selection.reason).toContain('GitHub Copilot SDK provider');
+  });
+
+  it('uses the Copilot model selected in Dashboard before the startup default', () => {
+    process.env.MYRMECIA_MODEL_PROVIDER = 'copilot';
+    process.env.MYRMECIA_MODEL = 'auto';
+    syncProviderModels('copilot', [{
+      id: 'claude-sonnet-4.5',
+      name: 'Claude Sonnet 4.5',
+      supportsReasoningEffort: true,
+    }]);
+    upsertModelRoute({
+      routeKey: 'provider:copilot',
+      defaultModelId: 'claude-sonnet-4.5',
+      fallbackGroup: 'copilot',
+    });
+    const agent = createAgent({
+      id: 'dashboard-copilot-agent',
+      name: 'Dashboard Copilot Agent',
+      role: 'developer',
+      model: 'gpt-5.3-codex',
+    });
+
+    const selection = selectModelForAgent(agent);
+
+    expect(selection.modelId).toBe('claude-sonnet-4.5');
+    expect(selection.reason).toContain('selected in Dashboard');
   });
 
   it('selects a model by explicit agent tier when no model is pinned', () => {

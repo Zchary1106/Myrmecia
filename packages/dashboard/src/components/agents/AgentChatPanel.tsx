@@ -69,7 +69,8 @@ function ActivityItem({ message }: { message: any }) {
 export function AgentChatPanel() {
   const {
     selectedAgentId, agents, agentChats, addChatMessage, updateChatMessage,
-    rightPanelTab, tasks, executions, executionMessages, loadExecutionMessages, loadTasks, loadExecutions
+    rightPanelTab, setRightPanelTab, tasks, executions, executionMessages,
+    loadExecutionMessages, loadTasks, loadExecutions
   } = useStore();
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
@@ -81,7 +82,6 @@ export function AgentChatPanel() {
   const agent = agents.find((a: any) => a.id === selectedAgentId);
   const chatMessages = selectedAgentId ? (agentChats[selectedAgentId] || []) : [];
   const execMessages = activeExecId ? (executionMessages[activeExecId] || []) : [];
-  const agentTasks = tasks.filter((t: any) => t.assigneeId === selectedAgentId);
 
   // Link the started task to its execution as soon as WebSocket/store updates arrive.
   useEffect(() => {
@@ -200,134 +200,96 @@ export function AgentChatPanel() {
           {(['chat', 'history'] as const).map(tab => (
             <button
               key={tab}
-              onClick={() => useStore.getState().setRightPanelTab(tab)}
+              onClick={() => setRightPanelTab(tab)}
               className={cn(
                 'px-3 py-1 rounded-md text-[11px] font-medium transition',
                 rightPanelTab === tab ? 'bg-accent/20 text-accent-light' : 'text-gray-500 hover:text-gray-300'
               )}
             >
-              {tab === 'chat' ? '⚡ Activity' : '📋 History'}
+              {tab === 'chat' ? '⚡ 执行检查器' : '📋 历史'}
             </button>
           ))}
         </div>
       </div>
 
-      {rightPanelTab === 'chat' ? (
-        <>
-          {/* Activity stream */}
-          <div className="flex-1 overflow-y-auto py-2">
-            {chatMessages.length === 0 && execMessages.length === 0 && (
-              <div className="h-full flex items-center justify-center">
-                <div className="text-center text-gray-600">
-                  <div className="text-3xl mb-2">{agent.emoji || '🤖'}</div>
-                  <p className="text-sm">Start a task with {agent.name}</p>
-                  <p className="text-[11px] text-gray-700 mt-1">
-                    {agent.capabilities?.length > 0
-                      ? `Capabilities: ${agent.capabilities.slice(0, 3).join(', ')}`
-                      : `Role: ${agent.role}`}
-                  </p>
-                </div>
-              </div>
-            )}
-
-            {/* Show chat messages (user inputs + agent responses) */}
-            {chatMessages.map(msg => (
-              <div key={msg.id}>
-                {msg.role === 'user' && (
-                  <div className="flex justify-end mx-3 my-2">
-                    <div className="bg-accent/15 rounded-lg px-3 py-2 max-w-[85%]">
-                      <div className="text-[12px] text-gray-200">{msg.content}</div>
-                    </div>
-                  </div>
-                )}
-                {msg.role === 'agent' && msg.status === 'streaming' && (
-                  <div className="flex items-center gap-2 px-3 py-2 text-[11px] text-gray-500">
-                    <div className="w-1.5 h-1.5 bg-accent rounded-full animate-pulse" />
-                    {msg.progress?.[0]?.detail || 'Processing...'}
-                  </div>
-                )}
-                {msg.role === 'agent' && msg.status === 'done' && msg.content && (
-                  <div className="mx-3 my-1 text-[11px] text-green-400/70">
-                    ✓ {msg.content}
-                  </div>
-                )}
-                {msg.role === 'agent' && msg.status === 'error' && (
-                  <div className="bg-red-500/10 border border-red-500/20 rounded-lg mx-3 my-2 px-3 py-2 text-[11px] text-red-400">
-                    {msg.content}
-                  </div>
-                )}
-              </div>
-            ))}
-
-            {/* Show execution activity stream (Claude Code style) */}
-            {execMessages.length > 0 && (
-              <div className="border-t border-border mt-2 pt-2">
-                <div className="px-3 py-1 text-[10px] text-gray-600 uppercase tracking-wider font-semibold">
-                  Activity Stream
-                </div>
-                {execMessages.map(msg => (
-                  <ActivityItem key={msg.id} message={msg} />
-                ))}
-              </div>
-            )}
-
-            <div ref={messagesEndRef} />
+      {/* Activity stream */}
+      <div className="flex-1 overflow-y-auto py-2">
+        {chatMessages.length === 0 && execMessages.length === 0 && (
+          <div className="h-full flex items-center justify-center">
+            <div className="text-center text-gray-600">
+              <div className="text-3xl mb-2">{agent.emoji || '🤖'}</div>
+              <p className="text-sm">Start a task with {agent.name}</p>
+              <p className="text-[11px] text-gray-700 mt-1">
+                {agent.capabilities?.length > 0
+                  ? `Capabilities: ${agent.capabilities.slice(0, 3).join(', ')}`
+                  : `Role: ${agent.role}`}
+              </p>
+            </div>
           </div>
+        )}
 
-          {/* Input */}
-          <div className="p-3 border-t border-border">
-            <form onSubmit={(e) => { e.preventDefault(); handleSend(); }} className="flex gap-2">
-              <input
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                placeholder={`Task for ${agent.name}...`}
-                className="flex-1 bg-background border border-border rounded-lg px-3 py-2 text-sm focus:border-accent outline-none placeholder-gray-600"
-                disabled={sending}
-              />
-              <button
-                type="submit"
-                disabled={!input.trim() || sending}
-                className="px-4 py-2 bg-accent text-white rounded-lg text-sm font-medium hover:bg-accent-light transition disabled:opacity-40"
-              >
-                {sending ? (
-                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                ) : '↑'}
-              </button>
-            </form>
-          </div>
-        </>
-      ) : (
-        /* History tab */
-        <div className="flex-1 overflow-y-auto p-4">
-          <div className="space-y-2">
-            {agentTasks.length === 0 && (
-              <div className="text-center text-gray-600 text-sm py-8">No task history</div>
-            )}
-            {agentTasks.map((task: any) => (
-              <div key={task.id} className="bg-surface-hover rounded-lg px-3 py-2.5 border border-border">
-                <div className="flex items-center gap-2 mb-1">
-                  <span className={cn(
-                    'px-1.5 py-0.5 rounded text-[10px] font-medium',
-                    task.status === 'done' ? 'bg-green-500/20 text-green-400' :
-                    task.status === 'running' ? 'bg-blue-500/20 text-blue-400' :
-                    task.status === 'failed' ? 'bg-red-500/20 text-red-400' :
-                    'bg-gray-500/20 text-gray-400'
-                  )}>
-                    {task.status}
-                  </span>
-                  <span className="text-[10px] text-gray-600">
-                    {new Date(task.createdAt).toLocaleString()}
-                  </span>
+        {chatMessages.map(msg => (
+          <div key={msg.id}>
+            {msg.role === 'user' && (
+              <div className="flex justify-end mx-3 my-2">
+                <div className="bg-accent/15 rounded-lg px-3 py-2 max-w-[85%]">
+                  <div className="text-[12px] text-gray-200">{msg.content}</div>
                 </div>
-                <div className="text-sm font-medium truncate">{task.title}</div>
-                {task.output && (
-                  <div className="text-[11px] text-gray-500 mt-1 line-clamp-2">{task.output}</div>
-                )}
               </div>
+            )}
+            {msg.role === 'agent' && msg.status === 'streaming' && (
+              <div className="flex items-center gap-2 px-3 py-2 text-[11px] text-gray-500">
+                <div className="w-1.5 h-1.5 bg-accent rounded-full animate-pulse" />
+                {msg.progress?.[0]?.detail || 'Processing...'}
+              </div>
+            )}
+            {msg.role === 'agent' && msg.status === 'done' && msg.content && (
+              <div className="mx-3 my-1 text-[11px] text-green-400/70">
+                ✓ {msg.content}
+              </div>
+            )}
+            {msg.role === 'agent' && msg.status === 'error' && (
+              <div className="bg-red-500/10 border border-red-500/20 rounded-lg mx-3 my-2 px-3 py-2 text-[11px] text-red-400">
+                {msg.content}
+              </div>
+            )}
+          </div>
+        ))}
+
+        {execMessages.length > 0 && (
+          <div className="border-t border-border mt-2 pt-2">
+            <div className="px-3 py-1 text-[10px] text-gray-600 uppercase tracking-wider font-semibold">
+              Activity Stream
+            </div>
+            {execMessages.map(msg => (
+              <ActivityItem key={msg.id} message={msg} />
             ))}
           </div>
-        </div>
-      )}
+        )}
+
+        <div ref={messagesEndRef} />
+      </div>
+
+      <div className="p-3 border-t border-border">
+        <form onSubmit={(e) => { e.preventDefault(); handleSend(); }} className="flex gap-2">
+          <input
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder={`Task for ${agent.name}...`}
+            className="flex-1 bg-background border border-border rounded-lg px-3 py-2 text-sm focus:border-accent outline-none placeholder-gray-600"
+            disabled={sending}
+          />
+          <button
+            type="submit"
+            disabled={!input.trim() || sending}
+            className="px-4 py-2 bg-accent text-white rounded-lg text-sm font-medium hover:bg-accent-light transition disabled:opacity-40"
+          >
+            {sending ? (
+              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+            ) : '↑'}
+          </button>
+        </form>
+      </div>
     </div>
   );
 }

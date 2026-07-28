@@ -35,7 +35,7 @@ export function buildAgentSystemPrompt(
 
   if (agent.skillPath) {
     try {
-      const skillRoot = join(__dirname, '../../../../');
+      const skillRoot = process.env.MYRMECIA_RESOURCE_ROOT || join(__dirname, '../../../../');
       const skillPrompt = readFileSync(join(skillRoot, agent.skillPath), 'utf-8');
       return `${skillPrompt}\n\n## Runtime Profile Override\n${runtimeProfile}`;
     } catch { /* fall through to the runtime profile */ }

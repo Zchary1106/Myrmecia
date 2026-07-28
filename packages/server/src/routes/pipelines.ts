@@ -1,7 +1,10 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { existsSync, readdirSync, realpathSync, statSync } from 'fs';
+import { basename, extname, relative, resolve } from 'path';
 import { listPipelines, getPipeline } from '../db/models/pipeline.js';
 import { PipelineEngine } from '../pipelines/pipeline-engine.js';
+import { workspaceManager } from '../workspace/workspace-manager.js';
 import { createOperatorAction } from '../db/models/operator-action.js';
 import { notFound, parseBody, parseQuery, requireConfirmation, requireOperatorRole, sendError } from './http.js';
 import { requestCanAccessWorkspace, workspaceIdFromRequest } from '../auth/tenant.js';
@@ -13,6 +16,7 @@ const createPipelineSchema = z.object({
   templateId: z.string().trim().min(1),
   input: z.string().trim().min(1),
   gateMode: z.enum(['auto', 'manual']).optional(),
+  confirmAutonomousPublish: z.boolean().optional(),
   domainId: z.string().trim().min(1).optional(),
 });
 const listPipelinesQuerySchema = z.object({
@@ -32,14 +36,52 @@ function assertPipelineAccess(req: any, pipelineId: string): Pipeline | undefine
   return getAccessiblePipeline(req, pipelineId);
 }
 
+function listFiles(root: string, current = root): string[] {
+  const files: string[] = [];
+  for (const entry of readdirSync(current, { withFileTypes: true })) {
+    const path = resolve(current, entry.name);
+    if (entry.isDirectory()) files.push(...listFiles(root, path));
+    else if (entry.isFile()) files.push(relative(root, path));
+  }
+  return files;
+}
+
+function resolvePipelineArtifact(pipelineId: string, requestedPath: string): string {
+  const workspace = workspaceManager.getWorkspaceInfo(pipelineId, 'pipeline');
+  if (!workspace) throw new Error('Pipeline workspace not found');
+  const root = realpathSync(resolve(workspace.path));
+  const artifactPath = resolve(root, requestedPath);
+  const rel = relative(root, artifactPath);
+  if (!rel || rel.startsWith('..') || resolve(root, rel) !== artifactPath) {
+    throw new Error('Artifact path is outside the pipeline workspace');
+  }
+  if (!existsSync(artifactPath) || !statSync(artifactPath).isFile()) {
+    throw new Error('Artifact not found');
+  }
+  const realArtifactPath = realpathSync(artifactPath);
+  const realRel = relative(root, realArtifactPath);
+  if (!realRel || realRel.startsWith('..')) {
+    throw new Error('Artifact target is outside the pipeline workspace');
+  }
+  return realArtifactPath;
+}
+
 export function createPipelineRoutes(pipelineEngine: PipelineEngine): Router {
   const router = Router();
 
   router.post('/', async (req, res) => {
     try {
       const actor = requireOperatorRole(req, 'pipeline.create', ['admin', 'operator']);
-      const { name, templateId, input, gateMode, domainId } = parseBody(createPipelineSchema, req);
-      const pipeline = await pipelineEngine.create({ name, templateId, input, gateMode, domainId, workspaceId: workspaceIdFromRequest(req) });
+      const { name, templateId, input, gateMode, confirmAutonomousPublish, domainId } = parseBody(createPipelineSchema, req);
+      const pipeline = await pipelineEngine.create({
+        name,
+        templateId,
+        input,
+        gateMode,
+        confirmAutonomousPublish,
+        domainId,
+        workspaceId: workspaceIdFromRequest(req),
+      });
       createOperatorAction({
         action: 'pipeline.create',
         actor,
@@ -67,6 +109,36 @@ export function createPipelineRoutes(pipelineEngine: PipelineEngine): Router {
     try {
       const pipeline = getAccessiblePipeline(req, req.params.id);
       res.json(pipeline);
+    } catch (err) {
+      sendError(res, err);
+    }
+  });
+
+  router.get('/:id/artifacts', (req, res) => {
+    try {
+      getAccessiblePipeline(req, req.params.id);
+      const workspace = workspaceManager.getWorkspaceInfo(req.params.id, 'pipeline');
+      if (!workspace) return res.json([]);
+      const files = listFiles(workspace.path)
+        .filter(path => ['.png', '.jpg', '.jpeg', '.webp', '.md', '.json'].includes(extname(path).toLowerCase()))
+        .map(path => ({
+          id: path,
+          name: basename(path),
+          path,
+          kind: ['.png', '.jpg', '.jpeg', '.webp'].includes(extname(path).toLowerCase()) ? 'image' : 'document',
+          url: `/api/v1/pipelines/${encodeURIComponent(req.params.id)}/artifacts/file?path=${encodeURIComponent(path)}`,
+        }));
+      res.json(files);
+    } catch (err) {
+      sendError(res, err);
+    }
+  });
+
+  router.get('/:id/artifacts/file', (req, res) => {
+    try {
+      getAccessiblePipeline(req, req.params.id);
+      const path = z.string().trim().min(1).parse(req.query.path);
+      res.sendFile(resolvePipelineArtifact(req.params.id, path), { dotfiles: 'deny' });
     } catch (err) {
       sendError(res, err);
     }

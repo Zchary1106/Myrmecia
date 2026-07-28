@@ -21,7 +21,8 @@ import { createInboxEntry } from '../src/db/models/inbox.js';
 import { createAgent } from '../src/db/models/agent.js';
 import { getDb } from '../src/db/database.js';
 import { syncBuiltinTools } from '../src/tools/tool-registry.js';
-import { syncBuiltinModels } from '../src/models/model-registry.js';
+import { getModelRoute, syncBuiltinModels } from '../src/models/model-registry.js';
+import { getModelGateway } from '../src/models/gateway.js';
 import type { TaskQueue } from '../src/queue/task-queue.js';
 import type { PipelineEngine } from '../src/pipelines/pipeline-engine.js';
 
@@ -64,6 +65,7 @@ afterEach(() => {
   vi.restoreAllMocks();
   delete process.env.API_AUTH_TOKEN;
   delete process.env.API_AUTH_ENABLED;
+  delete process.env.MYRMECIA_MODEL_PROVIDER;
 });
 
 async function withApp<T>(app: express.Express, fn: (baseUrl: string) => Promise<T>): Promise<T> {
@@ -338,6 +340,44 @@ describe('control routes', () => {
       `) as any[];
       expect(actions.map(action => action.action)).toEqual(['template.create', 'template.update']);
       expect(actions.every(action => action.target_type === 'template')).toBe(true);
+    });
+  });
+
+  it('discovers and persists the selected Copilot provider model', async () => {
+    process.env.MYRMECIA_MODEL_PROVIDER = 'copilot';
+    syncBuiltinModels();
+    vi.spyOn(getModelGateway(), 'listProviderModels').mockResolvedValue([
+      {
+        id: 'gpt-5',
+        name: 'GPT-5',
+        capabilities: {},
+      },
+      {
+        id: 'claude-sonnet-4.5',
+        name: 'Claude Sonnet 4.5',
+        capabilities: {},
+        supportedReasoningEfforts: ['low', 'high'],
+      },
+    ] as any);
+
+    const app = express();
+    app.use(express.json());
+    app.use('/models', createModelRoutes());
+
+    await withApp(app, async (baseUrl) => {
+      const discovered = await jsonFetch<any>(baseUrl, '/models/provider-settings');
+      expect(discovered.status).toBe(200);
+      expect(discovered.body.provider).toBe('copilot');
+      expect(discovered.body.models.map((model: any) => model.id)).toContain('claude-sonnet-4.5');
+
+      const selected = await jsonFetch<any>(baseUrl, '/models/provider-settings', {
+        method: 'PUT',
+        body: JSON.stringify({ modelId: 'claude-sonnet-4.5' }),
+        headers: { 'x-operator-id': 'ops1', 'x-operator-role': 'operator' },
+      });
+      expect(selected.status).toBe(200);
+      expect(selected.body.selectedModelId).toBe('claude-sonnet-4.5');
+      expect(getModelRoute('provider:copilot')?.defaultModelId).toBe('claude-sonnet-4.5');
     });
   });
 

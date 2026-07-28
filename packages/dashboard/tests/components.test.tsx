@@ -16,6 +16,8 @@ import {
 } from '../src/lib/permissions';
 import { createSavedView, savedViewScope } from '../src/lib/savedViews';
 import { buildActivitySummary, handoffTotal } from '../src/lib/activitySummary';
+import { useStore } from '../src/stores/store';
+import { isContentProductionAgent } from '../src/components/agents/AgentWorkspace';
 
 // ─── API module structure ────────────────────────────────────────────────────
 
@@ -43,6 +45,7 @@ describe('api module structure', () => {
     expect(api.pipelines.list).toBeTypeOf('function');
     expect(api.pipelines.create).toBeTypeOf('function');
     expect(api.pipelines.approve).toBeTypeOf('function');
+    expect(api.pipelines.artifacts).toBeTypeOf('function');
   });
 
   it('exports tools namespace', () => {
@@ -55,6 +58,8 @@ describe('api module structure', () => {
     expect(api.models).toBeDefined();
     expect(api.models.list).toBeTypeOf('function');
     expect(api.models.routes).toBeTypeOf('function');
+    expect(api.models.providerSettings).toBeTypeOf('function');
+    expect(api.models.selectProviderModel).toBeTypeOf('function');
   });
 
   it('exports executions namespace', () => {
@@ -97,6 +102,51 @@ describe('api module structure', () => {
     expect(api.stats).toBeTypeOf('function');
     expect(api.observability).toBeTypeOf('function');
     expect(api.diagnostics).toBeTypeOf('function');
+  });
+});
+
+describe('Agent Workbench navigation state', () => {
+  it('opens the Agents workspace and inspector atomically', () => {
+    useStore.setState({
+      activeView: 'tasks',
+      selectedAgentId: null,
+      agentInspectorOpen: false,
+      rightPanelTab: 'history',
+    });
+
+    useStore.getState().setSelectedAgentId('dev');
+
+    expect(useStore.getState()).toMatchObject({
+      activeView: 'agents',
+      selectedAgentId: 'dev',
+      agentInspectorOpen: true,
+      rightPanelTab: 'chat',
+    });
+  });
+
+  it('persists the Agent directory collapse state in the store', () => {
+    useStore.getState().setAgentDirectoryCollapsed(true);
+    expect(useStore.getState().agentDirectoryCollapsed).toBe(true);
+    useStore.getState().setAgentDirectoryCollapsed(false);
+    expect(useStore.getState().agentDirectoryCollapsed).toBe(false);
+  });
+
+  it('routes Xiaohongshu and Douyin specialists to Content Studio', () => {
+    expect(isContentProductionAgent({
+      id: 'xiaohongshu-writer',
+      role: 'content-writer',
+      capabilities: ['xiaohongshu'],
+    } as any)).toBe(true);
+    expect(isContentProductionAgent({
+      id: 'douyin-writer',
+      role: 'douyin-writer',
+      capabilities: ['douyin'],
+    } as any)).toBe(true);
+    expect(isContentProductionAgent({
+      id: 'dev',
+      role: 'developer',
+      capabilities: ['typescript'],
+    } as any)).toBe(false);
   });
 });
 

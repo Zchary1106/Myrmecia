@@ -17,11 +17,12 @@ let BUILTIN: DomainPack[] = [];
 
 function candidatePaths(): string[] {
   return [
+    process.env.MYRMECIA_RESOURCE_ROOT && join(process.env.MYRMECIA_RESOURCE_ROOT, 'agents/domains.yaml'),
     join(__dirname, '../../../../agents/domains.yaml'),
     join(__dirname, '../../../agents/domains.yaml'),
     join(process.cwd(), 'agents/domains.yaml'),
     join(process.cwd(), '../agents/domains.yaml'),
-  ];
+  ].filter((path): path is string => Boolean(path));
 }
 
 const slug = (s: string) =>

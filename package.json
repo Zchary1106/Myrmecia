@@ -9,6 +9,8 @@
     "build": "pnpm -r build",
     "dev:server": "pnpm --filter @myrmecia/server dev",
     "dev:dashboard": "pnpm --filter @myrmecia/dashboard dev",
+    "dev:desktop": "pnpm --filter @myrmecia/desktop dev",
+    "package:desktop": "pnpm --filter @myrmecia/desktop package",
     "demo": "bash scripts/demo.sh",
     "demo:seed": "AGENT_FACTORY_DEMO_MODE=true DB_PATH=packages/server/data/demo.db pnpm --filter @myrmecia/server exec tsx src/demo/seed-demo.ts",
     "demo:clean": "rm -f packages/server/data/demo.db packages/server/data/demo.db-wal packages/server/data/demo.db-shm",
@@ -20,12 +22,13 @@
     "typescript": "^5.7.3"
   },
   "engines": {
-    "node": ">=20.0.0",
+    "node": "^20.19.0 || >=22.12.0",
     "pnpm": ">=9.0.0"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
       "better-sqlite3",
+      "electron",
       "esbuild",
       "msgpackr-extract"
     ]

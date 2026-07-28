@@ -1,5 +1,6 @@
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { spawnSync } from 'node:child_process';
 import type { AgentDefinition, Task, AgentProgress, ToolActivity, ProgressTracker } from '../types.js';
 import { eventBus } from '../events/event-bus.js';
 import { updateTask, addTaskLog, getTask } from '../db/models/task.js';
@@ -27,15 +28,36 @@ import { sanitizeAgentOutput } from '../security/dlp-runtime.js';
 import { appendExecutionAuditEvent, recordExecutionPolicySnapshot } from '../audit/execution-audit.js';
 import { resolveDomainForTask, applyDomainOverlay, applyDomainKnowledge } from './domain-context.js';
 import { buildAgentSystemPrompt } from './agent-prompt.js';
-import { agentHasNoTools, selectRuntimeAdapter, type RuntimeAdapter } from './runtime-adapter.js';
+import { shouldUseTsAgentLoop, selectRuntimeAdapter, type RuntimeAdapter } from './runtime-adapter.js';
 import { logger } from '../lib/logger.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MAX_RECENT_ACTIVITIES = 5;
 
 // Path to Agent Factory Python runtime.
-const PYTHON_RUNTIME_RUNNER = join(__dirname, '../../../../packages/python-runtime/runtime_runner.py');
+const PYTHON_RUNTIME_RUNNER = process.env.MYRMECIA_PYTHON_RUNTIME_DIR
+  ? join(process.env.MYRMECIA_PYTHON_RUNTIME_DIR, 'runtime_runner.py')
+  : join(__dirname, '../../../../packages/python-runtime/runtime_runner.py');
 
+function resolvePythonRuntimeInvocation(executorName: string): { command: string; argsPrefix: string[] } {
+  if (executorName !== 'local') return { command: 'python3', argsPrefix: [] };
+
+  const configured = process.env.MYRMECIA_PYTHON_PATH?.trim();
+  if (configured) return { command: configured, argsPrefix: [] };
+  if (process.platform !== 'win32') return { command: 'python3', argsPrefix: [] };
+
+  const candidates = [
+    { command: 'py', argsPrefix: ['-3'] },
+    { command: 'python', argsPrefix: [] },
+    { command: 'python3', argsPrefix: [] },
+  ];
+  return candidates.find(candidate =>
+    spawnSync(candidate.command, [...candidate.argsPrefix, '--version'], {
+      stdio: 'ignore',
+      windowsHide: true,
+    }).status === 0,
+  ) ?? { command: 'python3', argsPrefix: [] };
+}
 
 export interface TaskResult {
   output: string;
@@ -74,13 +96,13 @@ export class AgentRuntime {
   private runtimeAdapters: RuntimeAdapter[];
 
   constructor() {
-    // Built-in adapters in priority order: the TS loop handles tool-free agents,
-    // the Python runtime is the catch-all. External runtimes can be inserted
-    // before the fallback via registerRuntimeAdapter().
+    // Built-in adapters in priority order: the TS loop handles tool-free agents
+    // and Copilot's server-side tool bridge; the Python runtime is the catch-all.
+    // External runtimes can be inserted before the fallback via registerRuntimeAdapter().
     this.runtimeAdapters = [
       {
         name: 'ts-agent-loop',
-        canHandle: (agent) => agentHasNoTools(agent),
+        canHandle: (agent) => shouldUseTsAgentLoop(agent),
         execute: (ctx) => tsAgentLoop.execute(
           ctx.agent, ctx.task, ctx.abortController, ctx.executionId, ctx.traceId, ctx.spanId, ctx.tracker, ctx.runtimeSkill,
         ),
@@ -629,10 +651,11 @@ export class AgentRuntime {
     };
     return new Promise((resolve, reject) => {
       const executor = getExecutor();
+      const python = resolvePythonRuntimeInvocation(executor.name);
       const proc = executor.spawn({
         executionId,
-        command: 'python3',
-        args: [PYTHON_RUNTIME_RUNNER, config],
+        command: python.command,
+        args: [...python.argsPrefix, PYTHON_RUNTIME_RUNNER, config],
         workdir: task.workdir || agent.config.workdir || process.cwd(),
         env: {
           AGENT_FACTORY_BASE_URL: modelBaseURL(),

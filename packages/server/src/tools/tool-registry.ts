@@ -173,6 +173,25 @@ export const BUILTIN_TOOLS: BuiltinToolDefinition[] = [
     outputSchema: { type: 'object' },
     metadata: { readOnly: false, network: false, writesWorkspace: true, writesOutsideWorkspace: false, destructive: false, outputFormat: 'svg' },
   },
+  {
+    id: 'image.generate_cards',
+    name: 'Image Card Renderer',
+    description: 'Render Xiaohongshu-style 1080x1440 PNG image cards in the task workspace.',
+    category: 'asset',
+    riskLevel: 'medium',
+    version: '1.0.0',
+    implementationRef: 'packages/server/src/tools/image-cards.ts:renderCards',
+    inputSchema: {
+      type: 'object',
+      required: ['cards'],
+      properties: {
+        cards: { type: 'array', minItems: 1 },
+        theme: { type: 'string' },
+      },
+    },
+    outputSchema: { type: 'object' },
+    metadata: { readOnly: false, network: false, writesWorkspace: true, writesOutsideWorkspace: false, destructive: false, outputFormat: 'png' },
+  },
 
   // ---- engineering tools (sandboxed, confined to the task workspace) ----
   {

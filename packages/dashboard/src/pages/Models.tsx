@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { ModelDefinition, ModelRoute } from '@myrmecia/shared';
+import type { ModelDefinition, ModelProviderSettings, ModelRoute } from '@myrmecia/shared';
 import { api } from '../lib/api';
 import { cn } from '../lib/utils';
 import { useStore } from '../stores/store';
@@ -31,10 +31,22 @@ export function ModelsPage() {
   const [group, setGroup] = useState('all');
   const [savingId, setSavingId] = useState<string | null>(null);
   const [routeDrafts, setRouteDrafts] = useState<Record<string, Pick<ModelRoute, 'defaultModelId' | 'fallbackGroup'>>>({});
+  const [providerSettings, setProviderSettings] = useState<ModelProviderSettings | null>(null);
+  const [providerModelId, setProviderModelId] = useState('');
   const [error, setError] = useState('');
 
+  const loadProviderSettings = async () => {
+    try {
+      const settings = await api.models.providerSettings();
+      setProviderSettings(settings);
+      setProviderModelId(settings.selectedModelId || settings.models[0]?.id || '');
+    } catch (err: any) {
+      setError(err.message || 'Load provider models failed');
+    }
+  };
+
   useEffect(() => {
-    void Promise.all([loadModels(), loadModelRoutes()]);
+    void Promise.all([loadModels(), loadModelRoutes(), loadProviderSettings()]);
   }, []);
 
   useEffect(() => {
@@ -105,6 +117,24 @@ export function ModelsPage() {
     }
   };
 
+  const saveProviderModel = async () => {
+    if (!providerModelId) return;
+    setSavingId('provider:copilot');
+    setError('');
+    try {
+      const settings = await api.models.selectProviderModel(providerModelId);
+      setProviderSettings(settings);
+      setProviderModelId(settings.selectedModelId || providerModelId);
+      await Promise.all([loadModels(), loadModelRoutes()]);
+    } catch (err: any) {
+      setError(err.message || 'Update Copilot model failed');
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const usesCopilot = providerSettings?.provider === 'copilot';
+
   return (
     <div className="p-6 space-y-6">
       <div className="rounded-2xl border border-border bg-gradient-to-br from-surface to-background p-6">
@@ -113,13 +143,13 @@ export function ModelsPage() {
             <div className="text-xs uppercase tracking-[0.24em] text-accent-light">Model Registry</div>
             <h2 className="mt-2 text-3xl font-bold">Models & Routes</h2>
             <p className="mt-2 max-w-2xl text-sm text-gray-400">
-              管理 Copilot API 反向代理支持的 GPT / Claude 模型、健康状态、fallback group 和 role 默认路由。
+              管理 OpenAI-compatible、DeepSeek 与 GitHub Copilot SDK 模型的健康状态、fallback group 和 role 默认路由。
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
             <AuditDrawer targetType="model" label="Audit" />
             <button
-              onClick={() => Promise.all([loadModels(), loadModelRoutes()])}
+              onClick={() => Promise.all([loadModels(), loadModelRoutes(), loadProviderSettings()])}
               className="rounded-xl bg-surface-hover px-4 py-2 text-sm text-gray-300 hover:text-white"
             >
               Refresh
@@ -136,6 +166,52 @@ export function ModelsPage() {
       </div>
 
       {error && <div className="rounded-lg border border-red-500/20 bg-red-500/10 p-3 text-sm text-red-300">{error}</div>}
+
+      {usesCopilot && (
+        <section className="rounded-2xl border border-blue-400/20 bg-gradient-to-br from-blue-500/10 via-surface to-surface p-5">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="rounded-full bg-blue-400/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-blue-300">
+                  Local Copilot Login
+                </span>
+                <span className="text-xs text-gray-500">GitHub Copilot SDK</span>
+              </div>
+              <h3 className="mt-3 text-lg font-semibold">当前 Copilot 模型</h3>
+              <p className="mt-1 text-xs text-gray-400">
+                模型来自当前已登录的 GitHub Copilot 账号。这里的选择会用于全部 Agent，下次启动仍然保留。
+              </p>
+            </div>
+            <div className="flex min-w-0 flex-col gap-2 sm:min-w-[360px] sm:flex-row">
+              <select
+                value={providerModelId}
+                onChange={event => setProviderModelId(event.target.value)}
+                disabled={providerSettings.models.length === 0 || savingId === 'provider:copilot'}
+                className="min-w-0 flex-1 rounded-xl border border-blue-400/20 bg-background px-3 py-2.5 text-sm outline-none focus:border-blue-400 disabled:opacity-50"
+              >
+                {providerSettings.models.length === 0 && <option value="">没有可用模型</option>}
+                {providerSettings.models.map(model => (
+                  <option key={model.id} value={model.id}>
+                    {model.name} · {model.id}{model.supportsReasoningEffort ? ' · reasoning' : ''}
+                  </option>
+                ))}
+              </select>
+              <button
+                onClick={saveProviderModel}
+                disabled={!providerModelId || savingId === 'provider:copilot'}
+                className="rounded-xl bg-blue-500 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
+              >
+                {savingId === 'provider:copilot' ? '保存中…' : '应用模型'}
+              </button>
+            </div>
+          </div>
+          {providerSettings.error && (
+            <div className="mt-4 rounded-lg border border-yellow-500/20 bg-yellow-500/10 p-3 text-xs text-yellow-200">
+              无法刷新 Copilot 模型列表：{providerSettings.error}
+            </div>
+          )}
+        </section>
+      )}
 
       <div className="grid gap-4 xl:grid-cols-[1fr_420px]">
         <section className="space-y-4">
@@ -170,10 +246,22 @@ export function ModelsPage() {
         </section>
 
         <aside className="rounded-2xl border border-border bg-surface p-5">
-          <h3 className="text-sm font-semibold text-gray-300">Role routing</h3>
-          <p className="mt-1 text-xs text-gray-500">执行时按 Agent 显式模型、role route、global route、fallback group 顺序选择模型。</p>
-          <div className="mt-4 space-y-3">
-            {modelRoutes.map(route => {
+          <h3 className="text-sm font-semibold text-gray-300">{usesCopilot ? 'Copilot routing' : 'Role routing'}</h3>
+          <p className="mt-1 text-xs text-gray-500">
+            {usesCopilot
+              ? 'Copilot 模式使用上方统一模型选择；角色路由不会覆盖已选择的 Copilot 模型。'
+              : '执行时按 Agent 显式模型、role route、global route、fallback group 顺序选择模型。'}
+          </p>
+          {usesCopilot ? (
+            <div className="mt-4 rounded-xl border border-blue-400/15 bg-blue-500/5 p-4">
+              <div className="text-xs font-semibold text-blue-200">{providerModelId || '尚未选择模型'}</div>
+              <p className="mt-2 text-xs leading-relaxed text-gray-500">
+                切换模型后，新启动的 Agent 执行会使用该模型；正在运行的任务不会被中断。
+              </p>
+            </div>
+          ) : (
+            <div className="mt-4 space-y-3">
+              {modelRoutes.map(route => {
               const draft = routeDrafts[route.routeKey] || { defaultModelId: route.defaultModelId, fallbackGroup: route.fallbackGroup };
               return (
                 <div key={route.routeKey} className="rounded-xl border border-border bg-background p-3">
@@ -208,8 +296,9 @@ export function ModelsPage() {
                   />
                 </div>
               );
-            })}
-          </div>
+              })}
+            </div>
+          )}
         </aside>
       </div>
     </div>
@@ -240,7 +329,7 @@ function ModelCard({
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="truncate font-semibold">{model.displayName}</div>
-          <div className="mt-1 text-xs text-gray-500">{model.id}</div>
+          <div className="mt-1 text-xs text-gray-500">{model.provider} · {model.id}</div>
         </div>
         <span className={cn('rounded-full px-2 py-1 text-[10px] font-semibold', healthClass[model.healthStatus])}>{model.healthStatus}</span>
       </div>

@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect } from 'react';
 import { useStore } from '../../stores/store';
 import type { DashboardView } from '../../stores/store';
 import { useWebSocket } from '../../hooks/useWebSocket';
-import { AgentChatPanel } from '../agents/AgentChatPanel';
+import { AgentWorkspace } from '../agents/AgentWorkspace';
 import { CommandCenter } from '../common/CommandCenter';
 import { CommandBar } from '../common/CommandBar';
 import { cn } from '../../lib/utils';
@@ -28,151 +28,121 @@ const OrchestratePage = lazy(() => import('../../pages/Orchestrate').then(m => (
 const TeamsPage = lazy(() => import('../../pages/Teams').then(m => ({ default: m.TeamsPage })));
 const DomainsPage = lazy(() => import('../../pages/Domains').then(m => ({ default: m.DomainsPage })));
 
-function agentDotColor(agent: any): string {
-  const active = agent.activeExecutions || 0;
-  if (active > 0) return 'bg-blue-500 animate-pulse';
-  return 'bg-green-500';
-}
+const globalSections: {
+  label: string;
+  views: { id: DashboardView; label: string; icon: string; badge?: 'notifications' | 'inbox' }[];
+}[] = [
+  {
+    label: 'Workspace',
+    views: [
+      { id: 'command', label: 'Command', icon: '⌘', badge: 'notifications' },
+      { id: 'tasks', label: 'Queue', icon: '▣' },
+      { id: 'agents', label: 'Agents', icon: '◆' },
+      { id: 'tools', label: 'Tools', icon: '🧰' },
+      { id: 'models', label: 'Models', icon: '◉' },
+      { id: 'skills', label: 'Skills', icon: '▤' },
+      { id: 'domains', label: 'Domains', icon: '▥' },
+      { id: 'memory', label: 'Memory', icon: '⌁' },
+    ],
+  },
+  {
+    label: 'Flow',
+    views: [
+      { id: 'orchestrator', label: 'Pipelines', icon: '↝' },
+      { id: 'orchestrate', label: 'Canvas', icon: '⌘' },
+      { id: 'teams', label: 'Teams', icon: '♟' },
+      { id: 'board', label: 'Board', icon: '◎' },
+      { id: 'inbox', label: 'Inbox', icon: '▾', badge: 'inbox' },
+    ],
+  },
+  {
+    label: 'Operations',
+    views: [
+      { id: 'console', label: 'Console', icon: '⌁' },
+      { id: 'timeline', label: 'Timeline', icon: '◷' },
+      { id: 'observability', label: 'Observe', icon: '◒' },
+      { id: 'audit', label: 'Audit', icon: '▧' },
+      { id: 'cost', label: 'Costs', icon: '＄' },
+      { id: 'settings', label: 'Settings', icon: '⚙' },
+    ],
+  },
+];
 
-function AgentSidebar() {
-  const { agents, selectedAgentId, setSelectedAgentId, health, diagnostics } = useStore();
+function GlobalNavRail() {
+  const {
+    activeView,
+    setActiveView,
+    health,
+    diagnostics,
+    pendingInboxCount,
+    unreadCount,
+    agents,
+  } = useStore();
   const canControl = runtimeControlsAllowed(diagnostics);
 
-  const grouped = agents.reduce<Record<string, any[]>>((acc, agent) => {
-    const group = ['orchestrator', 'product-manager', 'designer', 'developer', 'tester', 'devops', 'reviewer'].includes(agent.role)
-      ? 'Core'
-      : agent.role === 'content-writer' ? 'Content' : 'Tools';
-    if (!acc[group]) acc[group] = [];
-    acc[group].push(agent);
-    return acc;
-  }, {});
-
   return (
-    <aside className="w-52 bg-surface border-r border-border flex flex-col h-full">
-      {/* Brand */}
-      <div className="p-4 border-b border-border">
-        <h1 className="text-base font-bold flex items-center gap-2">
-          <img src="/myrmecia-mark.png" alt="" className="w-7 h-7 rounded-lg shadow-lg shadow-accent/20" />
-          <span>Myrmecia</span>
-        </h1>
-        <div className="flex items-center gap-1.5 mt-1">
-          <span className={cn('w-1.5 h-1.5 rounded-full', health?.status === 'ok' ? 'bg-green-500' : 'bg-gray-500')} />
-          <span className="text-[10px] text-gray-500">
-            {agents.filter((a: any) => (a.activeExecutions || 0) > 0).length} running / {agents.length} agents
-          </span>
-        </div>
-        <div className={cn(
-          'mt-2 rounded-md px-2 py-1 text-[10px] truncate',
-          canControl ? 'bg-green-500/10 text-green-400' : 'bg-yellow-500/10 text-yellow-400',
-        )}>
-          {canControl ? 'Control' : 'Read-only'} · {operatorRoleLabel(diagnostics)}
-        </div>
+    <aside
+      data-testid="global-nav-rail"
+      className="flex h-full w-[88px] flex-none flex-col border-r border-border bg-surface"
+    >
+      <div className="flex flex-col items-center border-b border-border px-2 py-3">
+        <img src="/myrmecia-mark.png" alt="" className="h-9 w-9 rounded-xl shadow-lg shadow-accent/20" />
+        <div className="mt-1.5 text-[8px] font-bold tracking-[0.16em] text-gray-500">MYRMECIA</div>
       </div>
 
-      {/* Agent list */}
-      <div className="flex-1 overflow-y-auto p-2 space-y-3">
-        {['Core', 'Content', 'Tools'].filter(g => grouped[g]?.length).map(group => (
-          <div key={group}>
-            <div className="text-[10px] font-semibold text-gray-600 uppercase tracking-wider px-2 mb-1">
-              {group}
+      <nav className="flex-1 overflow-y-auto px-1.5 py-2">
+        {globalSections.map((section, sectionIndex) => (
+          <div key={section.label} className={cn(sectionIndex > 0 && 'mt-2 border-t border-border pt-2')}>
+            <div className="mb-1 text-center text-[7px] font-semibold uppercase tracking-[0.14em] text-gray-700">
+              {section.label}
             </div>
-            <div className="space-y-0.5">
-              {grouped[group].map((agent: any) => (
+            <div className="space-y-1">
+              {section.views.map(view => {
+                const badge = view.badge === 'notifications' ? unreadCount : view.badge === 'inbox' ? pendingInboxCount : 0;
+                const selected = activeView === view.id || (view.id === 'agents' && activeView === 'agent-settings');
+                return (
                 <button
-                  key={agent.id}
-                  onClick={() => setSelectedAgentId(agent.id)}
+                  key={view.id}
+                  type="button"
+                  onClick={() => setActiveView(view.id)}
+                  title={view.label}
                   className={cn(
-                    'w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-left transition-colors',
-                    selectedAgentId === agent.id
+                    'relative flex w-full flex-col items-center justify-center rounded-xl px-1 py-1.5 transition',
+                    selected
                       ? 'bg-accent/15 text-accent-light'
-                      : 'text-gray-400 hover:bg-surface-hover hover:text-gray-200'
+                      : 'text-gray-600 hover:bg-surface-hover hover:text-gray-300',
                   )}
                 >
-                  <span className="text-base">{agent.emoji || '🤖'}</span>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-[12px] font-medium truncate">{agent.name}</div>
-                  </div>
-                  <span className={cn('w-1.5 h-1.5 rounded-full flex-shrink-0', agentDotColor(agent))} />
+                  <span className="text-base leading-none">{view.icon}</span>
+                  <span className="mt-1 max-w-full truncate text-[8px] font-medium">{view.label}</span>
+                  {badge > 0 && (
+                    <span className="absolute right-1 top-1 min-w-4 rounded-full bg-accent px-1 text-[8px] font-bold text-white">
+                      {badge > 99 ? '99+' : badge}
+                    </span>
+                  )}
                 </button>
-              ))}
+                );
+              })}
             </div>
           </div>
         ))}
-      </div>
+      </nav>
 
-      {/* Bottom nav */}
-      <div className="p-2 border-t border-border space-y-0.5">
-        <ViewToggle />
+      <div className="border-t border-border px-2 py-3 text-center">
+        <div className="flex items-center justify-center gap-1.5">
+          <span className={cn('h-2 w-2 rounded-full', health?.status === 'ok' ? 'bg-emerald-400' : 'bg-gray-600')} />
+          <span className="text-[8px] text-gray-600">
+            {agents.filter(agent => agent.activeExecutions > 0).length}/{agents.length}
+          </span>
+        </div>
+        <div
+          className={cn('mt-1 truncate text-[7px]', canControl ? 'text-emerald-500/70' : 'text-yellow-500/70')}
+          title={`${canControl ? 'Control' : 'Read-only'} · ${operatorRoleLabel(diagnostics)}`}
+        >
+          {canControl ? 'CONTROL' : 'READ ONLY'}
+        </div>
       </div>
     </aside>
-  );
-}
-
-function ViewToggle() {
-  const { activeView, setActiveView, pendingInboxCount, unreadCount } = useStore();
-
-  const sections: { label: string; views: { id: DashboardView; label: string; icon: string; badge?: number }[] }[] = [
-    {
-      label: 'Workspace',
-      views: [
-        { id: 'command', label: 'Command Center', icon: '⌘', badge: unreadCount },
-        { id: 'console', label: 'Interaction Console', icon: '🧭' },
-        { id: 'tasks', label: 'Work Queue', icon: '📋' },
-        { id: 'agents', label: 'Agents', icon: '🤖' },
-        { id: 'tools', label: 'Tools', icon: '🧰' },
-        { id: 'models', label: 'Models', icon: '🧠' },
-        { id: 'skills', label: 'Skills', icon: '📚' },
-        { id: 'domains', label: 'Domains', icon: '📘' },
-        { id: 'memory', label: 'Memory', icon: '🧬' },
-        { id: 'orchestrator', label: 'Pipelines', icon: '🔗' },
-        { id: 'orchestrate', label: 'Orchestrate', icon: '🕸️' },
-        { id: 'teams', label: 'Teams', icon: '🐜' },
-        { id: 'board', label: 'Orchestration Board', icon: '🎯' },
-        { id: 'inbox', label: 'Inbox', icon: '📥', badge: pendingInboxCount },
-      ],
-    },
-    {
-      label: 'Operations',
-      views: [
-        { id: 'timeline', label: 'Timeline', icon: '🧭' },
-        { id: 'observability', label: 'Observe', icon: '📈' },
-        { id: 'audit', label: 'Audit', icon: '🧾' },
-        { id: 'cost' as DashboardView, label: 'Costs', icon: '💰' },
-        { id: 'settings', label: 'Settings', icon: '⚙️' },
-      ],
-    },
-  ];
-
-  return (
-    <>
-      {sections.map(section => (
-        <div key={section.label} className="space-y-0.5">
-          <div className="px-2.5 pt-2 pb-1 text-[10px] font-semibold text-gray-600 uppercase tracking-wider">
-            {section.label}
-          </div>
-          {section.views.map(v => (
-            <button
-              key={v.id}
-              onClick={() => setActiveView(v.id)}
-              className={cn(
-                'w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-[12px] transition-colors',
-                activeView === v.id
-                  ? 'bg-accent/15 text-accent-light font-medium'
-                  : 'text-gray-500 hover:bg-surface-hover hover:text-gray-300'
-              )}
-            >
-              <span>{v.icon}</span>
-              <span className="flex-1 text-left">{v.label}</span>
-              {(v.badge ?? 0) > 0 && (
-                <span className="bg-accent/20 text-accent-light px-1.5 py-0.5 rounded-full text-[10px]">
-                  {v.badge}
-                </span>
-              )}
-            </button>
-          ))}
-        </div>
-      ))}
-    </>
   );
 }
 
@@ -186,6 +156,8 @@ function MainContent() {
     case 'console':
       return <InteractionConsolePage />;
     case 'agents':
+      return <AgentWorkspace />;
+    case 'agent-settings':
       return <AgentsPage />;
     case 'tools':
       return <ToolsPage />;
@@ -235,7 +207,7 @@ export function Layout() {
   const {
     loadAgents, loadTools, loadToolExecutions, loadModels, loadModelRoutes, loadSkills, loadSkillAssignments, loadTasks, loadPipelines, loadTemplates, loadHealth, loadNotifications, loadExecutions, loadInboxEntries,
     loadPlatformEvents, loadObservability, loadDiagnostics, loadOperatorActions,
-    selectedAgentId,
+    activeView,
   } = useStore();
 
   useWebSocket();
@@ -285,25 +257,14 @@ export function Layout() {
   return (
     <div className="flex flex-col h-screen">
       <div className="flex flex-1 min-h-0">
-        {/* Left: Agent sidebar */}
-        <AgentSidebar />
+        <GlobalNavRail />
 
-        {/* Center: Main content area */}
-        <main className="flex-1 overflow-y-auto bg-background">
+        <main className={cn('min-w-0 flex-1 bg-background', activeView === 'agents' ? 'overflow-hidden' : 'overflow-y-auto')}>
           <MainContent />
         </main>
-
-        {/* Right: Chat/Detail panel */}
-        <aside className={cn(
-          'border-l border-border bg-surface transition-all duration-300 overflow-hidden',
-          selectedAgentId ? 'w-[400px]' : 'w-0'
-        )}>
-          <AgentChatPanel />
-        </aside>
       </div>
 
-      {/* Bottom: Command bar */}
-      <CommandBar />
+      {activeView !== 'agents' && <CommandBar />}
     </div>
   );
 }

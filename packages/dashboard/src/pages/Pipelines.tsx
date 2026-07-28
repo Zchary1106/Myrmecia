@@ -114,13 +114,14 @@ function CreatePipelineModal({ templates, onClose, onCreated }: { templates: any
   const [templateId, setTemplateId] = useState('');
   const [input, setInput] = useState('');
   const [gateMode, setGateMode] = useState<'auto' | 'manual'>('auto');
+  const [confirmAutonomousPublish, setConfirmAutonomousPublish] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const submit = async () => {
     if (!name || !templateId || !input) return;
     setLoading(true);
     try {
-      await api.pipelines.create({ name, templateId, input, gateMode });
+      await api.pipelines.create({ name, templateId, input, gateMode, confirmAutonomousPublish });
       onCreated();
     } catch (err) {
       console.error(err);
@@ -156,6 +157,20 @@ function CreatePipelineModal({ templates, onClose, onCreated }: { templates: any
               Manual Gates
             </button>
           </div>
+
+          {gateMode === 'auto' && (
+            <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200">
+              <input
+                type="checkbox"
+                checked={confirmAutonomousPublish}
+                onChange={event => setConfirmAutonomousPublish(event.target.checked)}
+                className="mt-0.5"
+              />
+              <span>
+                <strong>Allow autonomous publishing.</strong> Publishing workflows otherwise remain manually gated before live-account actions.
+              </span>
+            </label>
+          )}
 
           <div className="flex justify-end gap-2">
             <button onClick={onClose} className="px-4 py-2 text-sm text-gray-400">Cancel</button>

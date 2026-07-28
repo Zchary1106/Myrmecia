@@ -26,6 +26,7 @@ export function WorkLauncher({
   const [assigneeId, setAssigneeId] = useState('');
   const [templateId, setTemplateId] = useState('');
   const [gateMode, setGateMode] = useState<'auto' | 'manual'>('auto');
+  const [confirmAutonomousPublish, setConfirmAutonomousPublish] = useState(false);
   const [priority, setPriority] = useState<Priority>('normal');
   const [domains, setDomains] = useState<DomainPackDTO[]>([]);
   const [domainId, setDomainId] = useState('');
@@ -70,6 +71,7 @@ export function WorkLauncher({
           templateId,
           input: description.trim(),
           gateMode,
+          confirmAutonomousPublish,
           domainId: domainId || undefined,
         });
         await loadPipelines();
@@ -251,6 +253,20 @@ export function WorkLauncher({
                   <option value="auto">Auto</option>
                   <option value="manual">Manual</option>
                 </select>
+                {gateMode === 'auto' && (
+                  <label className="mt-2 flex cursor-pointer items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5 text-[11px] text-amber-200">
+                    <input
+                      type="checkbox"
+                      checked={confirmAutonomousPublish}
+                      onChange={event => setConfirmAutonomousPublish(event.target.checked)}
+                      disabled={!canLaunch}
+                      className="mt-0.5"
+                    />
+                    <span>
+                      <strong>Allow autonomous publishing.</strong> Publishing workflows otherwise stay on manual gates.
+                    </span>
+                  </label>
+                )}
               </div>
             </div>
           )}

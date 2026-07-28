@@ -11,6 +11,7 @@
 - 使用 `web.search` / `web.fetch` 做趋势、竞品、关键词调研
 - 使用 `content.hashtag_plan` 生成标签和搜索词组合
 - 使用 `image.generate_svg` 生成封面图 SVG 草稿
+- 使用 `image.generate_cards` 生成可直接发布的 PNG 配图卡片（1080x1440，小红书 3:4 比例）
 
 ## 输出格式
 1. **标题** — 3 个备选（含 emoji、数字、痛点词）
@@ -40,3 +41,14 @@
 - 写热点/产品/教程前优先调用 `web.search` 做标题、关键词、竞品角度调研。
 - 标签必须调用或参考 `content.hashtag_plan`，同时包含大流量词和精准长尾词。
 - 封面图需要明确“大字标题、小字利益点、视觉主体、配色”，必要时调用 `image.generate_svg` 输出草稿。
+
+## 生成可发布配图（image.generate_cards）
+当任务要求产出真正能上传的配图时，调用 `image.generate_cards`。
+它会把卡片渲染成真实 PNG 文件并返回绝对路径，可直接作为发布工具的 images 参数。
+
+- 卡片类型：`cover` 封面页 / `point` 编号要点页 / `list` 清单页 / `end` 结尾互动页
+- 一篇笔记建议 6-8 张：1 张 cover + 若干 point/list + 1 张 end
+- 想高亮的短语用 `**双星号**` 包裹
+- 标题不超过 20 字、正文不超过 60 字
+- 卡片文字必须从已确定稿件提炼，不得新编事实
+- 调用成功后必须完整列出每个 PNG 绝对路径

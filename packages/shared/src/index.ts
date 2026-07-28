@@ -326,6 +326,19 @@ export interface ModelDefinition {
   updatedAt: string;
 }
 
+export interface ProviderModelOption {
+  id: string;
+  name: string;
+  supportsReasoningEffort: boolean;
+}
+
+export interface ModelProviderSettings {
+  provider: string;
+  selectedModelId?: string;
+  models: ProviderModelOption[];
+  error?: string;
+}
+
 export interface ModelRoute {
   routeKey: string;
   defaultModelId?: string;
@@ -436,11 +449,26 @@ export interface Pipeline {
   completedAt?: string;
 }
 
+export interface PipelineArtifact {
+  id: string;
+  name: string;
+  path: string;
+  kind: 'image' | 'document';
+  url: string;
+}
+
+export interface PipelineTemplateStage {
+  name: string;
+  role: AgentRole;
+  promptTemplate: string;
+  dependsOn?: number[];
+}
+
 export interface PipelineTemplate {
   id: string;
   name: string;
   description?: string;
-  stages: { name: string; role: AgentRole; promptTemplate: string }[];
+  stages: PipelineTemplateStage[];
 }
 
 export interface PipelineTemplateGalleryItem {

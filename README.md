@@ -156,6 +156,16 @@ It plugs into the whole platform, not a corner of it:
 
 > The platform provides the *mechanism*; the accuracy and responsibility for a domain stay with your knowledge base and disclaimer — so high-stakes fields like medicine and law are owned by you, not implied by us.
 
+### Content Production Studio
+
+Content specialists such as `xiaohongshu-writer`, `douyin-writer`,
+`trend-scout`, and `social-publisher` open a workflow-first Studio instead of a
+generic chat-first surface. The Xiaohongshu + Douyin crosspost workflow keeps
+trend evidence, both platform drafts, compliance review, generated PNG cards,
+and the final publishing gate in one six-stage run. Chat remains available as a
+stage-scoped revision request, while publishing requires an explicit manual
+approval and typed confirmation.
+
 ### Unified Memory
 
 A single dimension-adaptive vector store backs four memory layers plus a bi-temporal entity graph:
@@ -316,8 +326,10 @@ docker compose up -d
 | `AGENT_FACTORY_API_KEY` | Model endpoint API key |
 | `AGENT_FACTORY_MODEL` | Default fallback model |
 | `ANTHROPIC_API_KEY` | Optional fallback API key |
-| `MODEL_PROVIDERS` | JSON map of provider → `{ baseURL, apiKeyEnv }` for the model gateway |
+| `MODEL_PROVIDERS` | JSON map of provider → OpenAI `{ baseURL, apiKeyEnv }` or local Copilot `{ type: "copilot", baseDirectory?, cliPath? }` |
 | `MODEL_PROVIDER_MAP` | JSON map of modelId → provider name |
+| `MYRMECIA_MODEL_PROVIDER` | `copilot` uses the local Copilot SDK login; `deepseek` selects the direct DeepSeek API; unset preserves OpenAI-compatible routing |
+| `COPILOT_SDK_HOME` | Optional server-local Copilot home (prefer `MODEL_PROVIDERS.copilot.baseDirectory`; never expose it to the Dashboard) |
 | `AGENT_STREAMING` | `true` to stream token deltas over WebSocket (default off) |
 | `MCP_SERVERS` | JSON array of MCP stdio servers, e.g. `[{"name":"fs","command":"npx","args":["-y","@modelcontextprotocol/server-filesystem","/tmp"]}]` |
 | `MCP_TOOLS_IN_AGENTS` | `false` to hide MCP tools from the agent loop (default on) |
@@ -332,6 +344,55 @@ docker compose up -d
 | `DATABASE_URL` | PostgreSQL connection string (SQLite when unset) |
 | `PORT` | Server port (default 3000) |
 | `NODE_ENV` | `development` / `production` |
+
+#### GitHub Copilot SDK provider
+
+The server can use the existing signed-in GitHub Copilot CLI/SDK account without
+an in-app OAuth flow or a GitHub token in the Dashboard:
+
+```bash
+MYRMECIA_MODEL_PROVIDER=copilot
+```
+
+The provider runs only in the server process with the official
+`@github/copilot-sdk`, `useLoggedInUser: true`, and SDK `empty` mode. It never
+reads, accepts, logs, or sends a GitHub token to the Dashboard. Only the
+TS-loop's explicitly allowed custom tools are exposed; built-in Copilot tools
+remain denied, and all custom tool calls stay within the existing TS validation,
+sandbox, audit, and execution path. This also selects the TS loop before the
+Python fallback for tool-enabled agents. Set `baseDirectory` in an optional
+`MODEL_PROVIDERS.copilot` entry (or `COPILOT_SDK_HOME`) only when the server
+needs a non-default local Copilot home; this path is server configuration, not a
+Dashboard setting. With neither set, the adapter passes the local CLI default
+(`~/.copilot`) to the SDK; the server does not parse that directory or its
+credentials.
+
+Current SDK adapter limits: it supports text responses and optional token-delta
+streaming, and it bridges custom tool calls inside the Copilot SDK session rather
+than returning OpenAI tool-call continuations. The SDK also does not provide
+final OpenAI token-usage fields, so Copilot usage is recorded as zero tokens
+rather than fabricated.
+
+The Electron startup screen selects Copilot only as a provider; it does not pin
+a model. After launch, open **Models & Routes** to discover the models available
+to the signed-in Copilot account and persist the active model for future Agent
+executions. Existing runs keep their original model.
+
+#### DeepSeek direct provider
+
+DeepSeek does not need a proxy because its official API is OpenAI-compatible:
+
+```bash
+MYRMECIA_MODEL_PROVIDER=deepseek
+MYRMECIA_BASE_URL=https://api.deepseek.com
+MYRMECIA_MODEL=deepseek-v4-flash # or deepseek-v4-pro
+MYRMECIA_API_KEY=your_deepseek_api_key
+```
+
+When this provider is selected, the model router overrides the built-in
+GPT/Claude role defaults with registered DeepSeek models. `deepseek-v4-flash`
+is the default, while long-context and high-risk routes use
+`deepseek-v4-pro` unless `MYRMECIA_MODEL` explicitly selects a DeepSeek model.
 
 ## Usage
 

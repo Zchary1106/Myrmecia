@@ -7,12 +7,14 @@ import type {
   InboxEntryType,
   LogEntry,
   ModelDefinition,
+  ModelProviderSettings,
   ModelRoute,
   Notification,
   ObservabilitySummary,
   OperatorAction,
   OperatorPreference,
   Pipeline,
+  PipelineArtifact,
   PipelineTemplate,
   PipelineTemplateGalleryItem,
   PipelineTemplateValidationResult,
@@ -119,6 +121,12 @@ export const api = {
     list: (params?: { enabled?: string }) =>
       request<ModelDefinition[]>(`/models${params ? '?' + new URLSearchParams(params) : ''}`),
     routes: () => request<ModelRoute[]>('/models/routes'),
+    providerSettings: () => request<ModelProviderSettings>('/models/provider-settings'),
+    selectProviderModel: (modelId: string) =>
+      request<ModelProviderSettings>('/models/provider-settings', {
+        method: 'PUT',
+        body: JSON.stringify({ modelId }),
+      }),
     updateRoute: (data: { routeKey: string; defaultModelId?: string; fallbackGroup?: string }) =>
       request<ModelRoute>('/models/routes', { method: 'PATCH', body: JSON.stringify(data) }),
     update: (id: string, data: { enabled?: boolean; priority?: number; fallbackGroup?: string }) =>
@@ -174,8 +182,9 @@ export const api = {
   pipelines: {
     list: () => request<Pipeline[]>('/pipelines'),
     get: (id: string) => request<Pipeline>(`/pipelines/${id}`),
-    create: (data: { name: string; templateId: string; input: string; gateMode?: Pipeline['gateMode']; domainId?: string }) =>
+    create: (data: { name: string; templateId: string; input: string; gateMode?: Pipeline['gateMode']; confirmAutonomousPublish?: boolean; domainId?: string }) =>
       request<Pipeline>('/pipelines', { method: 'POST', body: JSON.stringify(data) }),
+    artifacts: (id: string) => request<PipelineArtifact[]>(`/pipelines/${id}/artifacts`),
     approve: (id: string) => request<{ success: boolean }>(`/pipelines/${id}/approve`, { method: 'POST' }),
     skip: (id: string) => request<{ success: boolean }>(`/pipelines/${id}/skip`, { method: 'POST' }),
     cancel: (id: string, confirmed = false) =>

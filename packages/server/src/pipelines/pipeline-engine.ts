@@ -4,8 +4,9 @@ import { parse as parseYaml } from 'yaml';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { createPipeline, getPipeline, listPipelines, updatePipeline } from '../db/models/pipeline.js';
-import { createTemplate, listTemplates, getTemplate } from '../db/models/pipeline.js';
+import { createTemplate, listTemplates, getTemplate, updateTemplate } from '../db/models/pipeline.js';
 import { getTask } from '../db/models/task.js';
+import { getAgent, listAgents } from '../db/models/agent.js';
 import { eventBus } from '../events/event-bus.js';
 import { TaskQueue } from '../queue/task-queue.js';
 import { AgentManager } from '../agents/agent-manager.js';
@@ -15,9 +16,63 @@ import { getReflectionService } from '../memory/reflection.js';
 import { workspaceManager } from '../workspace/workspace-manager.js';
 import { createTestReportFromOutput, isTestingStage } from '../testing/test-report.js';
 import { saveCheckpoint, getCompletedStageIndices } from './checkpoint.js';
-import type { Pipeline, PipelineStage } from '../types.js';
+import type { Pipeline, PipelineStage, PipelineTemplate } from '../types.js';
 
 const execAsync = promisify(exec);
+
+interface PipelineTemplateYaml {
+  name?: string;
+  description?: string;
+  stages?: PipelineTemplateYamlStage[];
+}
+
+interface PipelineTemplateYamlStage {
+  name: string;
+  role: string;
+  prompt_template: string;
+  depends_on?: number[];
+}
+
+function toTemplateStages(stages: PipelineTemplateYamlStage[]): PipelineTemplate['stages'] {
+  return stages.map(stage => ({
+    name: stage.name,
+    role: stage.role,
+    promptTemplate: stage.prompt_template,
+    ...(stage.depends_on?.length ? { dependsOn: stage.depends_on } : {}),
+  }));
+}
+
+const AUTONOMOUS_PUBLISH_GUARD_TOOLS = [
+  'mcp__xiaohongshu__publish_content',
+  'mcp__xiaohongshu__publish_with_video',
+  'mcp__douyin-upload__douyin_upload_video',
+];
+
+function resolveAgentsForRole(role: string) {
+  const byRole = listAgents({ role });
+  if (byRole.length > 0) return byRole;
+  const byId = getAgent(role);
+  return byId ? [byId] : [];
+}
+
+function templateHasAutonomousPublishStage(stages: Array<{ role: string }>): boolean {
+  return stages.some(stage =>
+    resolveAgentsForRole(stage.role).some(agent =>
+      (agent.allowedTools || []).some(tool => AUTONOMOUS_PUBLISH_GUARD_TOOLS.includes(tool)),
+    ),
+  );
+}
+
+function resolveGateMode(
+  stages: Array<{ role: string }>,
+  requested: 'auto' | 'manual' | undefined,
+  confirmAutonomousPublish: boolean | undefined,
+): { gateMode: 'auto' | 'manual'; forcedForSafety: boolean } {
+  if (requested === 'manual') return { gateMode: 'manual', forcedForSafety: false };
+  if (!templateHasAutonomousPublishStage(stages)) return { gateMode: requested ?? 'auto', forcedForSafety: false };
+  if (confirmAutonomousPublish === true) return { gateMode: 'auto', forcedForSafety: false };
+  return { gateMode: 'manual', forcedForSafety: true };
+}
 
 export class PipelineEngine {
   private taskQueue: TaskQueue;
@@ -40,28 +95,33 @@ export class PipelineEngine {
   async loadTemplates(templatesDir: string) {
     try {
       const files = readdirSync(templatesDir).filter(f => f.endsWith('.yaml') || f.endsWith('.yml'));
-      const existing = listTemplates();
-      const existingNames = new Set(existing.map(t => t.name));
+      const existingByName = new Map(listTemplates().map(template => [template.name, template]));
 
       for (const file of files) {
         const content = readFileSync(join(templatesDir, file), 'utf-8');
-        const tmpl = parseYaml(content);
-        if (!tmpl?.stages || !Array.isArray(tmpl.stages)) {
+        const tmpl = parseYaml(content) as PipelineTemplateYaml | undefined;
+        if (!tmpl?.name || !Array.isArray(tmpl.stages)) {
           logger.debug({ file }, 'Skipping non-pipeline template metadata file');
           continue;
         }
-        if (!existingNames.has(tmpl.name)) {
-          createTemplate({
-            name: tmpl.name,
-            description: tmpl.description,
-            stages: tmpl.stages.map((s: any) => ({
-              name: s.name,
-              role: s.role,
-              promptTemplate: s.prompt_template,
-              dependsOn: s.depends_on,
-            })),
-          });
+        const data = {
+          name: tmpl.name,
+          description: tmpl.description || '',
+          stages: toTemplateStages(tmpl.stages),
+        };
+        const existing = existingByName.get(data.name);
+        if (!existing) {
+          const created = createTemplate(data);
+          existingByName.set(data.name, created);
           logger.info({ template: tmpl.name }, 'Loaded pipeline template');
+          continue;
+        }
+        if (
+          existing.description !== data.description
+          || JSON.stringify(existing.stages) !== JSON.stringify(data.stages)
+        ) {
+          updateTemplate(existing.id, data);
+          logger.info({ template: tmpl.name }, 'Synced pipeline template');
         }
       }
     } catch (err: any) {
@@ -70,7 +130,15 @@ export class PipelineEngine {
   }
 
   /** Create a new pipeline from a template */
-  async create(data: { name: string; templateId: string; input: string; gateMode?: 'auto' | 'manual'; workspaceId?: string; domainId?: string }): Promise<Pipeline> {
+  async create(data: {
+    name: string;
+    templateId: string;
+    input: string;
+    gateMode?: 'auto' | 'manual';
+    confirmAutonomousPublish?: boolean;
+    workspaceId?: string;
+    domainId?: string;
+  }): Promise<Pipeline> {
     const template = getTemplate(data.templateId);
     if (!template) throw new Error(`Template ${data.templateId} not found`);
 
@@ -80,14 +148,26 @@ export class PipelineEngine {
       agentRole: s.role,
       status: 'pending' as const,
       promptTemplate: s.promptTemplate,
-      dependsOn: (s as any).dependsOn,
+      dependsOn: s.dependsOn,
     }));
+
+    const { gateMode, forcedForSafety } = resolveGateMode(
+      template.stages,
+      data.gateMode,
+      data.confirmAutonomousPublish,
+    );
+    if (forcedForSafety) {
+      logger.warn(
+        { templateId: data.templateId, requested: data.gateMode ?? 'auto' },
+        'Forced publish-capable pipeline to manual gating without explicit autonomous-publish confirmation',
+      );
+    }
 
     const pipeline = createPipeline({
       name: data.name,
       templateId: data.templateId,
       stages,
-      gateMode: data.gateMode,
+      gateMode,
       input: data.input,
       workspaceId: data.workspaceId,
       domainId: data.domainId,

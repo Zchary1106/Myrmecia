@@ -110,3 +110,13 @@ items:
     input_example: Promote the one-command Myrmecia demo.
     output_example: Social note draft, title options, hashtags, and optimization notes.
     risk: Low. Human brand review recommended before publishing.
+  - id: content-xiaohongshu-douyin-crosspost
+    template_name: Xiaohongshu Douyin Crosspost
+    title: Xiaohongshu + Douyin Crosspost Pipeline
+    category: content
+    summary: Research real topics, draft both platforms, review compliance, generate PNG cards, and publish after approval.
+    tags: [content, social, xiaohongshu, douyin, mcp, publishing]
+    recommended_agents: [trend-scout, xiaohongshu-writer, douyin-writer, review, social-publisher]
+    input_example: 3 个提升远程工作效率的小工具
+    output_example: Trend brief, Xiaohongshu draft, Douyin script, compliance report, image cards, and publish results.
+    risk: High. The final stage can publish to live accounts; always review the final package before approval.

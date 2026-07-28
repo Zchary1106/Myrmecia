@@ -81,3 +81,13 @@ export function agentHasNoTools(agent: AgentDefinition): boolean {
   const tools = agent.allowedTools || agent.config.allowedTools || [];
   return tools.length === 0;
 }
+
+/**
+ * Copilot tool calls are bridged into the TypeScript loop's existing validated
+ * sandbox/audit path. Select that loop before the Python catch-all whenever
+ * the server-side provider switch explicitly selects Copilot.
+ */
+export function shouldUseTsAgentLoop(agent: AgentDefinition): boolean {
+  return agentHasNoTools(agent)
+    || process.env.MYRMECIA_MODEL_PROVIDER?.trim().toLowerCase() === 'copilot';
+}

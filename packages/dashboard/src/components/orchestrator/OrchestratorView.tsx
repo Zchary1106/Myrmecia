@@ -189,6 +189,7 @@ function PipelineBuilder() {
   const [stages, setStages] = useState<PipelineTemplate['stages']>([{ ...emptyStage }]);
   const [selectedStageIndex, setSelectedStageIndex] = useState(0);
   const [gateMode, setGateMode] = useState<'auto' | 'manual'>('auto');
+  const [confirmAutonomousPublish, setConfirmAutonomousPublish] = useState(false);
   const [runInput, setRunInput] = useState('');
   const [validation, setValidation] = useState<PipelineTemplateValidationResult | null>(null);
   const [error, setError] = useState('');
@@ -277,6 +278,7 @@ function PipelineBuilder() {
         templateId: savedId,
         input: runInput,
         gateMode,
+        confirmAutonomousPublish,
       });
       setRunInput('');
       await Promise.all([loadPipelines(), loadTasks()]);
@@ -432,6 +434,19 @@ function PipelineBuilder() {
               <option value="auto">Auto advance</option>
               <option value="manual">Manual gates</option>
             </select>
+            {gateMode === 'auto' && (
+              <label className="mt-2 flex cursor-pointer items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5 text-[11px] text-amber-200">
+                <input
+                  type="checkbox"
+                  checked={confirmAutonomousPublish}
+                  onChange={event => setConfirmAutonomousPublish(event.target.checked)}
+                  className="mt-0.5"
+                />
+                <span>
+                  <strong>Allow autonomous publishing.</strong> Publishing workflows otherwise stay on manual gates.
+                </span>
+              </label>
+            )}
             <textarea
               value={runInput}
               onChange={event => setRunInput(event.target.value)}

@@ -102,6 +102,9 @@ export function CommandBar() {
     } else {
       // Direct mode without @mention: send to selected agent or supervisor
       if (selectedAgentId) {
+        // Direct Agent work is owned by the Agent Workbench, not the page that
+        // happened to be open when the command was submitted.
+        setSelectedAgentId(selectedAgentId);
         const userMsg: ChatMessage = {
           id: `msg-${Date.now()}`,
           role: 'user',

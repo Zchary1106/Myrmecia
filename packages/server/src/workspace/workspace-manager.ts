@@ -14,7 +14,7 @@ export class WorkspaceManager {
   private workspacesDir: string;
 
   constructor(baseDir?: string) {
-    this.baseDir = baseDir || process.cwd();
+    this.baseDir = baseDir || process.env.MYRMECIA_WORKSPACE_ROOT || process.cwd();
     this.workspacesDir = join(this.baseDir, '.agent-factory', 'workspaces');
     mkdirSync(this.workspacesDir, { recursive: true });
   }
