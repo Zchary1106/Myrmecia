@@ -159,15 +159,19 @@ function CreatePipelineModal({ templates, onClose, onCreated }: { templates: any
           </div>
 
           {gateMode === 'auto' && (
-            <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200">
+            <label className="flex items-start gap-2 p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-xs text-amber-200 cursor-pointer">
               <input
                 type="checkbox"
                 checked={confirmAutonomousPublish}
-                onChange={event => setConfirmAutonomousPublish(event.target.checked)}
+                onChange={e => setConfirmAutonomousPublish(e.target.checked)}
                 className="mt-0.5"
               />
               <span>
-                <strong>Allow autonomous publishing.</strong> Publishing workflows otherwise remain manually gated before live-account actions.
+                <strong>Allow fully autonomous publish.</strong> Off by default. Some pipelines can call a
+                real publish tool (e.g. Xiaohongshu / Douyin MCP servers) against a live account. If this
+                stays unchecked, such pipelines are always forced back to Manual Gates regardless of the
+                Auto/Manual choice above, so a human reviews the final draft before anything goes live.
+                Check this only if you want the pipeline to write <em>and</em> publish with no confirmation.
               </span>
             </label>
           )}

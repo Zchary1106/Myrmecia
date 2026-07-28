@@ -54,92 +54,176 @@ describe('PipelineEngine durable task resolution', () => {
     expect(updated.stages[0].output).toBe('built');
   });
 
-  it('syncs changed YAML templates without replacing persisted IDs', async () => {
-    const templatesDir = mkdtempSync(join(tmpdir(), 'agent-factory-content-templates-'));
-    const templatePath = join(templatesDir, 'content.yaml');
+  it('syncs changed YAML templates without replacing their persisted IDs', async () => {
+    const templatesDir = mkdtempSync(join(tmpdir(), 'agent-factory-pipeline-templates-'));
+    const templatePath = join(templatesDir, 'feature.yaml');
     const engine = new PipelineEngine({} as TaskQueue, {} as AgentManager);
-    writeFileSync(templatePath, `
-name: Content Workflow
-description: Initial
-stages:
-  - name: Research
-    role: trend-scout
-    prompt_template: "Research {input}"
-`, 'utf-8');
-    await engine.loadTemplates(templatesDir);
-    const initial = listTemplates().find(template => template.name === 'Content Workflow');
 
     writeFileSync(templatePath, `
-name: Content Workflow
-description: Updated
+name: Feature
+description: Initial version
 stages:
-  - name: Research
-    role: trend-scout
-    prompt_template: "Research {input}"
-  - name: Draft
-    role: xiaohongshu-writer
+  - name: Spec
+    role: product-manager
+    prompt_template: "Write a spec for {input}"
+`, 'utf-8');
+    await engine.loadTemplates(templatesDir);
+
+    const initial = listTemplates().find(template => template.name === 'Feature');
+    expect(initial).toMatchObject({
+      description: 'Initial version',
+      stages: [{ name: 'Spec', role: 'product-manager', promptTemplate: 'Write a spec for {input}' }],
+    });
+
+    writeFileSync(templatePath, `
+name: Feature
+description: Updated version
+stages:
+  - name: Spec
+    role: product-manager
+    prompt_template: "Write a spec for {input}"
+  - name: Implement
+    role: developer
     depends_on: [0]
-    prompt_template: "Draft {input}"
+    prompt_template: "Implement {input}"
 `, 'utf-8');
     await engine.loadTemplates(templatesDir);
-    const synced = listTemplates().find(template => template.name === 'Content Workflow');
 
+    const synced = listTemplates().find(template => template.name === 'Feature');
     expect(synced?.id).toBe(initial?.id);
-    expect(synced?.description).toBe('Updated');
-    expect(synced?.stages[1].dependsOn).toEqual([0]);
+    expect(synced).toMatchObject({
+      description: 'Updated version',
+      stages: [
+        { name: 'Spec', role: 'product-manager', promptTemplate: 'Write a spec for {input}' },
+        { name: 'Implement', role: 'developer', promptTemplate: 'Implement {input}', dependsOn: [0] },
+      ],
+    });
   });
 });
 
-describe('PipelineEngine publishing safety', () => {
+describe('PipelineEngine autonomous-publish safety guard', () => {
+  const createdPipelineIds: string[] = [];
+
   beforeEach(() => {
-    process.env.DB_PATH = join(mkdtempSync(join(tmpdir(), 'agent-factory-publish-safety-')), 'test.db');
+    createdPipelineIds.length = 0;
+    process.env.DB_PATH = join(mkdtempSync(join(tmpdir(), 'agent-factory-pipeline-autopublish-')), 'test.db');
     getDb();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    for (const pipelineId of createdPipelineIds) {
+      await workspaceManager.cleanupWorkspace(pipelineId);
+    }
     closeDb();
     delete process.env.DB_PATH;
   });
 
-  const unavailableAgentManager = { findAvailableAgent: () => undefined } as unknown as AgentManager;
-
-  function createPublishTemplate() {
+  function createPublisherAgentAndTemplate() {
     createAgent({
-      id: 'publisher',
-      name: 'Publisher',
+      name: 'Social Publisher',
       role: 'social-publisher',
-      allowedTools: ['mcp__xiaohongshu__publish_content'],
+      allowedTools: ['mcp__xiaohongshu__publish_content', 'mcp__douyin-upload__douyin_upload_video'],
     });
     return createTemplate({
-      name: 'Publish Workflow',
-      // Keep this unit test focused on gate resolution; an unsatisfied
-      // dependency prevents create() from fire-and-forget starting a real stage.
+      name: 'Publish Template',
       stages: [{ name: 'Publish', role: 'social-publisher', promptTemplate: 'Publish {input}', dependsOn: [99] }],
     });
   }
 
-  it('forces publish-capable pipelines to manual gates by default', async () => {
-    const template = createPublishTemplate();
-    const pipeline = await new PipelineEngine({} as TaskQueue, unavailableAgentManager).create({
-      name: 'Safe publish',
+  function createNonPublishingTemplate() {
+    createAgent({ name: 'Dev', role: 'developer', allowedTools: ['file_read', 'file_write'] });
+    return createTemplate({
+      name: 'Engineering Template',
+      stages: [{ name: 'Build', role: 'developer', promptTemplate: 'Build {input}', dependsOn: [99] }],
+    });
+  }
+
+  // `create()` fires off stage execution in the background (fire-and-forget); a stub that
+  // reports "no agent available" keeps that background call harmless in this unit test
+  // instead of throwing on a real AgentManager method the fake object doesn't implement.
+  const stubAgentManager = { findAvailableAgent: () => undefined } as unknown as AgentManager;
+
+  it('forces gateMode to manual for a publish-capable template requesting auto without confirmation', async () => {
+    const template = createPublisherAgentAndTemplate();
+    const engine = new PipelineEngine({} as TaskQueue, stubAgentManager);
+
+    const pipeline = await engine.create({
+      name: 'Auto run, no confirmation',
       templateId: template.id,
-      input: 'publish content',
+      input: 'ship a post',
       gateMode: 'auto',
     });
+    createdPipelineIds.push(pipeline.id);
+
     expect(pipeline.gateMode).toBe('manual');
-    await workspaceManager.cleanupWorkspace(pipeline.id);
   });
 
-  it('allows autonomous publish only after explicit confirmation', async () => {
-    const template = createPublishTemplate();
-    const pipeline = await new PipelineEngine({} as TaskQueue, unavailableAgentManager).create({
-      name: 'Confirmed publish',
+  it('forces gateMode to manual for a publish-capable template when gateMode is omitted entirely', async () => {
+    // Omitting gateMode defaults to 'auto' further down the stack (db/models/pipeline.ts),
+    // so this must be forced to manual too, not just the explicit gateMode: 'auto' case.
+    const template = createPublisherAgentAndTemplate();
+    const engine = new PipelineEngine({} as TaskQueue, stubAgentManager);
+
+    const pipeline = await engine.create({
+      name: 'Auto run, gateMode omitted',
       templateId: template.id,
-      input: 'publish content',
+      input: 'ship a post',
+    });
+    createdPipelineIds.push(pipeline.id);
+
+    expect(pipeline.gateMode).toBe('manual');
+  });
+
+  it('allows gateMode auto for a publish-capable template only when explicitly confirmed', async () => {
+    const template = createPublisherAgentAndTemplate();
+    const engine = new PipelineEngine({} as TaskQueue, stubAgentManager);
+
+    const pipeline = await engine.create({
+      name: 'Auto run, confirmed',
+      templateId: template.id,
+      input: 'ship a post',
       gateMode: 'auto',
       confirmAutonomousPublish: true,
     });
+    createdPipelineIds.push(pipeline.id);
+
     expect(pipeline.gateMode).toBe('auto');
-    await workspaceManager.cleanupWorkspace(pipeline.id);
+  });
+
+  it('always honors an explicit manual request regardless of confirmation', async () => {
+    const template = createPublisherAgentAndTemplate();
+    const engine = new PipelineEngine({} as TaskQueue, stubAgentManager);
+
+    const pipeline = await engine.create({
+      name: 'Manual run',
+      templateId: template.id,
+      input: 'ship a post',
+      gateMode: 'manual',
+    });
+    createdPipelineIds.push(pipeline.id);
+
+    expect(pipeline.gateMode).toBe('manual');
+  });
+
+  it('leaves non-publishing templates unaffected by the guard', async () => {
+    const template = createNonPublishingTemplate();
+    const engine = new PipelineEngine({} as TaskQueue, stubAgentManager);
+
+    const autoPipeline = await engine.create({
+      name: 'Engineering auto run',
+      templateId: template.id,
+      input: 'build the feature',
+      gateMode: 'auto',
+    });
+    createdPipelineIds.push(autoPipeline.id);
+    expect(autoPipeline.gateMode).toBe('auto');
+
+    const defaultPipeline = await engine.create({
+      name: 'Engineering default run',
+      templateId: template.id,
+      input: 'build the feature',
+    });
+    createdPipelineIds.push(defaultPipeline.id);
+    expect(defaultPipeline.gateMode).toBe('auto');
   });
 });

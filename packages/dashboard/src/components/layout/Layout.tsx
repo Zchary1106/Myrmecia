@@ -134,6 +134,9 @@ function GlobalNavRail() {
           <span className="text-[8px] text-gray-600">
             {agents.filter(agent => agent.activeExecutions > 0).length}/{agents.length}
           </span>
+          <span data-testid="agent-summary" className="sr-only">
+            {agents.filter(agent => agent.activeExecutions > 0).length} running / {agents.length} agents
+          </span>
         </div>
         <div
           className={cn('mt-1 truncate text-[7px]', canControl ? 'text-emerald-500/70' : 'text-yellow-500/70')}
@@ -141,6 +144,9 @@ function GlobalNavRail() {
         >
           {canControl ? 'CONTROL' : 'READ ONLY'}
         </div>
+        <span data-testid="operator-identity" className="sr-only">
+          {canControl ? 'Control' : 'Read-only'} · {operatorRoleLabel(diagnostics)}
+        </span>
       </div>
     </aside>
   );

@@ -176,7 +176,7 @@ export const BUILTIN_TOOLS: BuiltinToolDefinition[] = [
   {
     id: 'image.generate_cards',
     name: 'Image Card Renderer',
-    description: 'Render Xiaohongshu-style 1080x1440 PNG image cards in the task workspace.',
+    description: 'Render Xiaohongshu-style 1080x1440 PNG image cards into the task workspace and return their absolute paths.',
     category: 'asset',
     riskLevel: 'medium',
     version: '1.0.0',

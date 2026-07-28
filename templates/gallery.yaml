@@ -114,9 +114,9 @@ items:
     template_name: Xiaohongshu Douyin Crosspost
     title: Xiaohongshu + Douyin Crosspost Pipeline
     category: content
-    summary: Research real topics, draft both platforms, review compliance, generate PNG cards, and publish after approval.
+    summary: Research real trending topics via connected MCP servers, draft a Xiaohongshu note and a Douyin script from the same angle, run compliance review, then actually publish via MCP once approved.
     tags: [content, social, xiaohongshu, douyin, mcp, publishing]
     recommended_agents: [trend-scout, xiaohongshu-writer, douyin-writer, review, social-publisher]
     input_example: 3 个提升远程工作效率的小工具
-    output_example: Trend brief, Xiaohongshu draft, Douyin script, compliance report, image cards, and publish results.
-    risk: High. The final stage can publish to live accounts; always review the final package before approval.
+    output_example: Trend research with real engagement data, Xiaohongshu note draft, Douyin script draft, compliance review notes, and live publish results (post links or failure reasons).
+    risk: High. The final stage calls real publish tools (mcp__xiaohongshu__*, mcp__douyin-upload__*) against live accounts — always create this pipeline with gateMode "manual" and review the final draft before approving the publish stage. Requires local image/video file paths to be supplied at approval time.

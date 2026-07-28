@@ -6,7 +6,7 @@ import { promisify } from 'util';
 import { createPipeline, getPipeline, listPipelines, updatePipeline } from '../db/models/pipeline.js';
 import { createTemplate, listTemplates, getTemplate, updateTemplate } from '../db/models/pipeline.js';
 import { getTask } from '../db/models/task.js';
-import { getAgent, listAgents } from '../db/models/agent.js';
+import { listAgents, getAgent } from '../db/models/agent.js';
 import { eventBus } from '../events/event-bus.js';
 import { TaskQueue } from '../queue/task-queue.js';
 import { AgentManager } from '../agents/agent-manager.js';
@@ -34,7 +34,7 @@ interface PipelineTemplateYamlStage {
 }
 
 function toTemplateStages(stages: PipelineTemplateYamlStage[]): PipelineTemplate['stages'] {
-  return stages.map(stage => ({
+  return stages.map((stage) => ({
     name: stage.name,
     role: stage.role,
     promptTemplate: stage.prompt_template,
@@ -42,12 +42,22 @@ function toTemplateStages(stages: PipelineTemplateYamlStage[]): PipelineTemplate
   }));
 }
 
+/**
+ * MCP tools that take an irreversible real-world action (posting to a live social
+ * account). Any pipeline that resolves a stage to an agent holding one of these
+ * tools is treated as "autonomous-publish-capable" and is forced into manual
+ * gating unless the caller explicitly opts in (see `resolveGateMode` below).
+ */
 const AUTONOMOUS_PUBLISH_GUARD_TOOLS = [
   'mcp__xiaohongshu__publish_content',
   'mcp__xiaohongshu__publish_with_video',
   'mcp__douyin-upload__douyin_upload_video',
 ];
 
+/** Resolve a stage's `role` the same way `AgentManager.findAvailableAgent` does
+ * (direct role match, falling back to an id match), but without filtering by
+ * current availability — we only need the agent *definition* to inspect its
+ * tool grants ahead of pipeline creation. */
 function resolveAgentsForRole(role: string) {
   const byRole = listAgents({ role });
   if (byRole.length > 0) return byRole;
@@ -55,18 +65,37 @@ function resolveAgentsForRole(role: string) {
   return byId ? [byId] : [];
 }
 
+/** Does this template contain a stage whose agent can call a real-publish MCP tool? */
 function templateHasAutonomousPublishStage(stages: Array<{ role: string }>): boolean {
   return stages.some(stage =>
     resolveAgentsForRole(stage.role).some(agent =>
-      (agent.allowedTools || []).some(tool => AUTONOMOUS_PUBLISH_GUARD_TOOLS.includes(tool)),
-    ),
+      (agent.allowedTools || []).some(tool => AUTONOMOUS_PUBLISH_GUARD_TOOLS.includes(tool))
+    )
   );
 }
 
+/**
+ * Decide the effective gateMode for a new pipeline. Pipelines that can reach a
+ * real-publish MCP tool always default to (and are forced back to) "manual"
+ * unless the caller both requests "auto" AND explicitly confirms
+ * `confirmAutonomousPublish` — this is the opt-in, off-by-default "let it write
+ * and publish itself" switch. Non-publishing pipelines are unaffected.
+ *
+ * Note: an *unspecified* gateMode defaults to "auto" further down the stack
+ * (see `createPipeline` / db/models/pipeline.ts), so `undefined` must be
+ * treated the same as an explicit "auto" request here — otherwise omitting
+ * gateMode would silently bypass this guard.
+ *
+ * Returns `forcedForSafety: true` only when the guard actually downgraded an
+ * auto/unspecified request to "manual" — not for the ordinary, benign case of
+ * a non-publishing template simply defaulting to "auto" when unspecified —
+ * so callers can log/report the safety event precisely instead of inferring
+ * it from a generic "did the value change" comparison.
+ */
 function resolveGateMode(
   stages: Array<{ role: string }>,
   requested: 'auto' | 'manual' | undefined,
-  confirmAutonomousPublish: boolean | undefined,
+  confirmAutonomousPublish: boolean | undefined
 ): { gateMode: 'auto' | 'manual'; forcedForSafety: boolean } {
   if (requested === 'manual') return { gateMode: 'manual', forcedForSafety: false };
   if (!templateHasAutonomousPublishStage(stages)) return { gateMode: requested ?? 'auto', forcedForSafety: false };
@@ -110,12 +139,14 @@ export class PipelineEngine {
           stages: toTemplateStages(tmpl.stages),
         };
         const existing = existingByName.get(data.name);
+
         if (!existing) {
           const created = createTemplate(data);
           existingByName.set(data.name, created);
           logger.info({ template: tmpl.name }, 'Loaded pipeline template');
           continue;
         }
+
         if (
           existing.description !== data.description
           || JSON.stringify(existing.stages) !== JSON.stringify(data.stages)
@@ -135,6 +166,9 @@ export class PipelineEngine {
     templateId: string;
     input: string;
     gateMode?: 'auto' | 'manual';
+    /** Explicit opt-in required to run a publish-capable pipeline with gateMode "auto".
+     *  Off by default: omitting this (or setting false) forces "manual" for any
+     *  pipeline that can reach a real-publish MCP tool (e.g. mcp__xiaohongshu__publish_content). */
     confirmAutonomousPublish?: boolean;
     workspaceId?: string;
     domainId?: string;
@@ -151,15 +185,11 @@ export class PipelineEngine {
       dependsOn: s.dependsOn,
     }));
 
-    const { gateMode, forcedForSafety } = resolveGateMode(
-      template.stages,
-      data.gateMode,
-      data.confirmAutonomousPublish,
-    );
+    const { gateMode, forcedForSafety } = resolveGateMode(template.stages, data.gateMode, data.confirmAutonomousPublish);
     if (forcedForSafety) {
       logger.warn(
         { templateId: data.templateId, requested: data.gateMode ?? 'auto' },
-        'Forced publish-capable pipeline to manual gating without explicit autonomous-publish confirmation',
+        'Forced pipeline to manual gating: template can reach a real-publish MCP tool and confirmAutonomousPublish was not set'
       );
     }
 

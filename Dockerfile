@@ -28,6 +28,8 @@ COPY --from=builder /app/packages/shared ./packages/shared
 COPY --from=builder /app/packages/server ./packages/server
 COPY --from=builder /app/packages/python-runtime ./packages/python-runtime
 COPY --from=builder /app/package.json .
+COPY agents ./agents
+COPY templates ./templates
 
 RUN pip3 install --no-cache-dir --break-system-packages -r packages/python-runtime/requirements.txt
 

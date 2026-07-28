@@ -478,6 +478,10 @@ agents:
       maxToolCalls: 12
       maxWallClockMs: 900000
     capabilities: [trend-research, social-media, xiaohongshu, douyin, web-research, competitive-analysis]
+    # NOTE: mcp__xiaohongshu__search_feeds / list_feeds are deliberately NOT granted here.
+    # They routinely take >10min per call against the live site, and their payloads carry
+    # xsec_token values that trip the global DLP api_key rule, so the result is blocked
+    # anyway. Xiaohongshu-side signal is gathered via web.search instead.
     allowed_tools: [web.search, web.fetch, mcp__douyin-search__search_videos, mcp__douyin-search__get_homefeed, mcp__douyin-search__get_video_comments]
     triggers: [选题, 调研, 热点, trend, 什么内容火]
 

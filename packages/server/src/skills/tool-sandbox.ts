@@ -10,7 +10,7 @@ import { guardrails } from '../agents/safety-guardrails.js';
 import { getRuntimeLimits } from '../agents/runtime-limits.js';
 import { assertLocalShellAllowed, assertNetworkToolAllowed } from '../agents/sandbox-profile.js';
 import { formatToolGuardianDecision, formatToolGuardianWarnings, redactSecrets, reviewToolCall } from './tool-guardian.js';
-import { renderCards, CARD_HEIGHT, CARD_WIDTH, type CardRenderSpec } from '../tools/image-cards.js';
+import { renderCards, CARD_WIDTH, CARD_HEIGHT, type CardRenderSpec } from '../tools/image-cards.js';
 
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
@@ -66,7 +66,7 @@ export function buildSandboxToolDefinition(toolName: string, modelToolName = too
     'content.wechat_layout': 'Convert a markdown draft into WeChat layout recommendations and HTML blocks.',
     'content.hashtag_plan': 'Generate platform hashtag and keyword suggestions.',
     'image.generate_svg': 'Generate a simple SVG cover image in the task workspace.',
-    'image.generate_cards': 'Render Xiaohongshu-style 1080x1440 PNG cards in the task workspace.',
+    'image.generate_cards': 'Render Xiaohongshu-style 1080x1440 PNG image cards (cover / numbered point / list / ending) into the task workspace and return their absolute file paths, ready to pass straight to a note-publishing tool.',
   };
   const schemaByTool: Record<string, { properties: Record<string, unknown>; required?: string[] }> = {
     file_read: { properties: { path: { type: 'string', description: 'Workspace-relative file path' } }, required: ['path'] },
@@ -96,24 +96,24 @@ export function buildSandboxToolDefinition(toolName: string, modelToolName = too
       properties: {
         cards: {
           type: 'array',
-          description: 'Ordered image cards, maximum 12.',
+          description: 'Ordered image cards (max 12). Card 1 is the cover. Wrap a phrase in **double asterisks** to highlight it in the accent colour.',
           items: {
             type: 'object',
             properties: {
-              type: { type: 'string', enum: ['cover', 'point', 'list', 'end'] },
-              tag: { type: 'string' },
-              title: { type: 'string' },
-              subtitle: { type: 'string' },
-              index: { type: 'string' },
-              heading: { type: 'string' },
-              body: { type: 'string' },
-              tip: { type: 'string' },
-              items: { type: 'array', items: { type: 'string' } },
+              type: { type: 'string', enum: ['cover', 'point', 'list', 'end'], description: 'cover=封面页, point=编号要点页, list=清单页, end=结尾互动页' },
+              tag: { type: 'string', description: 'cover: small pill label, e.g. 远程办公' },
+              title: { type: 'string', description: 'cover: main headline' },
+              subtitle: { type: 'string', description: 'cover: supporting line' },
+              index: { type: 'string', description: 'point: big number/marker, e.g. ① or 01' },
+              heading: { type: 'string', description: 'point/list/end: card heading' },
+              body: { type: 'string', description: 'point/end: paragraph text' },
+              tip: { type: 'string', description: 'point/list: highlighted takeaway box at the card bottom' },
+              items: { type: 'array', items: { type: 'string' }, description: 'list: bullet items (max 6)' },
             },
             additionalProperties: false,
           },
         },
-        theme: { type: 'string', enum: ['warm', 'clean', 'dark'] },
+        theme: { type: 'string', enum: ['warm', 'clean', 'dark'], description: 'Visual theme, default warm' },
       },
       required: ['cards'],
     },
@@ -535,12 +535,9 @@ export async function executeTool(
 
   if (toolName === 'image.generate_cards') {
     try {
+      const spec = toolInput as unknown as CardRenderSpec;
       const outDir = assertSafePath(workdir, 'generated-assets/cards');
-      const { paths, chromeBinary } = await renderCards(
-        toolInput as unknown as CardRenderSpec,
-        outDir,
-        { timeoutMs: Math.min(timeoutMs, 60_000) },
-      );
+      const { paths, chromeBinary } = await renderCards(spec, outDir, { timeoutMs: Math.min(timeoutMs, 60_000) });
       return {
         output: jsonToolOutput({
           paths,
@@ -548,7 +545,7 @@ export async function executeTool(
           format: 'png',
           size: `${CARD_WIDTH}x${CARD_HEIGHT}`,
           renderer: chromeBinary,
-          note: 'Pass these absolute PNG paths directly to the publishing tool.',
+          note: 'These are absolute paths to real PNG files — pass them directly as the "images" argument when publishing.',
         }, maxOutputChars),
         status: 'done',
       };

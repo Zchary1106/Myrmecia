@@ -435,7 +435,7 @@ function PipelineBuilder() {
               <option value="manual">Manual gates</option>
             </select>
             {gateMode === 'auto' && (
-              <label className="mt-2 flex cursor-pointer items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5 text-[11px] text-amber-200">
+              <label className="flex items-start gap-2 mt-2 p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-[11px] text-amber-200 cursor-pointer">
                 <input
                   type="checkbox"
                   checked={confirmAutonomousPublish}
@@ -443,7 +443,9 @@ function PipelineBuilder() {
                   className="mt-0.5"
                 />
                 <span>
-                  <strong>Allow autonomous publishing.</strong> Publishing workflows otherwise stay on manual gates.
+                  <strong>Allow fully autonomous publish.</strong> Off by default — pipelines that can
+                  reach a real publish tool (Xiaohongshu / Douyin MCP) stay on Manual gates until you
+                  check this, even with Auto advance selected.
                 </span>
               </label>
             )}
