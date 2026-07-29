@@ -11,6 +11,7 @@ import { getRuntimeLimits } from '../agents/runtime-limits.js';
 import { assertLocalShellAllowed, assertNetworkToolAllowed } from '../agents/sandbox-profile.js';
 import { formatToolGuardianDecision, formatToolGuardianWarnings, redactSecrets, reviewToolCall } from './tool-guardian.js';
 import { renderCards, CARD_WIDTH, CARD_HEIGHT, type CardRenderSpec } from '../tools/image-cards.js';
+import { generateComfyImages, type ComfyGenerateSpec } from '../tools/comfyui-images.js';
 
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
@@ -24,6 +25,11 @@ export interface ToolSandboxOptions {
   allowedTools?: string[];
   timeoutMs?: number;
   maxOutputChars?: number;
+  /**
+   * Reports incremental progress from long-running tools so the operator sees
+   * movement instead of a silent multi-minute gap between start and finish.
+   */
+  onProgress?: (update: { message: string; ratio: number }) => void;
 }
 
 export const SANDBOX_TOOL_NAMES = [
@@ -42,6 +48,7 @@ export const SANDBOX_TOOL_NAMES = [
   'content.hashtag_plan',
   'image.generate_svg',
   'image.generate_cards',
+  'image.generate_comfyui',
 ] as const;
 
 const SANDBOX_TOOL_SET = new Set<string>(SANDBOX_TOOL_NAMES);
@@ -67,6 +74,7 @@ export function buildSandboxToolDefinition(toolName: string, modelToolName = too
     'content.hashtag_plan': 'Generate platform hashtag and keyword suggestions.',
     'image.generate_svg': 'Generate a simple SVG cover image in the task workspace.',
     'image.generate_cards': 'Render Xiaohongshu-style 1080x1440 PNG image cards (cover / numbered point / list / ending) into the task workspace and return their absolute file paths, ready to pass straight to a note-publishing tool.',
+    'image.generate_comfyui': 'Generate AI illustrations (covers, scene art, backgrounds) with the local ComfyUI server and return absolute PNG paths. Roughly 1 minute per image, so keep to 1-3 prompts; use image.generate_cards for anything containing text, since diffusion models cannot render readable Chinese.',
   };
   const schemaByTool: Record<string, { properties: Record<string, unknown>; required?: string[] }> = {
     file_read: { properties: { path: { type: 'string', description: 'Workspace-relative file path' } }, required: ['path'] },
@@ -116,6 +124,25 @@ export function buildSandboxToolDefinition(toolName: string, modelToolName = too
         theme: { type: 'string', enum: ['warm', 'clean', 'dark'], description: 'Visual theme, default warm' },
       },
       required: ['cards'],
+    },
+    'image.generate_comfyui': {
+      properties: {
+        prompts: {
+          type: 'array',
+          description: 'English image prompts, one per image (max 6). Describe the scene only — never ask for text or Chinese characters in the image. Each entry is a string, or an object with "prompt" and optional "negative".',
+          items: { type: 'string' },
+        },
+        style: {
+          type: 'string',
+          enum: ['illustration', 'photo', 'anime', 'watercolor'],
+          description: 'Style preset appended to every prompt, default illustration',
+        },
+        width: { type: 'integer', description: 'Image width, default 896 (3:4 for Xiaohongshu)' },
+        height: { type: 'integer', description: 'Image height, default 1200' },
+        steps: { type: 'integer', description: 'Sampling steps 10-40, default 25. Higher is slower.' },
+        seed: { type: 'integer', description: 'Optional seed for reproducible output' },
+      },
+      required: ['prompts'],
     },
   };
   const schema = schemaByTool[toolName];
@@ -551,6 +578,32 @@ export async function executeTool(
       };
     } catch (err: any) {
       return { output: `Image card generation failed: ${err.message}`, status: 'failed' };
+    }
+  }
+
+  if (toolName === 'image.generate_comfyui') {
+    try {
+      const spec = toolInput as unknown as ComfyGenerateSpec;
+      const outDir = assertSafePath(workdir, 'generated-assets/art');
+      const result = await generateComfyImages(spec, outDir, {
+        timeoutMs,
+        onProgress: (p) => options.onProgress?.({ message: p.message, ratio: p.ratio }),
+      });
+      return {
+        output: jsonToolOutput({
+          paths: result.images.map((img) => img.path),
+          count: result.images.length,
+          format: 'png',
+          model: result.model,
+          elapsedSeconds: Math.round(result.elapsedMs / 1000),
+          seeds: result.images.map((img) => img.seed),
+          autoStarted: result.autoStarted,
+          note: 'Absolute paths to real PNG files — pass them directly as the "images" argument when publishing.',
+        }, maxOutputChars),
+        status: 'done',
+      };
+    } catch (err: any) {
+      return { output: `ComfyUI image generation failed: ${err.message}`, status: 'failed' };
     }
   }
 
