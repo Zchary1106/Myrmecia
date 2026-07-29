@@ -589,6 +589,7 @@ export async function executeTool(
           model: result.model,
           elapsedSeconds: Math.round(result.elapsedMs / 1000),
           seeds: result.images.map((img) => img.seed),
+          autoStarted: result.autoStarted,
           note: 'Absolute paths to real PNG files — pass them directly as the "images" argument when publishing.',
         }, maxOutputChars),
         status: 'done',

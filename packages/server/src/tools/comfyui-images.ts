@@ -17,7 +17,9 @@
  * the only viable default for a pipeline stage.
  */
 
-import { createWriteStream, existsSync, mkdirSync } from 'fs';
+import { createWriteStream, existsSync, mkdirSync, openSync } from 'fs';
+import { spawn } from 'child_process';
+import { homedir, tmpdir } from 'os';
 import { Readable } from 'stream';
 import { pipeline } from 'stream/promises';
 import { join } from 'path';
@@ -75,6 +77,8 @@ export interface ComfyGenerateResult {
   images: ComfyImage[];
   model: string;
   elapsedMs: number;
+  /** True when this call had to start the ComfyUI server itself. */
+  autoStarted: boolean;
 }
 
 export function comfyBaseUrl(): string {
@@ -158,6 +162,131 @@ export async function checkComfyAvailable(timeoutMs = 5_000): Promise<{ ok: bool
   }
 }
 
+const COMFY_HOME_CANDIDATES = [
+  join(homedir(), 'MyWork', 'ComfyUI'),
+  join(homedir(), 'ComfyUI'),
+  join(homedir(), 'Documents', 'ComfyUI'),
+  join(homedir(), 'Applications', 'ComfyUI'),
+  '/opt/ComfyUI',
+];
+
+/** A directory only counts as a ComfyUI install if it can actually be launched. */
+function isComfyHome(dir: string): boolean {
+  return Boolean(dir) && existsSync(join(dir, 'main.py'));
+}
+
+export function findComfyHome(): string | undefined {
+  const configured = process.env.COMFYUI_HOME;
+  if (configured) return isComfyHome(configured) ? configured : undefined;
+  return COMFY_HOME_CANDIDATES.find(isComfyHome);
+}
+
+/**
+ * ComfyUI's dependencies (torch, custom nodes) almost never live in the system
+ * interpreter, so a bare `python3` is the last resort rather than the default.
+ */
+export function findComfyPython(home: string): string {
+  const configured = process.env.COMFYUI_PYTHON;
+  if (configured) return configured;
+  const candidates = [
+    join(home, 'venv', 'bin', 'python'),
+    join(home, '.venv', 'bin', 'python'),
+    join(homedir(), 'miniconda3', 'envs', 'comfyui', 'bin', 'python'),
+    join(homedir(), 'anaconda3', 'envs', 'comfyui', 'bin', 'python'),
+    join(homedir(), 'miniforge3', 'envs', 'comfyui', 'bin', 'python'),
+  ];
+  return candidates.find((p) => existsSync(p)) || 'python3';
+}
+
+/**
+ * Autostart is on by default, but only ever does anything when a real install is
+ * found, so machines without ComfyUI behave exactly as before.
+ */
+export function isAutostartEnabled(): boolean {
+  const raw = (process.env.COMFYUI_AUTOSTART || '').trim().toLowerCase();
+  if (['0', 'false', 'no', 'off'].includes(raw)) return false;
+  return true;
+}
+
+/** Spawning a local process cannot help a URL that points at another machine. */
+function isLocalUrl(url: string): boolean {
+  try {
+    const host = new URL(url).hostname;
+    return host === '127.0.0.1' || host === 'localhost' || host === '::1' || host === '0.0.0.0';
+  } catch {
+    return false;
+  }
+}
+
+/** Serialises concurrent callers so a burst of tool calls spawns one server. */
+let startInFlight: Promise<{ ok: boolean; detail: string }> | null = null;
+
+async function launchComfy(timeoutMs: number): Promise<{ ok: boolean; detail: string }> {
+  const home = findComfyHome();
+  if (!home) {
+    return { ok: false, detail: 'no ComfyUI install found (set COMFYUI_HOME)' };
+  }
+
+  const baseUrl = comfyBaseUrl();
+  const port = new URL(baseUrl).port || '8188';
+  const python = findComfyPython(home);
+  const logPath = join(tmpdir(), 'myrmecia-comfyui.log');
+  const logFd = openSync(logPath, 'a');
+
+  // Detached: keep the server alive across pipeline runs. Restarting it per run
+  // would pay the model-load cost every time, which dwarfs generation itself.
+  const child = spawn(python, ['main.py', '--listen', '127.0.0.1', '--port', port], {
+    cwd: home,
+    // A proxy in the environment would otherwise intercept our own health checks
+    // against 127.0.0.1 and return 502.
+    env: { ...process.env, NO_PROXY: '127.0.0.1,localhost', no_proxy: '127.0.0.1,localhost' },
+    detached: true,
+    stdio: ['ignore', logFd, logFd],
+  });
+  child.unref();
+
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 2_000));
+    const health = await checkComfyAvailable(3_000);
+    if (health.ok) {
+      return { ok: true, detail: `${health.detail} (auto-started from ${home}, pid ${child.pid})` };
+    }
+  }
+
+  return {
+    ok: false,
+    detail: `auto-start timed out after ${Math.round(timeoutMs / 1000)}s; see ${logPath}`,
+  };
+}
+
+/**
+ * Return a reachable ComfyUI, starting one if needed.
+ *
+ * The launch command is derived entirely from configuration and disk layout,
+ * never from tool input, so an agent cannot influence what gets executed.
+ */
+export async function ensureComfyAvailable(startTimeoutMs = 180_000): Promise<{ ok: boolean; detail: string; autoStarted: boolean }> {
+  const health = await checkComfyAvailable();
+  if (health.ok) return { ...health, autoStarted: false };
+
+  if (!isAutostartEnabled()) {
+    return { ...health, autoStarted: false };
+  }
+  if (!isLocalUrl(comfyBaseUrl())) {
+    return { ...health, autoStarted: false };
+  }
+  if (!findComfyHome()) {
+    return { ...health, autoStarted: false };
+  }
+
+  if (!startInFlight) {
+    startInFlight = launchComfy(startTimeoutMs).finally(() => { startInFlight = null; });
+  }
+  const started = await startInFlight;
+  return { ...started, autoStarted: started.ok };
+}
+
 async function downloadImage(baseUrl: string, image: { filename: string; subfolder?: string; type?: string }, destPath: string, timeoutMs: number): Promise<void> {
   const params = new URLSearchParams({
     filename: image.filename,
@@ -201,11 +330,27 @@ export async function generateComfyImages(
     throw new Error('image.generate_comfyui requires a non-empty "prompts" array');
   }
 
-  const health = await checkComfyAvailable();
+  // Start the clock before the health check: auto-starting the server can take
+  // a while, and that time has to come out of the caller's budget rather than
+  // being spent on top of it.
+  const started = Date.now();
+  const totalBudgetMs = options.timeoutMs ?? 900_000;
+
+  // Never spend more than a third of the budget getting the server up, so a
+  // slow start still leaves room to actually render something.
+  const startBudgetMs = Math.max(30_000, Math.min(180_000, Math.floor(totalBudgetMs / 3)));
+
+  const health = await ensureComfyAvailable(startBudgetMs);
   if (!health.ok) {
+    const home = findComfyHome();
+    const hint = !isAutostartEnabled()
+      ? 'Auto-start is disabled (COMFYUI_AUTOSTART=false).'
+      : home
+        ? `Auto-start from ${home} did not come up in time.`
+        : 'No ComfyUI install was found to auto-start — set COMFYUI_HOME.';
     throw new Error(
-      `ComfyUI is not reachable at ${comfyBaseUrl()} (${health.detail}). `
-      + 'Start it with: cd ~/MyWork/ComfyUI && python main.py --listen 127.0.0.1 --port 8188. '
+      `ComfyUI is not reachable at ${comfyBaseUrl()} (${health.detail}). ${hint} `
+      + 'Start it manually with: cd <ComfyUI> && python main.py --listen 127.0.0.1 --port 8188. '
       + 'If a proxy is configured, NO_PROXY must include 127.0.0.1.',
     );
   }
@@ -216,11 +361,9 @@ export async function generateComfyImages(
   const width = normalizeDimension(spec.width, DEFAULT_WIDTH);
   const height = normalizeDimension(spec.height, DEFAULT_HEIGHT);
   const steps = Math.max(10, Math.min(40, Number(spec.steps) || DEFAULT_STEPS));
-  const totalBudgetMs = options.timeoutMs ?? 900_000;
 
   mkdirSync(outDir, { recursive: true });
 
-  const started = Date.now();
   const images: ComfyImage[] = [];
 
   for (const [index, entry] of prompts.entries()) {
@@ -283,5 +426,5 @@ export async function generateComfyImages(
     }
   }
 
-  return { images, model: checkpoint, elapsedMs: Date.now() - started };
+  return { images, model: checkpoint, elapsedMs: Date.now() - started, autoStarted: health.autoStarted };
 }

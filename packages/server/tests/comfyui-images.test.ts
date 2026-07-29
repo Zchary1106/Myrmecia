@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, existsSync, readFileSync } from 'fs';
+import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import {
@@ -7,6 +7,10 @@ import {
   checkComfyAvailable,
   generateComfyImages,
   comfyBaseUrl,
+  findComfyHome,
+  findComfyPython,
+  isAutostartEnabled,
+  ensureComfyAvailable,
   DEFAULT_WIDTH,
   DEFAULT_HEIGHT,
 } from '../src/tools/comfyui-images.js';
@@ -17,12 +21,18 @@ describe('comfyui-images', () => {
 
   beforeEach(() => {
     workdir = mkdtempSync(join(tmpdir(), 'comfy-test-'));
+    // Hermetic default: never let the suite spawn a real ComfyUI on a developer
+    // machine that happens to have one installed. Autostart tests opt back in.
+    process.env.COMFYUI_AUTOSTART = 'false';
   });
 
   afterEach(() => {
     global.fetch = originalFetch;
     delete process.env.COMFYUI_URL;
     delete process.env.COMFYUI_CHECKPOINT;
+    delete process.env.COMFYUI_HOME;
+    delete process.env.COMFYUI_PYTHON;
+    delete process.env.COMFYUI_AUTOSTART;
     rmSync(workdir, { recursive: true, force: true });
   });
 
@@ -63,6 +73,7 @@ describe('comfyui-images', () => {
   });
 
   it('tells the user how to start ComfyUI when it is unreachable', async () => {
+    process.env.COMFYUI_AUTOSTART = 'false';
     global.fetch = vi.fn().mockRejectedValue(new Error('connect ECONNREFUSED')) as any;
     await expect(generateComfyImages({ prompts: ['a cat'] }, workdir))
       .rejects.toThrow(/not reachable.*python main\.py/s);
@@ -150,5 +161,78 @@ describe('comfyui-images', () => {
 
   it('defaults to the 3:4 ratio Xiaohongshu expects', () => {
     expect(DEFAULT_WIDTH / DEFAULT_HEIGHT).toBeCloseTo(3 / 4, 2);
+  });
+
+  describe('autostart', () => {
+    it('is on by default and can be switched off', () => {
+      delete process.env.COMFYUI_AUTOSTART;
+      expect(isAutostartEnabled()).toBe(true);
+      for (const off of ['false', '0', 'no', 'off', 'OFF']) {
+        process.env.COMFYUI_AUTOSTART = off;
+        expect(isAutostartEnabled()).toBe(false);
+      }
+      process.env.COMFYUI_AUTOSTART = 'true';
+      expect(isAutostartEnabled()).toBe(true);
+    });
+
+    it('rejects a COMFYUI_HOME that is not actually a ComfyUI install', () => {
+      process.env.COMFYUI_HOME = workdir; // exists, but has no main.py
+      expect(findComfyHome()).toBeUndefined();
+    });
+
+    it('accepts a COMFYUI_HOME containing main.py', () => {
+      writeFileSync(join(workdir, 'main.py'), '# stub');
+      process.env.COMFYUI_HOME = workdir;
+      expect(findComfyHome()).toBe(workdir);
+    });
+
+    it('prefers an explicitly configured interpreter', () => {
+      process.env.COMFYUI_PYTHON = '/custom/bin/python';
+      expect(findComfyPython(workdir)).toBe('/custom/bin/python');
+    });
+
+    it('prefers a venv inside the install over the system interpreter', () => {
+      mkdirSync(join(workdir, 'venv', 'bin'), { recursive: true });
+      writeFileSync(join(workdir, 'venv', 'bin', 'python'), '#!/bin/sh');
+      expect(findComfyPython(workdir)).toBe(join(workdir, 'venv', 'bin', 'python'));
+    });
+
+    it('does not spawn anything when autostart is disabled', async () => {
+      process.env.COMFYUI_AUTOSTART = 'false';
+      global.fetch = vi.fn().mockRejectedValue(new Error('ECONNREFUSED')) as any;
+      const res = await ensureComfyAvailable(1_000);
+      expect(res.ok).toBe(false);
+      expect(res.autoStarted).toBe(false);
+    });
+
+    it('does not try to spawn a local process for a remote ComfyUI', async () => {
+      writeFileSync(join(workdir, 'main.py'), '# stub');
+      process.env.COMFYUI_HOME = workdir;
+      process.env.COMFYUI_AUTOSTART = 'true';
+      process.env.COMFYUI_URL = 'http://192.168.1.50:8188';
+      global.fetch = vi.fn().mockRejectedValue(new Error('ECONNREFUSED')) as any;
+
+      const res = await ensureComfyAvailable(1_000);
+      expect(res.ok).toBe(false);
+      expect(res.autoStarted).toBe(false);
+    });
+
+    it('skips the spawn entirely when the server already answers', async () => {
+      global.fetch = vi.fn(async () =>
+        new Response(JSON.stringify({ system: { comfyui_version: '0.21.0' }, devices: [{ name: 'mps' }] }), { status: 200 }),
+      ) as any;
+
+      const res = await ensureComfyAvailable(1_000);
+      expect(res.ok).toBe(true);
+      expect(res.autoStarted).toBe(false);
+    });
+
+    it('explains why it could not autostart when no install is present', async () => {
+      process.env.COMFYUI_AUTOSTART = 'true';
+      process.env.COMFYUI_HOME = workdir; // no main.py -> not an install
+      global.fetch = vi.fn().mockRejectedValue(new Error('ECONNREFUSED')) as any;
+      await expect(generateComfyImages({ prompts: ['x'] }, workdir, { timeoutMs: 30_000 }))
+        .rejects.toThrow(/No ComfyUI install was found/);
+    });
   });
 });
