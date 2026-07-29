@@ -360,9 +360,9 @@ agents:
       maxTokens: 40000
       maxResponseTokens: 8192
       maxToolCalls: 16
-      maxWallClockMs: 600000
+      maxWallClockMs: 900000
     capabilities: [xiaohongshu, rednote, social-media, chinese-content, lifestyle, web-research, hashtag-planning, image-generation]
-    allowed_tools: [web.search, web.fetch, content.hashtag_plan, image.generate_svg, image.generate_cards]
+    allowed_tools: [web.search, web.fetch, content.hashtag_plan, image.generate_svg, image.generate_cards, image.generate_comfyui]
     triggers: [小红书, 笔记, 种草, 小红书文案, rednote]
 
   - id: douyin-writer

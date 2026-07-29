@@ -1,0 +1,287 @@
+/**
+ * ComfyUI image generation.
+ *
+ * Renders illustrations for social posts by driving a local ComfyUI server over
+ * its HTTP API, complementing `image.generate_cards`: cards carry the text, this
+ * carries the artwork (covers, backgrounds, scene illustrations).
+ *
+ * Why HTTP and not MCP: ComfyUI speaks HTTP, our MCP client only speaks stdio,
+ * so going through MCP would mean running an `mcp-remote` bridge for three
+ * endpoints. We submit a prompt graph, poll history, then download the results
+ * into the task workspace.
+ *
+ * Model choice is not arbitrary. Measured on the local M2 Max / 32GB box at a comparable
+ * resolution: SDXL takes ~55s per image, while FLUX.1-dev fp8 loads 22.7GB and
+ * takes 80-105s *per step* (~30 min per image) because it exhausts unified
+ * memory. A six-image set is ~5 min on SDXL versus ~3 hours on FLUX, so SDXL is
+ * the only viable default for a pipeline stage.
+ */
+
+import { createWriteStream, existsSync, mkdirSync } from 'fs';
+import { Readable } from 'stream';
+import { pipeline } from 'stream/promises';
+import { join } from 'path';
+
+export const DEFAULT_COMFYUI_URL = 'http://127.0.0.1:8188';
+
+/**
+ * Xiaohongshu's feed is 3:4. 896x1200 holds that ratio exactly while staying
+ * near SDXL's ~1M-pixel training resolution and divisible by 8, which the VAE
+ * requires. (SDXL's own 832x1216 preset is 0.68, not 3:4, so it would be
+ * letterboxed in the feed.)
+ */
+export const DEFAULT_WIDTH = 896;
+export const DEFAULT_HEIGHT = 1200;
+
+const MAX_IMAGES = 6;
+const DEFAULT_STEPS = 25;
+const POLL_INTERVAL_MS = 3_000;
+
+/**
+ * Keeping text out of generated art is deliberate: diffusion models render CJK
+ * glyphs as unreadable pseudo-characters, and the copy is already handled by
+ * `image.generate_cards`.
+ */
+const BASE_NEGATIVE = 'text, words, letters, watermark, signature, logo, blurry, low quality, distorted, deformed, ugly, extra limbs';
+
+export interface ComfyPrompt {
+  prompt: string;
+  negative?: string;
+}
+
+export interface ComfyGenerateSpec {
+  prompts: (string | ComfyPrompt)[];
+  style?: keyof typeof STYLE_PRESETS;
+  width?: number;
+  height?: number;
+  steps?: number;
+  seed?: number;
+}
+
+export const STYLE_PRESETS = {
+  illustration: 'flat vector illustration, minimalist infographic style, clean geometric shapes, soft muted palette, editorial poster, generous negative space',
+  photo: 'photorealistic, natural soft lighting, shallow depth of field, lifestyle photography, high detail',
+  anime: 'anime illustration, cel shading, clean linework, vibrant colours, studio quality',
+  watercolor: 'delicate watercolour painting, soft gradients, paper texture, gentle pastel tones',
+} as const;
+
+export interface ComfyImage {
+  path: string;
+  prompt: string;
+  seed: number;
+}
+
+export interface ComfyGenerateResult {
+  images: ComfyImage[];
+  model: string;
+  elapsedMs: number;
+}
+
+export function comfyBaseUrl(): string {
+  return (process.env.COMFYUI_URL || DEFAULT_COMFYUI_URL).replace(/\/+$/, '');
+}
+
+export function comfyCheckpoint(): string {
+  return process.env.COMFYUI_CHECKPOINT || 'sd_xl_base_1.0.safetensors';
+}
+
+/**
+ * Clamp to multiples of 8; SDXL's VAE downsamples by 8 and rejects other sizes.
+ */
+function normalizeDimension(value: number | undefined, fallback: number): number {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  return Math.max(512, Math.min(1536, Math.round(n / 8) * 8));
+}
+
+export function buildSdxlWorkflow(opts: {
+  positive: string;
+  negative: string;
+  width: number;
+  height: number;
+  steps: number;
+  seed: number;
+  checkpoint: string;
+  filenamePrefix: string;
+}): Record<string, unknown> {
+  return {
+    '4': { class_type: 'CheckpointLoaderSimple', inputs: { ckpt_name: opts.checkpoint } },
+    '5': { class_type: 'EmptyLatentImage', inputs: { width: opts.width, height: opts.height, batch_size: 1 } },
+    '6': { class_type: 'CLIPTextEncode', inputs: { text: opts.positive, clip: ['4', 1] } },
+    '7': { class_type: 'CLIPTextEncode', inputs: { text: opts.negative, clip: ['4', 1] } },
+    '3': {
+      class_type: 'KSampler',
+      inputs: {
+        seed: opts.seed,
+        steps: opts.steps,
+        cfg: 7.0,
+        sampler_name: 'dpmpp_2m',
+        scheduler: 'karras',
+        denoise: 1.0,
+        model: ['4', 0],
+        positive: ['6', 0],
+        negative: ['7', 0],
+        latent_image: ['5', 0],
+      },
+    },
+    '8': { class_type: 'VAEDecode', inputs: { samples: ['3', 0], vae: ['4', 2] } },
+    '9': { class_type: 'SaveImage', inputs: { filename_prefix: opts.filenamePrefix, images: ['8', 0] } },
+  };
+}
+
+async function fetchJson(url: string, init: RequestInit, timeoutMs: number): Promise<any> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { ...init, signal: controller.signal });
+    const text = await res.text();
+    if (!res.ok) {
+      throw new Error(`ComfyUI ${init.method || 'GET'} ${new URL(url).pathname} -> ${res.status}: ${text.slice(0, 400)}`);
+    }
+    return text ? JSON.parse(text) : {};
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Verify the server is reachable before queueing work, so a stopped ComfyUI
+ * surfaces as "start it" rather than as a poll timeout minutes later.
+ */
+export async function checkComfyAvailable(timeoutMs = 5_000): Promise<{ ok: boolean; detail: string }> {
+  try {
+    const stats = await fetchJson(`${comfyBaseUrl()}/system_stats`, { method: 'GET' }, timeoutMs);
+    const device = stats?.devices?.[0]?.name || stats?.system?.os || 'unknown';
+    return { ok: true, detail: `ComfyUI ${stats?.system?.comfyui_version || '?'} on ${device}` };
+  } catch (err: any) {
+    return { ok: false, detail: err?.message || String(err) };
+  }
+}
+
+async function downloadImage(baseUrl: string, image: { filename: string; subfolder?: string; type?: string }, destPath: string, timeoutMs: number): Promise<void> {
+  const params = new URLSearchParams({
+    filename: image.filename,
+    subfolder: image.subfolder || '',
+    type: image.type || 'output',
+  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${baseUrl}/view?${params}`, { signal: controller.signal });
+    if (!res.ok || !res.body) throw new Error(`ComfyUI /view -> ${res.status}`);
+    await pipeline(Readable.fromWeb(res.body as any), createWriteStream(destPath));
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function resolvePrompt(entry: string | ComfyPrompt, style: string): { positive: string; negative: string } {
+  const raw = typeof entry === 'string' ? { prompt: entry } : entry;
+  const prompt = String(raw?.prompt || '').trim();
+  if (!prompt) throw new Error('Each prompt must be a non-empty string');
+  const extra = String(raw?.negative || '').trim();
+  return {
+    positive: style ? `${prompt}, ${style}` : prompt,
+    negative: extra ? `${BASE_NEGATIVE}, ${extra}` : BASE_NEGATIVE,
+  };
+}
+
+/**
+ * Generate one image per prompt, sequentially. Sequential is intentional: the
+ * box has a single GPU and concurrent jobs thrash unified memory rather than
+ * finishing sooner.
+ */
+export async function generateComfyImages(
+  spec: ComfyGenerateSpec,
+  outDir: string,
+  options: { timeoutMs?: number } = {},
+): Promise<ComfyGenerateResult> {
+  const prompts = (spec.prompts || []).slice(0, MAX_IMAGES);
+  if (prompts.length === 0) {
+    throw new Error('image.generate_comfyui requires a non-empty "prompts" array');
+  }
+
+  const health = await checkComfyAvailable();
+  if (!health.ok) {
+    throw new Error(
+      `ComfyUI is not reachable at ${comfyBaseUrl()} (${health.detail}). `
+      + 'Start it with: cd ~/MyWork/ComfyUI && python main.py --listen 127.0.0.1 --port 8188. '
+      + 'If a proxy is configured, NO_PROXY must include 127.0.0.1.',
+    );
+  }
+
+  const baseUrl = comfyBaseUrl();
+  const checkpoint = comfyCheckpoint();
+  const style = STYLE_PRESETS[spec.style as keyof typeof STYLE_PRESETS] || STYLE_PRESETS.illustration;
+  const width = normalizeDimension(spec.width, DEFAULT_WIDTH);
+  const height = normalizeDimension(spec.height, DEFAULT_HEIGHT);
+  const steps = Math.max(10, Math.min(40, Number(spec.steps) || DEFAULT_STEPS));
+  const totalBudgetMs = options.timeoutMs ?? 900_000;
+
+  mkdirSync(outDir, { recursive: true });
+
+  const started = Date.now();
+  const images: ComfyImage[] = [];
+
+  for (const [index, entry] of prompts.entries()) {
+    const remaining = totalBudgetMs - (Date.now() - started);
+    if (remaining <= 15_000) {
+      if (images.length > 0) break;
+      throw new Error('Ran out of time budget before any image finished');
+    }
+
+    const { positive, negative } = resolvePrompt(entry, style);
+    const seed = Number.isFinite(spec.seed as number)
+      ? Number(spec.seed) + index
+      : Math.floor(Math.random() * 2_147_483_647);
+    const slug = String(index + 1).padStart(2, '0');
+
+    const workflow = buildSdxlWorkflow({
+      positive, negative, width, height, steps, seed, checkpoint,
+      filenamePrefix: `myrmecia_${slug}`,
+    });
+
+    const queued = await fetchJson(
+      `${baseUrl}/prompt`,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: workflow }) },
+      30_000,
+    );
+    const promptId = queued?.prompt_id;
+    if (!promptId) throw new Error(`ComfyUI did not return a prompt_id: ${JSON.stringify(queued).slice(0, 300)}`);
+
+    const deadline = Date.now() + remaining;
+    let outputs: any = null;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+      const history = await fetchJson(`${baseUrl}/history/${promptId}`, { method: 'GET' }, 15_000);
+      const record = history?.[promptId];
+      if (!record) continue;
+
+      const status = record.status || {};
+      if (status.status_str === 'error') {
+        const detail = JSON.stringify(status.messages || []).slice(0, 500);
+        throw new Error(`ComfyUI failed to execute the workflow: ${detail}`);
+      }
+      if (record.outputs) {
+        outputs = record.outputs;
+        break;
+      }
+    }
+
+    if (!outputs) {
+      if (images.length > 0) break;
+      throw new Error(`Timed out waiting for ComfyUI to render image ${slug}`);
+    }
+
+    const files = Object.values(outputs).flatMap((node: any) => node?.images || []);
+    for (const [fileIndex, file] of files.entries()) {
+      const ext = String(file.filename).split('.').pop() || 'png';
+      const destPath = join(outDir, `art-${slug}${fileIndex > 0 ? `-${fileIndex}` : ''}.${ext}`);
+      await downloadImage(baseUrl, file, destPath, 60_000);
+      if (!existsSync(destPath)) throw new Error(`Failed to download ComfyUI output ${file.filename}`);
+      images.push({ path: destPath, prompt: positive, seed });
+    }
+  }
+
+  return { images, model: checkpoint, elapsedMs: Date.now() - started };
+}

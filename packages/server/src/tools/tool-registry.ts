@@ -192,6 +192,29 @@ export const BUILTIN_TOOLS: BuiltinToolDefinition[] = [
     outputSchema: { type: 'object' },
     metadata: { readOnly: false, network: false, writesWorkspace: true, writesOutsideWorkspace: false, destructive: false, outputFormat: 'png' },
   },
+  {
+    id: 'image.generate_comfyui',
+    name: 'ComfyUI Image Generator',
+    description: 'Generate AI illustrations with the local ComfyUI server and return absolute PNG paths in the task workspace.',
+    category: 'asset',
+    riskLevel: 'medium',
+    version: '1.0.0',
+    implementationRef: 'packages/server/src/tools/comfyui-images.ts:generateComfyImages',
+    inputSchema: {
+      type: 'object',
+      required: ['prompts'],
+      properties: {
+        prompts: { type: 'array', minItems: 1 },
+        style: { type: 'string' },
+        width: { type: 'integer' },
+        height: { type: 'integer' },
+        steps: { type: 'integer' },
+        seed: { type: 'integer' },
+      },
+    },
+    outputSchema: { type: 'object' },
+    metadata: { readOnly: false, network: true, writesWorkspace: true, writesOutsideWorkspace: false, destructive: false, outputFormat: 'png' },
+  },
 
   // ---- engineering tools (sandboxed, confined to the task workspace) ----
   {
