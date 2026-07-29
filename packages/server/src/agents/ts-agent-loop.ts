@@ -471,6 +471,13 @@ export class TsAgentLoop {
                     allowedTools: toolPolicy.allowedTools,
                     timeoutMs: Math.min(limits.maxToolCallTimeoutMs, limits.maxToolRuntimeMsPerExecution - totalToolRuntimeMs),
                     maxOutputChars: Math.min(limits.maxOutputChars, 8_000),
+                    onProgress: ({ message }) => {
+                      addTaskLog(task.id, 'info', `⏳ ${toolName}: ${message}`, agent.id);
+                      eventBus.emit('execution:progress', {
+                        executionId, taskId: task.id, agentDefId: agent.id, workspaceId: task.workspaceId,
+                        progress: getProgressSnapshot(tracker, message),
+                      });
+                    },
                   });
               toolOutput = sanitizeAgentOutput(result.output, {
                 agentId: agent.id,
@@ -746,6 +753,10 @@ export class TsAgentLoop {
                   allowedTools: stepAllowedTools,
                   timeoutMs: remainingToolBudgetMs,
                   maxOutputChars: Math.min(limits.maxOutputChars, 8_000),
+                  onProgress: ({ message }) => {
+                    addTaskLog(task.id, 'info', `⏳ ${toolName}: ${message}`, agent.id);
+                    addExecutionMessage({ executionId, type: 'progress', content: message });
+                  },
                 });
             const toolElapsedMs = Date.now() - toolStartedAt;
             stepToolRuntimeMs += toolElapsedMs;

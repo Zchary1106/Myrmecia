@@ -11,6 +11,7 @@ import {
   findComfyPython,
   isAutostartEnabled,
   ensureComfyAvailable,
+  progressBar,
   DEFAULT_WIDTH,
   DEFAULT_HEIGHT,
 } from '../src/tools/comfyui-images.js';
@@ -234,5 +235,68 @@ describe('comfyui-images', () => {
       await expect(generateComfyImages({ prompts: ['x'] }, workdir, { timeoutMs: 30_000 }))
         .rejects.toThrow(/No ComfyUI install was found/);
     });
+  });
+
+  describe('progress reporting', () => {
+    it('renders a text bar that tracks the ratio and clamps out-of-range input', () => {
+      expect(progressBar(0, 10)).toBe('░░░░░░░░░░   0%');
+      expect(progressBar(0.5, 10)).toBe('█████░░░░░  50%');
+      expect(progressBar(1, 10)).toBe('██████████ 100%');
+      // NaN and out-of-range must not produce a broken bar
+      expect(progressBar(-5, 10)).toBe('░░░░░░░░░░   0%');
+      expect(progressBar(42, 10)).toBe('██████████ 100%');
+      expect(progressBar(Number.NaN, 10)).toBe('░░░░░░░░░░   0%');
+    });
+
+    it('reports progress and never exceeds 100% across a batch', async () => {
+      const updates: any[] = [];
+      global.fetch = vi.fn(async (url: any) => {
+        const u = String(url);
+        if (u.includes('/system_stats')) return new Response(JSON.stringify({ system: {}, devices: [] }), { status: 200 });
+        if (u.includes('/prompt')) return new Response(JSON.stringify({ prompt_id: 'p1' }), { status: 200 });
+        if (u.includes('/history/')) {
+          return new Response(JSON.stringify({
+            p1: { status: { status_str: 'success' }, outputs: { '9': { images: [{ filename: 'a.png', subfolder: '', type: 'output' }] } } },
+          }), { status: 200 });
+        }
+        return new Response(Buffer.from('png'), { status: 200 });
+      }) as any;
+
+      await generateComfyImages(
+        { prompts: ['one', 'two'] },
+        workdir,
+        { timeoutMs: 60_000, onProgress: (p) => updates.push(p) },
+      );
+
+      expect(updates.length).toBeGreaterThan(0);
+      expect(updates.every((u) => u.ratio >= 0 && u.ratio <= 1)).toBe(true);
+      // progress must advance monotonically, never jump backwards
+      const ratios = updates.map((u) => u.ratio);
+      expect([...ratios].sort((a, b) => a - b)).toEqual(ratios);
+      expect(updates.at(-1).ratio).toBe(1);
+      expect(updates.at(-1).phase).toBe('done');
+      expect(updates.some((u) => u.message.includes('配图 2/2'))).toBe(true);
+    }, 30_000);
+
+    it('does not fail the render when the progress consumer throws', async () => {
+      global.fetch = vi.fn(async (url: any) => {
+        const u = String(url);
+        if (u.includes('/system_stats')) return new Response(JSON.stringify({ system: {}, devices: [] }), { status: 200 });
+        if (u.includes('/prompt')) return new Response(JSON.stringify({ prompt_id: 'p1' }), { status: 200 });
+        if (u.includes('/history/')) {
+          return new Response(JSON.stringify({
+            p1: { status: { status_str: 'success' }, outputs: { '9': { images: [{ filename: 'a.png', subfolder: '', type: 'output' }] } } },
+          }), { status: 200 });
+        }
+        return new Response(Buffer.from('png'), { status: 200 });
+      }) as any;
+
+      const result = await generateComfyImages(
+        { prompts: ['one'] },
+        workdir,
+        { timeoutMs: 30_000, onProgress: () => { throw new Error('consumer exploded'); } },
+      );
+      expect(result.images).toHaveLength(1);
+    }, 30_000);
   });
 });

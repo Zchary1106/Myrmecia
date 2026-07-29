@@ -23,6 +23,7 @@ import { homedir, tmpdir } from 'os';
 import { Readable } from 'stream';
 import { pipeline } from 'stream/promises';
 import { join } from 'path';
+import { WebSocket } from 'ws';
 
 export const DEFAULT_COMFYUI_URL = 'http://127.0.0.1:8188';
 
@@ -38,6 +39,9 @@ export const DEFAULT_HEIGHT = 1200;
 const MAX_IMAGES = 6;
 const DEFAULT_STEPS = 25;
 const POLL_INTERVAL_MS = 3_000;
+
+/** Minimum gap between progress reports, so a long batch can't flood the log. */
+const PROGRESS_THROTTLE_MS = 5_000;
 
 /**
  * Keeping text out of generated art is deliberate: diffusion models render CJK
@@ -79,6 +83,52 @@ export interface ComfyGenerateResult {
   elapsedMs: number;
   /** True when this call had to start the ComfyUI server itself. */
   autoStarted: boolean;
+}
+
+export interface ComfyProgress {
+  /** Which image of the batch, 1-based. */
+  imageIndex: number;
+  imageCount: number;
+  /** Sampling step within the current image; 0 while the phase has no steps. */
+  step: number;
+  stepCount: number;
+  /** Overall completion across the whole batch, 0-1. */
+  ratio: number;
+  phase: 'starting' | 'queued' | 'sampling' | 'saving' | 'done';
+  /** Human-readable one-liner, e.g. "配图 2/3 · 采样 12/25 (48%)". */
+  message: string;
+}
+
+export type ComfyProgressHandler = (progress: ComfyProgress) => void;
+
+/** Renders a short text bar so progress is legible in a plain log line. */
+export function progressBar(ratio: number, width = 20): string {
+  const clamped = Math.max(0, Math.min(1, Number.isFinite(ratio) ? ratio : 0));
+  const filled = Math.round(clamped * width);
+  return `${'█'.repeat(filled)}${'░'.repeat(width - filled)} ${String(Math.round(clamped * 100)).padStart(3)}%`;
+}
+
+function buildProgress(
+  imageIndex: number,
+  imageCount: number,
+  step: number,
+  stepCount: number,
+  phase: ComfyProgress['phase'],
+): ComfyProgress {
+  // Weight each image equally, and the steps within it proportionally, so the
+  // bar advances smoothly across a multi-image batch instead of jumping.
+  const perImage = imageCount > 0 ? 1 / imageCount : 1;
+  const within = stepCount > 0 ? Math.min(1, step / stepCount) : (phase === 'done' ? 1 : 0);
+  const ratio = Math.min(1, (imageIndex - 1) * perImage + within * perImage);
+
+  const label = phase === 'sampling' && stepCount > 0
+    ? `采样 ${step}/${stepCount}`
+    : { starting: '启动 ComfyUI', queued: '排队中', saving: '保存中', done: '完成', sampling: '采样中' }[phase];
+
+  return {
+    imageIndex, imageCount, step, stepCount, ratio, phase,
+    message: `配图 ${imageIndex}/${imageCount} · ${label} ${progressBar(ratio)}`,
+  };
 }
 
 export function comfyBaseUrl(): string {
@@ -316,6 +366,46 @@ function resolvePrompt(entry: string | ComfyPrompt, style: string): { positive: 
 }
 
 /**
+ * Subscribe to ComfyUI's progress stream for one prompt.
+ *
+ * ComfyUI reports sampling progress only over its websocket ({value, max} per
+ * step); the REST API just says "not finished yet". Progress is best-effort:
+ * a websocket failure must never fail a generation that is otherwise fine, so
+ * every error path here degrades to "no live progress" instead of throwing.
+ */
+function watchComfyProgress(
+  baseUrl: string,
+  clientId: string,
+  onStep: (step: number, stepCount: number) => void,
+): { close: () => void } {
+  let socket: WebSocket | undefined;
+  try {
+    const wsUrl = `${baseUrl.replace(/^http/, 'ws')}/ws?clientId=${encodeURIComponent(clientId)}`;
+    socket = new WebSocket(wsUrl);
+    socket.addEventListener('message', (event: any) => {
+      try {
+        if (typeof event.data !== 'string') return; // preview image frames
+        const msg = JSON.parse(event.data);
+        if (msg?.type === 'progress' && msg.data) {
+          onStep(Number(msg.data.value) || 0, Number(msg.data.max) || 0);
+        }
+      } catch {
+        // a malformed frame is not worth failing the render over
+      }
+    });
+    socket.addEventListener('error', () => { /* fall back to silent polling */ });
+  } catch {
+    socket = undefined;
+  }
+
+  return {
+    close: () => {
+      try { socket?.close(); } catch { /* already gone */ }
+    },
+  };
+}
+
+/**
  * Generate one image per prompt, sequentially. Sequential is intentional: the
  * box has a single GPU and concurrent jobs thrash unified memory rather than
  * finishing sooner.
@@ -323,7 +413,7 @@ function resolvePrompt(entry: string | ComfyPrompt, style: string): { positive: 
 export async function generateComfyImages(
   spec: ComfyGenerateSpec,
   outDir: string,
-  options: { timeoutMs?: number } = {},
+  options: { timeoutMs?: number; onProgress?: ComfyProgressHandler } = {},
 ): Promise<ComfyGenerateResult> {
   const prompts = (spec.prompts || []).slice(0, MAX_IMAGES);
   if (prompts.length === 0) {
@@ -335,11 +425,17 @@ export async function generateComfyImages(
   // being spent on top of it.
   const started = Date.now();
   const totalBudgetMs = options.timeoutMs ?? 900_000;
+  const onProgress = options.onProgress;
+  const report = (p: ComfyProgress) => {
+    // A misbehaving progress consumer must not break generation.
+    try { onProgress?.(p); } catch { /* ignore */ }
+  };
 
   // Never spend more than a third of the budget getting the server up, so a
   // slow start still leaves room to actually render something.
   const startBudgetMs = Math.max(30_000, Math.min(180_000, Math.floor(totalBudgetMs / 3)));
 
+  report(buildProgress(1, prompts.length, 0, 0, 'starting'));
   const health = await ensureComfyAvailable(startBudgetMs);
   if (!health.ok) {
     const home = findComfyHome();
@@ -384,45 +480,81 @@ export async function generateComfyImages(
       filenamePrefix: `myrmecia_${slug}`,
     });
 
-    const queued = await fetchJson(
-      `${baseUrl}/prompt`,
-      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: workflow }) },
-      30_000,
-    );
-    const promptId = queued?.prompt_id;
-    if (!promptId) throw new Error(`ComfyUI did not return a prompt_id: ${JSON.stringify(queued).slice(0, 300)}`);
+    const imageNo = index + 1;
+    // A distinct client id per image keeps the progress stream scoped to this
+    // job, so a browser tab or another caller can't leak steps into our bar.
+    const clientId = `myrmecia-${Date.now()}-${slug}`;
+    let lastReportedStep = -1;
+    let lastReportAt = 0;
+    const watcher = watchComfyProgress(baseUrl, clientId, (step, stepCount) => {
+      if (step === lastReportedStep) return;
+      const total = stepCount || steps;
+      const isLast = step >= total;
+      // Throttle: a 25-step image would otherwise emit 25 log lines, and a
+      // multi-image batch would bury everything else in the task log.
+      if (!isLast && Date.now() - lastReportAt < PROGRESS_THROTTLE_MS) return;
+      lastReportedStep = step;
+      lastReportAt = Date.now();
+      report(buildProgress(imageNo, prompts.length, step, total, 'sampling'));
+    });
 
-    const deadline = Date.now() + remaining;
-    let outputs: any = null;
-    while (Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
-      const history = await fetchJson(`${baseUrl}/history/${promptId}`, { method: 'GET' }, 15_000);
-      const record = history?.[promptId];
-      if (!record) continue;
+    try {
+      report(buildProgress(imageNo, prompts.length, 0, steps, 'queued'));
 
-      const status = record.status || {};
-      if (status.status_str === 'error') {
-        const detail = JSON.stringify(status.messages || []).slice(0, 500);
-        throw new Error(`ComfyUI failed to execute the workflow: ${detail}`);
+      const queued = await fetchJson(
+        `${baseUrl}/prompt`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompt: workflow, client_id: clientId }),
+        },
+        30_000,
+      );
+      const promptId = queued?.prompt_id;
+      if (!promptId) throw new Error(`ComfyUI did not return a prompt_id: ${JSON.stringify(queued).slice(0, 300)}`);
+
+      const deadline = Date.now() + remaining;
+      let outputs: any = null;
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+        const history = await fetchJson(`${baseUrl}/history/${promptId}`, { method: 'GET' }, 15_000);
+        const record = history?.[promptId];
+        if (!record) continue;
+
+        const status = record.status || {};
+        if (status.status_str === 'error') {
+          const detail = JSON.stringify(status.messages || []).slice(0, 500);
+          throw new Error(`ComfyUI failed to execute the workflow: ${detail}`);
+        }
+        if (record.outputs) {
+          outputs = record.outputs;
+          break;
+        }
       }
-      if (record.outputs) {
-        outputs = record.outputs;
-        break;
+
+      if (!outputs) {
+        if (images.length > 0) break;
+        throw new Error(`Timed out waiting for ComfyUI to render image ${slug}`);
       }
-    }
 
-    if (!outputs) {
-      if (images.length > 0) break;
-      throw new Error(`Timed out waiting for ComfyUI to render image ${slug}`);
-    }
+      report(buildProgress(imageNo, prompts.length, steps, steps, 'saving'));
 
-    const files = Object.values(outputs).flatMap((node: any) => node?.images || []);
-    for (const [fileIndex, file] of files.entries()) {
-      const ext = String(file.filename).split('.').pop() || 'png';
-      const destPath = join(outDir, `art-${slug}${fileIndex > 0 ? `-${fileIndex}` : ''}.${ext}`);
-      await downloadImage(baseUrl, file, destPath, 60_000);
-      if (!existsSync(destPath)) throw new Error(`Failed to download ComfyUI output ${file.filename}`);
-      images.push({ path: destPath, prompt: positive, seed });
+      const files = Object.values(outputs).flatMap((node: any) => node?.images || []);
+      for (const [fileIndex, file] of files.entries()) {
+        const ext = String(file.filename).split('.').pop() || 'png';
+        const destPath = join(outDir, `art-${slug}${fileIndex > 0 ? `-${fileIndex}` : ''}.${ext}`);
+        await downloadImage(baseUrl, file, destPath, 60_000);
+        if (!existsSync(destPath)) throw new Error(`Failed to download ComfyUI output ${file.filename}`);
+        images.push({ path: destPath, prompt: positive, seed });
+      }
+
+      // Intermediate images need no completion line: the next iteration's
+      // "queued" report already announces the handover at the same ratio.
+      if (imageNo === prompts.length) {
+        report(buildProgress(imageNo, prompts.length, steps, steps, 'done'));
+      }
+    } finally {
+      watcher.close();
     }
   }
 

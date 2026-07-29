@@ -25,6 +25,11 @@ export interface ToolSandboxOptions {
   allowedTools?: string[];
   timeoutMs?: number;
   maxOutputChars?: number;
+  /**
+   * Reports incremental progress from long-running tools so the operator sees
+   * movement instead of a silent multi-minute gap between start and finish.
+   */
+  onProgress?: (update: { message: string; ratio: number }) => void;
 }
 
 export const SANDBOX_TOOL_NAMES = [
@@ -580,7 +585,10 @@ export async function executeTool(
     try {
       const spec = toolInput as unknown as ComfyGenerateSpec;
       const outDir = assertSafePath(workdir, 'generated-assets/art');
-      const result = await generateComfyImages(spec, outDir, { timeoutMs });
+      const result = await generateComfyImages(spec, outDir, {
+        timeoutMs,
+        onProgress: (p) => options.onProgress?.({ message: p.message, ratio: p.ratio }),
+      });
       return {
         output: jsonToolOutput({
           paths: result.images.map((img) => img.path),
