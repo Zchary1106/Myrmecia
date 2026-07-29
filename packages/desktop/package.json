@@ -1,0 +1,82 @@
+{
+  "name": "@myrmecia/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Myrmecia local-first desktop control plane.",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "node scripts/clean-dist.mjs && tsc && node scripts/copy-preload.mjs",
+    "typecheck": "tsc --noEmit",
+    "lint": "tsc --noEmit",
+    "prepare:dev": "pnpm --filter @myrmecia/shared build && pnpm --filter @myrmecia/server build && pnpm --filter @myrmecia/dashboard build",
+    "dev": "pnpm run prepare:dev && pnpm run build && electron .",
+    "stage": "node scripts/stage-resources.mjs",
+    "package": "pnpm run build && pnpm run stage && electron-builder"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.3",
+    "electron": "^36.3.1",
+    "electron-builder": "^26.0.12",
+    "typescript": "^5.7.3"
+  },
+  "build": {
+    "appId": "io.myrmecia.desktop",
+    "productName": "Myrmecia",
+    "asar": true,
+    "npmRebuild": false,
+    "beforePack": "./scripts/before-pack.mjs",
+    "afterPack": "./scripts/after-pack.mjs",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": ".stage/server",
+        "to": "server"
+      },
+      {
+        "from": "../dashboard/dist",
+        "to": "dashboard"
+      },
+      {
+        "from": "../../agents",
+        "to": "agents"
+      },
+      {
+        "from": "../../templates",
+        "to": "templates"
+      },
+      {
+        "from": "../python-runtime",
+        "to": "python-runtime"
+      },
+      {
+        "from": "src/splash",
+        "to": "desktop"
+      }
+    ],
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.developer-tools"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Development"
+    }
+  }
+}

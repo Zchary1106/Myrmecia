@@ -25,11 +25,12 @@ let BUILTIN: Team[] = [];
 
 function candidatePaths(): string[] {
   return [
+    process.env.MYRMECIA_RESOURCE_ROOT && join(process.env.MYRMECIA_RESOURCE_ROOT, 'agents/teams.yaml'),
     join(__dirname, '../../../../agents/teams.yaml'),
     join(__dirname, '../../../agents/teams.yaml'),
     join(process.cwd(), 'agents/teams.yaml'),
     join(process.cwd(), '../agents/teams.yaml'),
-  ];
+  ].filter((path): path is string => Boolean(path));
 }
 
 function normalize(t: any, builtin: boolean): Team {

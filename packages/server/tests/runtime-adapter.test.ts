@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { selectRuntimeAdapter, agentHasNoTools, type RuntimeAdapter } from '../src/agents/runtime-adapter.js';
+import { selectRuntimeAdapter, shouldUseTsAgentLoop, type RuntimeAdapter } from '../src/agents/runtime-adapter.js';
 import type { AgentDefinition } from '../src/types.js';
 
 function makeAgent(overrides?: Partial<AgentDefinition>): AgentDefinition {
@@ -26,9 +26,12 @@ function adapter(name: string, canHandle: (a: AgentDefinition) => boolean): Runt
 }
 
 describe('runtime adapter selection', () => {
-  afterEach(() => { delete process.env.AGENT_EXECUTOR; });
+  afterEach(() => {
+    delete process.env.AGENT_EXECUTOR;
+    delete process.env.MYRMECIA_MODEL_PROVIDER;
+  });
 
-  const ts = adapter('ts-agent-loop', a => agentHasNoTools(a));
+  const ts = adapter('ts-agent-loop', a => shouldUseTsAgentLoop(a));
   const python = adapter('python-runtime', () => true);
   const adapters = [ts, python];
 
@@ -40,6 +43,12 @@ describe('runtime adapter selection', () => {
   it('falls back to the python runtime when the agent has tools', () => {
     const selected = selectRuntimeAdapter(makeAgent({ allowedTools: ['shell_exec'] }), adapters);
     expect(selected?.name).toBe('python-runtime');
+  });
+
+  it('selects the TS loop before Python for tool-enabled Copilot agents', () => {
+    process.env.MYRMECIA_MODEL_PROVIDER = 'copilot';
+    const selected = selectRuntimeAdapter(makeAgent({ allowedTools: ['shell_exec'] }), adapters);
+    expect(selected?.name).toBe('ts-agent-loop');
   });
 
   it('honors the AGENT_EXECUTOR=ts override even when the agent has tools', () => {

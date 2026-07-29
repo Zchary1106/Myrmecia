@@ -23,7 +23,7 @@ import type {
   ToolExecution,
 } from '@myrmecia/shared';
 
-export type DashboardView = 'command' | 'console' | 'agents' | 'tools' | 'models' | 'skills' | 'orchestrator' | 'board' | 'tasks' | 'timeline' | 'inbox' | 'observability' | 'audit' | 'settings' | 'cost' | 'memory' | 'orchestrate' | 'teams' | 'domains';
+export type DashboardView = 'command' | 'console' | 'agents' | 'agent-settings' | 'tools' | 'models' | 'skills' | 'orchestrator' | 'board' | 'tasks' | 'timeline' | 'inbox' | 'observability' | 'audit' | 'settings' | 'cost' | 'memory' | 'orchestrate' | 'teams' | 'domains';
 
 // Legacy ChatMessage for backward compat
 export interface ChatMessage {
@@ -48,6 +48,10 @@ interface AppStore {
   // Agent selection & chat
   selectedAgentId: string | null;
   setSelectedAgentId: (id: string | null) => void;
+  agentDirectoryCollapsed: boolean;
+  setAgentDirectoryCollapsed: (collapsed: boolean) => void;
+  agentInspectorOpen: boolean;
+  setAgentInspectorOpen: (open: boolean) => void;
   chatMode: 'direct' | 'orchestrate';
   setChatMode: (mode: 'direct' | 'orchestrate') => void;
   agentChats: Record<string, ChatMessage[]>;
@@ -151,7 +155,23 @@ export const useStore = create<AppStore>((set, get) => ({
 
   // Agent selection & chat
   selectedAgentId: null,
-  setSelectedAgentId: (id) => set({ selectedAgentId: id, rightPanelTab: 'chat' }),
+  setSelectedAgentId: (id) => set((state) => ({
+    selectedAgentId: id,
+    activeView: id ? 'agents' : state.activeView,
+    rightPanelTab: 'chat',
+    agentInspectorOpen: Boolean(id),
+  })),
+  agentDirectoryCollapsed: typeof localStorage !== 'undefined'
+    ? localStorage.getItem('myrmecia.agent-directory-collapsed') === 'true'
+    : false,
+  setAgentDirectoryCollapsed: (collapsed) => {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('myrmecia.agent-directory-collapsed', String(collapsed));
+    }
+    set({ agentDirectoryCollapsed: collapsed });
+  },
+  agentInspectorOpen: true,
+  setAgentInspectorOpen: (open) => set({ agentInspectorOpen: open }),
   chatMode: 'direct',
   setChatMode: (mode) => set({ chatMode: mode }),
   agentChats: {},
@@ -216,7 +236,7 @@ export const useStore = create<AppStore>((set, get) => ({
 
   // Right panel
   rightPanelTab: 'chat',
-  setRightPanelTab: (tab) => set({ rightPanelTab: tab }),
+  setRightPanelTab: (tab) => set({ rightPanelTab: tab, agentInspectorOpen: true }),
 
   // Agents (with mock fallback when backend is offline)
   agents: [],

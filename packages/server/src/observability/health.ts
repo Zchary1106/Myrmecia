@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { execSync } from 'child_process';
 import { statfsSync } from 'fs';
 import { EventEmitter } from 'events';
+import { timingSafeEqual } from 'crypto';
 import { getDb } from '../db/database.js';
 
 // ─── Circuit Breaker ───────────────────────────────────────────────────────────
@@ -154,8 +155,30 @@ function checkDiskSpace(): CheckResult {
 
 // ─── Routes ────────────────────────────────────────────────────────────────────
 
+function hasDesktopHealthToken(req: Request): boolean {
+  const expected = process.env.MYRMECIA_DESKTOP_HEALTH_TOKEN;
+  if (!expected) return true;
+
+  const provided = req.get('x-myrmecia-health-token');
+  if (!provided) return false;
+  const expectedBuffer = Buffer.from(expected);
+  const providedBuffer = Buffer.from(provided);
+  return expectedBuffer.length === providedBuffer.length
+    && timingSafeEqual(expectedBuffer, providedBuffer);
+}
+
 export function createHealthRoutes(): Router {
   const router = Router();
+
+  // Keep a small root probe for local launchers. Detailed checks remain on
+  // /ready so a dashboard can become reachable while optional services settle.
+  router.get('/', (req: Request, res: Response) => {
+    if (!hasDesktopHealthToken(req)) {
+      res.sendStatus(404);
+      return;
+    }
+    res.json({ status: 'ok' });
+  });
 
   router.get('/live', (_req: Request, res: Response) => {
     res.json({ status: 'ok' });

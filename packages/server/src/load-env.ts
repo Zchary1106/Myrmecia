@@ -16,9 +16,10 @@ const here = dirname(fileURLToPath(import.meta.url));
 
 const candidates = [
   join(process.cwd(), '.env'),
+  process.env.MYRMECIA_RESOURCE_ROOT && join(process.env.MYRMECIA_RESOURCE_ROOT, '.env'),
   join(process.cwd(), '..', '..', '.env'),
   join(here, '..', '..', '..', '.env'),
-];
+].filter((path): path is string => Boolean(path));
 
 const loadEnvFile = (process as unknown as { loadEnvFile?: (p: string) => void }).loadEnvFile;
 

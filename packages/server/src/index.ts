@@ -2,8 +2,9 @@ import './load-env.js';
 import express from 'express';
 import cors from 'cors';
 import { createServer } from 'http';
-import { join, dirname } from 'path';
+import { join, dirname, resolve, extname } from 'path';
 import { fileURLToPath } from 'url';
+import { existsSync, statSync } from 'fs';
 
 import { getDb } from './db/database.js';
 import { AgentManager } from './agents/agent-manager.js';
@@ -85,6 +86,58 @@ import { eventBus } from './events/event-bus.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3000;
+const HOST = process.env.HOST;
+const RESERVED_DASHBOARD_PATHS = ['/api', '/auth', '/health', '/metrics', '/ws'];
+
+function runtimeAssetPath(relativePath: string): string {
+  const candidates = [
+    process.env.MYRMECIA_RESOURCE_ROOT && join(process.env.MYRMECIA_RESOURCE_ROOT, relativePath),
+    join(__dirname, '../../..', relativePath),
+    join(process.cwd(), relativePath),
+    join(process.cwd(), '..', relativePath),
+  ].filter((candidate): candidate is string => Boolean(candidate));
+
+  return candidates.find(existsSync) ?? candidates[0];
+}
+
+function isReservedDashboardPath(pathname: string): boolean {
+  return RESERVED_DASHBOARD_PATHS.some(path => pathname === path || pathname.startsWith(`${path}/`));
+}
+
+function addStaticDashboard(app: express.Express): void {
+  const configuredDirectory = process.env.SERVE_DASHBOARD_DIR;
+  if (!configuredDirectory) return;
+
+  const dashboardDirectory = resolve(configuredDirectory);
+  const indexPath = join(dashboardDirectory, 'index.html');
+  if (!existsSync(dashboardDirectory) || !statSync(dashboardDirectory).isDirectory() || !existsSync(indexPath)) {
+    logger.warn({ dashboardDirectory }, 'SERVE_DASHBOARD_DIR is not a dashboard build; static dashboard disabled');
+    return;
+  }
+
+  const staticFiles = express.static(dashboardDirectory, { index: false, fallthrough: true });
+  const isDashboardRequest = (req: express.Request) =>
+    (req.method === 'GET' || req.method === 'HEAD') && !isReservedDashboardPath(req.path);
+
+  // Register only after all application routes. This makes the dashboard opt-in
+  // and prevents the SPA fallback from ever claiming API, auth, health, metrics,
+  // or WebSocket endpoints.
+  app.use((req, res, next) => {
+    if (!isDashboardRequest(req)) return next();
+    return staticFiles(req, res, staticError => {
+      if (staticError) return next(staticError);
+      // Dashboard client routes have no file extension. Send the SPA shell only
+      // after no matching static file was found.
+      if (!extname(req.path)) {
+        return res.sendFile('index.html', { root: dashboardDirectory, dotfiles: 'deny' }, fallbackError => {
+          if (fallbackError) next(fallbackError);
+        });
+      }
+      return next();
+    });
+  });
+  logger.info({ dashboardDirectory }, 'Serving static dashboard');
+}
 
 async function main() {
   // Initialize telemetry early (before other imports trigger HTTP calls)
@@ -115,21 +168,16 @@ async function main() {
 
   // Initialize agent manager
   // Try multiple paths for registry.yaml (handles different CWDs)
-  const possiblePaths = [
-    join(__dirname, '../../../agents/registry.yaml'),
-    join(process.cwd(), 'agents/registry.yaml'),
-    join(process.cwd(), '../agents/registry.yaml'),
-  ];
-  const { existsSync } = await import('fs');
-  const registryPath = possiblePaths.find(p => existsSync(p)) || possiblePaths[0];
+  const agentsDirectory = runtimeAssetPath('agents');
+  const registryPath = join(agentsDirectory, 'registry.yaml');
   const agentManager = new AgentManager(registryPath);
   logger.info({ registryPath }, 'Loading agents from registry...');
   await agentManager.initializeFromRegistry();
   logger.info('Syncing skill registry...');
-  syncBuiltinSkills(join(__dirname, '../../../agents'));
+  syncBuiltinSkills(agentsDirectory);
   seedDefaultSources();
   startAutoSync();
-  const skillWatcher = new SkillWatcher(join(__dirname, '../../../agents'));
+  const skillWatcher = new SkillWatcher(agentsDirectory);
   setSkillWatcher(skillWatcher);
   skillWatcher.start();
   logger.info('Skill watcher active (hot-reload)');
@@ -145,7 +193,7 @@ async function main() {
 
   // Initialize pipeline engine
   const pipelineEngine = new PipelineEngine(taskQueue, agentManager);
-  const templatesDir = join(__dirname, '../../../templates');
+  const templatesDir = runtimeAssetPath('templates');
   logger.info('Loading pipeline templates...');
   await pipelineEngine.loadTemplates(templatesDir);
 
@@ -287,6 +335,8 @@ async function main() {
   app.use('/api', deprecationNotice, createSystemRoutes());
   app.use('/api/supervisor', deprecationNotice, supervisorRoutes);
 
+  addStaticDashboard(app);
+
   // Global error handler (must be after all routes)
   app.use(globalErrorHandler);
 
@@ -300,7 +350,7 @@ async function main() {
   // Artifact cleanup worker
   setInterval(() => artifactCleanupWorker.run({ logger, emit: (t, p) => eventBus.emit(t as any, p) }), artifactCleanupWorker.intervalMs);
 
-  server.listen(PORT, async () => {
+  const onListening = async () => {
     logger.info(`Agent Factory running on http://localhost:${PORT}`);
     logger.info(`WebSocket: ws://localhost:${PORT}/ws`);
     logger.info(`API auth: ${isApiAuthEnabled() ? 'enabled' : 'disabled (local mode)'}`);
@@ -310,7 +360,15 @@ async function main() {
     await pipelineEngine.recoverInterruptedPipelines();
     await qualityLoop.recoverInterruptedAttempts();
     teamCoordinator.recover();
-  });
+  };
+  // Existing server/Docker launches retain Node's default interface when HOST is
+  // unset. Desktop explicitly supplies 127.0.0.1 so its local service is never
+  // exposed on a LAN interface.
+  if (HOST) {
+    server.listen(PORT, HOST, onListening);
+  } else {
+    server.listen(PORT, onListening);
+  }
 
   // Graceful shutdown
   const shutdown = async () => {
@@ -320,6 +378,8 @@ async function main() {
     await workerPool.shutdown();
     await pubsub.shutdown();
     await taskQueue.shutdown();
+    const { shutdownModelGateway } = await import('./models/gateway.js');
+    await shutdownModelGateway();
     skillWatcher.stop();
     closeDb();
     server.close();

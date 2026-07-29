@@ -9,6 +9,7 @@ import { createPipeline, createTemplate, getPipeline, listTemplates, updatePipel
 import { createTask, updateTask } from '../src/db/models/task.js';
 import { PipelineEngine } from '../src/pipelines/pipeline-engine.js';
 import { TaskQueue } from '../src/queue/task-queue.js';
+import { workspaceManager } from '../src/workspace/workspace-manager.js';
 
 describe('PipelineEngine durable task resolution', () => {
   beforeEach(() => {
@@ -101,12 +102,18 @@ stages:
 });
 
 describe('PipelineEngine autonomous-publish safety guard', () => {
+  const createdPipelineIds: string[] = [];
+
   beforeEach(() => {
+    createdPipelineIds.length = 0;
     process.env.DB_PATH = join(mkdtempSync(join(tmpdir(), 'agent-factory-pipeline-autopublish-')), 'test.db');
     getDb();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    for (const pipelineId of createdPipelineIds) {
+      await workspaceManager.cleanupWorkspace(pipelineId);
+    }
     closeDb();
     delete process.env.DB_PATH;
   });
@@ -119,7 +126,7 @@ describe('PipelineEngine autonomous-publish safety guard', () => {
     });
     return createTemplate({
       name: 'Publish Template',
-      stages: [{ name: 'Publish', role: 'social-publisher', promptTemplate: 'Publish {input}' }],
+      stages: [{ name: 'Publish', role: 'social-publisher', promptTemplate: 'Publish {input}', dependsOn: [99] }],
     });
   }
 
@@ -127,7 +134,7 @@ describe('PipelineEngine autonomous-publish safety guard', () => {
     createAgent({ name: 'Dev', role: 'developer', allowedTools: ['file_read', 'file_write'] });
     return createTemplate({
       name: 'Engineering Template',
-      stages: [{ name: 'Build', role: 'developer', promptTemplate: 'Build {input}' }],
+      stages: [{ name: 'Build', role: 'developer', promptTemplate: 'Build {input}', dependsOn: [99] }],
     });
   }
 
@@ -146,6 +153,7 @@ describe('PipelineEngine autonomous-publish safety guard', () => {
       input: 'ship a post',
       gateMode: 'auto',
     });
+    createdPipelineIds.push(pipeline.id);
 
     expect(pipeline.gateMode).toBe('manual');
   });
@@ -161,6 +169,7 @@ describe('PipelineEngine autonomous-publish safety guard', () => {
       templateId: template.id,
       input: 'ship a post',
     });
+    createdPipelineIds.push(pipeline.id);
 
     expect(pipeline.gateMode).toBe('manual');
   });
@@ -176,6 +185,7 @@ describe('PipelineEngine autonomous-publish safety guard', () => {
       gateMode: 'auto',
       confirmAutonomousPublish: true,
     });
+    createdPipelineIds.push(pipeline.id);
 
     expect(pipeline.gateMode).toBe('auto');
   });
@@ -190,6 +200,7 @@ describe('PipelineEngine autonomous-publish safety guard', () => {
       input: 'ship a post',
       gateMode: 'manual',
     });
+    createdPipelineIds.push(pipeline.id);
 
     expect(pipeline.gateMode).toBe('manual');
   });
@@ -204,6 +215,7 @@ describe('PipelineEngine autonomous-publish safety guard', () => {
       input: 'build the feature',
       gateMode: 'auto',
     });
+    createdPipelineIds.push(autoPipeline.id);
     expect(autoPipeline.gateMode).toBe('auto');
 
     const defaultPipeline = await engine.create({
@@ -211,6 +223,7 @@ describe('PipelineEngine autonomous-publish safety guard', () => {
       templateId: template.id,
       input: 'build the feature',
     });
+    createdPipelineIds.push(defaultPipeline.id);
     expect(defaultPipeline.gateMode).toBe('auto');
   });
 });

@@ -63,10 +63,11 @@ function validateTemplateShape(data: {
 
 function loadTemplateGallery(): PipelineTemplateGalleryItem[] {
   const galleryPath = [
+    process.env.MYRMECIA_RESOURCE_ROOT && join(process.env.MYRMECIA_RESOURCE_ROOT, 'templates/gallery.yaml'),
     join(process.cwd(), 'templates/gallery.yaml'),
     join(process.cwd(), '../../templates/gallery.yaml'),
     join(process.cwd(), '../templates/gallery.yaml'),
-  ].find(path => existsSync(path));
+  ].filter((path): path is string => Boolean(path)).find(path => existsSync(path));
   if (!galleryPath) return [];
   const parsed = parseYaml(readFileSync(galleryPath, 'utf-8')) as { items?: any[] } | undefined;
   const templates = listTemplates();

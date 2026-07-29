@@ -1,0 +1,588 @@
+import { useEffect, useMemo, useState } from 'react';
+import type { Pipeline, PipelineArtifact, PipelineStage } from '@myrmecia/shared';
+import { api } from '../../lib/api';
+import { cn } from '../../lib/utils';
+import { useStore } from '../../stores/store';
+
+const CROSSPOST_TEMPLATE_NAME = 'Xiaohongshu Douyin Crosspost';
+
+const contentStages: Array<Pick<PipelineStage, 'name' | 'agentRole'>> = [
+  { name: '选题调研', agentRole: 'trend-scout' },
+  { name: '小红书笔记创作', agentRole: 'xiaohongshu-writer' },
+  { name: '抖音脚本创作', agentRole: 'douyin-writer' },
+  { name: '合规审核', agentRole: 'review' },
+  { name: '配图生成', agentRole: 'xiaohongshu-writer' },
+  { name: '发布执行', agentRole: 'social-publisher' },
+];
+
+const stageStyle: Record<string, { dot: string; badge: string; label: string }> = {
+  pending: { dot: 'bg-gray-600', badge: 'bg-gray-500/10 text-gray-500', label: 'Pending' },
+  running: { dot: 'bg-blue-400 animate-pulse', badge: 'bg-blue-500/10 text-blue-300', label: 'Working' },
+  review: { dot: 'bg-purple-400', badge: 'bg-purple-500/10 text-purple-300', label: 'Review' },
+  done: { dot: 'bg-emerald-400', badge: 'bg-emerald-500/10 text-emerald-300', label: 'Ready' },
+  failed: { dot: 'bg-red-400', badge: 'bg-red-500/10 text-red-300', label: 'Failed' },
+  skipped: { dot: 'bg-gray-500', badge: 'bg-gray-500/10 text-gray-500', label: 'Skipped' },
+  rolled_back: { dot: 'bg-orange-400', badge: 'bg-orange-500/10 text-orange-300', label: 'Rolled back' },
+};
+
+function errorMessage(error: unknown, fallback: string) {
+  return error instanceof Error ? error.message : fallback;
+}
+
+function isActivePipeline(pipeline: Pipeline) {
+  return ['running', 'paused', 'blocked', 'awaiting_retry'].includes(pipeline.status);
+}
+
+function isCrosspostPipeline(pipeline: Pipeline, templateId?: string) {
+  if (templateId && pipeline.templateId === templateId) return true;
+  const roles = pipeline.stages.map(stage => String(stage.agentRole));
+  return roles.includes('trend-scout') && roles.includes('social-publisher');
+}
+
+function StageStepper({
+  pipeline,
+  selectedStageIndex,
+  onSelect,
+}: {
+  pipeline: Pipeline;
+  selectedStageIndex: number;
+  onSelect: (index: number) => void;
+}) {
+  return (
+    <div data-testid="content-stage-stepper" className="overflow-x-auto border-b border-border bg-surface/60 px-4 py-4">
+      <div className="mx-auto flex min-w-[760px] max-w-[1280px] items-start">
+        {contentStages.map((fallback, index) => {
+          const stage = pipeline.stages[index];
+          const name = stage?.name || fallback.name;
+          const role = stage?.agentRole || fallback.agentRole;
+          const status = stage?.status || 'pending';
+          const style = stageStyle[status] || stageStyle.pending;
+          const isCurrent = index === pipeline.currentStageIndex;
+          const isSelected = index === selectedStageIndex;
+
+          return (
+            <div key={`${index}-${name}`} className="flex min-w-0 flex-1 items-start last:flex-none">
+              <button
+                type="button"
+                onClick={() => onSelect(index)}
+                aria-pressed={isSelected}
+                className={cn(
+                  'group relative flex min-w-0 flex-col items-center text-center outline-none',
+                  'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface',
+                )}
+              >
+                <span className={cn(
+                  'relative flex h-8 w-8 items-center justify-center rounded-full border text-[11px] font-bold transition',
+                  isSelected ? 'border-accent bg-accent text-white shadow-lg shadow-accent/20' : 'border-border bg-background text-gray-500 group-hover:border-accent/50',
+                )}>
+                  {status === 'done' ? '✓' : index + 1}
+                  <span className={cn('absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full border-2 border-surface', style.dot)} />
+                </span>
+                <span className={cn('mt-2 max-w-[110px] truncate text-[10px] font-semibold', isSelected ? 'text-gray-100' : 'text-gray-400')}>
+                  {name}
+                </span>
+                <span className="mt-0.5 max-w-[110px] truncate text-[9px] text-gray-600">{role}</span>
+                {isCurrent && <span className="mt-1 text-[8px] font-semibold uppercase tracking-[0.14em] text-accent-light">Current</span>}
+              </button>
+              {index < contentStages.length - 1 && (
+                <div className={cn(
+                  'mt-4 h-px flex-1 bg-border',
+                  status === 'done' && pipeline.stages[index + 1]?.status !== 'pending' ? 'bg-emerald-500/60' : '',
+                )} />
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function PipelineStatus({ status }: { status: Pipeline['status'] }) {
+  const style = status === 'done'
+    ? 'bg-emerald-500/10 text-emerald-300'
+    : status === 'failed'
+      ? 'bg-red-500/10 text-red-300'
+      : status === 'paused'
+        ? 'bg-amber-500/10 text-amber-300'
+        : 'bg-blue-500/10 text-blue-300';
+
+  return <span className={cn('rounded-full px-2 py-1 text-[9px] font-semibold uppercase tracking-wider', style)}>{status}</span>;
+}
+
+export function ContentStudio() {
+  const {
+    agents,
+    pipelines,
+    templates,
+    activePipelineId,
+    setActivePipelineId,
+    upsertPipeline,
+    loadPipelines,
+    loadTemplates,
+    loadTasks,
+  } = useStore();
+  const [initialLoading, setInitialLoading] = useState(true);
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [selectedStageIndex, setSelectedStageIndex] = useState(0);
+  const [artifacts, setArtifacts] = useState<PipelineArtifact[]>([]);
+  const [artifactLoading, setArtifactLoading] = useState(false);
+  const [artifactError, setArtifactError] = useState<string | null>(null);
+  const [showCreate, setShowCreate] = useState(false);
+  const [runName, setRunName] = useState('');
+  const [runInput, setRunInput] = useState('');
+  const [gateMode, setGateMode] = useState<'manual' | 'auto'>('manual');
+  const [busyAction, setBusyAction] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [showPublishConfirm, setShowPublishConfirm] = useState(false);
+  const [publishPhrase, setPublishPhrase] = useState('');
+  const [cancelArmed, setCancelArmed] = useState(false);
+  const [revisionPrompt, setRevisionPrompt] = useState('');
+  const [revisionState, setRevisionState] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
+  const [revisionMessage, setRevisionMessage] = useState('');
+
+  useEffect(() => {
+    let mounted = true;
+    void Promise.all([loadPipelines(), loadTemplates()]).finally(() => {
+      if (mounted) setInitialLoading(false);
+    });
+    return () => { mounted = false; };
+  }, [loadPipelines, loadTemplates]);
+
+  const crosspostTemplate = useMemo(
+    () => templates.find(template => template.name === CROSSPOST_TEMPLATE_NAME),
+    [templates],
+  );
+  const contentPipelines = useMemo(
+    () => pipelines
+      .filter(pipeline => isCrosspostPipeline(pipeline, crosspostTemplate?.id))
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()),
+    [pipelines, crosspostTemplate?.id],
+  );
+  const pipeline = contentPipelines.find(item => item.id === selectedRunId) || null;
+
+  useEffect(() => {
+    if (!contentPipelines.length) {
+      if (selectedRunId) setSelectedRunId(null);
+      return;
+    }
+    if (contentPipelines.some(item => item.id === selectedRunId)) return;
+    const next = contentPipelines.find(item => item.id === activePipelineId) || contentPipelines[0];
+    setSelectedRunId(next.id);
+    setActivePipelineId(next.id);
+  }, [activePipelineId, contentPipelines, selectedRunId, setActivePipelineId]);
+
+  useEffect(() => {
+    if (!pipeline) return;
+    setSelectedStageIndex(Math.min(Math.max(pipeline.currentStageIndex, 0), contentStages.length - 1));
+    setRevisionPrompt('');
+    setRevisionMessage('');
+    setRevisionState('idle');
+    setCancelArmed(false);
+  }, [
+    pipeline?.id,
+    pipeline?.status,
+    pipeline?.stages.map(stage => `${stage.index}:${stage.status}:${stage.output?.length || 0}`).join('|'),
+  ]);
+
+  useEffect(() => {
+    if (!pipeline) {
+      setArtifacts([]);
+      setArtifactError(null);
+      return;
+    }
+    let mounted = true;
+    setArtifactLoading(true);
+    setArtifactError(null);
+    api.pipelines.artifacts(pipeline.id)
+      .then(result => { if (mounted) setArtifacts(result); })
+      .catch(error => { if (mounted) setArtifactError(errorMessage(error, 'Could not load generated artifacts.')); })
+      .finally(() => { if (mounted) setArtifactLoading(false); });
+    return () => { mounted = false; };
+  }, [pipeline?.id]);
+
+  const selectedStage = pipeline?.stages[selectedStageIndex];
+  const selectedStageDetails = selectedStage || (pipeline ? {
+    index: selectedStageIndex,
+    ...contentStages[selectedStageIndex],
+    status: 'pending' as const,
+  } : null);
+  const selectedAgent = agents.find(agent =>
+    agent.id === selectedStageDetails?.agentRole || agent.role === selectedStageDetails?.agentRole,
+  );
+  const imageArtifacts = artifacts.filter(artifact => artifact.kind === 'image' && /\.png$/i.test(artifact.name));
+  const participantRoles = Array.from(new Set(contentStages.map(stage => String(stage.agentRole))));
+
+  const selectRun = (id: string) => {
+    setSelectedRunId(id);
+    setActivePipelineId(id);
+    setActionError(null);
+  };
+
+  const openCreate = () => {
+    setGateMode('manual');
+    setActionError(null);
+    setShowCreate(true);
+  };
+
+  const refreshPipeline = async (id: string) => {
+    const fresh = await api.pipelines.get(id);
+    upsertPipeline(fresh);
+    await loadPipelines();
+  };
+
+  const createRun = async () => {
+    if (!crosspostTemplate || !runInput.trim() || busyAction) return;
+    setBusyAction('create');
+    setActionError(null);
+    try {
+      const created = await api.pipelines.create({
+        name: runName.trim() || `Crosspost · ${runInput.trim().slice(0, 42)}`,
+        templateId: crosspostTemplate.id,
+        input: runInput.trim(),
+        gateMode,
+      });
+      upsertPipeline(created);
+      setSelectedRunId(created.id);
+      setActivePipelineId(created.id);
+      setShowCreate(false);
+      setRunName('');
+      setRunInput('');
+      await loadPipelines();
+    } catch (error) {
+      setActionError(errorMessage(error, 'Could not create the crosspost run.'));
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const runPipelineAction = async (action: 'approve' | 'skip' | 'cancel') => {
+    if (!pipeline || busyAction) return;
+    setBusyAction(action);
+    setActionError(null);
+    try {
+      if (action === 'approve') await api.pipelines.approve(pipeline.id);
+      if (action === 'skip') await api.pipelines.skip(pipeline.id);
+      if (action === 'cancel') await api.pipelines.cancel(pipeline.id, true);
+      await refreshPipeline(pipeline.id);
+      if (action === 'cancel') setCancelArmed(false);
+    } catch (error) {
+      setActionError(errorMessage(error, `Could not ${action} this run.`));
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const approve = () => {
+    if (!pipeline) return;
+    const next = pipeline.stages[pipeline.currentStageIndex + 1] || contentStages[pipeline.currentStageIndex + 1];
+    if (next?.agentRole === 'social-publisher') {
+      setPublishPhrase('');
+      setShowPublishConfirm(true);
+      return;
+    }
+    void runPipelineAction('approve');
+  };
+
+  const submitRevision = async () => {
+    if (!pipeline || !selectedStageDetails || !selectedAgent || !revisionPrompt.trim() || revisionState === 'sending') return;
+    setRevisionState('sending');
+    setRevisionMessage('');
+    try {
+      const previousOutput = selectedStageDetails.output
+        ? `\n\nCurrent stage output:\n${selectedStageDetails.output}`
+        : '';
+      const result = await api.agents.execute(selectedAgent.id, {
+        prompt: `Revision request for "${selectedStageDetails.name}" in crosspost run "${pipeline.name}".\n\n${revisionPrompt.trim()}${previousOutput}\n\nReturn a complete revised replacement for this stage.`,
+      });
+      setRevisionState('sent');
+      setRevisionMessage(`Revision task ${result.taskId} started with ${selectedAgent.name}.`);
+      await loadTasks();
+    } catch (error) {
+      setRevisionState('error');
+      setRevisionMessage(errorMessage(error, 'Could not start the revision task.'));
+    }
+  };
+
+  if (initialLoading) {
+    return (
+      <div data-testid="content-studio" className="flex h-full items-center justify-center bg-background text-sm text-gray-500">
+        <div className="flex items-center gap-2"><span className="h-3 w-3 animate-pulse rounded-full bg-accent" /> Loading Content Studio…</div>
+      </div>
+    );
+  }
+
+  return (
+    <div data-testid="content-studio" className="flex h-full min-h-0 flex-col overflow-hidden bg-background">
+      <header className="flex flex-wrap items-center gap-3 border-b border-border bg-surface px-4 py-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="text-lg">✦</span>
+            <h2 className="truncate text-sm font-bold">Content Production Studio</h2>
+            {pipeline && <PipelineStatus status={pipeline.status} />}
+          </div>
+          <p className="mt-0.5 truncate text-[10px] text-gray-500">Xiaohongshu + Douyin workflow · artifacts first · human-gated publishing</p>
+        </div>
+        <div className="flex items-center gap-2">
+          {contentPipelines.length > 0 && (
+            <select
+              value={selectedRunId || ''}
+              onChange={event => selectRun(event.target.value)}
+              aria-label="Select content production run"
+              className="max-w-52 rounded-lg border border-border bg-background px-2.5 py-2 text-[11px] text-gray-300 outline-none focus:border-accent"
+            >
+              {contentPipelines.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+            </select>
+          )}
+          <button
+            type="button"
+            onClick={openCreate}
+            className="rounded-lg bg-accent px-3 py-2 text-[11px] font-semibold text-white transition hover:bg-accent-light"
+          >
+            + New run
+          </button>
+        </div>
+      </header>
+
+      {actionError && (
+        <div role="alert" className="mx-4 mt-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
+          {actionError}
+        </div>
+      )}
+
+      {!pipeline ? (
+        <div className="flex flex-1 items-center justify-center p-6">
+          <div className="max-w-md rounded-2xl border border-border bg-surface p-7 text-center">
+            <div className="text-3xl">🧩</div>
+            <h3 className="mt-3 text-base font-bold">Start a crosspost production run</h3>
+            <p className="mt-2 text-xs leading-relaxed text-gray-500">
+              Research, write, review, generate images, and explicitly approve publication from one artifact-first workspace.
+            </p>
+            {!crosspostTemplate && <p className="mt-3 text-xs text-amber-300">The “{CROSSPOST_TEMPLATE_NAME}” template is not available yet.</p>}
+            <button
+              type="button"
+              disabled={!crosspostTemplate}
+              onClick={openCreate}
+              className="mt-5 rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-white hover:bg-accent-light disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Create crosspost run
+            </button>
+          </div>
+        </div>
+      ) : (
+        <>
+          <StageStepper pipeline={pipeline} selectedStageIndex={selectedStageIndex} onSelect={setSelectedStageIndex} />
+          <div className="grid min-h-0 flex-1 grid-cols-1 overflow-y-auto 2xl:grid-cols-[minmax(0,1fr)_300px] 2xl:overflow-hidden">
+            <main className="min-w-0 space-y-4 p-4 2xl:overflow-y-auto">
+              <section data-testid="content-artifact-canvas" className="rounded-2xl border border-border bg-surface shadow-lg shadow-black/10">
+                <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border p-4">
+                  <div className="min-w-0">
+                    <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-accent-light">Stage artifact</div>
+                    <h3 className="mt-1 truncate text-base font-bold">{selectedStageDetails?.name}</h3>
+                    <p className="mt-1 text-[11px] text-gray-500">{selectedAgent?.name || selectedStageDetails?.agentRole} · output captured from this workflow stage</p>
+                  </div>
+                  {selectedStageDetails && (
+                    <span className={cn('rounded-full px-2 py-1 text-[10px] font-medium', (stageStyle[selectedStageDetails.status] || stageStyle.pending).badge)}>
+                      {(stageStyle[selectedStageDetails.status] || stageStyle.pending).label}
+                    </span>
+                  )}
+                </div>
+                <div className="p-4">
+                  {selectedStageDetails?.output ? (
+                    <pre className="max-h-[380px] overflow-auto whitespace-pre-wrap break-words rounded-xl border border-border bg-background p-4 font-sans text-xs leading-6 text-gray-300">
+                      {selectedStageDetails.output}
+                    </pre>
+                  ) : (
+                    <div className="rounded-xl border border-dashed border-border bg-background/60 px-4 py-10 text-center text-xs text-gray-600">
+                      {selectedStageDetails?.status === 'running'
+                        ? 'This stage is working. Its readable output will appear here when it is complete.'
+                        : 'No stage output is available yet. Select a completed stage to inspect its artifact.'}
+                    </div>
+                  )}
+                </div>
+              </section>
+
+              <section data-testid="content-image-gallery" className="rounded-2xl border border-border bg-surface p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-accent-light">Generated PNGs</div>
+                    <h3 className="mt-1 text-sm font-bold">Image artifact gallery</h3>
+                  </div>
+                  <span className="text-[10px] text-gray-600">{imageArtifacts.length} files</span>
+                </div>
+                {artifactLoading && <div className="py-8 text-center text-xs text-gray-500">Loading generated artifacts…</div>}
+                {artifactError && <div role="alert" className="mt-3 rounded-lg bg-red-500/10 px-3 py-2 text-xs text-red-300">{artifactError}</div>}
+                {!artifactLoading && !artifactError && imageArtifacts.length === 0 && (
+                  <div className="mt-3 rounded-xl border border-dashed border-border bg-background/60 px-4 py-8 text-center text-xs text-gray-600">
+                    PNG cards generated by the image stage will appear here.
+                  </div>
+                )}
+                {imageArtifacts.length > 0 && (
+                  <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
+                    {imageArtifacts.map(artifact => (
+                      <a key={artifact.id} href={artifact.url} target="_blank" rel="noreferrer" className="group overflow-hidden rounded-xl border border-border bg-background hover:border-accent/50">
+                        <img src={artifact.url} alt={artifact.name} className="aspect-[3/4] w-full object-cover transition duration-200 group-hover:scale-[1.02]" />
+                        <span className="block truncate px-2 py-1.5 text-[10px] text-gray-500">{artifact.name}</span>
+                      </a>
+                    ))}
+                  </div>
+                )}
+              </section>
+            </main>
+
+            <aside className="border-t border-border bg-surface p-4 2xl:overflow-y-auto 2xl:border-l 2xl:border-t-0">
+              <section>
+                <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-gray-600">Run controls</div>
+                <div className="mt-3 grid grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={approve}
+                    disabled={pipeline.status !== 'paused' || !!busyAction}
+                    title={pipeline.status !== 'paused' ? 'Approval is available when this run is paused at a manual gate.' : undefined}
+                    className="rounded-lg bg-emerald-500/10 px-2 py-2 text-[10px] font-semibold text-emerald-300 transition hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {busyAction === 'approve' ? '…' : 'Approve'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void runPipelineAction('skip')}
+                    disabled={!isActivePipeline(pipeline) || !!busyAction}
+                    className="rounded-lg bg-amber-500/10 px-2 py-2 text-[10px] font-semibold text-amber-300 transition hover:bg-amber-500/20 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {busyAction === 'skip' ? '…' : 'Skip'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCancelArmed(true)}
+                    disabled={!isActivePipeline(pipeline) || !!busyAction}
+                    className="rounded-lg bg-red-500/10 px-2 py-2 text-[10px] font-semibold text-red-300 transition hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Cancel
+                  </button>
+                </div>
+                {cancelArmed && (
+                  <div className="mt-3 rounded-xl border border-red-500/30 bg-red-500/10 p-3">
+                    <p className="text-[11px] leading-relaxed text-red-200">Cancel this run and stop its active workflow stage?</p>
+                    <div className="mt-2 flex gap-2">
+                      <button type="button" onClick={() => void runPipelineAction('cancel')} className="rounded-md bg-red-500 px-2.5 py-1.5 text-[10px] font-semibold text-white">Cancel run</button>
+                      <button type="button" onClick={() => setCancelArmed(false)} className="rounded-md px-2.5 py-1.5 text-[10px] text-gray-400 hover:text-white">Keep run</button>
+                    </div>
+                  </div>
+                )}
+              </section>
+
+              <section className="mt-5 border-t border-border pt-5">
+                <div className="flex items-center justify-between">
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-gray-600">Participants</div>
+                  <span className="text-[9px] text-gray-600">{participantRoles.length} roles</span>
+                </div>
+                <div className="mt-3 space-y-2">
+                  {participantRoles.map(role => {
+                    const agent = agents.find(item => item.id === role || item.role === role);
+                    const isStageAgent = role === selectedStageDetails?.agentRole;
+                    return (
+                      <div key={role} className={cn('flex items-center gap-2 rounded-lg border p-2', isStageAgent ? 'border-accent/40 bg-accent/10' : 'border-border bg-background')}>
+                        <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-surface text-sm">{agent?.emoji || '✦'}</span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-[11px] font-medium text-gray-300">{agent?.name || role}</span>
+                          <span className="block truncate text-[9px] text-gray-600">{role}</span>
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+
+              <section className="mt-5 border-t border-border pt-5">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-gray-600">Request a revision</div>
+                <p className="mt-1 text-[10px] leading-relaxed text-gray-500">
+                  Launches a direct task for {selectedAgent?.name || selectedStageDetails?.agentRole || 'the selected stage agent'} without advancing this run.
+                </p>
+                <textarea
+                  value={revisionPrompt}
+                  onChange={event => { setRevisionPrompt(event.target.value); setRevisionState('idle'); }}
+                  placeholder="What should change in this stage?"
+                  rows={4}
+                  disabled={!selectedAgent || !selectedStageDetails || revisionState === 'sending'}
+                  className="mt-3 w-full resize-y rounded-lg border border-border bg-background px-3 py-2 text-[11px] leading-relaxed text-gray-200 outline-none placeholder:text-gray-700 focus:border-accent disabled:cursor-not-allowed disabled:opacity-50"
+                />
+                <button
+                  type="button"
+                  onClick={() => void submitRevision()}
+                  disabled={!selectedAgent || !revisionPrompt.trim() || revisionState === 'sending'}
+                  className="mt-2 w-full rounded-lg border border-accent/40 bg-accent/10 px-3 py-2 text-[11px] font-semibold text-accent-light hover:bg-accent/20 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {revisionState === 'sending' ? 'Starting revision…' : 'Launch revision task'}
+                </button>
+                {revisionMessage && <p className={cn('mt-2 text-[10px] leading-relaxed', revisionState === 'error' ? 'text-red-300' : 'text-emerald-300')}>{revisionMessage}</p>}
+              </section>
+            </aside>
+          </div>
+        </>
+      )}
+
+      {showCreate && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onMouseDown={() => setShowCreate(false)}>
+          <div role="dialog" aria-modal="true" aria-labelledby="content-run-title" className="w-full max-w-xl rounded-2xl border border-border bg-surface p-5 shadow-2xl" onMouseDown={event => event.stopPropagation()}>
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-accent-light">New workflow</div>
+                <h3 id="content-run-title" className="mt-1 text-lg font-bold">Create crosspost run</h3>
+              </div>
+              <button type="button" onClick={() => setShowCreate(false)} aria-label="Close create run dialog" className="text-gray-500 hover:text-white">×</button>
+            </div>
+            {!crosspostTemplate ? (
+              <p className="mt-5 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200">The required crosspost template is unavailable. Refresh templates and try again.</p>
+            ) : (
+              <div className="mt-5 space-y-4">
+                <label className="block">
+                  <span className="text-[11px] font-medium text-gray-300">Run name <span className="text-gray-600">(optional)</span></span>
+                  <input value={runName} onChange={event => setRunName(event.target.value)} placeholder="e.g. Productivity tips · July" className="mt-1.5 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-accent" />
+                </label>
+                <label className="block">
+                  <span className="text-[11px] font-medium text-gray-300">Production brief</span>
+                  <textarea value={runInput} onChange={event => setRunInput(event.target.value)} rows={5} placeholder="Describe the audience, topic, evidence to cover, and desired outcome…" className="mt-1.5 w-full resize-y rounded-lg border border-border bg-background px-3 py-2 text-sm leading-relaxed outline-none placeholder:text-gray-700 focus:border-accent" />
+                </label>
+                <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-accent/20 bg-accent/5 p-3">
+                  <input type="checkbox" checked={gateMode === 'manual'} onChange={event => setGateMode(event.target.checked ? 'manual' : 'auto')} className="mt-0.5 accent-[var(--color-accent)]" />
+                  <span>
+                    <span className="block text-xs font-semibold text-gray-200">Manual gates</span>
+                    <span className="mt-0.5 block text-[10px] leading-relaxed text-gray-500">Enabled by default. Review every completed stage, with an additional typed confirmation before publish execution.</span>
+                  </span>
+                </label>
+                <div className="flex justify-end gap-2">
+                  <button type="button" onClick={() => setShowCreate(false)} className="rounded-lg px-3 py-2 text-xs text-gray-400 hover:text-white">Cancel</button>
+                  <button type="button" onClick={() => void createRun()} disabled={!runInput.trim() || busyAction === 'create'} className="rounded-lg bg-accent px-4 py-2 text-xs font-semibold text-white hover:bg-accent-light disabled:cursor-not-allowed disabled:opacity-40">
+                    {busyAction === 'create' ? 'Creating…' : 'Create manual-gated run'}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {showPublishConfirm && pipeline && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4">
+          <div role="dialog" aria-modal="true" aria-labelledby="publish-confirm-title" className="w-full max-w-md rounded-2xl border border-amber-500/40 bg-surface p-5 shadow-2xl">
+            <div className="text-xl">⚠</div>
+            <h3 id="publish-confirm-title" className="mt-2 text-lg font-bold">Approve into publish execution?</h3>
+            <p className="mt-2 text-xs leading-relaxed text-gray-400">
+              This advances “{pipeline.name}” to the social publisher. Verify the final copy and generated PNGs before allowing platform publishing tools to run.
+            </p>
+            <label className="mt-4 block text-[11px] font-medium text-gray-300">
+              Type <span className="rounded bg-background px-1.5 py-0.5 font-mono text-amber-200">PUBLISH</span> to continue
+              <input value={publishPhrase} onChange={event => setPublishPhrase(event.target.value)} autoFocus className="mt-2 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-amber-400" />
+            </label>
+            <div className="mt-5 flex justify-end gap-2">
+              <button type="button" onClick={() => setShowPublishConfirm(false)} className="rounded-lg px-3 py-2 text-xs text-gray-400 hover:text-white">Go back</button>
+              <button type="button" onClick={() => { setShowPublishConfirm(false); void runPipelineAction('approve'); }} disabled={publishPhrase !== 'PUBLISH' || busyAction === 'approve'} className="rounded-lg bg-amber-500 px-3 py-2 text-xs font-bold text-black hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-40">
+                Approve publish stage
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

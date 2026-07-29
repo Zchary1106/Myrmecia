@@ -4,6 +4,7 @@ import type { AgentDefinition, ModelDefinition, ModelHealthStatus, ModelRoute, M
 
 interface BuiltinModel {
   id: string;
+  provider?: string;
   displayName: string;
   description: string;
   capabilityTags: string[];
@@ -16,6 +17,11 @@ interface BuiltinModel {
 }
 
 const PROVIDER = 'copilot-api';
+const COPILOT_PROVIDER = 'copilot';
+const COPILOT_DEFAULT_MODEL = 'auto';
+const DEEPSEEK_PROVIDER = 'deepseek';
+const DEEPSEEK_DEFAULT_MODEL = 'deepseek-v4-flash';
+const DEEPSEEK_STRONG_MODEL = 'deepseek-v4-pro';
 
 export const BUILTIN_MODELS: BuiltinModel[] = [
   {
@@ -125,6 +131,42 @@ export const BUILTIN_MODELS: BuiltinModel[] = [
     maxTokens: 128_000,
     inputCostPer1k: 0.0004,
     outputCostPer1k: 0.0012,
+  },
+  {
+    id: DEEPSEEK_DEFAULT_MODEL,
+    provider: DEEPSEEK_PROVIDER,
+    displayName: 'DeepSeek V4 Flash',
+    description: 'Direct DeepSeek API model for fast and cost-efficient agent execution.',
+    capabilityTags: ['fast', 'coding', 'tool-calls', 'structured-output'],
+    priority: 80,
+    fallbackGroup: 'deepseek',
+    tier: 'balanced',
+    inputCostPer1k: 0,
+    outputCostPer1k: 0,
+  },
+  {
+    id: DEEPSEEK_STRONG_MODEL,
+    provider: DEEPSEEK_PROVIDER,
+    displayName: 'DeepSeek V4 Pro',
+    description: 'Direct DeepSeek API model for complex planning, reasoning, and review tasks.',
+    capabilityTags: ['reasoning', 'planning', 'coding', 'tool-calls', 'structured-output'],
+    priority: 85,
+    fallbackGroup: 'deepseek',
+    tier: 'strong',
+    inputCostPer1k: 0,
+    outputCostPer1k: 0,
+  },
+  {
+    id: COPILOT_DEFAULT_MODEL,
+    provider: COPILOT_PROVIDER,
+    displayName: 'GitHub Copilot Auto',
+    description: 'Account-aware automatic model selection from the locally signed-in GitHub Copilot SDK.',
+    capabilityTags: ['reasoning', 'planning', 'coding', 'tool-calls', 'structured-output'],
+    priority: 90,
+    fallbackGroup: 'copilot',
+    tier: 'strong',
+    inputCostPer1k: 0,
+    outputCostPer1k: 0,
   },
 ];
 
@@ -252,7 +294,7 @@ export function syncBuiltinModels(): void {
           updated_at = CURRENT_TIMESTAMP
       `,
         model.id,
-        PROVIDER,
+        model.provider || PROVIDER,
         model.displayName,
         model.description,
         JSON.stringify(model.capabilityTags),
@@ -284,6 +326,55 @@ export function syncBuiltinModels(): void {
       `, route.routeKey, route.defaultModelId || null, route.fallbackGroup, route.modelTier || null);
     }
   });
+}
+
+export function syncProviderModels(
+  provider: string,
+  models: Array<{
+    id: string;
+    name: string;
+    capabilities?: unknown;
+    supportsReasoningEffort?: boolean;
+  }>,
+): ModelDefinition[] {
+  const db = getDb();
+  db.transaction(() => {
+    for (const model of models) {
+      db.run(`
+        INSERT INTO model_registry (
+          id, provider, display_name, description, capability_tags, cost_profile,
+          max_tokens, priority, fallback_group, model_tier
+        )
+        VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          provider = excluded.provider,
+          display_name = excluded.display_name,
+          description = excluded.description,
+          capability_tags = excluded.capability_tags,
+          cost_profile = excluded.cost_profile,
+          fallback_group = excluded.fallback_group,
+          model_tier = excluded.model_tier,
+          updated_at = CURRENT_TIMESTAMP
+      `,
+        model.id,
+        provider,
+        model.name,
+        `Discovered from the authenticated ${provider} account.`,
+        JSON.stringify([
+          `${provider}-sdk`,
+          ...(model.supportsReasoningEffort ? ['reasoning-effort'] : []),
+        ]),
+        JSON.stringify({
+          source: 'provider-discovery',
+          capabilities: model.capabilities || {},
+        }),
+        90,
+        provider,
+        'balanced',
+      );
+    }
+  });
+  return models.map(model => getModel(model.id)).filter((model): model is ModelDefinition => Boolean(model));
 }
 
 export function listModels(filter?: { enabled?: boolean }): ModelDefinition[] {
@@ -370,6 +461,11 @@ function enabledModel(id: string | undefined): ModelDefinition | undefined {
   return model?.enabled ? model : undefined;
 }
 
+function enabledProviderModel(id: string | undefined, provider: string): ModelDefinition | undefined {
+  const model = enabledModel(id);
+  return model?.provider === provider ? model : undefined;
+}
+
 function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
@@ -445,7 +541,85 @@ function selectionFromRoute(
   };
 }
 
+function selectDeepSeekModel(
+  agent: AgentDefinition,
+  task?: ModelRouteTask,
+  options?: { promptText?: string },
+): ModelSelection {
+  const policy = agent.config.modelPolicy || {};
+  const budget = Object.keys(policy).length > 0 ? policy : undefined;
+  const taskRoute = routeFromTask(agent, task, options?.promptText);
+  const configured = envWithAlias('MYRMECIA_MODEL', 'AGENT_FACTORY_MODEL');
+  const selected = enabledProviderModel(configured, DEEPSEEK_PROVIDER)
+    ?? enabledProviderModel(
+      taskRoute?.routeKey === 'task:long-context' || taskRoute?.routeKey === 'task:high-risk'
+        ? DEEPSEEK_STRONG_MODEL
+        : DEEPSEEK_DEFAULT_MODEL,
+      DEEPSEEK_PROVIDER,
+    )
+    ?? enabledProviderModel(DEEPSEEK_DEFAULT_MODEL, DEEPSEEK_PROVIDER);
+
+  if (!selected) {
+    throw new Error('DeepSeek provider is enabled but no DeepSeek model is available in the model registry.');
+  }
+
+  return {
+    modelId: selected.id,
+    source: 'env.default',
+    requestedModelId: configured,
+    fallbackGroup: selected.fallbackGroup,
+    modelTier: selected.tier,
+    budget,
+    taskProfile: taskRoute?.profile,
+    reason: configured === selected.id
+      ? 'using MYRMECIA_MODEL for the DeepSeek provider'
+      : `using DeepSeek direct provider${taskRoute ? ` (${taskRoute.profile})` : ''}`,
+  };
+}
+
+function selectCopilotModel(
+  agent: AgentDefinition,
+  task?: ModelRouteTask,
+  options?: { promptText?: string },
+): ModelSelection {
+  const policy = agent.config.modelPolicy || {};
+  const budget = Object.keys(policy).length > 0 ? policy : undefined;
+  const taskRoute = routeFromTask(agent, task, options?.promptText);
+  const configured = envWithAlias('MYRMECIA_MODEL', 'AGENT_FACTORY_MODEL');
+  const persisted = getModelRoute('provider:copilot')?.defaultModelId;
+  const selected = enabledProviderModel(persisted, COPILOT_PROVIDER)
+    ?? enabledProviderModel(configured, COPILOT_PROVIDER)
+    ?? enabledProviderModel(COPILOT_DEFAULT_MODEL, COPILOT_PROVIDER);
+
+  if (!selected) {
+    throw new Error('GitHub Copilot provider is enabled but no Copilot model is available in the model registry.');
+  }
+
+  return {
+    modelId: selected.id,
+    source: 'env.default',
+    requestedModelId: persisted || configured,
+    fallbackGroup: selected.fallbackGroup,
+    modelTier: selected.tier,
+    budget,
+    taskProfile: taskRoute?.profile,
+    reason: persisted === selected.id
+      ? 'using the Copilot model selected in Dashboard'
+      : configured === selected.id
+      ? 'using MYRMECIA_MODEL for the GitHub Copilot provider'
+      : `using GitHub Copilot SDK provider${taskRoute ? ` (${taskRoute.profile})` : ''}`,
+  };
+}
+
 export function selectModelForAgent(agent: AgentDefinition, task?: ModelRouteTask, options?: { promptText?: string }): ModelSelection {
+  const provider = process.env.MYRMECIA_MODEL_PROVIDER?.trim().toLowerCase();
+  if (provider === DEEPSEEK_PROVIDER) {
+    return selectDeepSeekModel(agent, task, options);
+  }
+  if (provider === COPILOT_PROVIDER) {
+    return selectCopilotModel(agent, task, options);
+  }
+
   const policy = agent.config.modelPolicy || {};
   const explicit = agent.model || agent.config.model || policy.preferredModel;
   const explicitSource = agent.model ? 'agent.model' : agent.config.model ? 'agent.config.model' : policy.preferredModel ? 'agent.config.modelPolicy' : undefined;

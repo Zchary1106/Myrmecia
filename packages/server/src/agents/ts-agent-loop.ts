@@ -7,7 +7,7 @@ import { completeTraceSpan, createTraceSpan } from '../db/models/trace.js';
 import { resolveAllowedToolsForAgent, validateToolParams } from '../tools/tool-policy.js';
 import { createToolExecution, completeToolExecution, summarizeToolPayload } from '../tools/tool-execution.js';
 import { estimateModelCost, recordModelUsage, selectModelForAgent } from '../models/model-registry.js';
-import { getModelGateway, streamChatCompletion } from '../models/gateway.js';
+import { getModelGateway } from '../models/gateway.js';
 import { messageBus } from './message-bus.js';
 import type { SkillDefinition, SkillVersion, SkillExecutorConfig } from '../types.js';
 import { parseSkillContent } from '../skills/skill-parser.js';
@@ -99,11 +99,6 @@ function estimateCost(model: string, inputTokens: number, outputTokens: number):
 }
 
 export class TsAgentLoop {
-  private getClient(modelId?: string): OpenAI {
-    // Delegate to the provider-agnostic gateway (defaults to the platform base URL).
-    return getModelGateway().clientForModel(modelId);
-  }
-
   async execute(
     agent: AgentDefinition,
     task: Task,
@@ -115,7 +110,6 @@ export class TsAgentLoop {
     runtimeSkill?: { skill: SkillDefinition; version: SkillVersion; source: 'assignment' | 'skillPath' },
   ): Promise<TaskResult> {
     const startTime = Date.now();
-    const client = this.getClient();
     const toolPolicy = resolveAllowedToolsForAgent(agent);
 
     // Block disallowed tools (same as Python runtime path)
@@ -164,10 +158,19 @@ export class TsAgentLoop {
       } catch { /* matcher unavailable, proceed without */ }
     }
 
-    if (parsedSkill?.isStructured && parsedSkill.config) {
+    const usesCopilot = process.env.MYRMECIA_MODEL_PROVIDER?.trim().toLowerCase() === 'copilot';
+    if (parsedSkill?.isStructured && parsedSkill.config && !usesCopilot) {
       return this.executeWithSkillExecutor(
         agent, task, abortController, executionId, traceId, rootSpanId,
         tracker, parsedSkill as { config: SkillExecutorConfig; promptContent: string }, toolPolicy, systemPrompt,
+      );
+    }
+    if (parsedSkill?.isStructured && usesCopilot) {
+      addTaskLog(
+        task.id,
+        'info',
+        'Copilot provider is executing the structured skill through the governed agent loop.',
+        'system',
       );
     }
 
@@ -267,7 +270,9 @@ export class TsAgentLoop {
     });
 
     try {
-      // Build tool definitions for the API
+      // The Copilot adapter exposes these as SDK custom tools but routes every
+      // invocation back into this TS loop. OpenAI-compatible providers retain
+      // their existing function-call path below.
       const { toolDefs, modelNameToToolId } = buildModelToolDefinitions(toolPolicy.allowedTools);
 
       const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
@@ -315,6 +320,92 @@ export class TsAgentLoop {
 
       let totalToolCalls = 0;
       let totalToolRuntimeMs = 0;
+      const executeCopilotToolCall = async (tc: { id: string; function: { name: string; arguments: string } }): Promise<string> => {
+        const toolName = modelNameToToolId.get(tc.function.name) || tc.function.name;
+        const mcpTool = isMcpTool(toolName);
+        let toolInput: Record<string, unknown> = {};
+        try { toolInput = JSON.parse(tc.function.arguments || '{}'); } catch {}
+
+        const violations = mcpTool ? [] : validateToolParams(toolName, toolInput);
+        if (violations.length > 0) {
+          const output = violations.map(violation => violation.message).join('; ');
+          addTaskLog(task.id, 'warn', `Tool ${toolName} blocked by param constraint: ${output}`, agent.id);
+          appendExecutionAuditEvent(executionId, {
+            type: 'tool.blocked',
+            severity: 'block',
+            message: `Tool ${toolName} blocked by parameter constraints`,
+            metadata: { toolName, violations },
+          });
+          eventBus.emit('tool:blocked', {
+            toolId: toolName, taskId: task.id, workspaceId: task.workspaceId, executionId, agentId: agent.id,
+            reason: `param_constraint: ${output}`,
+          });
+          return output;
+        }
+
+        if (totalToolCalls >= limits.maxToolCallsPerExecution) {
+          throw new Error(`Tool call limit exceeded (${limits.maxToolCallsPerExecution})`);
+        }
+        if (totalToolRuntimeMs >= limits.maxToolRuntimeMsPerExecution) {
+          throw new Error(`Tool runtime budget exceeded (${limits.maxToolRuntimeMsPerExecution}ms)`);
+        }
+        totalToolCalls++;
+        tracker.toolUseCount++;
+        const startedAt = Date.now();
+        const toolExecId = `ts_${executionId}_${tc.id}`;
+        if (!mcpTool) {
+          createToolExecution({
+            id: toolExecId, toolId: toolName, taskId: task.id,
+            executionId, agentId: agent.id, input: toolInput, startedAt: new Date().toISOString(),
+          });
+        }
+        addExecutionMessage({ executionId, type: 'tool_use', content: summarizeToolPayload(toolInput), toolName });
+        eventBus.emit('tool:started', {
+          toolExecutionId: toolExecId, toolId: toolName, taskId: task.id, workspaceId: task.workspaceId,
+          executionId, agentId: agent.id, inputSummary: summarizeToolPayload(toolInput),
+        });
+
+        let output = '';
+        let status: 'done' | 'failed' = 'done';
+        try {
+          const result = isMcpTool(toolName)
+            ? await executeMcpTool(toolName, toolInput, Math.min(limits.maxToolCallTimeoutMs, limits.maxToolRuntimeMsPerExecution - totalToolRuntimeMs))
+            : await executeTool(toolName, toolInput, task.workdir || process.cwd(), {
+                allowedTools: toolPolicy.allowedTools,
+                timeoutMs: Math.min(limits.maxToolCallTimeoutMs, limits.maxToolRuntimeMsPerExecution - totalToolRuntimeMs),
+                maxOutputChars: Math.min(limits.maxOutputChars, 8_000),
+              });
+          output = sanitizeAgentOutput(result.output, {
+            agentId: agent.id, taskId: task.id, workspaceId: task.workspaceId, executionId, purpose: `tool ${toolName} result`,
+          });
+          status = result.status;
+        } catch (err: any) {
+          output = err.message || 'Tool execution failed';
+          status = 'failed';
+        }
+
+        const durationMs = Date.now() - startedAt;
+        totalToolRuntimeMs += durationMs;
+        if (!mcpTool) {
+          completeToolExecution(toolExecId, {
+            status, output, outputSummary: String(output).slice(0, 200),
+            error: status === 'failed' ? output : undefined, durationMs, completedAt: new Date().toISOString(),
+          });
+        }
+        recordLedgerEntry({
+          executionId, taskId: task.id, agentId: agent.id, workspaceId: task.workspaceId,
+          type: 'tool.executed', decision: status,
+          summary: `Tool ${toolName} ${status} in ${durationMs}ms`,
+          metadata: { toolName, status, durationMs, inputSummary: summarizeToolPayload(toolInput) },
+        });
+        addExecutionMessage({ executionId, type: 'tool_result', content: String(output).slice(0, 500), toolName });
+        eventBus.emit(status === 'failed' ? 'tool:failed' : 'tool:done', {
+          toolExecutionId: toolExecId, toolId: toolName, taskId: task.id, workspaceId: task.workspaceId,
+          executionId, agentId: agent.id, status, error: status === 'failed' ? output : undefined,
+          durationMs, outputSummary: String(output).slice(0, 200),
+        });
+        return output;
+      };
 
       while (numTurns < maxTurns) {
         numTurns++;
@@ -333,16 +424,16 @@ export class TsAgentLoop {
           max_tokens: remainingResponseTokens(inputTokens, outputTokens, limits),
         };
 
-        // Opt-in token streaming (AGENT_STREAMING=true): emits token:delta events
-        // and accumulates into a normal completion object. Default path unchanged.
-        const completion = process.env.AGENT_STREAMING === 'true'
-          ? await streamChatCompletion(
-              client,
-              completionParams,
-              (delta) => eventBus.emit('token:delta', { executionId, taskId: task.id, workspaceId: task.workspaceId, delta }),
-              abortController.signal
-            )
-          : await client.chat.completions.create(completionParams, { signal: abortController.signal });
+        // The gateway preserves the OpenAI path and adapts Copilot sessions into
+        // the same completion shape. Streaming remains opt-in.
+        const completionOptions = {
+          onToolCall: executeCopilotToolCall,
+          signal: abortController.signal,
+          ...(process.env.AGENT_STREAMING === 'true'
+            ? { onDelta: (delta: string) => eventBus.emit('token:delta', { executionId, taskId: task.id, workspaceId: task.workspaceId, delta }) }
+            : {}),
+        };
+        const completion = await getModelGateway().completeForModel(selectedModel, completionParams, completionOptions);
 
         const choice = completion.choices[0];
         if (!choice) throw new Error('No response from model');
@@ -384,16 +475,14 @@ export class TsAgentLoop {
           for (const tc of assistantMsg.tool_calls) {
             const toolCallId = tc.id;
             const toolName = modelNameToToolId.get(tc.function.name) || tc.function.name;
+            const mcpTool = isMcpTool(toolName);
             let toolInput: Record<string, unknown> = {};
             try {
               toolInput = JSON.parse(tc.function.arguments || '{}');
             } catch {}
 
-            // Validate parameter constraints FIRST (skip for MCP tools — they aren't
-            // registered in the built-in tool registry that validateToolParams checks;
-            // their schema comes from the connected MCP server's own inputSchema, and
-            // is already surfaced to the model via getMcpToolDefinitions()).
-            const constraintViolations = isMcpTool(toolName) ? [] : validateToolParams(toolName, toolInput);
+            // Validate parameter constraints FIRST
+            const constraintViolations = mcpTool ? [] : validateToolParams(toolName, toolInput);
             let toolOutput = '';
             let toolStatus: 'done' | 'failed' = 'done';
             const toolStartTime = Date.now();
@@ -417,14 +506,8 @@ export class TsAgentLoop {
               continue;
             }
 
-            // Record tool execution. Skipped for MCP tools: tool_executions.tool_id
-            // has a hard FK to the built-in `tools` registry, which MCP tools (aggregated
-            // dynamically from connected MCP servers) are never rows in — the call would
-            // fail with "FOREIGN KEY constraint failed". MCP tool calls are still fully
-            // observable via the trace span + execution message recorded below, which
-            // have no such constraint.
+            // Record tool execution
             const toolExecId = `ts_${executionId}_${toolCallId}`;
-            const mcpTool = isMcpTool(toolName);
             if (!mcpTool) {
               createToolExecution({
                 id: toolExecId, toolId: toolName, taskId: task.id,
@@ -595,7 +678,6 @@ export class TsAgentLoop {
     systemPrompt: string,
   ): Promise<TaskResult> {
     const startTime = Date.now();
-    const client = this.getClient();
     const modelSelection = selectModelForAgent(agent, task, {
       promptText: `${systemPrompt}\n\n${parsedSkill.promptContent}\n\n${task.input}`,
     });
@@ -637,6 +719,9 @@ export class TsAgentLoop {
     ]));
     const { toolDefs: allToolDefs, modelNameToToolId } = buildModelToolDefinitions(runtimeToolIds);
     const workdir = task.workdir || process.cwd();
+    if (!getModelGateway().supportsTools(selectedModel) && runtimeToolIds.length > 0) {
+      throw new Error('GitHub Copilot provider cannot execute structured skills that require runtime tools; use an OpenAI-compatible provider.');
+    }
 
     // Multi-turn LLM call with tool-use support
     const llmCall = async (
@@ -672,12 +757,12 @@ export class TsAgentLoop {
           addTaskLog(task.id, 'info', `🗜️ auto-compacted step context ~${compaction.before}→${compaction.after} tokens`, agent.id);
         }
 
-        const completion = await client.chat.completions.create({
+        const completion = await getModelGateway().completeForModel(selectedModel, {
           model: selectedModel,
           messages,
           tools: stepToolDefs.length > 0 ? stepToolDefs : undefined,
           max_tokens: remainingResponseTokens(inputTokens, outputTokens, limits),
-        });
+        }, { signal: abortController.signal });
 
         const choice = completion.choices[0];
         if (!choice) break;
@@ -774,11 +859,11 @@ export class TsAgentLoop {
       // tools so step validation has a concrete textual result to check.
       if (!finalOutput.trim()) {
         try {
-          const summary = await client.chat.completions.create({
+          const summary = await getModelGateway().completeForModel(selectedModel, {
             model: selectedModel,
             messages: [...messages, { role: 'user', content: 'Provide the result of this step as plain text.' }],
             max_tokens: remainingResponseTokens(inputTokens, outputTokens, limits),
-          });
+          }, { signal: abortController.signal });
           finalOutput = extractMessageText(summary.choices[0]?.message?.content).trim() || finalOutput;
         } catch {
           /* keep finalOutput as-is */

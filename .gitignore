@@ -12,6 +12,9 @@ __pycache__/
 packages/server/data/
 packages/server/.agent-factory/
 .vite/
+packages/desktop/.stage/
+packages/desktop/release/
+packages/dashboard/test-results/
 
 # Sample pipeline run artifacts (kept locally, not tracked)
 reviews/
