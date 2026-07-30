@@ -10,7 +10,16 @@ import { guardrails } from '../agents/safety-guardrails.js';
 import { getRuntimeLimits } from '../agents/runtime-limits.js';
 import { assertLocalShellAllowed, assertNetworkToolAllowed } from '../agents/sandbox-profile.js';
 import { formatToolGuardianDecision, formatToolGuardianWarnings, redactSecrets, reviewToolCall } from './tool-guardian.js';
-import { renderCards, CARD_WIDTH, CARD_HEIGHT, type CardRenderSpec } from '../tools/image-cards.js';
+import {
+  renderCards,
+  renderWeChatCover,
+  CARD_WIDTH,
+  CARD_HEIGHT,
+  WECHAT_COVER_WIDTH,
+  WECHAT_COVER_HEIGHT,
+  type CardRenderSpec,
+  type WeChatCoverSpec,
+} from '../tools/image-cards.js';
 import { generateComfyImages, type ComfyGenerateSpec } from '../tools/comfyui-images.js';
 
 const execAsync = promisify(exec);
@@ -49,6 +58,7 @@ export const SANDBOX_TOOL_NAMES = [
   'image.generate_svg',
   'image.generate_cards',
   'image.generate_comfyui',
+  'image.generate_wechat_cover',
 ] as const;
 
 const SANDBOX_TOOL_SET = new Set<string>(SANDBOX_TOOL_NAMES);
@@ -75,6 +85,7 @@ export function buildSandboxToolDefinition(toolName: string, modelToolName = too
     'image.generate_svg': 'Generate a simple SVG cover image in the task workspace.',
     'image.generate_cards': 'Render Xiaohongshu-style 1080x1440 PNG image cards (cover / numbered point / list / ending) into the task workspace and return their absolute file paths, ready to pass straight to a note-publishing tool.',
     'image.generate_comfyui': 'Generate AI illustrations (covers, scene art, backgrounds) with the local ComfyUI server and return absolute PNG paths. Roughly 1 minute per image, so keep to 1-3 prompts; use image.generate_cards for anything containing text, since diffusion models cannot render readable Chinese.',
+    'image.generate_wechat_cover': 'Render a 900x383 PNG cover for a WeChat Official Account article and return its absolute path.',
   };
   const schemaByTool: Record<string, { properties: Record<string, unknown>; required?: string[] }> = {
     file_read: { properties: { path: { type: 'string', description: 'Workspace-relative file path' } }, required: ['path'] },
@@ -143,6 +154,14 @@ export function buildSandboxToolDefinition(toolName: string, modelToolName = too
         seed: { type: 'integer', description: 'Optional seed for reproducible output' },
       },
       required: ['prompts'],
+    },
+    'image.generate_wechat_cover': {
+      properties: {
+        title: { type: 'string', description: 'Article cover headline' },
+        subtitle: { type: 'string', description: 'Optional supporting line' },
+        theme: { type: 'string', enum: ['warm', 'clean', 'dark'] },
+      },
+      required: ['title'],
     },
   };
   const schema = schemaByTool[toolName];
@@ -604,6 +623,29 @@ export async function executeTool(
       };
     } catch (err: any) {
       return { output: `ComfyUI image generation failed: ${err.message}`, status: 'failed' };
+    }
+  }
+
+  if (toolName === 'image.generate_wechat_cover') {
+    try {
+      const outDir = assertSafePath(workdir, 'generated-assets/wechat');
+      const { path, renderer } = await renderWeChatCover(
+        toolInput as unknown as WeChatCoverSpec,
+        outDir,
+        { timeoutMs: Math.min(timeoutMs, 60_000) },
+      );
+      return {
+        output: jsonToolOutput({
+          path,
+          format: 'png',
+          size: `${WECHAT_COVER_WIDTH}x${WECHAT_COVER_HEIGHT}`,
+          renderer,
+          note: 'Upload this PNG through wechat_permanent_media before creating the draft.',
+        }, maxOutputChars),
+        status: 'done',
+      };
+    } catch (err: any) {
+      return { output: `WeChat cover generation failed: ${err.message}`, status: 'failed' };
     }
   }
 

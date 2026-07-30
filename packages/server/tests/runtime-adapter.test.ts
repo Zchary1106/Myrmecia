@@ -45,6 +45,14 @@ describe('runtime adapter selection', () => {
     expect(selected?.name).toBe('python-runtime');
   });
 
+  it('uses the TS loop for MCP-enabled agents with any model provider', () => {
+    process.env.MYRMECIA_MODEL_PROVIDER = 'deepseek';
+    const selected = selectRuntimeAdapter(makeAgent({
+      allowedTools: ['mcp__wechat-official-account__wechat_draft'],
+    }), adapters);
+    expect(selected?.name).toBe('ts-agent-loop');
+  });
+
   it('selects the TS loop before Python for tool-enabled Copilot agents', () => {
     process.env.MYRMECIA_MODEL_PROVIDER = 'copilot';
     const selected = selectRuntimeAdapter(makeAgent({ allowedTools: ['shell_exec'] }), adapters);

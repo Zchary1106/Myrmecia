@@ -3,7 +3,11 @@ import { z } from 'zod';
 import { existsSync, readdirSync, realpathSync, statSync } from 'fs';
 import { basename, extname, relative, resolve } from 'path';
 import { listPipelines, getPipeline } from '../db/models/pipeline.js';
-import { PipelineEngine } from '../pipelines/pipeline-engine.js';
+import {
+  PipelineEngine,
+  PublishConfirmationRequiredError,
+  PublishStageSkipForbiddenError,
+} from '../pipelines/pipeline-engine.js';
 import { workspaceManager } from '../workspace/workspace-manager.js';
 import { createOperatorAction } from '../db/models/operator-action.js';
 import { notFound, parseBody, parseQuery, requireConfirmation, requireOperatorRole, sendError } from './http.js';
@@ -22,6 +26,9 @@ const createPipelineSchema = z.object({
 const listPipelinesQuerySchema = z.object({
   status: pipelineStatusSchema.optional(),
 });
+const approvePipelineSchema = z.object({
+  confirmPublish: z.boolean().optional(),
+}).default({});
 
 function getAccessiblePipeline(req: any, pipelineId: string): Pipeline {
   const pipeline = getPipeline(pipelineId);
@@ -148,7 +155,8 @@ export function createPipelineRoutes(pipelineEngine: PipelineEngine): Router {
     try {
       const actor = requireOperatorRole(req, 'pipeline.approve', ['admin', 'operator']);
       assertPipelineAccess(req, req.params.id);
-      await pipelineEngine.approveGate(req.params.id);
+      const { confirmPublish } = parseBody(approvePipelineSchema, req) ?? {};
+      await pipelineEngine.approveGate(req.params.id, confirmPublish === true);
       createOperatorAction({
         action: 'pipeline.approve',
         actor,
@@ -158,6 +166,15 @@ export function createPipelineRoutes(pipelineEngine: PipelineEngine): Router {
       });
       res.json({ success: true });
     } catch (err) {
+      if (err instanceof PublishConfirmationRequiredError) {
+        return res.status(409).json({
+          error: {
+            code: 'PUBLISH_CONFIRMATION_REQUIRED',
+            message: err.message,
+            details: { required: { confirmPublish: true } },
+          },
+        });
+      }
       sendError(res, err);
     }
   });
@@ -176,6 +193,14 @@ export function createPipelineRoutes(pipelineEngine: PipelineEngine): Router {
       });
       res.json({ success: true });
     } catch (err) {
+      if (err instanceof PublishStageSkipForbiddenError) {
+        return res.status(409).json({
+          error: {
+            code: 'PUBLISH_STAGE_SKIP_FORBIDDEN',
+            message: err.message,
+          },
+        });
+      }
       sendError(res, err);
     }
   });
@@ -204,7 +229,8 @@ export function createPipelineRoutes(pipelineEngine: PipelineEngine): Router {
     try {
       const actor = requireOperatorRole(req, 'pipeline.resume', ['admin', 'operator']);
       assertPipelineAccess(req, req.params.id);
-      const pipeline = await pipelineEngine.resume(req.params.id);
+      const { confirmPublish } = parseBody(approvePipelineSchema, req) ?? {};
+      const pipeline = await pipelineEngine.resume(req.params.id, confirmPublish === true);
       createOperatorAction({
         action: 'pipeline.resume',
         actor,
@@ -215,18 +241,46 @@ export function createPipelineRoutes(pipelineEngine: PipelineEngine): Router {
       });
       res.json(pipeline);
     } catch (err) {
+      if (err instanceof PublishConfirmationRequiredError) {
+        return res.status(409).json({
+          error: {
+            code: 'PUBLISH_CONFIRMATION_REQUIRED',
+            message: err.message,
+            details: { required: { confirmPublish: true } },
+          },
+        });
+      }
       sendError(res, err);
     }
   });
 
   router.post('/:id/stages/:index/retry', async (req, res) => {
     try {
+      const actor = requireOperatorRole(req, 'pipeline.stage.retry', ['admin', 'operator']);
       const stageIndex = parseInt(req.params.index, 10);
       assertPipelineAccess(req, req.params.id);
-      await pipelineEngine.retryStage(req.params.id, stageIndex);
+      const { confirmPublish } = parseBody(approvePipelineSchema, req) ?? {};
+      await pipelineEngine.retryStage(req.params.id, stageIndex, confirmPublish === true);
+      createOperatorAction({
+        action: 'pipeline.stage.retry',
+        actor,
+        targetType: 'pipeline',
+        targetId: req.params.id,
+        pipelineId: req.params.id,
+        metadata: { stageIndex, confirmPublish: confirmPublish === true },
+      });
       res.json({ success: true, message: `Stage ${stageIndex} retry initiated` });
-    } catch (err: any) {
-      res.status(400).json({ error: err.message });
+    } catch (err) {
+      if (err instanceof PublishConfirmationRequiredError) {
+        return res.status(409).json({
+          error: {
+            code: 'PUBLISH_CONFIRMATION_REQUIRED',
+            message: err.message,
+            details: { required: { confirmPublish: true } },
+          },
+        });
+      }
+      sendError(res, err);
     }
   });
 

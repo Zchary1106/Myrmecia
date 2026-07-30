@@ -2,7 +2,16 @@ import { describe, expect, it } from 'vitest';
 import { mkdtempSync, readFileSync, existsSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { findChromeBinary, renderCards, CARD_WIDTH, CARD_HEIGHT } from '../src/tools/image-cards.js';
+import {
+  findChromeBinary,
+  renderCards,
+  renderWeChatCover,
+  CARD_WIDTH,
+  CARD_HEIGHT,
+  WECHAT_COVER_WIDTH,
+  WECHAT_COVER_HEIGHT,
+} from '../src/tools/image-cards.js';
+import { executeTool } from '../src/skills/tool-sandbox.js';
 
 const chrome = findChromeBinary();
 // Rendering needs a real Chromium; skip (rather than fail) on machines without one.
@@ -12,6 +21,39 @@ describe('image-cards spec handling', () => {
   it('rejects an empty card list', async () => {
     const outDir = mkdtempSync(join(tmpdir(), 'cards-empty-'));
     await expect(renderCards({ cards: [] }, outDir)).rejects.toThrow(/non-empty/);
+  });
+
+  it('routes the WeChat cover sandbox tool to its renderer branch', async () => {
+    const outDir = mkdtempSync(join(tmpdir(), 'wechat-cover-tool-'));
+    const result = await executeTool(
+      'image.generate_wechat_cover',
+      { title: '' },
+      outDir,
+      { allowedTools: ['image.generate_wechat_cover'] },
+    );
+    expect(result.status).toBe('failed');
+    expect(result.output).toContain('requires a title');
+    expect(result.output).not.toContain('is not available');
+  });
+
+  it('renders an injection-safe WeChat cover without Chromium', async () => {
+    const outDir = mkdtempSync(join(tmpdir(), 'wechat-cover-'));
+    const { path, renderer } = await renderWeChatCover({
+      title: '<script>alert(1)</script>',
+      subtitle: 'a & b',
+      theme: 'clean',
+    }, outDir);
+
+    const header = readFileSync(path).subarray(0, 24);
+    expect(header.subarray(0, 8).toString('hex')).toBe('89504e470d0a1a0a');
+    expect(header.readUInt32BE(16)).toBe(WECHAT_COVER_WIDTH);
+    expect(header.readUInt32BE(20)).toBe(WECHAT_COVER_HEIGHT);
+    expect(renderer).toBe('sharp/libvips');
+
+    const svg = readFileSync(join(outDir, 'wechat-cover.svg'), 'utf-8');
+    expect(svg).not.toContain('<script>alert(1)</script>');
+    expect(svg).toContain('&lt;script&gt;');
+    expect(svg).toContain('a &amp; b');
   });
 });
 
@@ -62,4 +104,5 @@ describeIfChrome('image-cards rendering', () => {
     expect((html.match(/<li>/g) || []).length).toBe(6);
     expect(html).not.toContain('项目7');
   }, 120_000);
+
 });

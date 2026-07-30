@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain, safeStorage, shell } from 'electron';
 import { spawn, spawnSync, type ChildProcessByStdio } from 'node:child_process';
 import { createServer } from 'node:net';
 import { createWriteStream, existsSync, type WriteStream } from 'node:fs';
-import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -30,6 +30,9 @@ interface StoredRuntimeConfiguration {
   baseUrl?: string;
   model?: string;
   encryptedApiKey?: string;
+  wechatAppId?: string;
+  encryptedWechatAppSecret?: string;
+  encryptedWechatStorageKey?: string;
 }
 
 interface RuntimeConfigurationSummary {
@@ -46,6 +49,19 @@ interface RuntimeConfigurationInput {
   baseUrl?: string;
   model?: string;
   apiKey?: string;
+}
+
+interface WeChatConfigurationSummary {
+  available: true;
+  configured: boolean;
+  appId: string;
+  secureStorageAvailable: boolean;
+  recoveryMessage?: string;
+}
+
+interface WeChatConfigurationInput {
+  appId?: string;
+  appSecret?: string;
 }
 
 interface LoadedRuntimeConfiguration {
@@ -79,6 +95,7 @@ interface ResourceLayout {
   pythonRuntimeDir: string;
   splashPath: string;
   preloadPath: string;
+  dashboardPreloadPath: string;
 }
 
 const START_PORT = 3000;
@@ -122,6 +139,7 @@ function getResourceLayout(): ResourceLayout {
       pythonRuntimeDir: join(resources, 'python-runtime'),
       splashPath: join(resources, 'desktop', 'splash.html'),
       preloadPath: join(app.getAppPath(), 'dist', 'preload.cjs'),
+      dashboardPreloadPath: join(app.getAppPath(), 'dist', 'dashboard-preload.cjs'),
     };
   }
 
@@ -136,6 +154,7 @@ function getResourceLayout(): ResourceLayout {
     pythonRuntimeDir: join(repositoryRoot, 'packages', 'python-runtime'),
     splashPath: join(desktopRoot, 'src', 'splash', 'splash.html'),
     preloadPath: join(desktopRoot, 'dist', 'preload.cjs'),
+    dashboardPreloadPath: join(desktopRoot, 'dist', 'dashboard-preload.cjs'),
   };
 }
 
@@ -214,6 +233,19 @@ function parseRuntimeConfigurationInput(value: unknown): RuntimeConfigurationInp
   };
 }
 
+function parseWeChatConfigurationInput(value: unknown): WeChatConfigurationInput {
+  if (!isRecord(value)) throw new Error('微信公众号配置格式无效。');
+  const appId = optionalString(value.appId, '微信公众号 AppID', 32);
+  const appSecret = optionalString(value.appSecret, '微信公众号 AppSecret', 64);
+  if (!appId || !/^wx[a-z0-9]{16}$/i.test(appId)) {
+    throw new Error('微信公众号 AppID 应为 wx 开头的 18 位字符。');
+  }
+  if (!appSecret || !/^[a-f0-9]{32}$/i.test(appSecret)) {
+    throw new Error('微信公众号 AppSecret 应为 32 位十六进制字符。');
+  }
+  return { appId, appSecret };
+}
+
 async function readStoredRuntimeConfiguration(): Promise<StoredRuntimeConfiguration> {
   let raw: string;
   try {
@@ -234,8 +266,19 @@ async function readStoredRuntimeConfiguration(): Promise<StoredRuntimeConfigurat
   const baseUrl = normalizeBaseUrl(parsed.baseUrl);
   const model = optionalString(parsed.model, '模型名称', 256);
   const encryptedApiKey = optionalString(parsed.encryptedApiKey, '加密 API Key', 65_536);
+  const wechatAppId = optionalString(parsed.wechatAppId, '微信公众号 AppID', 32);
+  const encryptedWechatAppSecret = optionalString(parsed.encryptedWechatAppSecret, '加密微信公众号 AppSecret', 65_536);
+  const encryptedWechatStorageKey = optionalString(parsed.encryptedWechatStorageKey, '加密微信公众号存储密钥', 65_536);
   const provider = normalizeProvider(parsed.provider);
-  return { provider, baseUrl, model, encryptedApiKey };
+  return {
+    provider,
+    baseUrl,
+    model,
+    encryptedApiKey,
+    wechatAppId,
+    encryptedWechatAppSecret,
+    encryptedWechatStorageKey,
+  };
 }
 
 async function loadStoredRuntimeConfiguration(): Promise<LoadedRuntimeConfiguration> {
@@ -255,15 +298,26 @@ function secureStorageAvailable(): boolean {
 }
 
 function decryptApiKey(configuration: StoredRuntimeConfiguration): string | undefined {
-  if (!configuration.encryptedApiKey) return undefined;
+  return decryptStoredSecret(configuration.encryptedApiKey, 'API Key');
+}
+
+function decryptStoredSecret(encrypted: string | undefined, label: string): string | undefined {
+  if (!encrypted) return undefined;
   if (!secureStorageAvailable()) {
-    throw new Error('系统凭据库不可用，无法解密已保存的 API Key。');
+    throw new Error(`系统凭据库不可用，无法解密已保存的${label}。`);
   }
   try {
-    return safeStorage.decryptString(Buffer.from(configuration.encryptedApiKey, 'base64'));
+    return safeStorage.decryptString(Buffer.from(encrypted, 'base64'));
   } catch {
-    throw new Error('无法解密已保存的 API Key。请重新配置模型凭据。');
+    throw new Error(`无法解密已保存的${label}。请重新配置。`);
   }
+}
+
+function encryptStoredSecret(value: string, label: string): string {
+  if (!secureStorageAvailable()) {
+    throw new Error(`系统凭据库不可用，无法安全保存${label}。`);
+  }
+  return safeStorage.encryptString(value).toString('base64');
 }
 
 async function writeStoredRuntimeConfiguration(configuration: StoredRuntimeConfiguration): Promise<void> {
@@ -341,8 +395,57 @@ async function saveRuntimeConfiguration(value: unknown): Promise<RuntimeConfigur
     ...(baseUrl ? { baseUrl } : {}),
     ...(model ? { model } : {}),
     ...(encryptedApiKey ? { encryptedApiKey } : {}),
+    ...(current.wechatAppId ? { wechatAppId: current.wechatAppId } : {}),
+    ...(current.encryptedWechatAppSecret ? { encryptedWechatAppSecret: current.encryptedWechatAppSecret } : {}),
+    ...(current.encryptedWechatStorageKey ? { encryptedWechatStorageKey: current.encryptedWechatStorageKey } : {}),
   });
   return runtimeConfigurationSummary();
+}
+
+async function weChatConfigurationSummary(): Promise<WeChatConfigurationSummary> {
+  const loaded = await loadStoredRuntimeConfiguration();
+  const { configuration } = loaded;
+  let recoveryMessage = loaded.recoveryMessage;
+  if (!recoveryMessage && configuration.encryptedWechatAppSecret) {
+    try {
+      decryptStoredSecret(configuration.encryptedWechatAppSecret, '微信公众号 AppSecret');
+    } catch (error) {
+      recoveryMessage = error instanceof Error ? error.message : '无法读取微信公众号凭据。';
+    }
+  }
+  return {
+    available: true,
+    configured: Boolean(configuration.wechatAppId && configuration.encryptedWechatAppSecret),
+    appId: configuration.wechatAppId || '',
+    secureStorageAvailable: secureStorageAvailable(),
+    ...(recoveryMessage ? { recoveryMessage } : {}),
+  };
+}
+
+async function saveWeChatConfiguration(value: unknown): Promise<WeChatConfigurationSummary> {
+  const input = parseWeChatConfigurationInput(value);
+  const loaded = await loadStoredRuntimeConfiguration();
+  const current = loaded.configuration;
+  await writeStoredRuntimeConfiguration({
+    ...current,
+    wechatAppId: input.appId,
+    encryptedWechatAppSecret: encryptStoredSecret(input.appSecret!, '微信公众号 AppSecret'),
+    encryptedWechatStorageKey: current.encryptedWechatStorageKey
+      || encryptStoredSecret(randomBytes(32).toString('hex'), '微信公众号 MCP 存储密钥'),
+  });
+  return weChatConfigurationSummary();
+}
+
+async function clearWeChatConfiguration(): Promise<WeChatConfigurationSummary> {
+  const loaded = await loadStoredRuntimeConfiguration();
+  const {
+    wechatAppId: _wechatAppId,
+    encryptedWechatAppSecret: _encryptedWechatAppSecret,
+    encryptedWechatStorageKey: _encryptedWechatStorageKey,
+    ...rest
+  } = loaded.configuration;
+  await writeStoredRuntimeConfiguration(rest);
+  return weChatConfigurationSummary();
 }
 
 async function runtimeConfigurationEnvironment(): Promise<Record<string, string>> {
@@ -350,12 +453,20 @@ async function runtimeConfigurationEnvironment(): Promise<Record<string, string>
   const { configuration } = loaded;
   const provider = configuredProvider(configuration);
   let apiKey: string | undefined;
+  let wechatAppSecret: string | undefined;
+  let wechatStorageKey: string | undefined;
   if (!loaded.recoveryMessage) {
     try {
       apiKey = decryptApiKey(configuration);
     } catch {
       // A configuration error is surfaced by the splash before startup. If an
       // environment API key is available, the child can still start without it.
+    }
+    try {
+      wechatAppSecret = decryptStoredSecret(configuration.encryptedWechatAppSecret, '微信公众号 AppSecret');
+      wechatStorageKey = decryptStoredSecret(configuration.encryptedWechatStorageKey, '微信公众号 MCP 存储密钥');
+    } catch {
+      // The Settings integration panel surfaces credential recovery errors.
     }
   }
   return {
@@ -372,6 +483,13 @@ async function runtimeConfigurationEnvironment(): Promise<Record<string, string>
         ...(configuration.model ? { MYRMECIA_MODEL: configuration.model } : {}),
       }),
     ...(provider !== 'copilot' && apiKey ? { MYRMECIA_API_KEY: apiKey } : {}),
+    ...(configuration.wechatAppId && wechatAppSecret
+      ? {
+        WECHAT_OFFICIAL_ACCOUNT_APP_ID: configuration.wechatAppId,
+        WECHAT_OFFICIAL_ACCOUNT_APP_SECRET: wechatAppSecret,
+        ...(wechatStorageKey ? { WECHAT_MCP_SECRET_KEY: wechatStorageKey } : {}),
+      }
+      : {}),
   };
 }
 
@@ -406,6 +524,7 @@ function createDashboardWindow(origin: string): void {
     void dashboardWindow.loadURL(origin);
     return;
   }
+  const layout = getResourceLayout();
   dashboardWindow = new BrowserWindow({
     width: 1320,
     height: 860,
@@ -414,6 +533,7 @@ function createDashboardWindow(origin: string): void {
     show: false,
     title: 'Myrmecia',
     webPreferences: {
+      preload: layout.dashboardPreloadPath,
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -768,6 +888,17 @@ async function startServer(): Promise<void> {
   const runtimeRequirements = await readServerRuntimeRequirements(layout);
   assertCompatibleNodeRuntime(nodeRuntime, runtimeRequirements);
   const runtimeEnvironment = await runtimeConfigurationEnvironment();
+  if (
+    !runtimeEnvironment.WECHAT_OFFICIAL_ACCOUNT_APP_ID
+    && !process.env.WECHAT_OFFICIAL_ACCOUNT_APP_ID
+  ) {
+    const wechatDbPath = join(app.getPath('userData'), 'wechat-mcp.db');
+    await Promise.all([
+      rm(wechatDbPath, { force: true }),
+      rm(`${wechatDbPath}-wal`, { force: true }),
+      rm(`${wechatDbPath}-shm`, { force: true }),
+    ]);
+  }
   if (runtimeEnvironment.MYRMECIA_MODEL_PROVIDER === 'copilot') {
     assertCopilotCompatibleNodeRuntime(nodeRuntime);
   }
@@ -942,6 +1073,12 @@ if (!hasSingleInstanceLock) {
     ipcMain.handle('desktop:run-doctor', () => runDoctor());
     ipcMain.handle('desktop:get-runtime-config', () => runtimeConfigurationSummary());
     ipcMain.handle('desktop:save-runtime-config', (_event, configuration) => saveRuntimeConfiguration(configuration));
+    ipcMain.handle('desktop:get-wechat-config', () => weChatConfigurationSummary());
+    ipcMain.handle('desktop:save-wechat-config', (_event, configuration) => saveWeChatConfiguration(configuration));
+    ipcMain.handle('desktop:clear-wechat-config', () => clearWeChatConfiguration());
+    ipcMain.on('desktop:restart-local-server', () => {
+      setTimeout(() => { void launchDashboard(); }, 50);
+    });
     ipcMain.on('desktop:retry-startup', () => {
       void launchDashboard();
     });

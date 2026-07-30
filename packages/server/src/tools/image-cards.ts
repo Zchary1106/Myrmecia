@@ -17,11 +17,15 @@ import { promisify } from 'util';
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
+import { pathToFileURL } from 'url';
+import sharp from 'sharp';
 
 const execFileAsync = promisify(execFile);
 
 export const CARD_WIDTH = 1080;
 export const CARD_HEIGHT = 1440;
+export const WECHAT_COVER_WIDTH = 900;
+export const WECHAT_COVER_HEIGHT = 383;
 
 export interface CardSpec {
   /** cover = 封面页, point = 编号要点页, list = 清单页, end = 结尾互动页 */
@@ -41,13 +45,26 @@ export interface CardRenderSpec {
   theme?: 'warm' | 'clean' | 'dark';
 }
 
+export interface WeChatCoverSpec {
+  title: string;
+  subtitle?: string;
+  theme?: 'warm' | 'clean' | 'dark';
+}
+
 const THEMES = {
   warm: { bg: 'linear-gradient(160deg,#FFF8F0 0%,#FFE8E0 100%)', accent: '#FF2E4D', text: '#1a1a1a', muted: '#555', card: 'rgba(255,255,255,.72)' },
   clean: { bg: 'linear-gradient(160deg,#F5F9FF 0%,#E8F0FE 100%)', accent: '#2563eb', text: '#111827', muted: '#4b5563', card: 'rgba(255,255,255,.8)' },
   dark: { bg: 'linear-gradient(160deg,#1f2430 0%,#11141c 100%)', accent: '#FF6B81', text: '#f8fafc', muted: '#c3c9d5', card: 'rgba(255,255,255,.08)' },
 } as const;
 
+const COVER_THEMES = {
+  warm: { start: '#FFF8F0', end: '#FFE8E0', accent: '#FF2E4D', text: '#1a1a1a', muted: '#555555' },
+  clean: { start: '#F5F9FF', end: '#E8F0FE', accent: '#2563eb', text: '#111827', muted: '#4b5563' },
+  dark: { start: '#1f2430', end: '#11141c', accent: '#FF6B81', text: '#f8fafc', muted: '#c3c9d5' },
+} as const;
+
 const FONT_STACK = `"PingFang SC","Hiragino Sans GB","Noto Sans CJK SC","Source Han Sans SC","Microsoft YaHei","Heiti SC",sans-serif`;
+const SVG_FONT_STACK = 'PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, Source Han Sans SC, Microsoft YaHei, Heiti SC, sans-serif';
 
 function escapeHtml(value: string): string {
   return String(value)
@@ -211,7 +228,7 @@ export async function renderCards(
       '--force-device-scale-factor=1',
       `--screenshot=${pngPath}`,
       `--window-size=${CARD_WIDTH},${CARD_HEIGHT}`,
-      `file://${htmlPath}`,
+      pathToFileURL(htmlPath).href,
     ], { timeout: options.timeoutMs ?? 30_000 });
 
     if (!existsSync(pngPath)) throw new Error(`Card ${slug} failed to render to PNG`);
@@ -219,4 +236,73 @@ export async function renderCards(
   }
 
   return { paths, chromeBinary: chrome };
+}
+
+export async function renderWeChatCover(
+  spec: WeChatCoverSpec,
+  outDir: string,
+  _options: { timeoutMs?: number } = {},
+): Promise<{ path: string; renderer: string }> {
+  if (!spec.title?.trim()) throw new Error('image.generate_wechat_cover requires a title');
+  const theme = (spec.theme && spec.theme in COVER_THEMES ? spec.theme : 'clean') as keyof typeof COVER_THEMES;
+  const colors = COVER_THEMES[theme];
+  mkdirSync(outDir, { recursive: true });
+  const svgPath = join(outDir, 'wechat-cover.svg');
+  const pngPath = join(outDir, 'wechat-cover.png');
+  const titleLines = wrapCoverTitle(spec.title);
+  const subtitle = truncateCoverText(spec.subtitle || '', 42);
+  const title = titleLines.map((line, index) =>
+    `<tspan x="126" dy="${index === 0 ? 0 : 60}">${escapeHtml(line)}</tspan>`
+  ).join('');
+  const subtitleY = titleLines.length > 1 ? 330 : 282;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${WECHAT_COVER_WIDTH}" height="${WECHAT_COVER_HEIGHT}" viewBox="0 0 ${WECHAT_COVER_WIDTH} ${WECHAT_COVER_HEIGHT}">
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="${colors.start}"/>
+      <stop offset="100%" stop-color="${colors.end}"/>
+    </linearGradient>
+  </defs>
+  <rect width="900" height="383" fill="url(#background)"/>
+  <circle cx="830" cy="42" r="118" fill="${colors.accent}" opacity="0.08"/>
+  <circle cx="782" cy="364" r="82" fill="${colors.accent}" opacity="0.06"/>
+  <rect x="72" y="82" width="10" height="220" rx="5" fill="${colors.accent}"/>
+  <text x="126" y="92" font-family="${SVG_FONT_STACK}" font-size="20" font-weight="700" letter-spacing="4" fill="${colors.accent}">MYRMECIA · 公众号</text>
+  <text x="126" y="172" font-family="${SVG_FONT_STACK}" font-size="48" font-weight="700" fill="${colors.text}">${title}</text>
+  ${subtitle ? `<text x="126" y="${subtitleY}" font-family="${SVG_FONT_STACK}" font-size="22" fill="${colors.muted}">${escapeHtml(subtitle)}</text>` : ''}
+</svg>`;
+  writeFileSync(svgPath, svg, 'utf-8');
+  await sharp(Buffer.from(svg)).png({ compressionLevel: 9 }).toFile(pngPath);
+
+  if (!existsSync(pngPath)) throw new Error('WeChat cover failed to render to PNG');
+  return { path: pngPath, renderer: 'sharp/libvips' };
+}
+
+function wrapCoverTitle(value: string): string[] {
+  const characters = Array.from(value.replace(/\*\*/g, '').trim());
+  const lines: string[] = [];
+  let current = '';
+  let width = 0;
+  for (const character of characters) {
+    const characterWidth = /^[\x00-\xff]$/.test(character) ? 0.55 : 1;
+    if (current && width + characterWidth > 15.5) {
+      lines.push(current);
+      current = '';
+      width = 0;
+      if (lines.length === 2) break;
+    }
+    current += character;
+    width += characterWidth;
+  }
+  if (current && lines.length < 2) lines.push(current);
+  if (lines.length === 2 && characters.join('').length > lines.join('').length) {
+    lines[1] = `${Array.from(lines[1]).slice(0, -1).join('')}…`;
+  }
+  return lines;
+}
+
+function truncateCoverText(value: string, maxLength: number): string {
+  const characters = Array.from(value.replace(/\*\*/g, '').trim());
+  return characters.length > maxLength
+    ? `${characters.slice(0, maxLength - 1).join('')}…`
+    : characters.join('');
 }

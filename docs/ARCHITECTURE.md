@@ -315,6 +315,7 @@ The Dashboard **Skills** page supports draft creation, published-version immutab
 | `content.wechat_layout` | 把公众号 Markdown 草稿转成移动端友好的 HTML blocks |
 | `content.hashtag_plan` | 生成中文关键词、标签和搜索意图 |
 | `image.generate_svg` | 本地生成 SVG 封面草稿到 `generated-assets/cover.svg` |
+| `image.generate_wechat_cover` | 本地生成 900×383 公众号 PNG 封面 |
 
 ### Recommended Tool Mapping
 
@@ -323,7 +324,7 @@ The Dashboard **Skills** page supports draft creation, published-version immutab
 | PM / Master / Review | `web.search`, `web.fetch` |
 | Dev / API / DB / Ops | `web.search`, `web.fetch` |
 | Doc Writer | `web.search`, `web.fetch`, `crawler.extract_links` |
-| WeChat Writer | `web.search`, `web.fetch`, `crawler.extract_links`, `content.wechat_layout`, `content.hashtag_plan`, `image.generate_svg` |
+| WeChat Writer | `web.search`, `web.fetch`, `crawler.extract_links`, `content.wechat_layout`, `image.generate_wechat_cover`, `mcp__wechat-official-account__wechat_permanent_media`, `mcp__wechat-official-account__wechat_draft` |
 | Xiaohongshu Writer | `web.search`, `web.fetch`, `content.hashtag_plan`, `image.generate_svg` |
 | UI Agent | `image.generate_svg` |
 | i18n / QA | lightweight fetch/search as needed |
@@ -435,7 +436,7 @@ Pipeline templates live in `templates/*.yaml`, for example:
 | `full-product` | PM → UI → Dev → QA → Ops |
 | `feature` | Spec → Code → Test → Review |
 | `bugfix` | Triage → Fix → Test |
-| `wechat-article` | 选题 → 写作 → 审核 → 排版 |
+| `wechat-article` | 选题 → 写作 → 审核 → 排版 → 草稿箱同步 → 人工确认发布 |
 | `xiaohongshu-note` | 选题 → 创作 → SEO |
 
 ## 8. Dashboard Architecture

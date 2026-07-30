@@ -30,7 +30,11 @@
       "better-sqlite3",
       "electron",
       "esbuild",
-      "msgpackr-extract"
-    ]
+      "msgpackr-extract",
+      "sqlite3"
+    ],
+    "patchedDependencies": {
+      "wechat-official-account-mcp@2.0.0": "patches/wechat-official-account-mcp@2.0.0.patch"
+    }
   }
 }

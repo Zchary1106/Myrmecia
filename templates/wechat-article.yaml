@@ -1,5 +1,5 @@
 name: WeChat Article
-description: 公众号文章创作流水线（选题→写作→审核→排版）
+description: 公众号文章创作与发布流水线（选题→写作→审核→排版→草稿箱→人工确认发布）
 stages:
   - name: 选题分析
     role: product-manager
@@ -13,8 +13,7 @@ stages:
       {input}
 
   - name: 内容创作
-    role: content-writer
-    agent: wechat-writer
+    role: wechat-writer
     prompt_template: |
       根据以下选题分析，撰写完整的公众号文章。
       
@@ -38,11 +37,41 @@ stages:
       {input}
 
   - name: 排版优化
-    role: content-writer
-    agent: wechat-writer
+    role: wechat-writer
     prompt_template: |
       根据审核意见优化文章，并输出最终排版版本。
       包含：最终标题、摘要、正文、封面图提示词、标签。
       
       审核意见 + 原文：
+      {input}
+
+  - name: 草稿箱同步
+    role: wechat-writer
+    prompt_template: |
+      将以下已审核终稿同步到微信公众号草稿箱：
+      1. 调用 `content.wechat_layout` 生成适合公众号的 HTML 正文。
+      2. 调用 `image.generate_wechat_cover` 生成 900x383 PNG 封面。
+      3. 调用 `mcp__wechat-official-account__wechat_permanent_media`，action=add、type=image，
+         上传封面 PNG 并取得永久素材 media_id。
+      4. 调用 `mcp__wechat-official-account__wechat_draft`，action=add，将标题、作者、摘要、
+         HTML 正文和 thumbMediaId 写入草稿箱。
+      5. 输出草稿 Media ID、封面路径和同步结果，并原样保留最终文章内容供发布阶段审核。
+
+      如果微信公众号 MCP 未配置或任一步失败，必须停止并明确说明，不得编造 media_id。
+
+      已审核终稿：
+      {input}
+
+  - name: 发布执行
+    role: social-publisher
+    publish_tools:
+      - mcp__wechat-official-account__wechat_publish
+    prompt_template: |
+      以下是已人工审核的公众号终稿与草稿 Media ID。
+      只有输入中存在唯一明确的草稿 Media ID 时，才调用
+      `mcp__wechat-official-account__wechat_publish`，action=submit、mediaId=该草稿 ID。
+      提交成功后，从结果提取 publish_id，再用 action=get、publishId=该 ID 查询发布状态。
+      若未获得草稿 ID、提交未返回 publish_id 或 MCP 未连接，必须停止，不得猜测 ID。
+
+      终稿与草稿同步结果：
       {input}

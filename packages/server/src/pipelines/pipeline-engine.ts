@@ -8,7 +8,7 @@ import { createTemplate, listTemplates, getTemplate, updateTemplate } from '../d
 import { getTask } from '../db/models/task.js';
 import { listAgents, getAgent } from '../db/models/agent.js';
 import { eventBus } from '../events/event-bus.js';
-import { TaskQueue } from '../queue/task-queue.js';
+import { PUBLISH_RECONFIRMATION_ERROR, TaskQueue } from '../queue/task-queue.js';
 import { AgentManager } from '../agents/agent-manager.js';
 import { logger } from '../lib/logger.js';
 import { contextManager } from './context-manager.js';
@@ -17,6 +17,7 @@ import { workspaceManager } from '../workspace/workspace-manager.js';
 import { createTestReportFromOutput, isTestingStage } from '../testing/test-report.js';
 import { saveCheckpoint, getCompletedStageIndices } from './checkpoint.js';
 import type { Pipeline, PipelineStage, PipelineTemplate } from '../types.js';
+import { GOVERNED_PUBLISH_MCP_TOOLS } from '../tools/mcp-manager.js';
 
 const execAsync = promisify(exec);
 
@@ -31,6 +32,7 @@ interface PipelineTemplateYamlStage {
   role: string;
   prompt_template: string;
   depends_on?: number[];
+  publish_tools?: string[];
 }
 
 function toTemplateStages(stages: PipelineTemplateYamlStage[]): PipelineTemplate['stages'] {
@@ -39,6 +41,7 @@ function toTemplateStages(stages: PipelineTemplateYamlStage[]): PipelineTemplate
     role: stage.role,
     promptTemplate: stage.prompt_template,
     ...(stage.depends_on?.length ? { dependsOn: stage.depends_on } : {}),
+    ...(stage.publish_tools?.length ? { publishTools: stage.publish_tools } : {}),
   }));
 }
 
@@ -48,12 +51,6 @@ function toTemplateStages(stages: PipelineTemplateYamlStage[]): PipelineTemplate
  * tools is treated as "autonomous-publish-capable" and is forced into manual
  * gating unless the caller explicitly opts in (see `resolveGateMode` below).
  */
-const AUTONOMOUS_PUBLISH_GUARD_TOOLS = [
-  'mcp__xiaohongshu__publish_content',
-  'mcp__xiaohongshu__publish_with_video',
-  'mcp__douyin-upload__douyin_upload_video',
-];
-
 /** Resolve a stage's `role` the same way `AgentManager.findAvailableAgent` does
  * (direct role match, falling back to an id match), but without filtering by
  * current availability — we only need the agent *definition* to inspect its
@@ -66,13 +63,38 @@ function resolveAgentsForRole(role: string) {
 }
 
 /** Does this template contain a stage whose agent can call a real-publish MCP tool? */
-function templateHasAutonomousPublishStage(stages: Array<{ role: string }>): boolean {
-  return stages.some(stage =>
-    resolveAgentsForRole(stage.role).some(agent =>
-      (agent.allowedTools || []).some(tool => AUTONOMOUS_PUBLISH_GUARD_TOOLS.includes(tool))
+function stageHasAutonomousPublishCapability(stage: { role: string; publishTools?: string[] }): boolean {
+  if (stage.publishTools?.some(tool =>
+    GOVERNED_PUBLISH_MCP_TOOLS.some(publishTool => publishTool === tool)
+  )) {
+    return true;
+  }
+  return resolveAgentsForRole(stage.role).some(agent =>
+    (agent.allowedTools || []).some(tool =>
+      GOVERNED_PUBLISH_MCP_TOOLS.some(publishTool => publishTool === tool)
     )
   );
 }
+
+function templateHasAutonomousPublishStage(stages: Array<{ role: string; publishTools?: string[] }>): boolean {
+  return stages.some(stageHasAutonomousPublishCapability);
+}
+
+function readyPublishStageIndices(stages: PipelineStage[]): number[] {
+  return stages.flatMap((stage, index) => {
+    if (stage.status !== 'pending' || !stageHasAutonomousPublishCapability({
+      role: stage.agentRole,
+      publishTools: stage.publishTools,
+    })) {
+      return [];
+    }
+    const dependencies = stage.dependsOn ?? (index > 0 ? [index - 1] : []);
+    return dependencies.every(dependency => stages[dependency]?.status === 'done') ? [index] : [];
+  });
+}
+
+export class PublishConfirmationRequiredError extends Error {}
+export class PublishStageSkipForbiddenError extends Error {}
 
 /**
  * Decide the effective gateMode for a new pipeline. Pipelines that can reach a
@@ -93,7 +115,7 @@ function templateHasAutonomousPublishStage(stages: Array<{ role: string }>): boo
  * it from a generic "did the value change" comparison.
  */
 function resolveGateMode(
-  stages: Array<{ role: string }>,
+  stages: Array<{ role: string; publishTools?: string[] }>,
   requested: 'auto' | 'manual' | undefined,
   confirmAutonomousPublish: boolean | undefined
 ): { gateMode: 'auto' | 'manual'; forcedForSafety: boolean } {
@@ -108,6 +130,7 @@ export class PipelineEngine {
   private agentManager: AgentManager;
   private stageGitShas = new Map<string, string>(); // key: `${pipelineId}:${stageIndex}`
   private taskToPipeline = new Map<string, { pipelineId: string; stageIndex: number }>();
+  private publishStageApprovals = new Set<string>();
 
   constructor(taskQueue: TaskQueue, agentManager: AgentManager) {
     this.taskQueue = taskQueue;
@@ -183,6 +206,7 @@ export class PipelineEngine {
       status: 'pending' as const,
       promptTemplate: s.promptTemplate,
       dependsOn: s.dependsOn,
+      publishTools: s.publishTools,
     }));
 
     const { gateMode, forcedForSafety } = resolveGateMode(template.stages, data.gateMode, data.confirmAutonomousPublish);
@@ -246,6 +270,19 @@ export class PipelineEngine {
     const stages = [...pipeline.stages];
     const stage = stages[stageIndex];
     if (!stage) return;
+    const publishApprovalKey = `${pipelineId}:${stageIndex}`;
+    if (
+      pipeline.gateMode === 'manual'
+      && stageHasAutonomousPublishCapability({ role: stage.agentRole, publishTools: stage.publishTools })
+      && !this.publishStageApprovals.has(publishApprovalKey)
+    ) {
+      updatePipeline(pipelineId, {
+        status: 'paused',
+        currentStageIndex: stageIndex - 1,
+      });
+      logger.warn({ pipelineId, stageIndex }, 'Publish stage paused until explicit approval');
+      return;
+    }
 
     // Use context manager for optimized input building (with long-term memory recall)
     const prompt = await contextManager.buildStageInputWithMemory(pipeline, stageIndex);
@@ -282,6 +319,7 @@ export class PipelineEngine {
       setTimeout(() => this.retryBlockedStage(pipelineId, stageIndex), 10000);
       return;
     }
+    this.publishStageApprovals.delete(publishApprovalKey);
 
     // Create task for this stage
     const task = await this.taskQueue.enqueue({
@@ -471,6 +509,28 @@ export class PipelineEngine {
           await this.onTaskComplete(current.taskId);
         } else if (task?.status === 'failed' || task?.status === 'cancelled' || !task) {
           const stages = [...pipeline.stages];
+          if (
+            task?.error === PUBLISH_RECONFIRMATION_ERROR
+            && stageHasAutonomousPublishCapability({
+              role: current.agentRole,
+              publishTools: current.publishTools,
+            })
+          ) {
+            stages[pipeline.currentStageIndex] = { ...current, status: 'rolled_back' };
+            updatePipeline(pipeline.id, {
+              stages,
+              status: 'awaiting_retry',
+            });
+            eventBus.emit('pipeline:awaiting_retry', {
+              pipelineId: pipeline.id,
+              stageIndex: pipeline.currentStageIndex,
+              taskId: current.taskId,
+              workspaceId: pipeline.workspaceId,
+              recovered: true,
+              reason: PUBLISH_RECONFIRMATION_ERROR,
+            });
+            continue;
+          }
           stages[pipeline.currentStageIndex] = { ...current, status: 'failed' };
           updatePipeline(pipeline.id, {
             stages,
@@ -496,11 +556,22 @@ export class PipelineEngine {
   }
 
   /** Approve gate and advance to next stage */
-  async approveGate(pipelineId: string) {
+  async approveGate(pipelineId: string, confirmPublish = false) {
     const pipeline = getPipeline(pipelineId);
     if (!pipeline || pipeline.status !== 'paused') return;
 
     const nextIdx = pipeline.currentStageIndex + 1;
+    const nextStage = pipeline.stages[nextIdx];
+    if (
+      nextStage
+      && stageHasAutonomousPublishCapability({ role: nextStage.agentRole, publishTools: nextStage.publishTools })
+      && !confirmPublish
+    ) {
+      throw new PublishConfirmationRequiredError('Publishing requires explicit confirmation');
+    }
+    if (nextStage && stageHasAutonomousPublishCapability({ role: nextStage.agentRole, publishTools: nextStage.publishTools })) {
+      this.publishStageApprovals.add(`${pipelineId}:${nextIdx}`);
+    }
     updatePipeline(pipelineId, { status: 'running' });
     await this.startStage(pipelineId, nextIdx);
   }
@@ -512,10 +583,20 @@ export class PipelineEngine {
 
     const stages = [...pipeline.stages];
     const current = pipeline.currentStageIndex;
+    const nextIdx = current + 1;
+    if (
+      nextIdx < stages.length
+      && stageHasAutonomousPublishCapability({
+        role: stages[nextIdx].agentRole,
+        publishTools: stages[nextIdx].publishTools,
+      })
+    ) {
+      throw new PublishStageSkipForbiddenError('A publish stage cannot be entered through skip');
+    }
+
     stages[current] = { ...stages[current], status: 'skipped' };
     updatePipeline(pipelineId, { stages });
 
-    const nextIdx = current + 1;
     if (nextIdx >= stages.length) {
       updatePipeline(pipelineId, { status: 'done', completedAt: new Date().toISOString() });
       return;
@@ -525,7 +606,7 @@ export class PipelineEngine {
   }
 
   /** Resume pipeline from checkpoints — skips completed stages */
-  async resume(pipelineId: string): Promise<Pipeline> {
+  async resume(pipelineId: string, confirmPublish = false): Promise<Pipeline> {
     const pipeline = getPipeline(pipelineId);
     if (!pipeline) throw new Error(`Pipeline ${pipelineId} not found`);
     if (pipeline.status === 'done') throw new Error('Pipeline is already done');
@@ -533,6 +614,13 @@ export class PipelineEngine {
 
     const completedIndices = getCompletedStageIndices(pipelineId);
     if (completedIndices.size === 0) {
+      const readyPublishStages = readyPublishStageIndices(pipeline.stages);
+      if (pipeline.gateMode === 'manual' && readyPublishStages.length > 0 && !confirmPublish) {
+        throw new PublishConfirmationRequiredError('Resuming into publishing requires explicit confirmation');
+      }
+      if (confirmPublish) {
+        for (const index of readyPublishStages) this.publishStageApprovals.add(`${pipelineId}:${index}`);
+      }
       // No checkpoints — just start from the beginning
       updatePipeline(pipelineId, { status: 'running' });
       this.startReadyStages(pipelineId);
@@ -546,6 +634,13 @@ export class PipelineEngine {
         stages[idx] = { ...stages[idx], status: 'done' };
       }
     }
+    const readyPublishStages = readyPublishStageIndices(stages);
+    if (pipeline.gateMode === 'manual' && readyPublishStages.length > 0 && !confirmPublish) {
+      throw new PublishConfirmationRequiredError('Resuming into publishing requires explicit confirmation');
+    }
+    if (confirmPublish) {
+      for (const index of readyPublishStages) this.publishStageApprovals.add(`${pipelineId}:${index}`);
+    }
     updatePipeline(pipelineId, { stages, status: 'running' });
 
     // Start stages whose dependencies are satisfied and which are not checkpointed
@@ -557,6 +652,9 @@ export class PipelineEngine {
   async cancel(pipelineId: string) {
     const pipeline = getPipeline(pipelineId);
     if (!pipeline) return;
+    for (const key of this.publishStageApprovals) {
+      if (key.startsWith(`${pipelineId}:`)) this.publishStageApprovals.delete(key);
+    }
 
     for (const stage of pipeline.stages) {
       if (stage.taskId) {
@@ -575,7 +673,7 @@ export class PipelineEngine {
   }
 
   /** Retry a rolled-back stage */
-  async retryStage(pipelineId: string, stageIndex: number): Promise<void> {
+  async retryStage(pipelineId: string, stageIndex: number, confirmPublish = false): Promise<void> {
     const pipeline = getPipeline(pipelineId);
     if (!pipeline) throw new Error(`Pipeline ${pipelineId} not found`);
 
@@ -583,6 +681,15 @@ export class PipelineEngine {
     if (!stage) throw new Error(`Stage ${stageIndex} not found`);
     if (stage.status !== 'rolled_back') {
       throw new Error(`Stage ${stageIndex} is not in rolled_back status (current: ${stage.status})`);
+    }
+    if (
+      stageHasAutonomousPublishCapability({ role: stage.agentRole, publishTools: stage.publishTools })
+      && !confirmPublish
+    ) {
+      throw new PublishConfirmationRequiredError('Retrying a publish stage requires explicit confirmation');
+    }
+    if (stageHasAutonomousPublishCapability({ role: stage.agentRole, publishTools: stage.publishTools }) && confirmPublish) {
+      this.publishStageApprovals.add(`${pipelineId}:${stageIndex}`);
     }
 
     const stages = [...pipeline.stages];

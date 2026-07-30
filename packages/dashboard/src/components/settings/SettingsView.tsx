@@ -18,6 +18,136 @@ function CheckRow({ label, ok, detail }: { label: string; ok: boolean; detail: s
   );
 }
 
+function WeChatIntegrationSettings() {
+  const desktop = window.myrmeciaDesktopIntegrations;
+  const [summary, setSummary] = useState<MyrmeciaWeChatConfiguration | null>(null);
+  const [appId, setAppId] = useState('');
+  const [appSecret, setAppSecret] = useState('');
+  const [connected, setConnected] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [integrationError, setIntegrationError] = useState<string | null>(null);
+
+  const refresh = async () => {
+    setIntegrationError(null);
+    const [config, servers] = await Promise.all([
+      desktop?.getWeChatConfig(),
+      api.mcp.servers().catch(() => []),
+    ]);
+    if (config) {
+      setSummary(config);
+      setAppId(config.appId);
+    }
+    setConnected(servers.some(server => server.name === 'wechat-official-account' && server.connected));
+  };
+
+  useEffect(() => {
+    void refresh().catch(error => setIntegrationError(error instanceof Error ? error.message : 'Unable to inspect WeChat integration.'));
+  }, []);
+
+  const save = async () => {
+    if (!desktop || busy) return;
+    setBusy(true);
+    setMessage(null);
+    setIntegrationError(null);
+    try {
+      const result = await desktop.saveWeChatConfig({ appId: appId.trim(), appSecret: appSecret.trim() });
+      setSummary(result);
+      setAppSecret('');
+      setMessage('凭据已由系统凭据库加密保存，正在重启本地服务并连接公众号 MCP…');
+      desktop.restartLocalServer();
+    } catch (error) {
+      setIntegrationError(error instanceof Error ? error.message : 'Unable to save WeChat credentials.');
+      setBusy(false);
+    }
+  };
+
+  const clear = async () => {
+    if (!desktop || busy || !window.confirm('清除本机保存的微信公众号凭据并重启服务？')) return;
+    setBusy(true);
+    setMessage(null);
+    setIntegrationError(null);
+    try {
+      const result = await desktop.clearWeChatConfig();
+      setSummary(result);
+      setAppId('');
+      setAppSecret('');
+      setMessage('微信公众号凭据已清除，正在重启本地服务…');
+      desktop.restartLocalServer();
+    } catch (error) {
+      setIntegrationError(error instanceof Error ? error.message : 'Unable to clear WeChat credentials.');
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="rounded-xl border border-border bg-surface p-5">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <div className="flex items-center gap-2">
+            <span className="text-xl">✍️</span>
+            <h3 className="text-sm font-semibold">微信公众号 MCP</h3>
+            <span className={cn(
+              'rounded-full px-2 py-1 text-[9px] font-semibold',
+              connected ? 'bg-emerald-500/10 text-emerald-300' : summary?.configured ? 'bg-yellow-500/10 text-yellow-300' : 'bg-gray-500/10 text-gray-500',
+            )}>
+              {connected ? 'connected' : summary?.configured ? 'restart required' : 'not configured'}
+            </span>
+          </div>
+          <p className="mt-2 max-w-2xl text-[11px] leading-relaxed text-gray-500">
+            为公众号写手提供封面素材上传、草稿箱同步和发布能力。AppSecret 由 Electron 系统凭据库加密，
+            不会回传到 Dashboard，也不会出现在 MCP 子进程参数中。
+          </p>
+        </div>
+        {summary?.configured && (
+          <button onClick={() => void clear()} disabled={busy} className="rounded-lg bg-red-500/10 px-3 py-2 text-[11px] text-red-300 hover:bg-red-500/20 disabled:opacity-50">
+            Clear credentials
+          </button>
+        )}
+      </div>
+
+      {desktop ? (
+        <div className="mt-5 grid gap-3 lg:grid-cols-[1fr_1fr_auto]">
+          <label className="block">
+            <span className="text-[10px] font-medium text-gray-400">AppID</span>
+            <input
+              value={appId}
+              onChange={event => setAppId(event.target.value)}
+              placeholder="wx1234567890abcdef"
+              className="mt-1.5 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-accent"
+            />
+          </label>
+          <label className="block">
+            <span className="text-[10px] font-medium text-gray-400">AppSecret</span>
+            <input
+              type="password"
+              value={appSecret}
+              onChange={event => setAppSecret(event.target.value)}
+              placeholder={summary?.configured ? '留空不会读取或显示现有密钥' : '32 位十六进制 AppSecret'}
+              className="mt-1.5 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-accent"
+            />
+          </label>
+          <button
+            onClick={() => void save()}
+            disabled={busy || !appId.trim() || !appSecret.trim() || summary?.secureStorageAvailable === false}
+            className="self-end rounded-lg bg-accent px-4 py-2 text-xs font-semibold text-white hover:bg-accent-light disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {busy ? 'Saving…' : 'Save & restart'}
+          </button>
+        </div>
+      ) : (
+        <div className="mt-4 rounded-lg border border-yellow-500/20 bg-yellow-500/10 p-3 text-[11px] text-yellow-200">
+          Web 模式请设置 WECHAT_OFFICIAL_ACCOUNT_APP_ID、WECHAT_OFFICIAL_ACCOUNT_APP_SECRET 和 WECHAT_MCP_SECRET_KEY 后重启服务。
+        </div>
+      )}
+
+      {summary?.recoveryMessage && <div className="mt-3 text-xs text-yellow-300">{summary.recoveryMessage}</div>}
+      {message && <div className="mt-3 text-xs text-emerald-300">{message}</div>}
+      {integrationError && <div className="mt-3 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-red-300">{integrationError}</div>}
+    </section>
+  );
+}
+
 export function SettingsView() {
   const { health, diagnostics, loadHealth, loadDiagnostics } = useStore();
   const [token, setToken] = useState('');
@@ -221,6 +351,8 @@ export function SettingsView() {
           </div>
         )}
       </section>
+
+      <WeChatIntegrationSettings />
 
       <section className="grid lg:grid-cols-2 gap-4">
         <div className="bg-surface border border-border rounded-xl p-5">

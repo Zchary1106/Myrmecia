@@ -14,6 +14,7 @@ const templateStageSchema = z.object({
   role: z.string().trim().min(1),
   promptTemplate: z.string().trim().min(1),
   dependsOn: z.array(z.number().int().nonnegative()).optional(),
+  publishTools: z.array(z.string().trim().min(1)).optional(),
 });
 
 const templateBodySchema = z.object({
@@ -33,11 +34,12 @@ const validateTemplateBodySchema = z.object({
     role: z.string().optional(),
     promptTemplate: z.string().optional(),
     dependsOn: z.array(z.number().int().nonnegative()).optional(),
+    publishTools: z.array(z.string().trim().min(1)).optional(),
   })).default([]),
 });
 
 function validateTemplateShape(data: {
-  stages: { name?: string; role?: string; promptTemplate?: string; dependsOn?: number[] }[];
+  stages: { name?: string; role?: string; promptTemplate?: string; dependsOn?: number[]; publishTools?: string[] }[];
 }): PipelineTemplateValidationResult {
   const errors: PipelineTemplateValidationResult['errors'] = [];
   const warnings: PipelineTemplateValidationResult['warnings'] = [];

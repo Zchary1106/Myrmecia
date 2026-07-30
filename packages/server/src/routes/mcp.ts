@@ -5,7 +5,7 @@
  */
 
 import { Router } from 'express';
-import { getMcpManager } from '../tools/mcp-manager.js';
+import { getMcpManager, isProtectedMcpTool, McpPolicyError, WECHAT_OFFICIAL_ACCOUNT_MCP } from '../tools/mcp-manager.js';
 
 export function createMcpRoutes(): Router {
   const router = Router();
@@ -24,6 +24,9 @@ export function createMcpRoutes(): Router {
   router.post('/servers', async (req, res) => {
     const { name, command, args, env, cwd } = req.body || {};
     if (!name || !command) return res.status(400).json({ error: { message: 'name and command required' } });
+    if (name === WECHAT_OFFICIAL_ACCOUNT_MCP) {
+      return res.status(409).json({ error: { code: 'RESERVED_MCP_SERVER', message: 'server name is reserved' } });
+    }
     try {
       const client = await getMcpManager().addServer({ name, command, args, env, cwd });
       res.status(201).json({ name, connected: client.isConnected(), tools: client.tools });
@@ -43,10 +46,21 @@ export function createMcpRoutes(): Router {
   router.post('/call', async (req, res) => {
     const { name, arguments: args } = req.body || {};
     if (!name) return res.status(400).json({ error: { message: 'tool name required' } });
+    if (isProtectedMcpTool(String(name))) {
+      return res.status(403).json({
+        error: {
+          code: 'GOVERNED_MCP_TOOL',
+          message: 'WeChat Official Account tools may only run through an authorized agent pipeline',
+        },
+      });
+    }
     try {
       const result = await getMcpManager().callTool(String(name), args || {});
       res.json(result);
     } catch (err: any) {
+      if (err instanceof McpPolicyError) {
+        return res.status(403).json({ error: { code: 'GOVERNED_MCP_TOOL', message: err.message } });
+      }
       res.status(502).json({ error: { message: err.message } });
     }
   });
