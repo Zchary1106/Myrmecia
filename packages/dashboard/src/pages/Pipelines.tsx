@@ -7,9 +7,42 @@ const stageStatusIcons: Record<string, string> = {
   pending: '⏳', running: '🔄', review: '👁️', done: '✅', failed: '❌', skipped: '⏭️',
 };
 
+export function hasPublishStageAhead(pipeline: any): boolean {
+  const nextStage = pipeline.stages[pipeline.currentStageIndex + 1];
+  return Boolean(
+    nextStage
+    && (
+      nextStage.agentRole === 'social-publisher'
+      || (Array.isArray(nextStage.publishTools) && nextStage.publishTools.length > 0)
+    )
+  );
+}
+
 export function PipelinesPage() {
   const { pipelines, templates, loadPipelines } = useStore();
   const [showCreate, setShowCreate] = useState(false);
+  const approvePipeline = async (pipeline: any) => {
+    const confirmPublish = hasPublishStageAhead(pipeline);
+    if (confirmPublish && window.prompt('Type PUBLISH to approve the live publish stage') !== 'PUBLISH') return;
+    await api.pipelines.approve(pipeline.id, confirmPublish);
+    await loadPipelines();
+  };
+
+  const cancelPipeline = async (pipeline: any) => {
+    if (!window.confirm(`Cancel pipeline "${pipeline.name}"?`)) return;
+    await api.pipelines.cancel(pipeline.id, true);
+    await loadPipelines();
+  };
+
+  const retryPipelineStage = async (pipeline: any) => {
+    const stage = pipeline.stages[pipeline.currentStageIndex];
+    if (!stage || stage.status !== 'rolled_back') return;
+    const confirmPublish = stage.agentRole === 'social-publisher'
+      || (Array.isArray(stage.publishTools) && stage.publishTools.length > 0);
+    if (confirmPublish && window.prompt('Type PUBLISH to retry the live publish stage') !== 'PUBLISH') return;
+    await api.pipelines.retryStage(pipeline.id, stage.index, confirmPublish);
+    await loadPipelines();
+  };
 
   return (
     <div className="p-6">
@@ -34,9 +67,10 @@ export function PipelinesPage() {
             <PipelineCard
               key={pipeline.id}
               pipeline={pipeline}
-              onApprove={() => { api.pipelines.approve(pipeline.id).then(loadPipelines); }}
+              onApprove={() => { void approvePipeline(pipeline); }}
               onSkip={() => { api.pipelines.skip(pipeline.id).then(loadPipelines); }}
-              onCancel={() => { api.pipelines.cancel(pipeline.id).then(loadPipelines); }}
+              onCancel={() => { void cancelPipeline(pipeline); }}
+              onRetry={() => { void retryPipelineStage(pipeline); }}
             />
           ))}
         </div>
@@ -53,13 +87,14 @@ export function PipelinesPage() {
   );
 }
 
-function PipelineCard({ pipeline, onApprove, onSkip, onCancel }: {
-  pipeline: any; onApprove: () => void; onSkip: () => void; onCancel: () => void;
+function PipelineCard({ pipeline, onApprove, onSkip, onCancel, onRetry }: {
+  pipeline: any; onApprove: () => void; onSkip: () => void; onCancel: () => void; onRetry: () => void;
 }) {
   const statusColor: Record<string, string> = {
-    running: 'text-blue-400', paused: 'text-yellow-400', blocked: 'text-orange-400',
+    running: 'text-blue-400', paused: 'text-yellow-400', blocked: 'text-orange-400', awaiting_retry: 'text-orange-300',
     done: 'text-green-400', failed: 'text-red-400',
   };
+  const publishStageAhead = hasPublishStageAhead(pipeline);
 
   return (
     <div className="bg-surface border border-border rounded-xl p-5">
@@ -74,12 +109,22 @@ function PipelineCard({ pipeline, onApprove, onSkip, onCancel }: {
               <button onClick={onApprove} className="px-3 py-1 bg-green-500/20 text-green-400 rounded-lg text-xs hover:bg-green-500/30">
                 Approve
               </button>
-              <button onClick={onSkip} className="px-3 py-1 bg-yellow-500/20 text-yellow-400 rounded-lg text-xs hover:bg-yellow-500/30">
+              <button
+                onClick={onSkip}
+                disabled={publishStageAhead}
+                title={publishStageAhead ? 'The publish gate cannot be bypassed with Skip.' : undefined}
+                className="px-3 py-1 bg-yellow-500/20 text-yellow-400 rounded-lg text-xs hover:bg-yellow-500/30 disabled:cursor-not-allowed disabled:opacity-40"
+              >
                 Skip
               </button>
             </>
           )}
-          {['running', 'paused', 'blocked'].includes(pipeline.status) && (
+          {pipeline.status === 'awaiting_retry' && (
+            <button onClick={onRetry} className="px-3 py-1 bg-blue-500/20 text-blue-300 rounded-lg text-xs hover:bg-blue-500/30">
+              Retry stage
+            </button>
+          )}
+          {['running', 'paused', 'blocked', 'awaiting_retry'].includes(pipeline.status) && (
             <button onClick={onCancel} className="px-3 py-1 bg-red-500/20 text-red-400 rounded-lg text-xs hover:bg-red-500/30">
               Cancel
             </button>

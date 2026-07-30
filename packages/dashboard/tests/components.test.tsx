@@ -18,6 +18,8 @@ import { createSavedView, savedViewScope } from '../src/lib/savedViews';
 import { buildActivitySummary, handoffTotal } from '../src/lib/activitySummary';
 import { useStore } from '../src/stores/store';
 import { isContentProductionAgent } from '../src/components/agents/AgentWorkspace';
+import { contentStudioWorkflow } from '../src/components/agents/ContentStudio';
+import { hasPublishStageAhead } from '../src/pages/Pipelines';
 
 // ─── API module structure ────────────────────────────────────────────────────
 
@@ -45,6 +47,7 @@ describe('api module structure', () => {
     expect(api.pipelines.list).toBeTypeOf('function');
     expect(api.pipelines.create).toBeTypeOf('function');
     expect(api.pipelines.approve).toBeTypeOf('function');
+    expect(api.pipelines.retryStage).toBeTypeOf('function');
     expect(api.pipelines.artifacts).toBeTypeOf('function');
   });
 
@@ -52,6 +55,12 @@ describe('api module structure', () => {
     expect(api.tools).toBeDefined();
     expect(api.tools.list).toBeTypeOf('function');
     expect(api.tools.executions).toBeTypeOf('function');
+  });
+
+  it('exports MCP namespace', () => {
+    expect(api.mcp).toBeDefined();
+    expect(api.mcp.servers).toBeTypeOf('function');
+    expect(api.mcp.tools).toBeTypeOf('function');
   });
 
   it('exports models namespace', () => {
@@ -86,7 +95,7 @@ describe('api module structure', () => {
 
   it('exports all top-level namespaces', () => {
     const namespaces = [
-      'tasks', 'agents', 'tools', 'models', 'skills', 'executions',
+      'tasks', 'agents', 'tools', 'mcp', 'models', 'skills', 'executions',
       'pipelines', 'templates', 'events', 'preferences', 'notifications',
       'inbox', 'supervisor', 'knowledge', 'audit', 'plugins', 'billing',
       'usage', 'apiKeys', 'releases', 'eval', 'notificationChannels',
@@ -131,7 +140,7 @@ describe('Agent Workbench navigation state', () => {
     expect(useStore.getState().agentDirectoryCollapsed).toBe(false);
   });
 
-  it('routes Xiaohongshu and Douyin specialists to Content Studio', () => {
+  it('routes social and WeChat content specialists to Content Studio', () => {
     expect(isContentProductionAgent({
       id: 'xiaohongshu-writer',
       role: 'content-writer',
@@ -143,10 +152,43 @@ describe('Agent Workbench navigation state', () => {
       capabilities: ['douyin'],
     } as any)).toBe(true);
     expect(isContentProductionAgent({
+      id: 'wechat-writer',
+      role: 'content-writer',
+      capabilities: ['wechat'],
+    } as any)).toBe(true);
+    expect(isContentProductionAgent({
       id: 'dev',
       role: 'developer',
       capabilities: ['typescript'],
     } as any)).toBe(false);
+  });
+
+  it('uses the governed WeChat article workflow for the WeChat writer', () => {
+    const workflow = contentStudioWorkflow('wechat-writer');
+    expect(workflow.templateName).toBe('WeChat Article');
+    expect(workflow.stages.map(stage => stage.name)).toEqual([
+      '选题分析',
+      '内容创作',
+      '内容审核',
+      '排版优化',
+      '草稿箱同步',
+      '发布执行',
+    ]);
+    expect(workflow.stages[4].agentRole).toBe('wechat-writer');
+    expect(workflow.stages[5].agentRole).toBe('social-publisher');
+  });
+
+  it('detects a generic pipeline publish gate before approval', () => {
+    expect(hasPublishStageAhead({
+      currentStageIndex: 0,
+      stages: [
+        { agentRole: 'wechat-writer' },
+        {
+          agentRole: 'social-publisher',
+          publishTools: ['mcp__wechat-official-account__wechat_publish'],
+        },
+      ],
+    })).toBe(true);
   });
 });
 

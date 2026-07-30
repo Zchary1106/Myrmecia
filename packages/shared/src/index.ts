@@ -431,6 +431,7 @@ export interface PipelineStage {
   output?: string;
   gateApproved?: boolean;
   dependsOn?: number[];  // stage indices this depends on (enables parallel execution)
+  publishTools?: string[]; // governed live-publish MCP tools explicitly approved for this stage
 }
 
 export interface Pipeline {
@@ -462,6 +463,7 @@ export interface PipelineTemplateStage {
   role: AgentRole;
   promptTemplate: string;
   dependsOn?: number[];
+  publishTools?: string[];
 }
 
 export interface PipelineTemplate {

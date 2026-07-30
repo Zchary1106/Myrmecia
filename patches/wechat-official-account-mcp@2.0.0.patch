@@ -1,0 +1,13 @@
+diff --git a/dist/src/storage/storage-manager.js b/dist/src/storage/storage-manager.js
+index ae3425431d7d2848f5b9c33224456e5ecf56b658..ec9ed394ba720b519dadc3c42fd8c5ab7b04285f 100644
+--- a/dist/src/storage/storage-manager.js
++++ b/dist/src/storage/storage-manager.js
+@@ -27,7 +27,7 @@ export class StorageManager {
+             writable: true,
+             value: void 0
+         });
+-        this.dbPath = path.join(__dirname, '../../data/wechat-mcp.db');
++        this.dbPath = process.env.WECHAT_MCP_DB_PATH || path.join(__dirname, '../../data/wechat-mcp.db');
+         this.secretKey = process.env.WECHAT_MCP_SECRET_KEY;
+     }
+     async initialize() {

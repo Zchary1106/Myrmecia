@@ -145,6 +145,13 @@ export function createTaskRoutes(taskQueue: TaskQueue): Router {
     try {
       const task = getAccessibleTask(req, req.params.id);
       const actor = requireOperatorRole(req, 'task.retry', ['admin', 'operator']);
+      if (task.mode === 'pipeline' && task.assigneeId === 'social-publisher') {
+        throw new HttpError(
+          409,
+          'PUBLISH_TASK_RETRY_FORBIDDEN',
+          'Publish tasks cannot be retried directly; retry the pipeline stage with publish confirmation',
+        );
+      }
       const retried = await taskQueue.retryTask(req.params.id);
       createOperatorAction({
         action: 'task.retry',

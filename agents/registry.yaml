@@ -342,8 +342,8 @@ agents:
       maxResponseTokens: 4096
       maxToolCalls: 24
       maxWallClockMs: 240000
-    capabilities: [wechat, article, copywriting, seo, chinese-content, web-research, wechat-layout, image-generation]
-    allowed_tools: [web.search, web.fetch, crawler.extract_links, content.wechat_layout, content.hashtag_plan, image.generate_svg]
+    capabilities: [wechat, article, copywriting, seo, chinese-content, web-research, wechat-layout, image-generation, draft-publishing]
+    allowed_tools: [web.search, web.fetch, crawler.extract_links, content.wechat_layout, content.hashtag_plan, image.generate_svg, image.generate_wechat_cover, mcp__wechat-official-account__wechat_permanent_media, mcp__wechat-official-account__wechat_draft]
     triggers: [公众号, 写文章, 推文, 微信文章, wechat article]
 
   - id: xiaohongshu-writer
@@ -500,6 +500,6 @@ agents:
       maxResponseTokens: 2048
       maxToolCalls: 8
       maxWallClockMs: 180000
-    capabilities: [publishing, xiaohongshu, douyin, execution]
-    allowed_tools: [mcp__xiaohongshu__check_login_status, mcp__xiaohongshu__publish_content, mcp__xiaohongshu__publish_with_video, mcp__douyin-upload__douyin_check_login, mcp__douyin-upload__douyin_upload_video]
+    capabilities: [publishing, xiaohongshu, douyin, wechat, execution]
+    allowed_tools: [mcp__xiaohongshu__check_login_status, mcp__xiaohongshu__publish_content, mcp__xiaohongshu__publish_with_video, mcp__douyin-upload__douyin_check_login, mcp__douyin-upload__douyin_upload_video, mcp__wechat-official-account__wechat_publish]
     triggers: [发布, 发到小红书, 发到抖音, publish]

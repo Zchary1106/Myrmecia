@@ -3,8 +3,11 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const source = resolve(desktopRoot, 'src', 'preload.cjs');
-const destination = resolve(desktopRoot, 'dist', 'preload.cjs');
+const files = ['preload.cjs', 'dashboard-preload.cjs'];
 
-mkdirSync(dirname(destination), { recursive: true });
-copyFileSync(source, destination);
+for (const file of files) {
+  const source = resolve(desktopRoot, 'src', file);
+  const destination = resolve(desktopRoot, 'dist', file);
+  mkdirSync(dirname(destination), { recursive: true });
+  copyFileSync(source, destination);
+}

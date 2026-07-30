@@ -18,6 +18,16 @@ const apiPort = e2ePort('E2E_API_PORT', 3000);
 const dashboardPort = e2ePort('E2E_DASHBOARD_PORT', 5173);
 const dashboardDirectory = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(dashboardDirectory, '../..');
+const noProxy = new Set(
+  `${process.env.NO_PROXY || ''},${process.env.no_proxy || ''}`
+    .split(',')
+    .map(value => value.trim())
+    .filter(Boolean),
+);
+noProxy.add('127.0.0.1');
+noProxy.add('localhost');
+process.env.NO_PROXY = [...noProxy].join(',');
+process.env.no_proxy = process.env.NO_PROXY;
 
 export default defineConfig({
   testDir: './e2e',
@@ -37,6 +47,7 @@ export default defineConfig({
       env: {
         ...process.env,
         PORT: String(apiPort),
+        DB_PATH: ':memory:',
       },
     },
     {

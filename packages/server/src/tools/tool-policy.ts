@@ -1,5 +1,6 @@
 import type { AgentDefinition } from '../types.js';
 import { getTool, listToolPermissions, getToolParamConstraints } from './tool-registry.js';
+import { getMcpManager, isMcpTool } from './mcp-manager.js';
 import { validateParamConstraints } from './param-constraints.js';
 import type { ConstraintViolation } from './param-constraints.js';
 
@@ -47,15 +48,27 @@ export function resolveAllowedToolsForAgent(agent: AgentDefinition): AgentToolPo
   const allowedTools: string[] = [];
 
   for (const toolId of requestedTools) {
-    const tool = getTool(toolId);
-    const permission = permissions.get(toolId);
-
-    if (!tool) {
-      decisions.push({ toolId, allowed: false, reason: 'unknown_tool' });
-      continue;
-    }
     if (disallowed.has(toolId)) {
       decisions.push({ toolId, allowed: false, reason: 'agent_disallowed' });
+      continue;
+    }
+    if (isMcpTool(toolId)) {
+      const connected = getMcpManager().listTools().some(tool => tool.qualifiedName === toolId);
+      if (!connected) {
+        decisions.push({ toolId, allowed: false, reason: 'unknown_tool' });
+      } else if (agent.config.allowNetwork === false) {
+        decisions.push({ toolId, allowed: false, reason: 'network_disallowed' });
+      } else {
+        decisions.push({ toolId, allowed: true, reason: 'allowed' });
+        allowedTools.push(toolId);
+      }
+      continue;
+    }
+
+    const tool = getTool(toolId);
+    const permission = permissions.get(toolId);
+    if (!tool) {
+      decisions.push({ toolId, allowed: false, reason: 'unknown_tool' });
       continue;
     }
     if (!tool.enabled) {

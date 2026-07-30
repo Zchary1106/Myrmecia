@@ -8,6 +8,7 @@ import { logger } from '../lib/logger.js';
 import type { Task, TaskMode, Priority } from '../types.js';
 
 const QUEUE_NAME = 'agent-factory-tasks';
+export const PUBLISH_RECONFIRMATION_ERROR = 'Interrupted publish task requires renewed pipeline confirmation';
 
 // Priority mapping: lower number = higher priority in BullMQ
 const PRIORITY_MAP: Record<string, number> = {
@@ -17,6 +18,10 @@ const PRIORITY_MAP: Record<string, number> = {
   low: 4,
 };
 
+export function isPipelinePublisherTask(task: Task): boolean {
+  return task.mode === 'pipeline' && task.assigneeId === 'social-publisher';
+}
+
 export class TaskQueue {
   private queue: Queue | null = null;
   private worker: Worker | null = null;
@@ -24,6 +29,7 @@ export class TaskQueue {
   private agentManager: AgentManager;
   private redis: IORedis | null = null;
   private useRedis: boolean;
+  private workerStarted = false;
 
   constructor(agentManager: AgentManager) {
     this.agentManager = agentManager;
@@ -100,6 +106,7 @@ export class TaskQueue {
       {
         connection,
         concurrency: 6, // Support 6+ concurrent agents
+        autorun: false,
       }
     );
 
@@ -112,6 +119,15 @@ export class TaskQueue {
     this.queueEvents = new QueueEvents(QUEUE_NAME, { connection });
 
     logger.info('BullMQ connected to Redis');
+  }
+
+  startWorker(): void {
+    if (!this.worker || this.workerStarted) return;
+    this.workerStarted = true;
+    void this.worker.run().catch(err => {
+      this.workerStarted = false;
+      logger.error({ err: err.message }, 'BullMQ worker stopped unexpectedly');
+    });
   }
 
   /** Enqueue a new task */
@@ -145,7 +161,7 @@ export class TaskQueue {
       await this.queue.add('execute-task', { taskId: task.id }, {
         priority: PRIORITY_MAP[task.priority] || 3,
         jobId: task.id,
-        attempts: task.maxRetries + 1,
+        attempts: isPipelinePublisherTask(task) ? 1 : task.maxRetries + 1,
         backoff: { type: 'exponential', delay: 5000 },
       });
       updateTask(task.id, { status: 'queued' });
@@ -161,7 +177,7 @@ export class TaskQueue {
   private async processJob(taskId: string, job?: Job) {
     const task = getTask(taskId);
     if (!task) throw new Error(`Task ${taskId} not found`);
-    if (task.status === 'cancelled') return;
+    if (task.status === 'done' || task.status === 'cancelled' || (task.status === 'failed' && isPipelinePublisherTask(task))) return;
 
     // Coordination parents (top-level decomposed `master` tasks) are settled by
     // MasterAgent.monitorSubtasks, never executed as a leaf. Without this guard a
@@ -215,7 +231,7 @@ export class TaskQueue {
 
     const attemptsMade = job ? job.attemptsMade + 1 : current.retryCount + 1;
     const maxAttempts = job?.opts.attempts ?? (current.maxRetries + 1);
-    const willRetry = attemptsMade < maxAttempts;
+    const willRetry = !isPipelinePublisherTask(current) && attemptsMade < maxAttempts;
     const error = err?.message || String(err);
 
     const updated = updateTask(taskId, {
@@ -271,7 +287,7 @@ export class TaskQueue {
     this.agentManager.executeTask(agentId, getTask(task.id)!).catch(err => {
       logger.error({ taskId: task.id, err: err.message }, 'Task execution failed');
       const current = getTask(task.id)!;
-      if (current.retryCount < current.maxRetries) {
+      if (!isPipelinePublisherTask(current) && current.retryCount < current.maxRetries) {
         updateTask(task.id, { status: 'pending', retryCount: current.retryCount + 1 });
         addTaskLog(task.id, 'warn', `Retrying (${current.retryCount + 1}/${current.maxRetries})`, 'system');
         this.tryExecute(getTask(task.id)!);
@@ -331,6 +347,9 @@ export class TaskQueue {
   async retryTask(taskId: string): Promise<Task> {
     const task = getTask(taskId);
     if (!task) throw new Error(`Task ${taskId} not found`);
+    if (isPipelinePublisherTask(task)) {
+      throw new Error(`Task ${taskId} is not retryable directly; retry the confirmed pipeline publish stage instead`);
+    }
     if (!['failed', 'cancelled'].includes(task.status)) {
       throw new Error(`Task ${taskId} is not retryable from status ${task.status}`);
     }
@@ -349,7 +368,7 @@ export class TaskQueue {
       await this.queue.add('execute-task', { taskId }, {
         priority: PRIORITY_MAP[task.priority] || 3,
         jobId: `${taskId}-retry-${Date.now()}`,
-        attempts: task.maxRetries + 1,
+        attempts: isPipelinePublisherTask(task) ? 1 : task.maxRetries + 1,
         backoff: { type: 'exponential', delay: 5000 },
       });
       updateTask(taskId, { status: 'queued' });
@@ -376,6 +395,16 @@ export class TaskQueue {
     logger.info({ count: toRecover.length }, 'Recovering interrupted tasks');
 
     for (const task of toRecover) {
+      if (isPipelinePublisherTask(task)) {
+        updateTask(task.id, {
+          status: 'failed',
+          error: PUBLISH_RECONFIRMATION_ERROR,
+          completedAt: new Date().toISOString(),
+        });
+        addTaskLog(task.id, 'error', 'Publish task was not auto-retried after restart; renew pipeline confirmation', 'system');
+        continue;
+      }
+
       // Parent (decomposed) tasks are not executed directly — they are settled
       // by MasterAgent.monitorSubtasks once their children finish. Re-queuing
       // them would run the parent as if it were a leaf task AND would flip its

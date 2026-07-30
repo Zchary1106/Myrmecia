@@ -117,6 +117,10 @@ export const api = {
     setPermission: (toolId: string, agentId: string, data: { enabled: boolean; approvalRequired?: boolean }) =>
       request<ToolPermission>(`/tools/${toolId}/permissions/${agentId}`, { method: 'PUT', body: JSON.stringify(data) }),
   },
+  mcp: {
+    servers: () => request<Array<{ name: string; connected: boolean; toolCount: number }>>('/mcp/servers'),
+    tools: () => request<Array<{ server: string; name: string; qualifiedName: string }>>('/mcp/tools'),
+  },
   models: {
     list: (params?: { enabled?: string }) =>
       request<ModelDefinition[]>(`/models${params ? '?' + new URLSearchParams(params) : ''}`),
@@ -185,7 +189,16 @@ export const api = {
     create: (data: { name: string; templateId: string; input: string; gateMode?: Pipeline['gateMode']; confirmAutonomousPublish?: boolean; domainId?: string }) =>
       request<Pipeline>('/pipelines', { method: 'POST', body: JSON.stringify(data) }),
     artifacts: (id: string) => request<PipelineArtifact[]>(`/pipelines/${id}/artifacts`),
-    approve: (id: string) => request<{ success: boolean }>(`/pipelines/${id}/approve`, { method: 'POST' }),
+    approve: (id: string, confirmPublish = false) =>
+      request<{ success: boolean }>(`/pipelines/${id}/approve`, {
+        method: 'POST',
+        body: JSON.stringify({ confirmPublish }),
+      }),
+    retryStage: (id: string, stageIndex: number, confirmPublish = false) =>
+      request<{ success: boolean; message: string }>(`/pipelines/${id}/stages/${stageIndex}/retry`, {
+        method: 'POST',
+        body: JSON.stringify({ confirmPublish }),
+      }),
     skip: (id: string) => request<{ success: boolean }>(`/pipelines/${id}/skip`, { method: 'POST' }),
     cancel: (id: string, confirmed = false) =>
       request<{ success: boolean }>(`/pipelines/${id}/cancel`, { method: 'POST', body: JSON.stringify({ confirm: confirmed }) }),
