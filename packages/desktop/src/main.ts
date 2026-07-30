@@ -94,6 +94,7 @@ interface ResourceLayout {
   templatesDir: string;
   pythonRuntimeDir: string;
   splashPath: string;
+  iconPath: string;
   preloadPath: string;
   dashboardPreloadPath: string;
 }
@@ -138,6 +139,7 @@ function getResourceLayout(): ResourceLayout {
       templatesDir: join(resources, 'templates'),
       pythonRuntimeDir: join(resources, 'python-runtime'),
       splashPath: join(resources, 'desktop', 'splash.html'),
+      iconPath: join(app.getAppPath(), 'dist', 'icon.png'),
       preloadPath: join(app.getAppPath(), 'dist', 'preload.cjs'),
       dashboardPreloadPath: join(app.getAppPath(), 'dist', 'dashboard-preload.cjs'),
     };
@@ -153,6 +155,7 @@ function getResourceLayout(): ResourceLayout {
     templatesDir: join(repositoryRoot, 'templates'),
     pythonRuntimeDir: join(repositoryRoot, 'packages', 'python-runtime'),
     splashPath: join(desktopRoot, 'src', 'splash', 'splash.html'),
+    iconPath: join(desktopRoot, 'dist', 'icon.png'),
     preloadPath: join(desktopRoot, 'dist', 'preload.cjs'),
     dashboardPreloadPath: join(desktopRoot, 'dist', 'dashboard-preload.cjs'),
   };
@@ -503,6 +506,7 @@ function createSplashWindow(): void {
     maximizable: false,
     show: false,
     title: 'Myrmecia',
+    icon: layout.iconPath,
     webPreferences: {
       preload: layout.preloadPath,
       contextIsolation: true,
@@ -532,6 +536,7 @@ function createDashboardWindow(origin: string): void {
     minHeight: 640,
     show: false,
     title: 'Myrmecia',
+    icon: layout.iconPath,
     webPreferences: {
       preload: layout.dashboardPreloadPath,
       contextIsolation: true,
@@ -1068,6 +1073,11 @@ if (!hasSingleInstanceLock) {
   app.quit();
 } else {
   app.whenReady().then(async () => {
+    const layout = getResourceLayout();
+    if (process.platform === 'darwin') {
+      if (!app.dock) throw new Error('macOS Dock API is unavailable.');
+      app.dock.setIcon(layout.iconPath);
+    }
     createSplashWindow();
     ipcMain.handle('desktop:get-startup-state', () => startupState);
     ipcMain.handle('desktop:run-doctor', () => runDoctor());
