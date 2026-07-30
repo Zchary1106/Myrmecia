@@ -646,3 +646,27 @@ CREATE TABLE IF NOT EXISTS execution_ledger (
 CREATE INDEX IF NOT EXISTS idx_execution_ledger_execution ON execution_ledger(execution_id, seq);
 CREATE INDEX IF NOT EXISTS idx_execution_ledger_task ON execution_ledger(task_id);
 CREATE INDEX IF NOT EXISTS idx_execution_ledger_workspace ON execution_ledger(workspace_id);
+
+-- Migration: 202607300001_add_governed_publish_state
+-- Single-use live-publish authorization consumption.
+CREATE TABLE IF NOT EXISTS publish_authorization_consumptions (
+  task_id TEXT NOT NULL,
+  pipeline_id TEXT,
+  stage_index INTEGER,
+  scope TEXT NOT NULL,
+  tool_name TEXT NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (task_id, scope)
+);
+CREATE INDEX IF NOT EXISTS idx_publish_authorization_pipeline
+  ON publish_authorization_consumptions(pipeline_id, stage_index);
+
+CREATE TABLE IF NOT EXISTS wechat_draft_outputs (
+  task_id TEXT PRIMARY KEY,
+  pipeline_id TEXT NOT NULL,
+  stage_index INTEGER NOT NULL,
+  media_id TEXT NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_wechat_draft_outputs_pipeline
+  ON wechat_draft_outputs(pipeline_id, stage_index);

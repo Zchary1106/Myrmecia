@@ -6,7 +6,7 @@
  * string the model can consume.
  */
 
-import { getMcpManager } from './mcp-manager.js';
+import { getMcpManager, type McpCallPolicyContext } from './mcp-manager.js';
 
 export interface ModelToolDef {
   type: 'function';
@@ -22,12 +22,15 @@ export function mcpToolsEnabled(): boolean {
  * Build function definitions for every connected MCP tool.
  * Returns the defs plus a map of model-tool-name → qualified MCP name.
  */
-export function getMcpToolDefinitions(): { defs: ModelToolDef[]; nameToQualified: Map<string, string> } {
+export function getMcpToolDefinitions(
+  allowedTools?: ReadonlySet<string>,
+): { defs: ModelToolDef[]; nameToQualified: Map<string, string> } {
   const nameToQualified = new Map<string, string>();
   const defs: ModelToolDef[] = [];
   if (!mcpToolsEnabled()) return { defs, nameToQualified };
 
   for (const tool of getMcpManager().listTools()) {
+    if (allowedTools && !allowedTools.has(tool.qualifiedName)) continue;
     const modelName = sanitizeToolName(tool.qualifiedName);
     nameToQualified.set(modelName, tool.qualifiedName);
     const parameters = isObjectSchema(tool.inputSchema)
@@ -49,10 +52,11 @@ export function getMcpToolDefinitions(): { defs: ModelToolDef[]; nameToQualified
 export async function executeMcpTool(
   qualifiedName: string,
   args: Record<string, unknown>,
-  timeoutMs?: number
+  timeoutMs?: number,
+  policyContext?: McpCallPolicyContext,
 ): Promise<{ output: string; status: 'done' | 'failed' }> {
   try {
-    const result = await getMcpManager().callTool(qualifiedName, args || {}, timeoutMs);
+    const result = await getMcpManager().callTool(qualifiedName, args || {}, timeoutMs, policyContext);
     return { output: mcpResultToString(result.content), status: result.isError ? 'failed' : 'done' };
   } catch (err: any) {
     return { output: err?.message || 'MCP tool failed', status: 'failed' };

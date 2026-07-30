@@ -85,6 +85,10 @@ stages:
 
   - name: 发布执行
     role: social-publisher
+    publish_tools:
+      - mcp__xiaohongshu__publish_content
+      - mcp__xiaohongshu__publish_with_video
+      - mcp__douyin-upload__douyin_upload_video
     prompt_template: |
       以下是已审核通过的终稿，以及上一步已经生成好的小红书配图 PNG 绝对路径。
       请先确认终稿是唯一确定版本（不含多个备选标题等未定稿内容），再核对配图路径是否齐全。

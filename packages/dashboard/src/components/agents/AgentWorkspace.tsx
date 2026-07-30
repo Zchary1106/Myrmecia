@@ -5,12 +5,12 @@ import { useStore } from '../../stores/store';
 import { AgentChatPanel } from './AgentChatPanel';
 import { ContentStudio } from './ContentStudio';
 
-const contentAgentIds = new Set(['trend-scout', 'xiaohongshu-writer', 'douyin-writer', 'social-publisher']);
+const contentAgentIds = new Set(['trend-scout', 'xiaohongshu-writer', 'douyin-writer', 'wechat-writer', 'social-publisher']);
 
 export function isContentProductionAgent(agent: AgentSummary | undefined): boolean {
   if (!agent) return false;
   return contentAgentIds.has(agent.id)
-    || agent.capabilities?.some(capability => ['xiaohongshu', 'douyin', 'tiktok', 'publishing', 'trend-research'].includes(capability));
+    || agent.capabilities?.some(capability => ['xiaohongshu', 'douyin', 'tiktok', 'wechat', 'publishing', 'trend-research'].includes(capability));
 }
 
 function agentGroup(agent: AgentSummary): 'Core' | 'Content' | 'Specialists' {

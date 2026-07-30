@@ -1,7 +1,8 @@
 import OpenAI from 'openai';
 import type { AgentDefinition, Task, AgentProgress, ToolActivity, ProgressTracker } from '../types.js';
 import { eventBus } from '../events/event-bus.js';
-import { updateTask, addTaskLog } from '../db/models/task.js';
+import { updateTask, addTaskLog, getTask } from '../db/models/task.js';
+import { getPipeline } from '../db/models/pipeline.js';
 import { updateExecution, addExecutionMessage } from '../db/models/execution.js';
 import { completeTraceSpan, createTraceSpan } from '../db/models/trace.js';
 import { resolveAllowedToolsForAgent, validateToolParams } from '../tools/tool-policy.js';
@@ -18,7 +19,11 @@ import { assertExecutionTokenBudget, remainingResponseTokens, resolveAgentRuntim
 import { compactMessages } from './context-compactor.js';
 import { sanitizeAgentOutput } from '../security/dlp-runtime.js';
 import { buildSandboxToolDefinition, executeTool, isSandboxTool } from '../skills/tool-sandbox.js';
-import { isMcpTool } from '../tools/mcp-manager.js';
+import {
+  GOVERNED_PUBLISH_MCP_TOOLS,
+  isMcpTool,
+  type McpCallPolicyContext,
+} from '../tools/mcp-manager.js';
 import { getMcpToolDefinitions, executeMcpTool } from '../tools/mcp-tools.js';
 import { appendExecutionAuditEvent, recordExecutionPolicySnapshot } from '../audit/execution-audit.js';
 import { recordLedgerEntry } from '../db/models/execution-ledger.js';
@@ -27,6 +32,62 @@ import { buildAgentSystemPrompt } from './agent-prompt.js';
 import { getSandboxProfile } from './sandbox-profile.js';
 
 const MAX_RECENT_ACTIVITIES = 5;
+
+export function buildMcpPolicyContext(agent: AgentDefinition, task: Task): McpCallPolicyContext {
+  const persistedTask = getTask(task.id);
+  const sourceTask = persistedTask || task;
+  const context: McpCallPolicyContext = {
+    agentId: agent.id,
+    taskMode: sourceTask.mode,
+    pipelineId: sourceTask.pipelineId,
+    stageIndex: sourceTask.stageIndex,
+    taskId: sourceTask.id,
+    taskInput: sourceTask.input,
+    workdir: sourceTask.workdir,
+  };
+  if (
+    !persistedTask
+    || persistedTask.status !== 'running'
+    || agent.id !== 'social-publisher'
+    || sourceTask.mode !== 'pipeline'
+    || !sourceTask.pipelineId
+    || sourceTask.stageIndex === undefined
+    || sourceTask.retryCount > 0
+  ) {
+    return context;
+  }
+
+  const pipeline = getPipeline(sourceTask.pipelineId);
+  const stage = pipeline?.stages[sourceTask.stageIndex];
+  if (
+    !pipeline
+    || pipeline.status !== 'running'
+    || pipeline.currentStageIndex !== sourceTask.stageIndex
+    || stage?.status !== 'running'
+    || stage.taskId !== sourceTask.id
+    || sourceTask.assigneeId !== agent.id
+  ) {
+    return context;
+  }
+
+  const agentTools = new Set(agent.allowedTools || agent.config.allowedTools || []);
+  const approvedPublishTools = (stage.publishTools || []).filter(tool =>
+    agentTools.has(tool)
+    && GOVERNED_PUBLISH_MCP_TOOLS.some(governedTool => governedTool === tool)
+  );
+  if (approvedPublishTools.length === 0) return context;
+
+  const dependencyIndices = stage.dependsOn ?? (sourceTask.stageIndex > 0 ? [sourceTask.stageIndex - 1] : []);
+  return {
+    ...context,
+    publishAuthorized: true,
+    approvedPublishTools,
+    publishAuthorizationId: sourceTask.id,
+    approvedDraftTaskIds: dependencyIndices
+      .map(index => pipeline.stages[index]?.taskId)
+      .filter((taskId): taskId is string => Boolean(taskId)),
+  };
+}
 
 function buildModelToolName(toolId: string, index: number): string {
   const safeName = toolId.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 48);
@@ -50,14 +111,15 @@ function extractMessageText(content: unknown): string {
 
 function buildModelToolDefinitions(toolIds: string[]) {
   const modelNameToToolId = new Map<string, string>();
-  const toolDefs = toolIds.map((toolId, index) => {
+  const sandboxToolIds = toolIds.filter(toolId => !isMcpTool(toolId));
+  const toolDefs = sandboxToolIds.map((toolId, index) => {
     const modelToolName = buildModelToolName(toolId, index);
     modelNameToToolId.set(modelToolName, toolId);
     return buildSandboxToolDefinition(toolId, modelToolName);
   }) as any[];
 
-  // Surface connected MCP tools to the model (routed to the MCP manager at call time).
-  const { defs: mcpDefs, nameToQualified } = getMcpToolDefinitions();
+  const allowedMcpTools = new Set(toolIds.filter(isMcpTool));
+  const { defs: mcpDefs, nameToQualified } = getMcpToolDefinitions(allowedMcpTools);
   for (const [modelName, qualified] of nameToQualified) modelNameToToolId.set(modelName, qualified);
   toolDefs.push(...(mcpDefs as any[]));
 
@@ -326,6 +388,22 @@ export class TsAgentLoop {
         let toolInput: Record<string, unknown> = {};
         try { toolInput = JSON.parse(tc.function.arguments || '{}'); } catch {}
 
+        if (!toolPolicy.allowedTools.includes(toolName)) {
+          const output = `Tool ${toolName} is not allowed for agent ${agent.id}`;
+          addTaskLog(task.id, 'warn', output, agent.id);
+          appendExecutionAuditEvent(executionId, {
+            type: 'tool.blocked',
+            severity: 'block',
+            message: output,
+            metadata: { toolName, reason: 'not_in_agent_allowlist' },
+          });
+          eventBus.emit('tool:blocked', {
+            toolId: toolName, taskId: task.id, workspaceId: task.workspaceId, executionId, agentId: agent.id,
+            reason: 'not_in_agent_allowlist',
+          });
+          return output;
+        }
+
         const violations = mcpTool ? [] : validateToolParams(toolName, toolInput);
         if (violations.length > 0) {
           const output = violations.map(violation => violation.message).join('; ');
@@ -369,7 +447,12 @@ export class TsAgentLoop {
         let status: 'done' | 'failed' = 'done';
         try {
           const result = isMcpTool(toolName)
-            ? await executeMcpTool(toolName, toolInput, Math.min(limits.maxToolCallTimeoutMs, limits.maxToolRuntimeMsPerExecution - totalToolRuntimeMs))
+            ? await executeMcpTool(
+                toolName,
+                toolInput,
+                Math.min(limits.maxToolCallTimeoutMs, limits.maxToolRuntimeMsPerExecution - totalToolRuntimeMs),
+                buildMcpPolicyContext(agent, task),
+              )
             : await executeTool(toolName, toolInput, task.workdir || process.cwd(), {
                 allowedTools: toolPolicy.allowedTools,
                 timeoutMs: Math.min(limits.maxToolCallTimeoutMs, limits.maxToolRuntimeMsPerExecution - totalToolRuntimeMs),
@@ -481,6 +564,23 @@ export class TsAgentLoop {
               toolInput = JSON.parse(tc.function.arguments || '{}');
             } catch {}
 
+            if (!toolPolicy.allowedTools.includes(toolName)) {
+              const blockedOutput = `Tool ${toolName} is not allowed for agent ${agent.id}`;
+              addTaskLog(task.id, 'warn', blockedOutput, agent.id);
+              appendExecutionAuditEvent(executionId, {
+                type: 'tool.blocked',
+                severity: 'block',
+                message: blockedOutput,
+                metadata: { toolName, reason: 'not_in_agent_allowlist' },
+              });
+              eventBus.emit('tool:blocked', {
+                toolId: toolName, taskId: task.id, workspaceId: task.workspaceId, executionId, agentId: agent.id,
+                reason: 'not_in_agent_allowlist',
+              });
+              messages.push({ role: 'tool', tool_call_id: toolCallId, content: blockedOutput });
+              continue;
+            }
+
             // Validate parameter constraints FIRST
             const constraintViolations = mcpTool ? [] : validateToolParams(toolName, toolInput);
             let toolOutput = '';
@@ -549,7 +649,12 @@ export class TsAgentLoop {
               }
               totalToolCalls++;
               const result = isMcpTool(toolName)
-                ? await executeMcpTool(toolName, toolInput, Math.min(limits.maxToolCallTimeoutMs, limits.maxToolRuntimeMsPerExecution - totalToolRuntimeMs))
+                ? await executeMcpTool(
+                    toolName,
+                    toolInput,
+                    Math.min(limits.maxToolCallTimeoutMs, limits.maxToolRuntimeMsPerExecution - totalToolRuntimeMs),
+                    buildMcpPolicyContext(agent, task),
+                  )
                 : await executeTool(toolName, toolInput, task.workdir || process.cwd(), {
                     allowedTools: toolPolicy.allowedTools,
                     timeoutMs: Math.min(limits.maxToolCallTimeoutMs, limits.maxToolRuntimeMsPerExecution - totalToolRuntimeMs),
@@ -804,6 +909,23 @@ export class TsAgentLoop {
             let toolInput: Record<string, unknown> = {};
             try { toolInput = JSON.parse(tc.function.arguments || '{}'); } catch {}
 
+            if (!stepAllowedTools.includes(toolName)) {
+              const blockedOutput = `Tool ${toolName} is not allowed for skill step ${llmOptions?.stepName || 'unknown'}`;
+              addTaskLog(task.id, 'warn', blockedOutput, agent.id);
+              appendExecutionAuditEvent(executionId, {
+                type: 'tool.blocked',
+                severity: 'block',
+                message: blockedOutput,
+                metadata: { toolName, reason: 'not_in_step_allowlist', step: llmOptions?.stepName },
+              });
+              eventBus.emit('tool:blocked', {
+                toolId: toolName, taskId: task.id, workspaceId: task.workspaceId, executionId, agentId: agent.id,
+                reason: 'not_in_step_allowlist',
+              });
+              messages.push({ role: 'tool', tool_call_id: tc.id, content: blockedOutput });
+              continue;
+            }
+
             // Log tool use
             addTaskLog(task.id, 'info', `  🔧 ${toolName}(${JSON.stringify(toolInput).slice(0, 100)})`, agent.id);
             tracker.toolUseCount++;
@@ -826,7 +948,12 @@ export class TsAgentLoop {
             );
             const toolStartedAt = Date.now();
             const result = isMcpTool(toolName)
-              ? await executeMcpTool(toolName, toolInput, remainingToolBudgetMs)
+              ? await executeMcpTool(
+                  toolName,
+                  toolInput,
+                  remainingToolBudgetMs,
+                  buildMcpPolicyContext(agent, task),
+                )
               : await executeTool(toolName, toolInput, workdir, {
                   allowedTools: stepAllowedTools,
                   timeoutMs: remainingToolBudgetMs,

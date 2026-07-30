@@ -94,12 +94,12 @@ items:
     template_name: WeChat Article
     title: WeChat Article Pipeline
     category: content
-    summary: Create, review, and format a WeChat article through a governed content workflow.
-    tags: [content, wechat, marketing]
-    recommended_agents: [wechat-writer, review]
+    summary: Research, write, review, format, generate a cover, sync a WeChat draft, and publish only after explicit human approval.
+    tags: [content, wechat, marketing, mcp, publishing]
+    recommended_agents: [wechat-writer, review, social-publisher]
     input_example: Write a launch article for Myrmecia Agent Ops.
-    output_example: Article draft, review notes, and formatted publishing copy.
-    risk: Low. Human editorial review recommended before publishing.
+    output_example: Final article, review notes, 900x383 cover PNG, draft Media ID, and publication status.
+    risk: High. Draft sync requires configured WeChat credentials, and the final stage can publish to a live account; keep manual gates enabled and verify the draft Media ID before approval.
   - id: content-xiaohongshu
     template_name: Xiaohongshu Note
     title: Xiaohongshu Note Pipeline

@@ -12,6 +12,7 @@ import { createToolRoutes } from '../src/routes/tools.js';
 import { createModelRoutes } from '../src/routes/models.js';
 import { createSkillRoutes } from '../src/routes/skills.js';
 import { createTemplateRoutes } from '../src/routes/templates.js';
+import { createMcpRoutes } from '../src/routes/mcp.js';
 import { createApiAuthMiddleware } from '../src/auth/token-auth.js';
 import { createApiKey } from '../src/auth/api-keys.js';
 import { metricsHandler } from '../src/observability/telemetry.js';
@@ -24,6 +25,7 @@ import { syncBuiltinTools } from '../src/tools/tool-registry.js';
 import { getModelRoute, syncBuiltinModels } from '../src/models/model-registry.js';
 import { getModelGateway } from '../src/models/gateway.js';
 import type { TaskQueue } from '../src/queue/task-queue.js';
+import { isPipelinePublisherTask } from '../src/queue/task-queue.js';
 import type { PipelineEngine } from '../src/pipelines/pipeline-engine.js';
 
 beforeAll(() => {
@@ -257,6 +259,10 @@ describe('control routes', () => {
     await withApp(app, async (baseUrl) => {
       await expect(jsonFetch(baseUrl, '/pipelines/pipe1/approve', { method: 'POST' }))
         .resolves.toMatchObject({ status: 200, body: { success: true } });
+      await expect(jsonFetch(baseUrl, '/pipelines/pipe1/approve', {
+        method: 'POST',
+        body: JSON.stringify({ confirmPublish: true }),
+      })).resolves.toMatchObject({ status: 200, body: { success: true } });
       await expect(jsonFetch(baseUrl, '/pipelines/pipe1/skip', { method: 'POST' }))
         .resolves.toMatchObject({ status: 200, body: { success: true } });
       await expect(jsonFetch(baseUrl, '/pipelines/pipe1/cancel', {
@@ -265,7 +271,8 @@ describe('control routes', () => {
       }))
         .resolves.toMatchObject({ status: 200, body: { success: true } });
 
-      expect(engine.approveGate).toHaveBeenCalledWith('pipe1');
+      expect(engine.approveGate).toHaveBeenNthCalledWith(1, 'pipe1', false);
+      expect(engine.approveGate).toHaveBeenNthCalledWith(2, 'pipe1', true);
       expect(engine.skipStage).toHaveBeenCalledWith('pipe1');
       expect(engine.cancel).toHaveBeenCalledWith('pipe1');
     });
@@ -282,12 +289,45 @@ describe('control routes', () => {
         method: 'POST',
         body: JSON.stringify({ title: '', mode: 'unknown' }),
       });
+
       expect(taskResult.status).toBe(400);
       expect(taskResult.body.error.code).toBe('VALIDATION_FAILED');
 
       const pipelineResult = await jsonFetch<any>(baseUrl, '/pipelines?status=unknown');
       expect(pipelineResult.status).toBe(400);
       expect(pipelineResult.body.error.code).toBe('VALIDATION_FAILED');
+    });
+  });
+
+  it('blocks generic REST access to governed MCP tools and reserved server names', async () => {
+    const app = express();
+    app.use(express.json());
+    app.use('/mcp', createMcpRoutes());
+
+    await withApp(app, async (baseUrl) => {
+      const call = await jsonFetch<any>(baseUrl, '/mcp/call', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: 'mcp__wechat-official-account__wechat_publish',
+          arguments: { action: 'submit', mediaId: 'draft-id' },
+        }),
+      });
+      expect(call).toMatchObject({
+        status: 403,
+        body: { error: { code: 'GOVERNED_MCP_TOOL' } },
+      });
+
+      const registration = await jsonFetch<any>(baseUrl, '/mcp/servers', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: 'wechat-official-account',
+          command: process.execPath,
+        }),
+      });
+      expect(registration).toMatchObject({
+        status: 409,
+        body: { error: { code: 'RESERVED_MCP_SERVER' } },
+      });
     });
   });
 
@@ -1119,11 +1159,45 @@ describe('control routes', () => {
     });
   });
 
+  it('forbids direct retry of a pipeline publisher task', async () => {
+    createAgent({
+      id: 'social-publisher',
+      name: 'Social Publisher',
+      role: 'social-publisher',
+    });
+    const task = createTask({
+      title: 'Publish task',
+      description: 'Publish task',
+      input: 'publish',
+      mode: 'pipeline',
+      assigneeId: 'social-publisher',
+    });
+    updateTask(task.id, { status: 'failed', completedAt: new Date().toISOString() });
+    expect(isPipelinePublisherTask(task)).toBe(true);
+    const retryTask = vi.fn();
+    const app = express();
+    app.use(express.json());
+    app.use('/tasks', createTaskRoutes({ retryTask } as unknown as TaskQueue));
+
+    await withApp(app, async (baseUrl) => {
+      const retry = await jsonFetch<any>(baseUrl, `/tasks/${task.id}/retry`, {
+        method: 'POST',
+        headers: { 'x-operator-id': 'ops1', 'x-operator-role': 'operator' },
+      });
+      expect(retry).toMatchObject({
+        status: 409,
+        body: { error: { code: 'PUBLISH_TASK_RETRY_FORBIDDEN' } },
+      });
+      expect(retryTask).not.toHaveBeenCalled();
+    });
+  });
+
   it('denies viewer pipeline controls', async () => {
     const engine = {
       approveGate: vi.fn(async () => undefined),
       skipStage: vi.fn(async () => undefined),
       cancel: vi.fn(async () => undefined),
+      retryStage: vi.fn(async () => undefined),
     };
     const app = express();
     app.use(express.json());
@@ -1137,6 +1211,15 @@ describe('control routes', () => {
       expect(result.status).toBe(403);
       expect(result.body.error.code).toBe('OPERATOR_FORBIDDEN');
       expect(engine.approveGate).not.toHaveBeenCalled();
+
+      const retry = await jsonFetch<any>(baseUrl, '/pipelines/pipe1/stages/1/retry', {
+        method: 'POST',
+        body: JSON.stringify({ confirmPublish: true }),
+        headers: { 'x-operator-id': 'viewer1', 'x-operator-role': 'viewer' },
+      });
+      expect(retry.status).toBe(403);
+      expect(retry.body.error.code).toBe('OPERATOR_FORBIDDEN');
+      expect(engine.retryStage).not.toHaveBeenCalled();
     });
   });
 

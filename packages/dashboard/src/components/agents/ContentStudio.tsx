@@ -5,8 +5,9 @@ import { cn } from '../../lib/utils';
 import { useStore } from '../../stores/store';
 
 const CROSSPOST_TEMPLATE_NAME = 'Xiaohongshu Douyin Crosspost';
+const WECHAT_TEMPLATE_NAME = 'WeChat Article';
 
-const contentStages: Array<Pick<PipelineStage, 'name' | 'agentRole'>> = [
+const crosspostStages: Array<Pick<PipelineStage, 'name' | 'agentRole'>> = [
   { name: '选题调研', agentRole: 'trend-scout' },
   { name: '小红书笔记创作', agentRole: 'xiaohongshu-writer' },
   { name: '抖音脚本创作', agentRole: 'douyin-writer' },
@@ -14,6 +15,33 @@ const contentStages: Array<Pick<PipelineStage, 'name' | 'agentRole'>> = [
   { name: '配图生成', agentRole: 'xiaohongshu-writer' },
   { name: '发布执行', agentRole: 'social-publisher' },
 ];
+
+const wechatStages: Array<Pick<PipelineStage, 'name' | 'agentRole'>> = [
+  { name: '选题分析', agentRole: 'product-manager' },
+  { name: '内容创作', agentRole: 'wechat-writer' },
+  { name: '内容审核', agentRole: 'reviewer' },
+  { name: '排版优化', agentRole: 'wechat-writer' },
+  { name: '草稿箱同步', agentRole: 'wechat-writer' },
+  { name: '发布执行', agentRole: 'social-publisher' },
+];
+
+export function contentStudioWorkflow(selectedAgentId: string | null) {
+  return selectedAgentId === 'wechat-writer'
+    ? {
+      templateName: WECHAT_TEMPLATE_NAME,
+      title: 'WeChat Official Account Studio',
+      subtitle: '选题 · 写作 · 审核 · 排版 · 草稿箱 · 人工发布',
+      stages: wechatStages,
+      createLabel: 'Create WeChat article run',
+    }
+    : {
+      templateName: CROSSPOST_TEMPLATE_NAME,
+      title: 'Content Production Studio',
+      subtitle: 'Xiaohongshu + Douyin · artifacts first · human-gated publishing',
+      stages: crosspostStages,
+      createLabel: 'Create crosspost run',
+    };
+}
 
 const stageStyle: Record<string, { dot: string; badge: string; label: string }> = {
   pending: { dot: 'bg-gray-600', badge: 'bg-gray-500/10 text-gray-500', label: 'Pending' },
@@ -39,19 +67,27 @@ function isCrosspostPipeline(pipeline: Pipeline, templateId?: string) {
   return roles.includes('trend-scout') && roles.includes('social-publisher');
 }
 
+function isWeChatPipeline(pipeline: Pipeline, templateId?: string) {
+  if (templateId && pipeline.templateId === templateId) return true;
+  const names = pipeline.stages.map(stage => stage.name);
+  return names.includes('草稿箱同步') && names.includes('发布执行');
+}
+
 function StageStepper({
   pipeline,
+  workflowStages,
   selectedStageIndex,
   onSelect,
 }: {
   pipeline: Pipeline;
+  workflowStages: Array<Pick<PipelineStage, 'name' | 'agentRole'>>;
   selectedStageIndex: number;
   onSelect: (index: number) => void;
 }) {
   return (
     <div data-testid="content-stage-stepper" className="overflow-x-auto border-b border-border bg-surface/60 px-4 py-4">
       <div className="mx-auto flex min-w-[760px] max-w-[1280px] items-start">
-        {contentStages.map((fallback, index) => {
+        {workflowStages.map((fallback, index) => {
           const stage = pipeline.stages[index];
           const name = stage?.name || fallback.name;
           const role = stage?.agentRole || fallback.agentRole;
@@ -84,7 +120,7 @@ function StageStepper({
                 <span className="mt-0.5 max-w-[110px] truncate text-[9px] text-gray-600">{role}</span>
                 {isCurrent && <span className="mt-1 text-[8px] font-semibold uppercase tracking-[0.14em] text-accent-light">Current</span>}
               </button>
-              {index < contentStages.length - 1 && (
+              {index < workflowStages.length - 1 && (
                 <div className={cn(
                   'mt-4 h-px flex-1 bg-border',
                   status === 'done' && pipeline.stages[index + 1]?.status !== 'pending' ? 'bg-emerald-500/60' : '',
@@ -121,6 +157,7 @@ export function ContentStudio() {
     loadPipelines,
     loadTemplates,
     loadTasks,
+    selectedAgentId,
   } = useStore();
   const [initialLoading, setInitialLoading] = useState(true);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
@@ -135,6 +172,7 @@ export function ContentStudio() {
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [showPublishConfirm, setShowPublishConfirm] = useState(false);
+  const [publishConfirmAction, setPublishConfirmAction] = useState<'approve' | 'retry'>('approve');
   const [publishPhrase, setPublishPhrase] = useState('');
   const [cancelArmed, setCancelArmed] = useState(false);
   const [revisionPrompt, setRevisionPrompt] = useState('');
@@ -149,15 +187,19 @@ export function ContentStudio() {
     return () => { mounted = false; };
   }, [loadPipelines, loadTemplates]);
 
-  const crosspostTemplate = useMemo(
-    () => templates.find(template => template.name === CROSSPOST_TEMPLATE_NAME),
-    [templates],
+  const isWeChatMode = selectedAgentId === 'wechat-writer';
+  const workflow = contentStudioWorkflow(selectedAgentId);
+  const workflowTemplate = useMemo(
+    () => templates.find(template => template.name === workflow.templateName),
+    [templates, workflow.templateName],
   );
   const contentPipelines = useMemo(
     () => pipelines
-      .filter(pipeline => isCrosspostPipeline(pipeline, crosspostTemplate?.id))
+      .filter(pipeline => isWeChatMode
+        ? isWeChatPipeline(pipeline, workflowTemplate?.id)
+        : isCrosspostPipeline(pipeline, workflowTemplate?.id))
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()),
-    [pipelines, crosspostTemplate?.id],
+    [pipelines, isWeChatMode, workflowTemplate?.id],
   );
   const pipeline = contentPipelines.find(item => item.id === selectedRunId) || null;
 
@@ -174,7 +216,7 @@ export function ContentStudio() {
 
   useEffect(() => {
     if (!pipeline) return;
-    setSelectedStageIndex(Math.min(Math.max(pipeline.currentStageIndex, 0), contentStages.length - 1));
+    setSelectedStageIndex(Math.min(Math.max(pipeline.currentStageIndex, 0), workflow.stages.length - 1));
     setRevisionPrompt('');
     setRevisionMessage('');
     setRevisionState('idle');
@@ -204,14 +246,28 @@ export function ContentStudio() {
   const selectedStage = pipeline?.stages[selectedStageIndex];
   const selectedStageDetails = selectedStage || (pipeline ? {
     index: selectedStageIndex,
-    ...contentStages[selectedStageIndex],
+    ...workflow.stages[selectedStageIndex],
     status: 'pending' as const,
   } : null);
   const selectedAgent = agents.find(agent =>
     agent.id === selectedStageDetails?.agentRole || agent.role === selectedStageDetails?.agentRole,
   );
   const imageArtifacts = artifacts.filter(artifact => artifact.kind === 'image' && /\.png$/i.test(artifact.name));
-  const participantRoles = Array.from(new Set(contentStages.map(stage => String(stage.agentRole))));
+  const participantRoles = Array.from(new Set(workflow.stages.map(stage => String(stage.agentRole))));
+  const publishStageAhead = pipeline
+    ? (pipeline.stages[pipeline.currentStageIndex + 1] || workflow.stages[pipeline.currentStageIndex + 1])?.agentRole === 'social-publisher'
+    : false;
+  const currentStage = pipeline?.stages[pipeline.currentStageIndex];
+  const retryableStage = pipeline?.status === 'awaiting_retry' && currentStage?.status === 'rolled_back'
+    ? currentStage
+    : null;
+  const retryRequiresPublishConfirmation = Boolean(
+    retryableStage
+    && (
+      retryableStage.agentRole === 'social-publisher'
+      || (retryableStage.publishTools?.length || 0) > 0
+    )
+  );
 
   const selectRun = (id: string) => {
     setSelectedRunId(id);
@@ -232,13 +288,13 @@ export function ContentStudio() {
   };
 
   const createRun = async () => {
-    if (!crosspostTemplate || !runInput.trim() || busyAction) return;
+    if (!workflowTemplate || !runInput.trim() || busyAction) return;
     setBusyAction('create');
     setActionError(null);
     try {
       const created = await api.pipelines.create({
-        name: runName.trim() || `Crosspost · ${runInput.trim().slice(0, 42)}`,
-        templateId: crosspostTemplate.id,
+        name: runName.trim() || `${isWeChatMode ? 'WeChat' : 'Crosspost'} · ${runInput.trim().slice(0, 42)}`,
+        templateId: workflowTemplate.id,
         input: runInput.trim(),
         gateMode,
       });
@@ -250,18 +306,18 @@ export function ContentStudio() {
       setRunInput('');
       await loadPipelines();
     } catch (error) {
-      setActionError(errorMessage(error, 'Could not create the crosspost run.'));
+      setActionError(errorMessage(error, 'Could not create the content run.'));
     } finally {
       setBusyAction(null);
     }
   };
 
-  const runPipelineAction = async (action: 'approve' | 'skip' | 'cancel') => {
+  const runPipelineAction = async (action: 'approve' | 'skip' | 'cancel', confirmPublish = false) => {
     if (!pipeline || busyAction) return;
     setBusyAction(action);
     setActionError(null);
     try {
-      if (action === 'approve') await api.pipelines.approve(pipeline.id);
+      if (action === 'approve') await api.pipelines.approve(pipeline.id, confirmPublish);
       if (action === 'skip') await api.pipelines.skip(pipeline.id);
       if (action === 'cancel') await api.pipelines.cancel(pipeline.id, true);
       await refreshPipeline(pipeline.id);
@@ -275,13 +331,38 @@ export function ContentStudio() {
 
   const approve = () => {
     if (!pipeline) return;
-    const next = pipeline.stages[pipeline.currentStageIndex + 1] || contentStages[pipeline.currentStageIndex + 1];
-    if (next?.agentRole === 'social-publisher') {
+    if (publishStageAhead) {
       setPublishPhrase('');
+      setPublishConfirmAction('approve');
       setShowPublishConfirm(true);
       return;
     }
     void runPipelineAction('approve');
+  };
+
+  const retryCurrentStage = async (confirmPublish = false) => {
+    if (!pipeline || !retryableStage || busyAction) return;
+    setBusyAction('retry');
+    setActionError(null);
+    try {
+      await api.pipelines.retryStage(pipeline.id, retryableStage.index, confirmPublish);
+      await refreshPipeline(pipeline.id);
+    } catch (error) {
+      setActionError(errorMessage(error, 'Could not retry this stage.'));
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const requestRetry = () => {
+    if (!retryableStage) return;
+    if (retryRequiresPublishConfirmation) {
+      setPublishPhrase('');
+      setPublishConfirmAction('retry');
+      setShowPublishConfirm(true);
+      return;
+    }
+    void retryCurrentStage();
   };
 
   const submitRevision = async () => {
@@ -293,7 +374,7 @@ export function ContentStudio() {
         ? `\n\nCurrent stage output:\n${selectedStageDetails.output}`
         : '';
       const result = await api.agents.execute(selectedAgent.id, {
-        prompt: `Revision request for "${selectedStageDetails.name}" in crosspost run "${pipeline.name}".\n\n${revisionPrompt.trim()}${previousOutput}\n\nReturn a complete revised replacement for this stage.`,
+        prompt: `Revision request for "${selectedStageDetails.name}" in content run "${pipeline.name}".\n\n${revisionPrompt.trim()}${previousOutput}\n\nReturn a complete revised replacement for this stage.`,
       });
       setRevisionState('sent');
       setRevisionMessage(`Revision task ${result.taskId} started with ${selectedAgent.name}.`);
@@ -318,10 +399,10 @@ export function ContentStudio() {
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span className="text-lg">✦</span>
-            <h2 className="truncate text-sm font-bold">Content Production Studio</h2>
+            <h2 className="truncate text-sm font-bold">{workflow.title}</h2>
             {pipeline && <PipelineStatus status={pipeline.status} />}
           </div>
-          <p className="mt-0.5 truncate text-[10px] text-gray-500">Xiaohongshu + Douyin workflow · artifacts first · human-gated publishing</p>
+          <p className="mt-0.5 truncate text-[10px] text-gray-500">{workflow.subtitle}</p>
         </div>
         <div className="flex items-center gap-2">
           {contentPipelines.length > 0 && (
@@ -354,24 +435,24 @@ export function ContentStudio() {
         <div className="flex flex-1 items-center justify-center p-6">
           <div className="max-w-md rounded-2xl border border-border bg-surface p-7 text-center">
             <div className="text-3xl">🧩</div>
-            <h3 className="mt-3 text-base font-bold">Start a crosspost production run</h3>
+            <h3 className="mt-3 text-base font-bold">{workflow.createLabel}</h3>
             <p className="mt-2 text-xs leading-relaxed text-gray-500">
               Research, write, review, generate images, and explicitly approve publication from one artifact-first workspace.
             </p>
-            {!crosspostTemplate && <p className="mt-3 text-xs text-amber-300">The “{CROSSPOST_TEMPLATE_NAME}” template is not available yet.</p>}
+            {!workflowTemplate && <p className="mt-3 text-xs text-amber-300">The “{workflow.templateName}” template is not available yet.</p>}
             <button
               type="button"
-              disabled={!crosspostTemplate}
+              disabled={!workflowTemplate}
               onClick={openCreate}
               className="mt-5 rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-white hover:bg-accent-light disabled:cursor-not-allowed disabled:opacity-40"
             >
-              Create crosspost run
+              {workflow.createLabel}
             </button>
           </div>
         </div>
       ) : (
         <>
-          <StageStepper pipeline={pipeline} selectedStageIndex={selectedStageIndex} onSelect={setSelectedStageIndex} />
+          <StageStepper pipeline={pipeline} workflowStages={workflow.stages} selectedStageIndex={selectedStageIndex} onSelect={setSelectedStageIndex} />
           <div className="grid min-h-0 flex-1 grid-cols-1 overflow-y-auto 2xl:grid-cols-[minmax(0,1fr)_300px] 2xl:overflow-hidden">
             <main className="min-w-0 space-y-4 p-4 2xl:overflow-y-auto">
               <section data-testid="content-artifact-canvas" className="rounded-2xl border border-border bg-surface shadow-lg shadow-black/10">
@@ -420,8 +501,8 @@ export function ContentStudio() {
                 {imageArtifacts.length > 0 && (
                   <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
                     {imageArtifacts.map(artifact => (
-                      <a key={artifact.id} href={artifact.url} target="_blank" rel="noreferrer" className="group overflow-hidden rounded-xl border border-border bg-background hover:border-accent/50">
-                        <img src={artifact.url} alt={artifact.name} className="aspect-[3/4] w-full object-cover transition duration-200 group-hover:scale-[1.02]" />
+                      <a key={artifact.id} href={artifact.url} target="_blank" rel="noreferrer" className={cn('group overflow-hidden rounded-xl border border-border bg-background hover:border-accent/50', isWeChatMode && 'col-span-2')}>
+                        <img src={artifact.url} alt={artifact.name} className={cn('w-full object-cover transition duration-200 group-hover:scale-[1.02]', isWeChatMode ? 'aspect-[900/383]' : 'aspect-[3/4]')} />
                         <span className="block truncate px-2 py-1.5 text-[10px] text-gray-500">{artifact.name}</span>
                       </a>
                     ))}
@@ -433,7 +514,16 @@ export function ContentStudio() {
             <aside className="border-t border-border bg-surface p-4 2xl:overflow-y-auto 2xl:border-l 2xl:border-t-0">
               <section>
                 <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-gray-600">Run controls</div>
-                <div className="mt-3 grid grid-cols-3 gap-2">
+                <div className="mt-3 grid grid-cols-4 gap-2">
+                  <button
+                    type="button"
+                    onClick={requestRetry}
+                    disabled={!retryableStage || !!busyAction}
+                    title={!retryableStage ? 'Retry is available for a rolled-back stage awaiting confirmation.' : undefined}
+                    className="rounded-lg bg-blue-500/10 px-2 py-2 text-[10px] font-semibold text-blue-300 transition hover:bg-blue-500/20 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {busyAction === 'retry' ? '…' : 'Retry'}
+                  </button>
                   <button
                     type="button"
                     onClick={approve}
@@ -446,7 +536,12 @@ export function ContentStudio() {
                   <button
                     type="button"
                     onClick={() => void runPipelineAction('skip')}
-                    disabled={!isActivePipeline(pipeline) || !!busyAction}
+                    title={publishStageAhead ? 'The publish gate cannot be bypassed with Skip.' : undefined}
+                    disabled={
+                      !isActivePipeline(pipeline)
+                      || !!busyAction
+                      || publishStageAhead
+                    }
                     className="rounded-lg bg-amber-500/10 px-2 py-2 text-[10px] font-semibold text-amber-300 transition hover:bg-amber-500/20 disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     {busyAction === 'skip' ? '…' : 'Skip'}
@@ -527,12 +622,12 @@ export function ContentStudio() {
             <div className="flex items-start justify-between gap-4">
               <div>
                 <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-accent-light">New workflow</div>
-                <h3 id="content-run-title" className="mt-1 text-lg font-bold">Create crosspost run</h3>
+                <h3 id="content-run-title" className="mt-1 text-lg font-bold">{workflow.createLabel}</h3>
               </div>
               <button type="button" onClick={() => setShowCreate(false)} aria-label="Close create run dialog" className="text-gray-500 hover:text-white">×</button>
             </div>
-            {!crosspostTemplate ? (
-              <p className="mt-5 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200">The required crosspost template is unavailable. Refresh templates and try again.</p>
+            {!workflowTemplate ? (
+              <p className="mt-5 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200">The required “{workflow.templateName}” template is unavailable. Refresh templates and try again.</p>
             ) : (
               <div className="mt-5 space-y-4">
                 <label className="block">
@@ -566,9 +661,13 @@ export function ContentStudio() {
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4">
           <div role="dialog" aria-modal="true" aria-labelledby="publish-confirm-title" className="w-full max-w-md rounded-2xl border border-amber-500/40 bg-surface p-5 shadow-2xl">
             <div className="text-xl">⚠</div>
-            <h3 id="publish-confirm-title" className="mt-2 text-lg font-bold">Approve into publish execution?</h3>
+            <h3 id="publish-confirm-title" className="mt-2 text-lg font-bold">
+              {publishConfirmAction === 'retry' ? 'Retry the publish stage?' : 'Approve into publish execution?'}
+            </h3>
             <p className="mt-2 text-xs leading-relaxed text-gray-400">
-              This advances “{pipeline.name}” to the social publisher. Verify the final copy and generated PNGs before allowing platform publishing tools to run.
+              {publishConfirmAction === 'retry'
+                ? `This creates a new publisher task for “${pipeline.name}”. Check the platform first because the interrupted attempt may have reached it.`
+                : `This advances “${pipeline.name}” to the social publisher. Verify the final copy and generated PNGs before allowing platform publishing tools to run.`}
             </p>
             <label className="mt-4 block text-[11px] font-medium text-gray-300">
               Type <span className="rounded bg-background px-1.5 py-0.5 font-mono text-amber-200">PUBLISH</span> to continue
@@ -576,8 +675,17 @@ export function ContentStudio() {
             </label>
             <div className="mt-5 flex justify-end gap-2">
               <button type="button" onClick={() => setShowPublishConfirm(false)} className="rounded-lg px-3 py-2 text-xs text-gray-400 hover:text-white">Go back</button>
-              <button type="button" onClick={() => { setShowPublishConfirm(false); void runPipelineAction('approve'); }} disabled={publishPhrase !== 'PUBLISH' || busyAction === 'approve'} className="rounded-lg bg-amber-500 px-3 py-2 text-xs font-bold text-black hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-40">
-                Approve publish stage
+              <button
+                type="button"
+                onClick={() => {
+                  setShowPublishConfirm(false);
+                  if (publishConfirmAction === 'retry') void retryCurrentStage(true);
+                  else void runPipelineAction('approve', true);
+                }}
+                disabled={publishPhrase !== 'PUBLISH' || busyAction === publishConfirmAction}
+                className="rounded-lg bg-amber-500 px-3 py-2 text-xs font-bold text-black hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {publishConfirmAction === 'retry' ? 'Retry publish stage' : 'Approve publish stage'}
               </button>
             </div>
           </div>

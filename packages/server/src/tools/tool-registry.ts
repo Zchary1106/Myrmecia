@@ -192,6 +192,26 @@ export const BUILTIN_TOOLS: BuiltinToolDefinition[] = [
     outputSchema: { type: 'object' },
     metadata: { readOnly: false, network: false, writesWorkspace: true, writesOutsideWorkspace: false, destructive: false, outputFormat: 'png' },
   },
+  {
+    id: 'image.generate_wechat_cover',
+    name: 'WeChat Cover Renderer',
+    description: 'Render a 900x383 PNG cover for a WeChat Official Account article.',
+    category: 'asset',
+    riskLevel: 'medium',
+    version: '1.0.0',
+    implementationRef: 'packages/server/src/tools/image-cards.ts:renderWeChatCover',
+    inputSchema: {
+      type: 'object',
+      required: ['title'],
+      properties: {
+        title: { type: 'string', minLength: 1 },
+        subtitle: { type: 'string' },
+        theme: { type: 'string' },
+      },
+    },
+    outputSchema: { type: 'object' },
+    metadata: { readOnly: false, network: false, writesWorkspace: true, writesOutsideWorkspace: false, destructive: false, outputFormat: 'png' },
+  },
 
   // ---- engineering tools (sandboxed, confined to the task workspace) ----
   {

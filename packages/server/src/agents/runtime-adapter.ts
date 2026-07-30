@@ -16,6 +16,7 @@ import type {
   SkillDefinition,
   SkillVersion,
 } from '../types.js';
+import { isMcpTool } from '../tools/mcp-manager.js';
 
 export interface RuntimeExecutionContext {
   agent: AgentDefinition;
@@ -88,6 +89,8 @@ export function agentHasNoTools(agent: AgentDefinition): boolean {
  * the server-side provider switch explicitly selects Copilot.
  */
 export function shouldUseTsAgentLoop(agent: AgentDefinition): boolean {
+  const tools = agent.allowedTools || agent.config.allowedTools || [];
   return agentHasNoTools(agent)
+    || tools.some(isMcpTool)
     || process.env.MYRMECIA_MODEL_PROVIDER?.trim().toLowerCase() === 'copilot';
 }

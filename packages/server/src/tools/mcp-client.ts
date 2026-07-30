@@ -14,6 +14,8 @@ export interface McpServerConfig {
   command: string;
   args?: string[];
   env?: Record<string, string>;
+  envAllow?: string[];
+  envOmit?: string[];
   cwd?: string;
 }
 
@@ -29,6 +31,18 @@ export interface McpCallResult {
 }
 
 const PROTOCOL_VERSION = '2024-11-05';
+
+export function buildMcpChildEnv(
+  config: Pick<McpServerConfig, 'env' | 'envAllow' | 'envOmit'>,
+  parentEnv: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  const inherited = config.envAllow
+    ? Object.fromEntries(config.envAllow.flatMap(key => parentEnv[key] === undefined ? [] : [[key, parentEnv[key]]]))
+    : parentEnv;
+  const env = { ...inherited, ...(config.env ?? {}) };
+  for (const key of config.envOmit ?? []) delete env[key];
+  return env;
+}
 
 export class McpClient {
   private proc?: ChildProcess;
@@ -47,7 +61,7 @@ export class McpClient {
 
   async connect(timeoutMs = 15000): Promise<void> {
     this.proc = spawn(this.config.command, this.config.args ?? [], {
-      env: { ...process.env, ...(this.config.env ?? {}) },
+      env: buildMcpChildEnv(this.config),
       cwd: this.config.cwd,
       stdio: ['pipe', 'pipe', 'pipe'],
     });

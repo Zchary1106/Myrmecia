@@ -358,6 +358,7 @@ async function main() {
     // Recover any tasks interrupted by previous shutdown
     await taskQueue.recoverRunningTasks();
     await pipelineEngine.recoverInterruptedPipelines();
+    taskQueue.startWorker();
     await qualityLoop.recoverInterruptedAttempts();
     teamCoordinator.recover();
   };

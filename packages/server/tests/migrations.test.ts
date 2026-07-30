@@ -28,6 +28,7 @@ describe('database migrations', () => {
     expect(rows.map(row => row.id)).toContain('202606280001_allow_pipeline_awaiting_retry_status');
     expect(rows.map(row => row.id)).toContain('202606280002_add_workspace_id_to_platform_events');
     expect(rows.map(row => row.id)).toContain('202606300001_add_execution_ledger');
+    expect(rows.map(row => row.id)).toContain('202607300001_add_governed_publish_state');
 
     const columns = db.all('PRAGMA table_info(tasks)') as { name: string }[];
     expect(columns.map(column => column.name)).toContain('workspace_path');
@@ -50,6 +51,16 @@ describe('database migrations', () => {
       SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'execution_ledger'
     `);
     expect(ledgerTables).toHaveLength(1);
+    const publishStateTables = db.all(`
+      SELECT name FROM sqlite_master
+      WHERE type = 'table'
+        AND name IN ('publish_authorization_consumptions', 'wechat_draft_outputs')
+      ORDER BY name
+    `) as { name: string }[];
+    expect(publishStateTables.map(row => row.name)).toEqual([
+      'publish_authorization_consumptions',
+      'wechat_draft_outputs',
+    ]);
   });
 
   it('does not re-run tracked migrations on restart', () => {
@@ -64,5 +75,34 @@ describe('database migrations', () => {
     expect(ids).toContain('202604260001_add_workspace_path_to_tasks');
     expect(ids).toContain('202604270001_add_operator_preferences');
     expect(ids).toContain('202605100001_expand_operator_action_targets');
+  });
+
+  it('adds governed publish tables to databases that already applied the execution ledger migration', () => {
+    const db = getDb();
+    db.exec(`
+      DROP TABLE publish_authorization_consumptions;
+      DROP TABLE wechat_draft_outputs;
+      DELETE FROM schema_migrations WHERE id = '202607300001_add_governed_publish_state';
+    `);
+    expect(
+      (db.all(`
+        SELECT name FROM sqlite_master
+        WHERE type = 'table'
+          AND name IN ('publish_authorization_consumptions', 'wechat_draft_outputs')
+      `) as { name: string }[]),
+    ).toHaveLength(0);
+
+    closeDb();
+    process.env.DB_PATH = dbPath;
+    const upgraded = getDb();
+    const migrationIds = upgraded.all('SELECT id FROM schema_migrations') as { id: string }[];
+    expect(migrationIds.map(row => row.id)).toContain('202607300001_add_governed_publish_state');
+    expect(migrationIds.map(row => row.id)).toContain('202606300001_add_execution_ledger');
+    const tables = upgraded.all(`
+      SELECT name FROM sqlite_master
+      WHERE type = 'table'
+        AND name IN ('publish_authorization_consumptions', 'wechat_draft_outputs')
+    `) as { name: string }[];
+    expect(tables).toHaveLength(2);
   });
 });
