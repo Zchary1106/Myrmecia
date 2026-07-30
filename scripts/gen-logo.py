@@ -6,6 +6,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 OUT = os.path.join(ROOT, "packages", "dashboard", "public")
+DESKTOP_OUT = os.path.join(ROOT, "packages", "desktop", "assets")
 os.makedirs(OUT, exist_ok=True)
 
 # ---- palette (matches dashboard accents) ----
@@ -195,5 +196,23 @@ def build_lockup():
     mark.save(os.path.join(OUT, "myrmecia-mark.png"))
     print("wrote", os.path.join(OUT, "myrmecia-mark.png"), mark.size)
 
+def build_desktop_icons():
+    os.makedirs(DESKTOP_OUT, exist_ok=True)
+    icon = draw_mark(1024, scale=3)
+    png_path = os.path.join(DESKTOP_OUT, "icon.png")
+    ico_path = os.path.join(DESKTOP_OUT, "icon.ico")
+    icns_path = os.path.join(DESKTOP_OUT, "icon.icns")
+    icon.save(png_path)
+    icon.save(
+        ico_path,
+        format="ICO",
+        sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)],
+    )
+    icon.save(icns_path, format="ICNS")
+    print("wrote", png_path, icon.size)
+    print("wrote", ico_path)
+    print("wrote", icns_path)
+
 build_lockup()
+build_desktop_icons()
 print("done")
