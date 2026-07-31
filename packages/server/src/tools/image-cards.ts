@@ -166,17 +166,17 @@ body{width:${CARD_WIDTH}px;height:${CARD_HEIGHT}px;font-family:${FONT_STACK};
 main{flex:1;display:flex;flex-direction:column;justify-content:center;min-height:0}
 .tag{display:inline-block;background:${t.accent};color:#fff;font-size:32px;font-weight:600;
   padding:14px 34px;border-radius:100px;align-self:flex-start}
-h1{font-size:86px;line-height:1.28;font-weight:800;margin-top:52px;letter-spacing:-1px}
-h2{font-size:64px;line-height:1.34;font-weight:800;margin-top:28px}
+h1{font-size:86px;line-height:1.28;font-weight:800;margin-top:52px;letter-spacing:-1px;white-space:pre-line}
+h2{font-size:64px;line-height:1.34;font-weight:800;margin-top:28px;white-space:pre-line}
 h2.end{font-size:72px}
-.sub{font-size:40px;line-height:1.68;color:${t.muted};margin-top:48px}
+.sub{font-size:40px;line-height:1.68;color:${t.muted};margin-top:48px;white-space:pre-line}
 .body{font-size:42px;line-height:1.76;color:${t.muted};margin-top:40px;white-space:pre-line}
 .idx{font-size:104px;font-weight:800;color:${t.accent};line-height:1}
 .hl{color:${t.accent}}
 ul{margin-top:44px;list-style:none}
 li{font-size:42px;line-height:1.58;color:${t.muted};margin-bottom:34px;padding-left:52px;position:relative}
 li:last-child{margin-bottom:0}
-li::before{content:"✅";position:absolute;left:0;top:2px;font-size:36px}
+li::before{content:"●";position:absolute;left:0;top:2px;font-size:28px;color:${t.accent}}
 .tip{flex:none;margin-top:56px;background:${t.card};border-left:10px solid ${t.accent};border-radius:20px;
   padding:34px 38px;font-size:36px;line-height:1.6;color:${t.text}}
 </style></head><body><main>${cardBody(card)}</main>${
