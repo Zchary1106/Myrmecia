@@ -15,7 +15,9 @@
     "demo:seed": "AGENT_FACTORY_DEMO_MODE=true DB_PATH=packages/server/data/demo.db pnpm --filter @myrmecia/server exec tsx src/demo/seed-demo.ts",
     "demo:clean": "rm -f packages/server/data/demo.db packages/server/data/demo.db-wal packages/server/data/demo.db-shm",
     "cli": "pnpm --filter @myrmecia/cli start",
-    "lint": "pnpm -r --if-present lint"
+    "lint": "pnpm -r --if-present lint",
+    "validate:social-workflow": "pnpm --filter @myrmecia/server validate:social-workflow",
+    "health:social-workflow": "pnpm --filter @myrmecia/server health:social-workflow"
   },
   "devDependencies": {
     "concurrently": "^9.1.2",

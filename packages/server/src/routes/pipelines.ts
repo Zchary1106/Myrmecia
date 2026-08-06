@@ -28,6 +28,7 @@ const listPipelinesQuerySchema = z.object({
 });
 const approvePipelineSchema = z.object({
   confirmPublish: z.boolean().optional(),
+  note: z.string().trim().max(2000).optional(),
 }).default({});
 
 function getAccessiblePipeline(req: any, pipelineId: string): Pipeline {
@@ -145,7 +146,11 @@ export function createPipelineRoutes(pipelineEngine: PipelineEngine): Router {
     try {
       getAccessiblePipeline(req, req.params.id);
       const path = z.string().trim().min(1).parse(req.query.path);
-      res.sendFile(resolvePipelineArtifact(req.params.id, path), { dotfiles: 'deny' });
+      // Pipeline workspaces intentionally live below `.agent-factory`. The
+      // resolver above already realpath-checks that the requested file stays
+      // inside that workspace, so denying every hidden path segment blocks all
+      // legitimate generated images.
+      res.sendFile(resolvePipelineArtifact(req.params.id, path), { dotfiles: 'allow' });
     } catch (err) {
       sendError(res, err);
     }
@@ -155,8 +160,8 @@ export function createPipelineRoutes(pipelineEngine: PipelineEngine): Router {
     try {
       const actor = requireOperatorRole(req, 'pipeline.approve', ['admin', 'operator']);
       assertPipelineAccess(req, req.params.id);
-      const { confirmPublish } = parseBody(approvePipelineSchema, req) ?? {};
-      await pipelineEngine.approveGate(req.params.id, confirmPublish === true);
+      const { confirmPublish, note } = parseBody(approvePipelineSchema, req) ?? {};
+      await pipelineEngine.approveGate(req.params.id, confirmPublish === true, actor, note);
       createOperatorAction({
         action: 'pipeline.approve',
         actor,
@@ -278,6 +283,31 @@ export function createPipelineRoutes(pipelineEngine: PipelineEngine): Router {
             message: err.message,
             details: { required: { confirmPublish: true } },
           },
+        });
+      }
+      sendError(res, err);
+    }
+  });
+
+  router.post('/:id/stages/:index/rerun', async (req, res) => {
+    try {
+      const actor = requireOperatorRole(req, 'pipeline.stage.rerun', ['admin', 'operator']);
+      const stageIndex = parseInt(req.params.index, 10);
+      assertPipelineAccess(req, req.params.id);
+      await pipelineEngine.rerunStage(req.params.id, stageIndex);
+      createOperatorAction({
+        action: 'pipeline.stage.rerun',
+        actor,
+        targetType: 'pipeline',
+        targetId: req.params.id,
+        pipelineId: req.params.id,
+        metadata: { stageIndex },
+      });
+      res.json({ success: true, message: `Stage ${stageIndex} re-run initiated` });
+    } catch (err) {
+      if (err instanceof PublishConfirmationRequiredError) {
+        return res.status(409).json({
+          error: { code: 'PUBLISH_CONFIRMATION_REQUIRED', message: err.message },
         });
       }
       sendError(res, err);

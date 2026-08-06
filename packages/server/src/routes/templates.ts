@@ -15,6 +15,15 @@ const templateStageSchema = z.object({
   promptTemplate: z.string().trim().min(1),
   dependsOn: z.array(z.number().int().nonnegative()).optional(),
   publishTools: z.array(z.string().trim().min(1)).optional(),
+  requiresApproval: z.boolean().optional(),
+  approvalKind: z.enum(['content', 'publish']).optional(),
+  outputSchema: z.string().trim().min(1).optional(),
+  outputPolicy: z.object({
+    field: z.string().trim().min(1),
+    allowedValues: z.array(z.union([z.string(), z.number(), z.boolean()])).min(1),
+    onFailure: z.enum(['blocked', 'failed']).optional(),
+    message: z.string().optional(),
+  }).optional(),
 });
 
 const templateBodySchema = z.object({
@@ -35,6 +44,15 @@ const validateTemplateBodySchema = z.object({
     promptTemplate: z.string().optional(),
     dependsOn: z.array(z.number().int().nonnegative()).optional(),
     publishTools: z.array(z.string().trim().min(1)).optional(),
+    requiresApproval: z.boolean().optional(),
+    approvalKind: z.enum(['content', 'publish']).optional(),
+    outputSchema: z.string().optional(),
+    outputPolicy: z.object({
+      field: z.string().optional(),
+      allowedValues: z.array(z.union([z.string(), z.number(), z.boolean()])).optional(),
+      onFailure: z.enum(['blocked', 'failed']).optional(),
+      message: z.string().optional(),
+    }).optional(),
   })).default([]),
 });
 

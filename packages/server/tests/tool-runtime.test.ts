@@ -59,6 +59,17 @@ describe('tool runtime', () => {
     expect(policy.allowedTools).toContain('browser.query');
   });
 
+  it('registers deterministic social compliance and media inspection tools', () => {
+    expect(getTool('content.compliance_check')).toMatchObject({
+      category: 'content',
+      riskLevel: 'low',
+    });
+    expect(getTool('media.inspect')).toMatchObject({
+      category: 'asset',
+      riskLevel: 'low',
+    });
+  });
+
   it('persists tool execution lifecycle', () => {
     const agent = createAgent({
       id: 'tool-agent',

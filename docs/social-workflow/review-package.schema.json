@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Social Human Review Package",
+  "type": "object",
+  "required": ["schema_version", "content_id", "recommendation", "platforms", "unresolved_findings"],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "content_id": { "type": "string", "minLength": 1 },
+    "recommendation": { "enum": ["approve", "changes_requested", "reject"] },
+    "platforms": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["platform", "final_title", "ready_for_human_review"],
+        "properties": {
+          "platform": { "enum": ["douyin", "xiaohongshu", "wechat"] },
+          "final_title": { "type": "string" },
+          "ready_for_human_review": { "type": "boolean" },
+          "notes": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "unresolved_findings": { "type": "array", "items": { "type": "string" } }
+  }
+}

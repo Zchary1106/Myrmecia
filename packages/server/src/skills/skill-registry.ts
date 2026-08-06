@@ -16,13 +16,7 @@ function titleFromMarkdown(content: string, fallback: string): string {
   return heading ? heading.replace(/^#\s+/, '').trim() : fallback;
 }
 
-export function syncBuiltinSkills(agentsDir: string): void {
-  if (!existsSync(agentsDir)) return;
-  const files = readdirSync(agentsDir).filter(file => file.endsWith('.md')).sort();
-  for (const file of files) {
-    const id = basename(file, '.md');
-    const sourcePath = `agents/${file}`;
-    const fullPath = join(agentsDir, file);
+function importSkillFile(id: string, sourcePath: string, fullPath: string): void {
     const content = readFileSync(fullPath, 'utf8');
     const skill = upsertSkill({
       id,
@@ -41,6 +35,25 @@ export function syncBuiltinSkills(agentsDir: string): void {
         createdBy: 'system',
         publishedBy: 'system',
       });
+    }
+}
+
+export function syncBuiltinSkills(agentsDir: string, skillsDir?: string): void {
+  if (existsSync(agentsDir)) {
+    const files = readdirSync(agentsDir).filter(file => file.endsWith('.md')).sort();
+    for (const file of files) {
+      importSkillFile(basename(file, '.md'), `agents/${file}`, join(agentsDir, file));
+    }
+  }
+
+  if (skillsDir && existsSync(skillsDir)) {
+    const entries = readdirSync(skillsDir, { withFileTypes: true })
+      .filter(entry => entry.isDirectory())
+      .sort((a, b) => a.name.localeCompare(b.name));
+    for (const entry of entries) {
+      const fullPath = join(skillsDir, entry.name, 'SKILL.md');
+      if (!existsSync(fullPath)) continue;
+      importSkillFile(entry.name, `skills/${entry.name}/SKILL.md`, fullPath);
     }
   }
 

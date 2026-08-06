@@ -68,3 +68,19 @@ export function getCompletedStageIndices(pipelineId: string): Set<number> {
 export function clearCheckpoints(pipelineId: string): void {
   getDb().run('UPDATE pipelines SET stage_checkpoints = ? WHERE id = ?', '{}', pipelineId);
 }
+
+export function clearStageCheckpoints(pipelineId: string, stageIndices: number[]): void {
+  if (stageIndices.length === 0) return;
+  const row = getDb().get('SELECT stage_checkpoints FROM pipelines WHERE id = ?', pipelineId) as any;
+  if (!row) return;
+  let checkpoints: Record<string, StageCheckpoint> = {};
+  try {
+    checkpoints = JSON.parse(row.stage_checkpoints || '{}');
+  } catch {}
+  for (const index of stageIndices) delete checkpoints[String(index)];
+  getDb().run(
+    'UPDATE pipelines SET stage_checkpoints = ? WHERE id = ?',
+    JSON.stringify(checkpoints),
+    pipelineId,
+  );
+}

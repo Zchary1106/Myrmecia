@@ -31,7 +31,12 @@ export interface RuntimeExecutionContext {
 
 export interface RuntimeAdapterResult {
   output: string;
-  costUSD: number;
+  costUSD: number | null;
+  costType?: 'exact' | 'estimated' | 'subscription' | 'unavailable';
+  provider?: string;
+  actualModelId?: string;
+  aiUnits?: number;
+  billingMultiplier?: number;
   inputTokens: number;
   outputTokens: number;
   durationMs: number;

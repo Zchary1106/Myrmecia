@@ -90,15 +90,24 @@ describe('CopilotProvider', () => {
     let sessionConfig: any;
     let aborts = 0;
     let disconnects = 0;
-    const deltaHandlers: Array<(event: { data: { deltaContent: string } }) => void> = [];
+    const handlers = new Map<string, Array<(event: any) => void>>();
     const session: CopilotSessionLike = {
-      on: (_event, handler) => {
-        deltaHandlers.push(handler);
+      on: (event, handler) => {
+        handlers.set(event, [...(handlers.get(event) || []), handler]);
         return () => undefined;
       },
       sendAndWait: async ({ prompt }) => {
         expect(prompt).toBe('Explain the adapter.');
-        deltaHandlers.forEach(handler => handler({ data: { deltaContent: 'Hello' } }));
+        handlers.get('assistant.message_delta')?.forEach(handler => handler({ data: { deltaContent: 'Hello' } }));
+        handlers.get('assistant.usage')?.forEach(handler => handler({
+          data: {
+            inputTokens: 120,
+            outputTokens: 30,
+            model: 'gpt-5.4',
+            cost: 1,
+            copilotUsage: { totalNanoAiu: 1_500_000_000 },
+          },
+        }));
         return { data: { content: 'Hello from Copilot' } };
       },
       abort: async () => { aborts++; },
@@ -143,7 +152,17 @@ describe('CopilotProvider', () => {
       streaming: true,
     });
     expect(result.choices[0].message.content).toBe('Hello from Copilot');
-    expect(result.usage).toEqual({ prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 });
+    expect(result.usage).toEqual({
+      prompt_tokens: 120,
+      completion_tokens: 30,
+      total_tokens: 150,
+      provider: 'copilot',
+      actual_model_id: 'gpt-5.4',
+      ai_units: 1.5,
+      billing_multiplier: 1,
+      cost_type: 'subscription',
+      cost_usd: null,
+    });
     expect(deltas).toEqual(['Hello']);
     expect(aborts).toBe(0);
     expect(disconnects).toBe(1);
@@ -208,6 +227,7 @@ describe('CopilotProvider', () => {
     expect(sessionConfig.availableTools).toEqual(['custom:*']);
     expect(sessionConfig.tools).toHaveLength(1);
     expect(sessionConfig.tools[0].defer).toBe('never');
+    expect(sessionConfig.tools[0].skipPermission).toBe(true);
     expect(calls).toEqual([{
       id: 'call_1',
       function: { name: 'tool_0_web_search', arguments: '{"query":"status"}' },

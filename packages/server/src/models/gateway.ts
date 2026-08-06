@@ -41,7 +41,17 @@ export interface StreamAccumulation {
     message: { role: 'assistant'; content: string | null; tool_calls?: any[] };
     finish_reason: string | null;
   }>;
-  usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
+  usage: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+    provider?: string;
+    actual_model_id?: string;
+    ai_units?: number;
+    billing_multiplier?: number;
+    cost_type?: 'exact' | 'estimated' | 'subscription' | 'unavailable';
+    cost_usd?: number | null;
+  };
 }
 
 const DEFAULT_PROVIDER = 'default';

@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Social Content Core Package",
+  "type": "object",
+  "required": ["schema_version", "content_id", "version", "topic", "core_claim", "facts", "master_script", "asset_manifest"],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "content_id": { "type": "string", "pattern": "^social-[0-9]{8}-.+-[0-9]+$" },
+    "version": { "type": "string", "pattern": "^v[1-9][0-9]*$" },
+    "topic": { "type": "string", "minLength": 1 },
+    "core_claim": { "type": "string", "minLength": 1 },
+    "facts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["claim", "source", "verified_at", "status"],
+        "properties": {
+          "claim": { "type": "string" },
+          "source": { "type": "string" },
+          "verified_at": { "type": "string", "format": "date-time" },
+          "status": { "enum": ["verified", "needs_verification"] }
+        }
+      }
+    },
+    "master_script": { "type": "object" },
+    "asset_manifest": { "type": "object" },
+    "platform_boundaries": { "type": "object" }
+  }
+}

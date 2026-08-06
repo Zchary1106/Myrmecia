@@ -5,7 +5,9 @@
 import { exec, execFile } from 'child_process';
 import { promisify } from 'util';
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, existsSync } from 'fs';
-import { resolve, normalize, dirname, relative, isAbsolute, join } from 'path';
+import { resolve, normalize, dirname, relative, isAbsolute, join, extname } from 'path';
+import sharp from 'sharp';
+import { parse as parseYaml } from 'yaml';
 import { guardrails } from '../agents/safety-guardrails.js';
 import { getRuntimeLimits } from '../agents/runtime-limits.js';
 import { assertLocalShellAllowed, assertNetworkToolAllowed } from '../agents/sandbox-profile.js';
@@ -21,6 +23,11 @@ import {
   type WeChatCoverSpec,
 } from '../tools/image-cards.js';
 import { generateComfyImages, type ComfyGenerateSpec } from '../tools/comfyui-images.js';
+import {
+  createSocialMonitorJobs,
+  findSocialScheduleConflicts,
+  getActiveSocialComplianceRulebook,
+} from '../db/models/social-workflow.js';
 
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
@@ -32,6 +39,7 @@ export interface ToolResult {
 
 export interface ToolSandboxOptions {
   allowedTools?: string[];
+  workspaceId?: string;
   timeoutMs?: number;
   maxOutputChars?: number;
   /**
@@ -55,6 +63,10 @@ export const SANDBOX_TOOL_NAMES = [
   'crawler.extract_links',
   'content.wechat_layout',
   'content.hashtag_plan',
+  'content.compliance_check',
+  'media.inspect',
+  'social.schedule_check',
+  'social.monitor_plan',
   'image.generate_svg',
   'image.generate_cards',
   'image.generate_comfyui',
@@ -82,6 +94,10 @@ export function buildSandboxToolDefinition(toolName: string, modelToolName = too
     'crawler.extract_links': 'Fetch a page and extract visible links.',
     'content.wechat_layout': 'Convert a markdown draft into WeChat layout recommendations and HTML blocks.',
     'content.hashtag_plan': 'Generate platform hashtag and keyword suggestions.',
+    'content.compliance_check': 'Deterministically apply the configured social compliance rulebook to platform drafts and return structured findings.',
+    'media.inspect': 'Inspect a local image or video for size, dimensions, format, codec/duration when available, and metadata risk.',
+    'social.schedule_check': 'Check durable social publishing schedules for account/time conflicts.',
+    'social.monitor_plan': 'Persist 48/72/168-hour post-publication monitoring jobs.',
     'image.generate_svg': 'Generate a simple SVG cover image in the task workspace.',
     'image.generate_cards': 'Render Xiaohongshu-style 1080x1440 PNG image cards (cover / numbered point / list / ending) into the task workspace and return their absolute file paths, ready to pass straight to a note-publishing tool.',
     'image.generate_comfyui': 'Generate AI illustrations (covers, scene art, backgrounds) with the local ComfyUI server and return absolute PNG paths. Roughly 1 minute per image, so keep to 1-3 prompts; use image.generate_cards for anything containing text, since diffusion models cannot render readable Chinese.',
@@ -102,6 +118,53 @@ export function buildSandboxToolDefinition(toolName: string, modelToolName = too
     shell_exec: { properties: { command: { type: 'string' } }, required: ['command'] },
     grep: { properties: { pattern: { type: 'string' }, glob: { type: 'string', description: 'Optional file glob, e.g. *.ts' } }, required: ['pattern'] },
     search: { properties: { pattern: { type: 'string' } }, required: ['pattern'] },
+    'content.compliance_check': {
+      properties: {
+        content_id: { type: 'string' },
+        workspace_id: { type: 'string' },
+        documents: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              platform: { type: 'string', enum: ['douyin', 'xiaohongshu', 'wechat'] },
+              title: { type: 'string' },
+              body: { type: 'string' },
+              text: { type: 'string' },
+            },
+            required: ['platform'],
+          },
+        },
+      },
+      required: ['content_id', 'workspace_id', 'documents'],
+    },
+    'media.inspect': {
+      properties: {
+        path: { type: 'string', description: 'File path inside the task workspace' },
+      },
+      required: ['path'],
+    },
+    'social.schedule_check': {
+      properties: {
+        workspace_id: { type: 'string' },
+        platform: { type: 'string', enum: ['douyin', 'xiaohongshu', 'wechat'] },
+        account_id: { type: 'string' },
+        schedule_at: { type: 'string' },
+        window_minutes: { type: 'integer' },
+        exclude_content_id: { type: 'string' },
+      },
+      required: ['workspace_id', 'platform', 'account_id', 'schedule_at'],
+    },
+    'social.monitor_plan': {
+      properties: {
+        workspace_id: { type: 'string' },
+        content_id: { type: 'string' },
+        platform: { type: 'string', enum: ['douyin', 'xiaohongshu', 'wechat'] },
+        publish_id: { type: 'string' },
+        published_at: { type: 'string' },
+      },
+      required: ['workspace_id', 'content_id', 'platform', 'publish_id', 'published_at'],
+    },
     'web.fetch': { properties: { url: { type: 'string', description: 'Absolute http/https URL' } }, required: ['url'] },
     'web.search': { properties: { query: { type: 'string' } }, required: ['query'] },
     'web.extract': {
@@ -132,7 +195,7 @@ export function buildSandboxToolDefinition(toolName: string, modelToolName = too
             additionalProperties: false,
           },
         },
-        theme: { type: 'string', enum: ['warm', 'clean', 'dark'], description: 'Visual theme, default warm' },
+        theme: { type: 'string', enum: ['warm', 'clean', 'dark', 'tech', 'editorial', 'notebook'], description: 'Visual theme, default warm' },
       },
       required: ['cards'],
     },
@@ -455,6 +518,117 @@ export async function executeTool(
     }
   }
 
+  if (toolName === 'media.inspect') {
+    try {
+      const filePath = assertSafePath(workdir, String(toolInput.path || toolInput.file_path || ''));
+      const stat = statSync(filePath);
+      if (!stat.isFile()) throw new Error('Path is not a file');
+      const extension = extname(filePath).toLowerCase();
+      const result: Record<string, unknown> = {
+        path: filePath,
+        exists: true,
+        size_bytes: stat.size,
+        extension,
+      };
+
+      if (['.png', '.jpg', '.jpeg', '.webp', '.gif', '.tiff', '.avif'].includes(extension)) {
+        const metadata = await sharp(filePath).metadata();
+        Object.assign(result, {
+          media_type: 'image',
+          format: metadata.format || extension.slice(1),
+          width: metadata.width,
+          height: metadata.height,
+          aspect_ratio: metadata.width && metadata.height ? metadata.width / metadata.height : undefined,
+          color_space: metadata.space,
+          orientation: metadata.orientation,
+          has_exif: Boolean(metadata.exif?.length),
+          has_icc_profile: Boolean(metadata.icc?.length),
+        });
+      } else if (['.mp4', '.mov', '.m4v', '.webm', '.mkv'].includes(extension)) {
+        result.media_type = 'video';
+        try {
+          const { stdout } = await execFileAsync('ffprobe', [
+            '-v', 'error',
+            '-show_entries', 'format=duration,format_name,size:stream=index,codec_name,codec_type,width,height',
+            '-of', 'json',
+            filePath,
+          ], {
+            cwd: workdir,
+            encoding: 'utf-8',
+            timeout: Math.min(timeoutMs, 15_000),
+            maxBuffer: 512_000,
+          });
+          result.ffprobe = JSON.parse(stdout);
+        } catch (error: any) {
+          result.inspect_warning = `ffprobe unavailable or failed: ${error.message || 'unknown error'}`;
+        }
+      } else {
+        result.media_type = 'unknown';
+      }
+
+      return { output: capOutput(JSON.stringify(result, null, 2), maxOutputChars), status: 'done' };
+    } catch (err: any) {
+      return {
+        output: JSON.stringify({
+          path: String(toolInput.path || toolInput.file_path || ''),
+          exists: false,
+          error: err.message,
+        }),
+        status: 'failed',
+      };
+    }
+  }
+
+  if (toolName === 'social.schedule_check') {
+    try {
+      const workspaceId = options.workspaceId || String(toolInput.workspace_id || 'default');
+      if (options.workspaceId && toolInput.workspace_id && toolInput.workspace_id !== options.workspaceId) {
+        throw new Error('workspace_id does not match the task workspace');
+      }
+      const conflicts = findSocialScheduleConflicts({
+        workspaceId,
+        platform: String(toolInput.platform) as 'douyin' | 'xiaohongshu' | 'wechat',
+        accountId: String(toolInput.account_id || ''),
+        scheduleAt: String(toolInput.schedule_at || ''),
+        windowMinutes: Number(toolInput.window_minutes || 30),
+        excludeContentId: toolInput.exclude_content_id
+          ? String(toolInput.exclude_content_id)
+          : undefined,
+      });
+      return {
+        output: capOutput(JSON.stringify({
+          conflict: conflicts.length > 0,
+          conflicts,
+        }, null, 2), maxOutputChars),
+        status: 'done',
+      };
+    } catch (err: any) {
+      return { output: `Schedule check failed: ${err.message}`, status: 'failed' };
+    }
+  }
+
+  if (toolName === 'social.monitor_plan') {
+    try {
+      const workspaceId = options.workspaceId || String(toolInput.workspace_id || 'default');
+      if (options.workspaceId && toolInput.workspace_id && toolInput.workspace_id !== options.workspaceId) {
+        throw new Error('workspace_id does not match the task workspace');
+      }
+      const jobs = createSocialMonitorJobs({
+        workspaceId,
+        contentId: String(toolInput.content_id || ''),
+        platform: String(toolInput.platform) as 'douyin' | 'xiaohongshu' | 'wechat',
+        publishId: String(toolInput.publish_id || ''),
+        publishedAt: String(toolInput.published_at || ''),
+      });
+      return {
+        output: capOutput(JSON.stringify({ jobs }, null, 2), maxOutputChars),
+        status: 'done',
+      };
+    } catch (err: any) {
+      return { output: `Monitor plan failed: ${err.message}`, status: 'failed' };
+    }
+  }
+
   if (toolName === 'apply_patch') {
     try {
       const filePath = assertSafePath(workdir, String(toolInput.path || toolInput.file_path || ''));
@@ -527,6 +701,108 @@ export async function executeTool(
       return { output: jsonToolOutput(links, maxOutputChars), status: 'done' };
     } catch (err: any) {
       return { output: `Extract links failed: ${err.message}`, status: 'failed' };
+    }
+  }
+
+  if (toolName === 'content.compliance_check') {
+    try {
+      const documents = Array.isArray(toolInput.documents) ? toolInput.documents : [];
+      if (documents.length === 0) throw new Error('documents must be a non-empty array');
+      const workspaceId = options.workspaceId || String(toolInput.workspace_id || 'default');
+      if (options.workspaceId && toolInput.workspace_id && toolInput.workspace_id !== options.workspaceId) {
+        throw new Error('workspace_id does not match the task workspace');
+      }
+      const storedRulebook = getActiveSocialComplianceRulebook(workspaceId);
+      const resourceRoot = process.env.MYRMECIA_RESOURCE_ROOT || workdir;
+      const rulePath = storedRulebook ? undefined : [
+        join(resourceRoot, 'docs/social-workflow/compliance-rules.yaml'),
+        resolve(workdir, 'docs/social-workflow/compliance-rules.yaml'),
+      ].find(existsSync);
+      if (!storedRulebook && !rulePath) throw new Error('Social compliance rulebook not found');
+      const rulebook = parseYaml(
+        storedRulebook?.yaml || readFileSync(rulePath!, 'utf8')
+      ) as {
+        rules?: Array<{
+          id: string;
+          severity: 'blocker' | 'warning' | 'info';
+          platforms?: string[];
+          patterns?: string[];
+          checks?: string[];
+          message?: string;
+        }>;
+      };
+      const findings: Array<Record<string, unknown>> = [];
+
+      for (const document of documents) {
+        const platform = String(document.platform || '');
+        const title = String(document.title || '');
+        const body = String(document.body || document.text || '');
+        const text = `${title}\n${body}`;
+        for (const rule of rulebook.rules || []) {
+          if (rule.platforms?.length && !rule.platforms.includes(platform)) continue;
+          for (const pattern of rule.patterns || []) {
+            let regex: RegExp;
+            try {
+              regex = new RegExp(pattern, 'giu');
+            } catch {
+              regex = new RegExp(pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'giu');
+            }
+            const matches = Array.from(text.matchAll(regex)).map(match => match[0]).slice(0, 10);
+            if (matches.length > 0) {
+              findings.push({
+                rule_id: rule.id,
+                severity: rule.severity,
+                platforms: [platform],
+                evidence: matches.join(', '),
+                recommendation: rule.message || '需要人工复核',
+                confidence: 1,
+              });
+            }
+          }
+
+          for (const check of rule.checks || []) {
+            const failed = (
+              check === 'title_max_20_chars' && title.length > 20
+            ) || (
+              check === 'body_max_1000_chars' && body.length > 1000
+            ) || (
+              check === 'hook_within_3_seconds' && !/(0[-–~至]3秒|前3秒|hook)/i.test(text)
+            ) || (
+              check === 'html_layout_required' && !/<(?:section|p|h[1-6])\b/i.test(body)
+            );
+            if (failed) {
+              findings.push({
+                rule_id: rule.id,
+                severity: rule.severity,
+                platforms: [platform],
+                evidence: check,
+                recommendation: rule.message || '需要人工复核',
+                confidence: 1,
+              });
+            }
+          }
+        }
+      }
+
+      const status = findings.some(item => item.severity === 'blocker')
+        ? 'blocked'
+        : findings.some(item => item.severity === 'warning')
+          ? 'needs_revision'
+          : 'pass';
+      return {
+        output: capOutput(JSON.stringify({
+          schema_version: '1.0',
+          content_id: String(toolInput.content_id || ''),
+          status,
+          summary: `Deterministic rule check completed with ${findings.length} finding(s).`,
+          findings,
+          required_human_checks: ['事实来源、素材版权和平台最新规则仍需人工确认'],
+          reviewed_at: new Date().toISOString(),
+        }, null, 2), maxOutputChars),
+        status: 'done',
+      };
+    } catch (err: any) {
+      return { output: `Compliance check failed: ${err.message}`, status: 'failed' };
     }
   }
 

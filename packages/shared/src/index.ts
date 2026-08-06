@@ -330,6 +330,10 @@ export interface ProviderModelOption {
   id: string;
   name: string;
   supportsReasoningEffort: boolean;
+  policyState?: 'enabled' | 'disabled' | 'unconfigured';
+  policyTerms?: string;
+  billingMultiplier?: number;
+  selectable: boolean;
 }
 
 export interface ModelProviderSettings {
@@ -383,7 +387,14 @@ export interface TaskExecution {
   skillVersionId?: string;
   status: ExecutionStatus;
   progress: AgentProgress;
-  costUSD: number;
+  costUSD: number | null;
+  costType?: ModelCostType;
+  provider?: string;
+  actualModelId?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  aiUnits?: number;
+  billingMultiplier?: number;
   tokenCount: number;
   parentExecutionId?: string;
   workspaceId?: string;
@@ -394,6 +405,8 @@ export interface TaskExecution {
   startedAt: string;
   completedAt?: string;
 }
+
+export type ModelCostType = 'exact' | 'estimated' | 'subscription' | 'unavailable';
 
 export type ExecutionMessageType = 'user_input' | 'agent_text' | 'tool_use' | 'tool_result' | 'progress' | 'error';
 
@@ -420,6 +433,23 @@ export interface AgentMessage {
 
 export type PipelineStatus = 'running' | 'paused' | 'blocked' | 'done' | 'failed' | 'awaiting_retry';
 
+export interface PipelineStageApproval {
+  actorId: string;
+  actorRole: OperatorRole;
+  actorSource: OperatorActor['source'];
+  approvedAt: string;
+  contentHash: string;
+  kind: 'content' | 'publish';
+  note?: string;
+}
+
+export interface PipelineStageOutputPolicy {
+  field: string;
+  allowedValues: Array<string | number | boolean>;
+  onFailure?: 'blocked' | 'failed';
+  message?: string;
+}
+
 export interface PipelineStage {
   index: number;
   name: string;
@@ -432,6 +462,12 @@ export interface PipelineStage {
   gateApproved?: boolean;
   dependsOn?: number[];  // stage indices this depends on (enables parallel execution)
   publishTools?: string[]; // governed live-publish MCP tools explicitly approved for this stage
+  requiresApproval?: boolean;
+  approvalKind?: 'content' | 'publish';
+  approval?: PipelineStageApproval;
+  outputSchema?: string;
+  outputPolicy?: PipelineStageOutputPolicy;
+  validationErrors?: string[];
 }
 
 export interface Pipeline {
@@ -464,6 +500,10 @@ export interface PipelineTemplateStage {
   promptTemplate: string;
   dependsOn?: number[];
   publishTools?: string[];
+  requiresApproval?: boolean;
+  approvalKind?: 'content' | 'publish';
+  outputSchema?: string;
+  outputPolicy?: PipelineStageOutputPolicy;
 }
 
 export interface PipelineTemplate {
@@ -506,6 +546,33 @@ export interface PipelineTemplateValidationResult {
   valid: boolean;
   errors: { stageIndex?: number; field?: string; message: string }[];
   warnings: { stageIndex?: number; field?: string; message: string }[];
+}
+
+export interface SocialPublishSchedule {
+  id: string;
+  workspaceId: string;
+  contentId: string;
+  platform: 'douyin' | 'xiaohongshu' | 'wechat';
+  accountId: string;
+  scheduleAt: string;
+  status: 'draft' | 'scheduled' | 'published' | 'cancelled';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SocialMonitorJob {
+  id: string;
+  workspaceId: string;
+  contentId: string;
+  platform: 'douyin' | 'xiaohongshu' | 'wechat';
+  publishId: string;
+  windowHours: 48 | 72 | 168;
+  dueAt: string;
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  taskId?: string;
+  result?: unknown;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface Notification {

@@ -45,6 +45,10 @@ async function discoverCopilotModels(): Promise<ProviderModelOption[]> {
     id: model.id,
     name: model.name,
     supportsReasoningEffort: Boolean(model.supportedReasoningEfforts?.length),
+    policyState: model.policy?.state,
+    policyTerms: model.policy?.terms,
+    billingMultiplier: model.billing?.multiplier,
+    selectable: model.policy?.state !== 'disabled',
   }));
   syncProviderModels('copilot', discovered.map(model => ({
     ...model,
@@ -71,9 +75,9 @@ async function providerSettings(): Promise<ModelProviderSettings> {
     const models = await discoverCopilotModels();
     return {
       provider,
-      selectedModelId: models.some(model => model.id === selectedModelId)
+      selectedModelId: models.some(model => model.id === selectedModelId && model.selectable)
         ? selectedModelId
-        : models[0]?.id || selectedModelId,
+        : models.find(model => model.selectable)?.id || selectedModelId,
       models,
     };
   } catch (err) {
@@ -83,6 +87,10 @@ async function providerSettings(): Promise<ModelProviderSettings> {
         id: model.id,
         name: model.displayName,
         supportsReasoningEffort: model.capabilityTags.includes('reasoning-effort'),
+        policyState: (model.costProfile.policy as { state?: ProviderModelOption['policyState'] } | undefined)?.state,
+        policyTerms: (model.costProfile.policy as { terms?: string } | undefined)?.terms,
+        billingMultiplier: (model.costProfile.billing as { multiplier?: number } | undefined)?.multiplier,
+        selectable: (model.costProfile.policy as { state?: string } | undefined)?.state !== 'disabled',
       }));
     return {
       provider,
@@ -123,6 +131,9 @@ export function createModelRoutes(): Router {
       const models = await discoverCopilotModels();
       const selected = models.find(model => model.id === modelId);
       if (!selected) notFound('MODEL_NOT_FOUND', 'Model is not available for the signed-in Copilot account');
+      if (!selected.selectable) {
+        throw new HttpError(409, 'MODEL_DISABLED', 'Model is disabled by the current Copilot account or organization policy');
+      }
 
       upsertModelRoute({
         routeKey: 'provider:copilot',

@@ -285,7 +285,7 @@ function AgentInspector() {
                     </div>
                     <div className="rounded-lg bg-surface p-2">
                       <div className="text-gray-600">Cost</div>
-                      <div className="mt-1 text-gray-300">${latestExecution.costUSD.toFixed(4)}</div>
+                      <div className="mt-1 text-gray-300">{latestExecution.costUSD == null ? 'N/A · subscription' : `$${latestExecution.costUSD.toFixed(4)}`}</div>
                     </div>
                     <div className="rounded-lg bg-surface p-2">
                       <div className="text-gray-600">Started</div>

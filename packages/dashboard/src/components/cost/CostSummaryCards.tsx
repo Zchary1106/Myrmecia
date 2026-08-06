@@ -1,7 +1,11 @@
 interface SummaryData {
   totalInputTokens: number;
   totalOutputTokens: number;
-  totalCostUSD: number;
+  totalAiUnits: number;
+  totalCostUSD: number | null;
+  usdRequestCount: number;
+  subscriptionRequestCount: number;
+  unavailableRequestCount: number;
   requestCount: number;
 }
 
@@ -22,19 +26,27 @@ export function CostSummaryCards({ data }: { data: SummaryData | null }) {
     {
       label: 'Requests',
       value: data ? data.requestCount.toLocaleString() : '—',
-      sub: '',
+      sub: data?.unavailableRequestCount
+        ? `${data.requestCount - data.unavailableRequestCount} measured / ${data.unavailableRequestCount} legacy unavailable`
+        : '',
       icon: '📊',
     },
     {
-      label: 'Total Cost',
-      value: data ? `$${data.totalCostUSD.toFixed(2)}` : '—',
-      sub: '',
+      label: 'Copilot AI Units',
+      value: data ? data.totalAiUnits.toFixed(3) : '—',
+      sub: data?.subscriptionRequestCount ? `${data.subscriptionRequestCount} subscription requests` : '',
+      icon: '◈',
+    },
+    {
+      label: 'USD Cost',
+      value: data ? (data.totalCostUSD == null ? 'N/A' : `$${data.totalCostUSD.toFixed(2)}`) : '—',
+      sub: data?.totalCostUSD == null && data?.subscriptionRequestCount ? 'Copilot subscription · not USD' : '',
       icon: '💰',
     },
   ];
 
   return (
-    <div className="grid grid-cols-3 gap-4">
+    <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
       {cards.map(c => (
         <div key={c.label} className="bg-surface border border-border rounded-xl p-4">
           <div className="flex items-center gap-2 text-sm text-gray-400 mb-1">

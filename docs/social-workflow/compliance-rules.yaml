@@ -1,0 +1,52 @@
+version: 1
+last_reviewed: "2026-08-04"
+disclaimer: "该规则库用于自动初筛，不构成法律意见；平台审核规则与法律要求变化时必须由人工更新。"
+rules:
+  - id: AD-ABSOLUTE-001
+    category: advertising
+    severity: blocker
+    platforms: [douyin, xiaohongshu, wechat]
+    patterns: ["最[好高低]", "第一", "顶级", "国家级", "全网", "绝对", "百分之百", "100%"]
+    message: "可能包含极限或绝对化宣传。"
+  - id: AD-EFFICACY-002
+    category: advertising
+    severity: warning
+    platforms: [douyin, xiaohongshu, wechat]
+    patterns: ["治愈", "根治", "保证有效", "立刻见效", "永久", "瘦[0-9]+斤", "月入[0-9]+"]
+    message: "效果、健康或收益承诺需要可验证依据及人工复核。"
+  - id: FACT-SOURCE-003
+    category: factuality
+    severity: warning
+    platforms: [douyin, xiaohongshu, wechat]
+    patterns: ["[0-9]+%", "[0-9]+倍", "[0-9]+万", "研究显示", "数据显示"]
+    message: "量化或研究性表述必须有来源、日期和适用条件。"
+  - id: PLATFORM-PRIVATE-004
+    category: platform_policy
+    severity: blocker
+    platforms: [douyin, xiaohongshu, wechat]
+    patterns: ["加微信", "加V", "私信发你", "评论区扣", "扫码", "群里见", "联系我领取"]
+    message: "可能包含私域导流或规避平台审核表达。"
+  - id: COPYRIGHT-ASSET-005
+    category: copyright
+    severity: warning
+    platforms: [douyin, xiaohongshu, wechat]
+    patterns: ["转载", "搬运", "网图", "截图自"]
+    message: "第三方素材需要确认版权、授权或合理使用依据。"
+  - id: XHS-LENGTH-006
+    category: platform_format
+    severity: warning
+    platforms: [xiaohongshu]
+    checks: ["title_max_20_chars", "body_max_1000_chars"]
+    message: "小红书标题或正文可能超出当前工作流约束。"
+  - id: DOUYIN-VIDEO-007
+    category: platform_format
+    severity: warning
+    platforms: [douyin]
+    checks: ["vertical_9_16", "hook_within_3_seconds", "local_video_path_required_before_publish"]
+    message: "抖音视频需要竖屏视频、前 3 秒 Hook 和本地视频文件。"
+  - id: WECHAT-HTML-008
+    category: platform_format
+    severity: warning
+    platforms: [wechat]
+    checks: ["html_layout_required", "cover_900x383_required", "draft_id_required_before_publish"]
+    message: "公众号发布需要 HTML、900x383 封面与草稿 ID。"

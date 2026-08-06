@@ -5,7 +5,7 @@ import { getMemoryService } from '../memory/memory-service.js';
  * Context Manager
  * Builds optimized context for downstream pipeline stages.
  * - Previous stages: summary only (saves tokens)
- * - Immediate predecessor: full output
+ * - Direct dependency stages: full output (supports parallel workflow branches)
  * - Shared project context injected
  * - Relevant long-term memory recalled (semantic + procedural + episodic)
  */
@@ -15,7 +15,7 @@ export class ContextManager {
     const parts: string[] = [];
 
     // 1. Project context header
-    parts.push(`# Project: ${pipeline.name}\nOriginal requirement: ${pipeline.input}\n`);
+    parts.push(`# Project: ${pipeline.name}\nWorkspace ID: ${pipeline.workspaceId || 'default'}\nOriginal requirement: ${pipeline.input}\n`);
 
     // 2. Previous stages — summaries only (not full output)
     if (stageIndex > 1) {
@@ -29,19 +29,37 @@ export class ContextManager {
       }
     }
 
-    // 3. Direct predecessor — full output
-    if (stageIndex > 0) {
-      const prev = pipeline.stages[stageIndex - 1];
-      if (prev.status === 'done' && prev.output) {
-        parts.push(`## Detailed Input from: ${prev.name}\n${prev.output}`);
-      }
+    // 3. Direct dependencies — full output. A stage with explicit `dependsOn`
+    // can receive several upstream deliverables produced in parallel. Fall
+    // back to the immediately preceding stage for legacy sequential templates.
+    const currentStage = pipeline.stages[stageIndex];
+    const dependencyIndices = currentStage.dependsOn ?? (stageIndex > 0 ? [stageIndex - 1] : []);
+    const dependencyOutputs = dependencyIndices
+      .map(index => pipeline.stages[index])
+      .filter((stage): stage is NonNullable<typeof stage> => Boolean(stage?.output))
+      .map(stage => `## Detailed Input from: ${stage.name}\n${stage.output}`);
+
+    if (dependencyOutputs.length > 0) {
+      parts.push(...dependencyOutputs);
     }
 
-    // 4. Current stage instruction
-    const currentStage = pipeline.stages[stageIndex];
+    // 4. Persisted human approvals — downstream stages must never infer
+    // approval from an LLM-produced JSON blob.
+    const approvals = pipeline.stages
+      .filter(stage => stage.approval)
+      .map(stage => ({
+        stageIndex: stage.index,
+        stageName: stage.name,
+        ...stage.approval,
+      }));
+    if (approvals.length > 0) {
+      parts.push(`## Verified Human Approval Records\n${JSON.stringify(approvals, null, 2)}`);
+    }
+
+    // 5. Current stage instruction
     if (currentStage.promptTemplate) {
-      const stageInput = stageIndex > 0
-        ? (pipeline.stages[stageIndex - 1].output || pipeline.input)
+      const stageInput = dependencyOutputs.length > 0
+        ? dependencyOutputs.join('\n\n---\n\n')
         : pipeline.input;
       parts.push(`## Your Task\n${currentStage.promptTemplate.replace('{input}', stageInput)}`);
     }

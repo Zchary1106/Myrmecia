@@ -1,5 +1,5 @@
 import OpenAI from 'openai';
-import type { AgentDefinition, Task, AgentProgress, ToolActivity, ProgressTracker } from '../types.js';
+import type { AgentDefinition, ModelCostType, Task, AgentProgress, ToolActivity, ProgressTracker } from '../types.js';
 import { eventBus } from '../events/event-bus.js';
 import { updateTask, addTaskLog, getTask } from '../db/models/task.js';
 import { getPipeline } from '../db/models/pipeline.js';
@@ -128,7 +128,12 @@ function buildModelToolDefinitions(toolIds: string[]) {
 
 export interface TaskResult {
   output: string;
-  costUSD: number;
+  costUSD: number | null;
+  costType: ModelCostType;
+  provider: string;
+  actualModelId?: string;
+  aiUnits: number;
+  billingMultiplier?: number;
   inputTokens: number;
   outputTokens: number;
   durationMs: number;
@@ -158,6 +163,39 @@ function getProgressSnapshot(tracker: ProgressTracker, summary?: string): AgentP
 
 function estimateCost(model: string, inputTokens: number, outputTokens: number): number {
   return estimateModelCost(model, inputTokens, outputTokens);
+}
+
+interface ProviderUsage {
+  provider: string;
+  actualModelId?: string;
+  aiUnits: number;
+  billingMultiplier?: number;
+  costType: ModelCostType;
+}
+
+function createProviderUsage(model: string): ProviderUsage {
+  const provider = getModelGateway().providerFor(model);
+  return {
+    provider,
+    aiUnits: 0,
+    costType: provider === 'copilot' ? 'subscription' : 'estimated',
+  };
+}
+
+function mergeProviderUsage(usage: ProviderUsage, completionUsage: any): void {
+  if (!completionUsage) return;
+  usage.provider = completionUsage.provider || usage.provider;
+  usage.actualModelId = completionUsage.actual_model_id || usage.actualModelId;
+  usage.aiUnits += Number(completionUsage.ai_units) || 0;
+  if (typeof completionUsage.billing_multiplier === 'number') {
+    usage.billingMultiplier = completionUsage.billing_multiplier;
+  }
+  if (completionUsage.cost_type) usage.costType = completionUsage.cost_type;
+}
+
+function providerCostUSD(model: string, inputTokens: number, outputTokens: number, usage: ProviderUsage): number | null {
+  if (usage.costType === 'subscription' || usage.costType === 'unavailable') return null;
+  return estimateCost(model, inputTokens, outputTokens);
 }
 
 export class TsAgentLoop {
@@ -269,6 +307,7 @@ export class TsAgentLoop {
     // Model selection
     const modelSelection = selectModelForAgent(agent, task, { promptText: `${systemPrompt}\n\n${enrichedInput}` });
     const selectedModel = modelSelection.modelId;
+    const providerUsage = createProviderUsage(selectedModel);
     const limits = resolveAgentRuntimeLimits(agent, modelSelection);
     updateExecution(executionId, {
       modelId: selectedModel,
@@ -367,15 +406,27 @@ export class TsAgentLoop {
             status: 'done',
             metadata: { inputTokens: cached.inputTokens, outputTokens: cached.outputTokens, numTurns: 1, cached: true },
           });
-          const cacheCost = estimateCost(selectedModel, cached.inputTokens, cached.outputTokens);
+          const cacheCost = providerCostUSD(selectedModel, cached.inputTokens, cached.outputTokens, providerUsage);
           recordModelUsage({
             modelId: selectedModel, agentId: agent.id, taskId: task.id,
             executionId, status: 'success',
-            inputTokens: cached.inputTokens, outputTokens: cached.outputTokens,
+            inputTokens: 0, outputTokens: 0,
             costUSD: cacheCost, latencyMs: 0, routeReason: modelSelection.reason,
             routeSource: modelSelection.source, modelTier: modelSelection.modelTier,
+            provider: providerUsage.provider, costType: providerUsage.costType,
           });
-          return { output: safeCachedOutput, costUSD: cacheCost, inputTokens: cached.inputTokens, outputTokens: cached.outputTokens, durationMs: 0, numTurns: 1, executionId };
+          return {
+            output: safeCachedOutput,
+            costUSD: cacheCost,
+            costType: providerUsage.costType,
+            provider: providerUsage.provider,
+            aiUnits: 0,
+            inputTokens: cached.inputTokens,
+            outputTokens: cached.outputTokens,
+            durationMs: 0,
+            numTurns: 1,
+            executionId,
+          };
         }
         metrics.cacheHitRate.add(1, { status: 'miss' });
       }
@@ -455,6 +506,7 @@ export class TsAgentLoop {
               )
             : await executeTool(toolName, toolInput, task.workdir || process.cwd(), {
                 allowedTools: toolPolicy.allowedTools,
+                workspaceId: task.workspaceId,
                 timeoutMs: Math.min(limits.maxToolCallTimeoutMs, limits.maxToolRuntimeMsPerExecution - totalToolRuntimeMs),
                 maxOutputChars: Math.min(limits.maxOutputChars, 8_000),
               });
@@ -517,6 +569,7 @@ export class TsAgentLoop {
             : {}),
         };
         const completion = await getModelGateway().completeForModel(selectedModel, completionParams, completionOptions);
+        mergeProviderUsage(providerUsage, completion.usage);
 
         const choice = completion.choices[0];
         if (!choice) throw new Error('No response from model');
@@ -657,6 +710,7 @@ export class TsAgentLoop {
                   )
                 : await executeTool(toolName, toolInput, task.workdir || process.cwd(), {
                     allowedTools: toolPolicy.allowedTools,
+                    workspaceId: task.workspaceId,
                     timeoutMs: Math.min(limits.maxToolCallTimeoutMs, limits.maxToolRuntimeMsPerExecution - totalToolRuntimeMs),
                     maxOutputChars: Math.min(limits.maxOutputChars, 8_000),
                     onProgress: ({ message }) => {
@@ -750,19 +804,37 @@ export class TsAgentLoop {
         metadata: { inputTokens, outputTokens, numTurns, durationMs, cached: false },
       });
 
-      const costUSD = estimateCost(selectedModel, inputTokens, outputTokens);
+      const costUSD = providerCostUSD(selectedModel, inputTokens, outputTokens, providerUsage);
       recordModelUsage({
         modelId: selectedModel, agentId: agent.id, taskId: task.id,
         executionId, status: 'success',
         inputTokens, outputTokens,
         costUSD,
+        costType: providerUsage.costType,
+        provider: providerUsage.provider,
+        actualModelId: providerUsage.actualModelId,
+        aiUnits: providerUsage.aiUnits,
+        billingMultiplier: providerUsage.billingMultiplier,
         latencyMs: durationMs,
         routeReason: modelSelection.reason,
         routeSource: modelSelection.source,
         modelTier: modelSelection.modelTier,
       });
 
-      return { output: finalOutput, costUSD, inputTokens, outputTokens, durationMs, numTurns, executionId };
+      return {
+        output: finalOutput,
+        costUSD,
+        costType: providerUsage.costType,
+        provider: providerUsage.provider,
+        actualModelId: providerUsage.actualModelId,
+        aiUnits: providerUsage.aiUnits,
+        billingMultiplier: providerUsage.billingMultiplier,
+        inputTokens,
+        outputTokens,
+        durationMs,
+        numTurns,
+        executionId,
+      };
     } catch (err: any) {
       const durationMs = Date.now() - startTime;
       completeTraceSpan(llmSpan.id, { status: 'failed', error: err.message, metadata: { durationMs } });
@@ -772,6 +844,11 @@ export class TsAgentLoop {
         routeReason: modelSelection.reason,
         routeSource: modelSelection.source,
         modelTier: modelSelection.modelTier,
+        costType: providerUsage.costType,
+        provider: providerUsage.provider,
+        actualModelId: providerUsage.actualModelId,
+        aiUnits: providerUsage.aiUnits,
+        billingMultiplier: providerUsage.billingMultiplier,
       });
       throw err;
     }
@@ -794,6 +871,7 @@ export class TsAgentLoop {
       promptText: `${systemPrompt}\n\n${parsedSkill.promptContent}\n\n${task.input}`,
     });
     const selectedModel = modelSelection.modelId;
+    const providerUsage = createProviderUsage(selectedModel);
     const limits = resolveAgentRuntimeLimits(agent, modelSelection);
     updateExecution(executionId, {
       modelId: selectedModel,
@@ -875,6 +953,7 @@ export class TsAgentLoop {
           tools: stepToolDefs.length > 0 ? stepToolDefs : undefined,
           max_tokens: remainingResponseTokens(inputTokens, outputTokens, limits),
         }, { signal: abortController.signal });
+        mergeProviderUsage(providerUsage, completion.usage);
 
         const choice = completion.choices[0];
         if (!choice) break;
@@ -963,6 +1042,7 @@ export class TsAgentLoop {
                 )
               : await executeTool(toolName, toolInput, workdir, {
                   allowedTools: stepAllowedTools,
+                  workspaceId: task.workspaceId,
                   timeoutMs: remainingToolBudgetMs,
                   maxOutputChars: Math.min(limits.maxOutputChars, 8_000),
                   onProgress: ({ message }) => {
@@ -1002,6 +1082,13 @@ export class TsAgentLoop {
             messages: [...messages, { role: 'user', content: 'Provide the result of this step as plain text.' }],
             max_tokens: remainingResponseTokens(inputTokens, outputTokens, limits),
           }, { signal: abortController.signal });
+          mergeProviderUsage(providerUsage, summary.usage);
+          const summaryInputTokens = summary.usage?.prompt_tokens || 0;
+          const summaryOutputTokens = summary.usage?.completion_tokens || 0;
+          inputTokens += summaryInputTokens;
+          outputTokens += summaryOutputTokens;
+          tracker.latestInputTokens = summaryInputTokens;
+          tracker.cumulativeOutputTokens += summaryOutputTokens;
           finalOutput = extractMessageText(summary.choices[0]?.message?.content).trim() || finalOutput;
         } catch {
           /* keep finalOutput as-is */
@@ -1048,7 +1135,7 @@ export class TsAgentLoop {
     const result = await executor.run(task.input);
 
     const durationMs = Date.now() - startTime;
-    const costUSD = estimateCost(selectedModel, inputTokens, outputTokens);
+    const costUSD = providerCostUSD(selectedModel, inputTokens, outputTokens, providerUsage);
     const safeFinalOutput = result.success
       ? sanitizeAgentOutput(result.finalOutput, {
           agentId: agent.id,
@@ -1069,6 +1156,11 @@ export class TsAgentLoop {
       inputTokens,
       outputTokens,
       costUSD,
+      costType: providerUsage.costType,
+      provider: providerUsage.provider,
+      actualModelId: providerUsage.actualModelId,
+      aiUnits: providerUsage.aiUnits,
+      billingMultiplier: providerUsage.billingMultiplier,
       latencyMs: durationMs,
       routeReason: `skill-executor: ${parsedSkill.config.steps.length} steps`,
       routeSource: modelSelection.source,
@@ -1083,6 +1175,11 @@ export class TsAgentLoop {
     return {
       output: safeFinalOutput,
       costUSD,
+      costType: providerUsage.costType,
+      provider: providerUsage.provider,
+      actualModelId: providerUsage.actualModelId,
+      aiUnits: providerUsage.aiUnits,
+      billingMultiplier: providerUsage.billingMultiplier,
       inputTokens,
       outputTokens,
       durationMs,

@@ -1,0 +1,8 @@
+interface:
+  display_name: "小红书视觉卡片创作"
+  short_description: "把审核终稿转成可发布的 3:4 图文卡片"
+  brand_color: "#FF2E4D"
+  default_prompt: "Use $xiaohongshu-visual-creator to turn this approved draft into a publish-ready Xiaohongshu card set."
+
+policy:
+  allow_implicit_invocation: true

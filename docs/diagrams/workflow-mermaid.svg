@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="900" viewBox="0 0 1200 900">
+  <style>
+    .box { fill:#f8f9fb; stroke:#2b6cb0; stroke-width:2; rx:8; }
+    .text { font-family: "Noto Sans", Arial, sans-serif; font-size:14px; fill:#0f172a; }
+    .title { font-size:16px; font-weight:700; }
+    .arrow { stroke:#475569; stroke-width:2; fill:none; marker-end:url(#arrowhead); }
+  </style>
+  <defs>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#475569" />
+    </marker>
+  </defs>
+
+  <!-- Nodes -->
+  <rect class="box" x="50" y="30" width="240" height="70" />
+  <text class="text title" x="170" y="55" text-anchor="middle">选题调研</text>
+  <text class="text" x="170" y="75" text-anchor="middle">(trend-scout)</text>
+
+  <rect class="box" x="380" y="30" width="260" height="70" />
+  <text class="text title" x="510" y="55" text-anchor="middle">小红书创作</text>
+  <text class="text" x="510" y="75" text-anchor="middle">(xiaohongshu-writer)</text>
+
+  <rect class="box" x="740" y="30" width="360" height="70" />
+  <text class="text title" x="920" y="45" text-anchor="middle">抖音脚本创作</text>
+  <text class="text" x="920" y="65" text-anchor="middle">(douyin-writer)</text>
+  <text class="text" x="920" y="85" text-anchor="middle">(附带小红书初稿原样复述)</text>
+
+  <!-- Second row -->
+  <rect class="box" x="380" y="150" width="360" height="70" />
+  <text class="text title" x="560" y="175" text-anchor="middle">自动合规检测</text>
+  <text class="text" x="560" y="195" text-anchor="middle">(rule-engine)</text>
+
+  <rect class="box" x="380" y="280" width="260" height="70" />
+  <text class="text title" x="510" y="305" text-anchor="middle">人工审核 / Gate</text>
+  <text class="text" x="510" y="325" text-anchor="middle">(review: 展示预览+合规摘要)</text>
+
+  <rect class="box" x="50" y="280" width="260" height="70" />
+  <text class="text title" x="180" y="305" text-anchor="middle">返工</text>
+  <text class="text" x="180" y="325" text-anchor="middle">(列出问题 & 返回创作阶段)</text>
+
+  <!-- Media row -->
+  <rect class="box" x="50" y="430" width="260" height="70" />
+  <text class="text title" x="180" y="455" text-anchor="middle">配图生成</text>
+  <text class="text" x="180" y="475" text-anchor="middle">(image.generate_cards / ComfyUI)</text>
+
+  <rect class="box" x="380" y="430" width="360" height="70" />
+  <text class="text title" x="560" y="455" text-anchor="middle">媒体 QA & 标准化</text>
+  <text class="text" x="560" y="475" text-anchor="middle">(尺寸 / 格式 / EXIF)</text>
+
+  <rect class="box" x="760" y="430" width="360" height="70" />
+  <text class="text title" x="940" y="455" text-anchor="middle">发布预检 (Preflight)</text>
+  <text class="text" x="940" y="475" text-anchor="middle">(账号登录 / 配额 / 媒体完整性)</text>
+
+  <!-- Publish row -->
+  <rect class="box" x="380" y="580" width="360" height="70" />
+  <text class="text title" x="560" y="605" text-anchor="middle">发布执行</text>
+  <text class="text" x="560" y="625" text-anchor="middle">(social-publisher: 幂等 + 重试 + 日志)</text>
+
+  <rect class="box" x="760" y="580" width="360" height="70" />
+  <text class="text title" x="940" y="605" text-anchor="middle">发布后监控</text>
+  <text class="text" x="940" y="625" text-anchor="middle">(48/72/168h 拉取指标)</text>
+
+  <!-- Arrows -->
+  <path class="arrow" d="M290 65 L380 65" />
+  <path class="arrow" d="M640 65 L740 65" />
+  <path class="arrow" d="M920 100 L560 150" />
+  <path class="arrow" d="M560 220 L560 280" />
+  <path class="arrow" d="M460 310 L290 310" />
+  <path class="arrow" d="M460 310 L510 350" />
+  <path class="arrow" d="M180 360 L180 430" />
+  <path class="arrow" d="M640 350 L640 430" />
+  <path class="arrow" d="M740 460 L760 460" />
+  <path class="arrow" d="M560 500 L560 580" />
+  <path class="arrow" d="M740 615 L760 615" />
+
+  <!-- Feedback loop -->
+  <path class="arrow" d="M940 650 L940 740 L560 740 L560 665" />
+  <text class="text" x="740" y="755" text-anchor="middle">性能反馈 & 选题库更新</text>
+
+  <!-- Notes -->
+  <text class="text" x="180" y="820">图例：流程自左->右->下。失败分支返回“返工”或人工介入。</text>
+</svg>

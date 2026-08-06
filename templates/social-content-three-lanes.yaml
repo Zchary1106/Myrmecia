@@ -1,0 +1,208 @@
+name: Social Content Three Lanes
+description: >-
+  三条独立的内容生产线：共享选题证据与内容核心包后，并行产出抖音视频、小红书图文/视频、公众号图文；
+  自动合规初筛与人工 Gate 后才允许进入媒体和发布链路。创建该流水线时必须使用 gateMode="manual"。
+stages:
+  - name: 选题证据包
+    role: trend-scout
+    prompt_template: |
+      围绕以下主题制作可审计的选题证据包。
+      固定规则：
+      - 抖音：使用 `mcp__douyin-search__search_videos` 或 `get_homefeed`；最多 8 次调用，不重复检索同一关键词。
+      - 小红书：使用 `web.search` 检索公开可访问页面；明确说明这不是站内全量数据。
+      - 采样窗口：默认近 30 天；若数据不足可扩大到近 90 天，并标注原因。
+      - 每个平台至少 5 个去重样本；按标题、作者、链接去重；若不足必须报告样本量。
+      - 每条证据输出：平台、标题、作者/账号、链接或来源、抓取时间、互动字段原值、关键词、观察结论。
+      - 区分“原始数据”“推断”“未知/缺失”，禁止编造互动数字。
+      - 说明限流、登录、DLP 或公开信息缺失等限制。
+
+      主题：
+      {input}
+
+  - name: 内容核心包
+    role: content-strategist
+    output_schema: docs/social-workflow/content-package.schema.json
+    prompt_template: |
+      根据以下选题证据包，生成符合 `docs/social-workflow/content-package.schema.json` 的内容核心包。
+      保持事实与平台适配边界，不直接生成最终发布稿，也不得虚构素材路径、版权或来源。
+
+      选题证据包：
+      {input}
+
+  - name: 抖音视频生产线
+    role: douyin-writer
+    depends_on: [1]
+    prompt_template: |
+      基于内容核心包，为抖音生成视频优先的最终脚本包。
+      必须包含：唯一确定的标题、0-3 秒 Hook、逐镜头/时长/画面/口播/字幕、B-roll 清单、
+      9:16/1080x1920 媒体规格、封面文案、拍摄清单、视频文件待交付字段、标签与 CTA。
+      只能使用核心包已验证的事实；待验证项必须保留标记，不得作为确定结论。
+
+      内容核心包：
+      {input}
+
+  - name: 小红书生产线
+    role: xiaohongshu-writer
+    depends_on: [1]
+    prompt_template: |
+      基于内容核心包，生成小红书最终稿，并先选择一种明确形态：`图文` 或 `视频`，不得混淆。
+      图文必须包含：唯一标题（≤20 字）、正文（≤1000 字）、6-8 张 1080x1440 卡片 brief、标签、CTA。
+      视频必须包含：唯一标题、口播/分镜、9:16 视频需求、封面、标签、CTA。
+      卡片内容只能提炼核心包中已验证的事实；不得生成或猜测真实媒体路径。
+
+      内容核心包：
+      {input}
+
+  - name: 公众号生产线
+    role: wechat-writer
+    depends_on: [1]
+    prompt_template: |
+      基于内容核心包，生成公众号最终稿包：唯一标题、120 字内摘要、Markdown 正文、
+      HTML 排版结构、900x383 封面 brief、来源说明、标签和草稿箱所需字段清单。
+      只能使用核心包中已验证事实；草稿箱同步与正式发布不在本阶段执行。
+
+      内容核心包：
+      {input}
+
+  - name: 自动合规初筛
+    role: social-compliance-reviewer
+    depends_on: [2, 3, 4]
+    output_schema: docs/social-workflow/compliance-report.schema.json
+    prompt_template: |
+      先调用 `content.compliance_check` 对以下三个独立生产线稿件执行确定性检查，
+      再根据 `docs/social-workflow/compliance-rules.yaml` 补充语义审核。
+      输出必须符合 `docs/social-workflow/compliance-report.schema.json`；
+      任何 blocker 或需要修改项都必须明确关联到平台与原文。
+      不得将自动初筛替代人工审核或法律意见。
+
+      三平台稿件：
+      {input}
+
+  - name: 人工审核材料
+    role: social-review-coordinator
+    depends_on: [2, 3, 4, 5]
+    requires_approval: true
+    approval_kind: content
+    output_schema: docs/social-workflow/review-package.schema.json
+    prompt_template: |
+      将自动合规报告和三个平台的完整终稿整理成人工审核包。
+      你只能提供 recommendation，不能冒充人工审批。审核包必须逐项包含：
+      1. 事实来源和待验证项；
+      2. 抖音视频封面/前 3 秒/本地视频待交付项；
+      3. 小红书图文或视频形态、标题正文与卡片 brief；
+      4. 公众号 HTML、900x383 封面和草稿字段；
+      5. 合规报告中所有 blocker/warning 的处置。
+      输出必须符合 `docs/social-workflow/review-package.schema.json`。
+      本阶段完成后 Pipeline 必须暂停，真人点击批准后，系统才会持久化审批人、审批时间和内容哈希。
+
+      审核输入：
+      {input}
+
+  - name: 小红书卡片生成
+    role: xiaohongshu-writer
+    depends_on: [3, 6]
+    prompt_template: |
+      必须从上下文读取系统生成的 Verified Human Approval Records。
+      仅在存在有效人工审批且小红书内容形态为图文时，调用 `image.generate_cards`
+      生成 6-8 张 1080x1440 PNG 卡片。卡片必须从已审核稿提炼，不得新增事实。
+      输出卡片绝对路径和内容摘要；如果审核未通过、形态为视频或工具失败，明确停止原因。
+
+      小红书完整终稿与审核包：
+      {input}
+
+  - name: 公众号草稿箱同步
+    role: wechat-writer
+    depends_on: [4, 6]
+    prompt_template: |
+      必须从上下文读取系统生成的 Verified Human Approval Records。
+      仅在存在有效人工审批时同步公众号草稿箱：
+      1. 生成 HTML 正文；
+      2. 生成 900x383 PNG 封面；
+      3. 上传封面永久素材；
+      4. 创建公众号草稿。
+      输出草稿 media_id、封面绝对路径和失败原因。不得正式发布。
+
+      公众号完整终稿与审核包：
+      {input}
+
+  - name: 媒体 QA
+    role: media-qa
+    depends_on: [2, 3, 4, 6, 7, 8]
+    output_schema: docs/social-workflow/media-qa-report.schema.json
+    output_policy:
+      field: status
+      allowed_values: [pass, partial]
+      on_failure: blocked
+      message: 媒体资产存在阻断问题，修复后才能进入发布预检。
+    prompt_template: |
+      对已生成或人工提供的所有媒体逐个调用 `media.inspect`：
+      - 小红书图文卡片：1080x1440 PNG/JPEG；
+      - 抖音与小红书视频：9:16，建议 1080x1920；
+      - 公众号封面：900x383 PNG。
+      抖音没有人工视频文件时，将抖音记录为 missing/skipped，并输出 status=partial，
+      但不能伪造路径；其它平台资产存在阻断问题时输出 status=blocked。
+      输出必须符合 `docs/social-workflow/media-qa-report.schema.json`。
+
+      三平台终稿、审批记录和生成资产：
+      {input}
+
+  - name: 发布预检
+    role: social-preflight
+    depends_on: [2, 3, 4, 6, 7, 8, 9]
+    output_schema: docs/social-workflow/preflight-result.schema.json
+    output_policy:
+      field: ok
+      allowed_values: [true]
+      on_failure: blocked
+      message: 发布预检未通过，禁止进入真实发布阶段。
+    prompt_template: |
+      对抖音、小红书、公众号分别执行发布预检，不得发布。
+      依照 `docs/social-workflow/preflight-result.schema.json` 输出 JSON：
+      - 检查最终稿、人工批准记录、媒体 QA、账号登录、格式与绝对路径；
+      - 检查同一 content_id/platform 的草稿或排期冲突；
+      - 为每个平台生成稳定幂等键；
+      - 缺少抖音本地视频时将抖音标记 skipped，不得伪造路径；
+      - 任何 errors 存在时 ok=false。
+
+      小红书资产、公众号草稿与其它发布输入：
+      {input}
+
+  - name: 发布执行
+    role: social-publisher
+    depends_on: [10]
+    publish_tools:
+      - mcp__xiaohongshu__publish_content
+      - mcp__xiaohongshu__publish_with_video
+      - mcp__douyin-upload__douyin_upload_video
+      - mcp__wechat-official-account__wechat_publish
+    prompt_template: |
+      只有在人工已通过当前 pipeline Gate、预检 `ok=true` 且平台输入完整时才发布。
+      保持三个平台独立执行：抖音只发布视频；小红书发布图文或视频中的一种；公众号从唯一草稿 media_id 提交。
+      同一 content_id/platform/idempotency_key 不得重复调用发布工具；发生临时错误最多重试一次。
+      依照 `docs/social-workflow/publish-result.schema.json` 输出每个平台的发布结果；
+      发生半成功或失败时保留安全的原始响应摘要，交给补偿阶段。
+
+      预检结果：
+      {input}
+
+  - name: 发布补偿计划
+    role: social-ops
+    depends_on: [11]
+    prompt_template: |
+      根据发布结果，按 `docs/social-workflow/compensation-plan.schema.json` 输出补偿计划。
+      不自动撤回或重发；只有明确 transient 错误才能建议一次需要人工确认的重试。
+
+      发布结果：
+      {input}
+
+  - name: 发布后监控计划
+    role: social-analytics
+    depends_on: [11]
+    prompt_template: |
+      为每个已发布平台调用 `social.monitor_plan`，持久化 48、72、168 小时的监控任务，
+      然后生成当前空报告骨架。
+      使用 `docs/social-workflow/performance-report.schema.json`；不能获取的指标必须标记 unavailable。
+      把可检验的选题假设与内容 ID 关联，供下一轮选题调研使用。
+
+      发布结果：
+      {input}

@@ -365,6 +365,25 @@ agents:
     allowed_tools: [web.search, web.fetch, content.hashtag_plan, image.generate_svg, image.generate_cards, image.generate_comfyui]
     triggers: [小红书, 笔记, 种草, 小红书文案, rednote]
 
+  - id: xiaohongshu-visual-designer
+    name: 小红书视觉卡片师
+    emoji: 🎴
+    role: xiaohongshu-visual-designer
+    description: 将已审核的小红书终稿压缩为连贯的 3:4 卡片故事，负责视觉主题、出图和逐图 QA
+    skill: skills/xiaohongshu-visual-creator/SKILL.md
+    model:
+      provider: openai
+      model: gpt-5.3-codex
+      tier: balanced
+      fallbackModel: gpt-5.4
+      maxTokens: 40000
+      maxResponseTokens: 8192
+      maxToolCalls: 20
+      maxWallClockMs: 900000
+    capabilities: [xiaohongshu, visual-storytelling, card-design, image-generation, media-qa]
+    allowed_tools: [file_read, file_list, image.generate_cards, image.generate_comfyui, media.inspect]
+    triggers: [小红书配图, 卡片设计, 图文排版, 生图, visual cards]
+
   - id: douyin-writer
     name: 抖音编导
     emoji: 🎬
@@ -484,6 +503,139 @@ agents:
     # anyway. Xiaohongshu-side signal is gathered via web.search instead.
     allowed_tools: [web.search, web.fetch, mcp__douyin-search__search_videos, mcp__douyin-search__get_homefeed, mcp__douyin-search__get_video_comments]
     triggers: [选题, 调研, 热点, trend, 什么内容火]
+
+  - id: content-strategist
+    name: 内容策略
+    emoji: 🧭
+    role: content-strategist
+    description: 将选题证据转化为可复用、可审计的跨平台内容核心包
+    skill: agents/content-strategist.md
+    model:
+      provider: openai
+      model: gpt-5.4-mini
+      tier: cheap
+      fallbackModel: claude-haiku-4.5
+      maxTokens: 30000
+      maxResponseTokens: 6144
+      maxToolCalls: 12
+      maxWallClockMs: 300000
+    capabilities: [content-strategy, factuality, social-media, content-reuse]
+    allowed_tools: [web.search, web.fetch]
+    triggers: [内容策略, 主脚本, master script, 内容核心]
+
+  - id: social-compliance-reviewer
+    name: 社媒合规初筛
+    emoji: 🛡️
+    role: social-compliance-reviewer
+    description: 使用可配置规则库初筛抖音、小红书、公众号内容风险
+    skill: agents/social-compliance-reviewer.md
+    model:
+      provider: openai
+      model: gpt-5.4-mini
+      tier: cheap
+      fallbackModel: claude-haiku-4.5
+      maxTokens: 30000
+      maxResponseTokens: 4096
+      maxToolCalls: 12
+      maxWallClockMs: 300000
+    capabilities: [social-compliance, advertising-review, platform-policy, factuality]
+    allowed_tools: [file_read, web.search, web.fetch, content.compliance_check]
+    triggers: [合规审核, 广告法, 极限词, 社媒审核]
+
+  - id: social-review-coordinator
+    name: 社媒审核材料
+    emoji: 📋
+    role: social-review-coordinator
+    description: 汇总三平台完整终稿和合规报告，生成供真人审批的审核包
+    skill: agents/social-review-coordinator.md
+    model:
+      provider: openai
+      model: gpt-5.4-mini
+      tier: cheap
+      fallbackModel: claude-haiku-4.5
+      maxTokens: 60000
+      maxResponseTokens: 6144
+      maxToolCalls: 8
+      maxWallClockMs: 300000
+    capabilities: [content-review, compliance-summary, human-gate-preparation]
+    allowed_tools: [file_read]
+    triggers: [审核材料, 人工审核包, review package]
+
+  - id: media-qa
+    name: 社媒媒体 QA
+    emoji: 🖼️
+    role: media-qa
+    description: 校验社媒图片、封面和视频文件的存在性、格式、尺寸与发布适配性
+    skill: agents/media-qa.md
+    model:
+      provider: openai
+      model: gpt-5.4-mini
+      tier: cheap
+      fallbackModel: claude-haiku-4.5
+      maxTokens: 30000
+      maxResponseTokens: 4096
+      maxToolCalls: 16
+      maxWallClockMs: 300000
+    capabilities: [media-qa, image-validation, video-validation, metadata-review]
+    allowed_tools: [file_read, file_list, media.inspect]
+    triggers: [媒体检查, 图片检查, 视频检查, media qa]
+
+  - id: social-ops
+    name: 社媒发布补偿
+    emoji: 🧯
+    role: social-ops
+    description: 处理社媒发布失败、半成功状态和人工补偿计划
+    skill: agents/social-ops.md
+    model:
+      provider: openai
+      model: gpt-5.4-mini
+      tier: cheap
+      fallbackModel: claude-haiku-4.5
+      maxTokens: 30000
+      maxResponseTokens: 4096
+      maxToolCalls: 12
+      maxWallClockMs: 300000
+    capabilities: [publishing-operations, compensation, incident-response]
+    allowed_tools: [file_read]
+    triggers: [发布失败, 补偿, 重试, 回滚]
+
+  - id: social-analytics
+    name: 社媒效果分析
+    emoji: 📈
+    role: social-analytics
+    description: 汇总发布后指标并反馈下一轮选题与平台策略
+    skill: agents/social-analytics.md
+    model:
+      provider: openai
+      model: gpt-5.4-mini
+      tier: cheap
+      fallbackModel: claude-haiku-4.5
+      maxTokens: 30000
+      maxResponseTokens: 4096
+      maxToolCalls: 16
+      maxWallClockMs: 300000
+    capabilities: [social-analytics, performance-reporting, content-strategy]
+    allowed_tools: [web.search, web.fetch, file_read, social.monitor_plan]
+    triggers: [数据复盘, 内容表现, 发布后监控, metrics]
+
+  - id: social-preflight
+    name: 社媒发布预检
+    emoji: ✅
+    role: social-preflight
+    description: 只执行登录、稿件、媒体和冲突检查；没有真实发布权限
+    skill: agents/social-preflight.md
+    model:
+      provider: openai
+      model: gpt-5.4-mini
+      tier: cheap
+      fallbackModel: claude-haiku-4.5
+      maxTokens: 30000
+      maxResponseTokens: 4096
+      maxToolCalls: 12
+      maxWallClockMs: 300000
+    capabilities: [preflight, account-check, media-validation, scheduling]
+    allowed_tools: [file_read, file_list, media.inspect, social.schedule_check, mcp__xiaohongshu__check_login_status, mcp__douyin-upload__douyin_check_login, mcp__wechat-official-account__wechat_auth]
+    triggers: [发布预检, preflight, 登录检查]
 
   - id: social-publisher
     name: 社媒发布执行

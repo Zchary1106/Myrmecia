@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Social Publish Preflight Result",
+  "type": "object",
+  "required": ["schema_version", "content_id", "checked_at", "ok", "platforms", "errors", "warnings"],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "content_id": { "type": "string" },
+    "checked_at": { "type": "string", "format": "date-time" },
+    "ok": { "type": "boolean" },
+    "platforms": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["platform", "account_login", "required_assets", "idempotency_key"],
+        "properties": {
+          "platform": { "enum": ["douyin", "xiaohongshu", "wechat"] },
+          "account_login": { "enum": ["authenticated", "unauthenticated", "unknown"] },
+          "required_assets": { "type": "array", "items": { "type": "string" } },
+          "draft_or_schedule_conflict": { "type": "boolean" },
+          "idempotency_key": { "type": "string", "minLength": 8 }
+        }
+      }
+    },
+    "errors": { "type": "array", "items": { "type": "string" } },
+    "warnings": { "type": "array", "items": { "type": "string" } }
+  }
+}

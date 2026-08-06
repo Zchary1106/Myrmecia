@@ -67,7 +67,7 @@ export function getUsageSummary(filter: {
   let sql = `SELECT
     COALESCE(SUM(input_tokens), 0) as total_input,
     COALESCE(SUM(output_tokens), 0) as total_output,
-    COALESCE(SUM(cost_usd), 0) as total_cost,
+    COALESCE(SUM(CASE WHEN cost_type IN ('exact','estimated') THEN cost_usd ELSE 0 END), 0) as total_cost,
     COUNT(*) as request_count
     FROM model_usage_stats WHERE 1=1`;
   const params: any[] = [];
@@ -89,7 +89,9 @@ export function getUsageSummary(filter: {
 
 export function getUsageByAgent(since?: string): Array<{ agentId: string; totalCostUSD: number; requestCount: number }> {
   const db = getDb();
-  let sql = `SELECT agent_id, SUM(cost_usd) as total_cost, COUNT(*) as count FROM model_usage_stats`;
+  let sql = `SELECT agent_id,
+    SUM(CASE WHEN cost_type IN ('exact','estimated') THEN cost_usd ELSE 0 END) as total_cost,
+    COUNT(*) as count FROM model_usage_stats`;
   const params: any[] = [];
   if (since) { sql += ' WHERE created_at >= ?'; params.push(since); }
   sql += ' GROUP BY agent_id ORDER BY total_cost DESC';
@@ -102,7 +104,9 @@ export function getUsageByAgent(since?: string): Array<{ agentId: string; totalC
 
 export function getUsageByModel(since?: string): Array<{ modelId: string; totalCostUSD: number; totalTokens: number }> {
   const db = getDb();
-  let sql = `SELECT model_id, SUM(cost_usd) as total_cost, SUM(input_tokens + output_tokens) as total_tokens FROM model_usage_stats`;
+  let sql = `SELECT model_id,
+    SUM(CASE WHEN cost_type IN ('exact','estimated') THEN cost_usd ELSE 0 END) as total_cost,
+    SUM(input_tokens + output_tokens) as total_tokens FROM model_usage_stats`;
   const params: any[] = [];
   if (since) { sql += ' WHERE created_at >= ?'; params.push(since); }
   sql += ' GROUP BY model_id ORDER BY total_cost DESC';

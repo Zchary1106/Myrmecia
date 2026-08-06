@@ -20,6 +20,33 @@ export function createMcpRoutes(): Router {
     res.json(getMcpManager().listTools());
   });
 
+  // Safe readiness probe: verifies that the configured credentials can obtain
+  // a token, but never returns token/config content to the caller.
+  router.get('/wechat/status', async (_req, res) => {
+    const connected = getMcpManager().servers()
+      .some(server => server.name === WECHAT_OFFICIAL_ACCOUNT_MCP && server.connected);
+    if (!connected) {
+      return res.status(503).json({ connected: false, authenticated: false });
+    }
+    try {
+      const result = await getMcpManager().callTool(
+        'mcp__wechat-official-account__wechat_auth',
+        { action: 'get_token' },
+        20_000,
+        {
+          agentId: 'social-preflight',
+          taskMode: 'direct',
+        },
+      );
+      res.status(result.isError ? 502 : 200).json({
+        connected: true,
+        authenticated: !result.isError,
+      });
+    } catch {
+      res.status(502).json({ connected: true, authenticated: false });
+    }
+  });
+
   // POST /mcp/servers — register + connect a server { name, command, args?, env? }
   router.post('/servers', async (req, res) => {
     const { name, command, args, env, cwd } = req.body || {};

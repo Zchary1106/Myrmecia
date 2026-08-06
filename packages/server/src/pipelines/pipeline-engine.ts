@@ -1,5 +1,6 @@
-import { readFileSync, readdirSync } from 'fs';
+import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'fs';
 import { join } from 'path';
+import { createHash } from 'crypto';
 import { parse as parseYaml } from 'yaml';
 import { exec } from 'child_process';
 import { promisify } from 'util';
@@ -15,8 +16,9 @@ import { contextManager } from './context-manager.js';
 import { getReflectionService } from '../memory/reflection.js';
 import { workspaceManager } from '../workspace/workspace-manager.js';
 import { createTestReportFromOutput, isTestingStage } from '../testing/test-report.js';
-import { saveCheckpoint, getCompletedStageIndices } from './checkpoint.js';
-import type { Pipeline, PipelineStage, PipelineTemplate } from '../types.js';
+import { clearStageCheckpoints, saveCheckpoint, getCompletedStageIndices } from './checkpoint.js';
+import { extractStructuredOutput, validateStageOutput } from './stage-output-validator.js';
+import type { OperatorActor, Pipeline, PipelineStage, PipelineTemplate } from '../types.js';
 import { GOVERNED_PUBLISH_MCP_TOOLS } from '../tools/mcp-manager.js';
 
 const execAsync = promisify(exec);
@@ -33,6 +35,15 @@ interface PipelineTemplateYamlStage {
   prompt_template: string;
   depends_on?: number[];
   publish_tools?: string[];
+  requires_approval?: boolean;
+  approval_kind?: 'content' | 'publish';
+  output_schema?: string;
+  output_policy?: {
+    field: string;
+    allowed_values: Array<string | number | boolean>;
+    on_failure?: 'blocked' | 'failed';
+    message?: string;
+  };
 }
 
 function toTemplateStages(stages: PipelineTemplateYamlStage[]): PipelineTemplate['stages'] {
@@ -42,6 +53,17 @@ function toTemplateStages(stages: PipelineTemplateYamlStage[]): PipelineTemplate
     promptTemplate: stage.prompt_template,
     ...(stage.depends_on?.length ? { dependsOn: stage.depends_on } : {}),
     ...(stage.publish_tools?.length ? { publishTools: stage.publish_tools } : {}),
+    ...(stage.requires_approval ? { requiresApproval: true } : {}),
+    ...(stage.approval_kind ? { approvalKind: stage.approval_kind } : {}),
+    ...(stage.output_schema ? { outputSchema: stage.output_schema } : {}),
+    ...(stage.output_policy ? {
+      outputPolicy: {
+        field: stage.output_policy.field,
+        allowedValues: stage.output_policy.allowed_values,
+        ...(stage.output_policy.on_failure ? { onFailure: stage.output_policy.on_failure } : {}),
+        ...(stage.output_policy.message ? { message: stage.output_policy.message } : {}),
+      },
+    } : {}),
   }));
 }
 
@@ -93,6 +115,91 @@ function readyPublishStageIndices(stages: PipelineStage[]): number[] {
   });
 }
 
+function contentHashForApproval(pipeline: Pipeline): string {
+  const completed = pipeline.stages
+    .filter(stage => stage.status === 'done' && stage.output)
+    .map(stage => ({ index: stage.index, output: stage.output }));
+  return createHash('sha256')
+    .update(JSON.stringify({ input: pipeline.input, completed }))
+    .digest('hex');
+}
+
+function explicitApprovalStagesEnabled(stages: PipelineStage[]): boolean {
+  return stages.some(stage => stage.requiresApproval);
+}
+
+function stageAndDescendantIndices(stages: PipelineStage[], targetIndex: number): number[] {
+  const affected = new Set([targetIndex]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const [index, stage] of stages.entries()) {
+      if (affected.has(index)) continue;
+      const dependencies = stage.dependsOn ?? (index > 0 ? [index - 1] : []);
+      if (dependencies.some(dependency => affected.has(dependency))) {
+        affected.add(index);
+        changed = true;
+      }
+    }
+  }
+  return [...affected].sort((a, b) => a - b);
+}
+
+export function buildPipelineRunSnapshot(pipeline: Pipeline) {
+  const stages = pipeline.stages.map(stage => ({
+    index: stage.index,
+    name: stage.name,
+    role: stage.agentRole,
+    status: stage.status,
+    taskId: stage.taskId,
+    outputHash: stage.output
+      ? createHash('sha256').update(stage.output).digest('hex')
+      : undefined,
+  }));
+  const contentHash = createHash('sha256')
+    .update(JSON.stringify({ input: pipeline.input, stages }))
+    .digest('hex');
+  const contentId = pipeline.stages
+    .flatMap(stage => stage.output?.match(/social-\d{8}-[^\s"'`,}]+-\d+/gi) || [])
+    .at(0) || pipeline.id;
+  const approvals = pipeline.stages
+    .filter(stage => stage.approval)
+    .map(stage => ({ stageIndex: stage.index, stageName: stage.name, ...stage.approval }));
+  const assets = [...new Set(pipeline.stages.flatMap(stage =>
+    stage.output?.match(/\/[^\s"'`,}]+\.(?:png|jpe?g|webp|mp4|mov|m4v|webm|mkv)/gi) || []
+  ))].map(path => ({ path }));
+  const publishResults = pipeline.stages.flatMap(stage => {
+    if (!stage.output || !stage.publishTools?.length) return [];
+    try {
+      const parsed = extractStructuredOutput(stage.output);
+      return parsed && typeof parsed === 'object' ? [parsed] : [];
+    } catch {
+      return [];
+    }
+  });
+
+  return {
+    schema_version: '1.0',
+    content_id: contentId,
+    pipeline_id: pipeline.id,
+    template_id: pipeline.templateId,
+    name: pipeline.name,
+    content_hash: contentHash,
+    created_at: pipeline.createdAt,
+    updated_at: new Date().toISOString(),
+    gate_mode: pipeline.gateMode,
+    stages,
+    assets,
+    approval: {
+      records: approvals,
+      required_before_publish: templateHasAutonomousPublishStage(
+        pipeline.stages.map(stage => ({ role: stage.agentRole, publishTools: stage.publishTools }))
+      ),
+    },
+    publish_results: publishResults,
+  };
+}
+
 export class PublishConfirmationRequiredError extends Error {}
 export class PublishStageSkipForbiddenError extends Error {}
 
@@ -115,11 +222,16 @@ export class PublishStageSkipForbiddenError extends Error {}
  * it from a generic "did the value change" comparison.
  */
 function resolveGateMode(
-  stages: Array<{ role: string; publishTools?: string[] }>,
+  stages: Array<{ role: string; publishTools?: string[]; requiresApproval?: boolean }>,
   requested: 'auto' | 'manual' | undefined,
   confirmAutonomousPublish: boolean | undefined
 ): { gateMode: 'auto' | 'manual'; forcedForSafety: boolean } {
   if (requested === 'manual') return { gateMode: 'manual', forcedForSafety: false };
+  // A template that explicitly declares a human approval stage must never be
+  // converted into an autonomous workflow by the generic publish opt-in.
+  if (stages.some(stage => stage.requiresApproval)) {
+    return { gateMode: 'manual', forcedForSafety: true };
+  }
   if (!templateHasAutonomousPublishStage(stages)) return { gateMode: requested ?? 'auto', forcedForSafety: false };
   if (confirmAutonomousPublish === true) return { gateMode: 'auto', forcedForSafety: false };
   return { gateMode: 'manual', forcedForSafety: true };
@@ -131,6 +243,22 @@ export class PipelineEngine {
   private stageGitShas = new Map<string, string>(); // key: `${pipelineId}:${stageIndex}`
   private taskToPipeline = new Map<string, { pipelineId: string; stageIndex: number }>();
   private publishStageApprovals = new Set<string>();
+  private startingStages = new Set<string>();
+
+  /**
+   * Persist a redacted, deterministic run snapshot alongside stage artifacts.
+   * This makes a completed workflow recoverable and auditable without storing
+   * credentials or raw external tool payloads in the database.
+   */
+  private writeRunSnapshot(pipeline: Pipeline): void {
+    const ws = workspaceManager.getWorkspaceInfo(pipeline.id, 'pipeline');
+    if (!ws) return;
+
+    const reportDir = join(ws.path, 'reports');
+    mkdirSync(reportDir, { recursive: true });
+    const snapshot = buildPipelineRunSnapshot(pipeline);
+    writeFileSync(join(reportDir, 'pipeline-run-snapshot.json'), JSON.stringify(snapshot, null, 2));
+  }
 
   constructor(taskQueue: TaskQueue, agentManager: AgentManager) {
     this.taskQueue = taskQueue;
@@ -207,6 +335,10 @@ export class PipelineEngine {
       promptTemplate: s.promptTemplate,
       dependsOn: s.dependsOn,
       publishTools: s.publishTools,
+      requiresApproval: s.requiresApproval,
+      approvalKind: s.approvalKind,
+      outputSchema: s.outputSchema,
+      outputPolicy: s.outputPolicy,
     }));
 
     const { gateMode, forcedForSafety } = resolveGateMode(template.stages, data.gateMode, data.confirmAutonomousPublish);
@@ -246,7 +378,7 @@ export class PipelineEngine {
    */
   private startReadyStages(pipelineId: string) {
     const pipeline = getPipeline(pipelineId);
-    if (!pipeline || pipeline.status === 'done' || pipeline.status === 'failed') return;
+    if (!pipeline || pipeline.status !== 'running') return;
 
     for (const [idx, stage] of pipeline.stages.entries()) {
       if (stage.status !== 'pending') continue;
@@ -264,12 +396,22 @@ export class PipelineEngine {
 
   /** Start a pipeline stage */
   private async startStage(pipelineId: string, stageIndex: number) {
+    const startingKey = `${pipelineId}:${stageIndex}`;
+    if (this.startingStages.has(startingKey)) return;
+    this.startingStages.add(startingKey);
+
     const pipeline = getPipeline(pipelineId);
-    if (!pipeline) return;
+    if (!pipeline) {
+      this.startingStages.delete(startingKey);
+      return;
+    }
 
     const stages = [...pipeline.stages];
     const stage = stages[stageIndex];
-    if (!stage) return;
+    if (!stage || stage.status !== 'pending') {
+      this.startingStages.delete(startingKey);
+      return;
+    }
     const publishApprovalKey = `${pipelineId}:${stageIndex}`;
     if (
       pipeline.gateMode === 'manual'
@@ -281,66 +423,107 @@ export class PipelineEngine {
         currentStageIndex: stageIndex - 1,
       });
       logger.warn({ pipelineId, stageIndex }, 'Publish stage paused until explicit approval');
+      this.startingStages.delete(startingKey);
       return;
     }
 
-    // Use context manager for optimized input building (with long-term memory recall)
-    const prompt = await contextManager.buildStageInputWithMemory(pipeline, stageIndex);
-
-    // Determine workspace — use pipeline workspace if available, else cwd
-    const ws = workspaceManager.getWorkspaceInfo(pipelineId, 'pipeline');
-    let workdir = ws?.path || undefined;
-    let workspacePath = ws?.path || undefined;
-
-    // Capture git SHA for rollback (saved in unified checkpoint later)
-    if (ws?.path) {
-      try {
-        const { stdout } = await execAsync('git rev-parse HEAD', { cwd: ws.path, encoding: 'utf-8', timeout: 5000 });
-        this.stageGitShas.set(`${pipelineId}:${stageIndex}`, stdout.trim());
-      } catch {
-        // Not a git workspace, skip
-      }
-    }
-
-    // Create stage-specific artifact directory
-    if (ws) {
-      const stageDir = workspaceManager.createStageDir(ws.path, stageIndex, stage.name);
-      // Stage output will be written here after completion
-    }
-
-    // Find an available agent for this role (prefer the pipeline's domain agents)
+    // Find an available agent before reserving the stage.
     const agent = this.agentManager.findAvailableAgent(stage.agentRole, pipeline.domainId);
     if (!agent) {
-      stages[stageIndex] = { ...stage, status: 'pending' };
-      updatePipeline(pipelineId, { stages, status: 'blocked' });
+      const latest = getPipeline(pipelineId);
+      if (latest) {
+        updatePipeline(pipelineId, { stages: latest.stages, status: 'blocked', currentStageIndex: stageIndex });
+      }
       eventBus.emit('pipeline:stage:started', { pipelineId, stageIndex, status: 'blocked', workspaceId: pipeline.workspaceId });
-
-      // Retry after delay — an agent may become available
       setTimeout(() => this.retryBlockedStage(pipelineId, stageIndex), 10000);
+      this.startingStages.delete(startingKey);
       return;
     }
-    this.publishStageApprovals.delete(publishApprovalKey);
 
-    // Create task for this stage
-    const task = await this.taskQueue.enqueue({
-      title: `${pipeline.name} — ${stage.name}`,
-      description: prompt,
-      mode: 'pipeline',
-      assigneeId: agent.id,
-      input: prompt,
-      pipelineId: pipeline.id,
-      stageIndex,
-      workdir,
-      workspacePath,
-      workspaceId: pipeline.workspaceId,
-      domainId: pipeline.domainId,
-    });
+    // Reserve this one stage synchronously using the latest persisted stage
+    // array. Parallel starters must not later overwrite each other's status.
+    const reservation = getPipeline(pipelineId);
+    if (!reservation || reservation.stages[stageIndex]?.status !== 'pending') {
+      this.startingStages.delete(startingKey);
+      return;
+    }
+    const reservedStages = [...reservation.stages];
+    reservedStages[stageIndex] = { ...reservedStages[stageIndex], status: 'running' };
+    updatePipeline(pipelineId, { stages: reservedStages, currentStageIndex: stageIndex });
 
-    stages[stageIndex] = { ...stage, status: 'running', taskId: task.id, input: prompt };
-    updatePipeline(pipelineId, { stages, currentStageIndex: stageIndex });
-    this.taskToPipeline.set(task.id, { pipelineId, stageIndex });
+    try {
+      // Use context manager for optimized input building (with long-term memory recall)
+      const prompt = await contextManager.buildStageInputWithMemory(
+        { ...reservation, stages: reservedStages },
+        stageIndex,
+      );
 
-    eventBus.emit('pipeline:stage:started', { pipelineId, stageIndex, taskId: task.id, workspaceId: pipeline.workspaceId });
+      // Determine workspace — use pipeline workspace if available, else cwd
+      const ws = workspaceManager.getWorkspaceInfo(pipelineId, 'pipeline');
+      const workdir = ws?.path || undefined;
+      const workspacePath = ws?.path || undefined;
+
+      // Capture git SHA for rollback (saved in unified checkpoint later)
+      if (ws?.path) {
+        try {
+          const { stdout } = await execAsync('git rev-parse HEAD', { cwd: ws.path, encoding: 'utf-8', timeout: 5000 });
+          this.stageGitShas.set(`${pipelineId}:${stageIndex}`, stdout.trim());
+        } catch {
+          // Not a git workspace, skip
+        }
+      }
+
+      // Create stage-specific artifact directory
+      if (ws) {
+        workspaceManager.createStageDir(ws.path, stageIndex, stage.name);
+      }
+
+      this.publishStageApprovals.delete(publishApprovalKey);
+
+      // Create task for this stage
+      const task = await this.taskQueue.enqueue({
+        title: `${pipeline.name} — ${stage.name}`,
+        description: prompt,
+        mode: 'pipeline',
+        assigneeId: agent.id,
+        input: prompt,
+        pipelineId: pipeline.id,
+        stageIndex,
+        workdir,
+        workspacePath,
+        workspaceId: pipeline.workspaceId,
+        domainId: pipeline.domainId,
+      });
+
+      const latest = getPipeline(pipelineId);
+      if (!latest) return;
+      const latestStages = [...latest.stages];
+      latestStages[stageIndex] = {
+        ...latestStages[stageIndex],
+        status: 'running',
+        taskId: task.id,
+        input: prompt,
+      };
+      updatePipeline(pipelineId, { stages: latestStages, currentStageIndex: stageIndex });
+      this.taskToPipeline.set(task.id, { pipelineId, stageIndex });
+
+      eventBus.emit('pipeline:stage:started', { pipelineId, stageIndex, taskId: task.id, workspaceId: pipeline.workspaceId });
+    } catch (error) {
+      const latest = getPipeline(pipelineId);
+      if (latest) {
+        const latestStages = [...latest.stages];
+        latestStages[stageIndex] = {
+          ...latestStages[stageIndex],
+          status: 'pending',
+          taskId: undefined,
+          input: undefined,
+        };
+        updatePipeline(pipelineId, { stages: latestStages, status: 'blocked', currentStageIndex: stageIndex });
+      }
+      throw error;
+    } finally {
+      this.startingStages.delete(startingKey);
+    }
   }
 
   /** Retry a blocked stage (when agent becomes available) */
@@ -375,20 +558,40 @@ export class PipelineEngine {
     if (!task) return;
 
     const stages = [...pipeline.stages];
-    stages[stageIdx] = { ...stages[stageIdx], status: 'done', output: task.output || '' };
-    updatePipeline(pipeline.id, { stages });
-
-    // Save unified checkpoint for recovery and rollback
-    const gitSha = this.stageGitShas.get(`${pipeline.id}:${stageIdx}`);
-    saveCheckpoint({
-      pipelineId: pipeline.id,
-      stageIndex: stageIdx,
-      stageName: stages[stageIdx].name,
-      stageOutput: task.output || '',
-      context: task.input || '',
-      timestamp: new Date().toISOString(),
-      gitSha,
+    const output = task.output || '';
+    const validation = validateStageOutput(stages[stageIdx], output);
+    stages[stageIdx] = {
+      ...stages[stageIdx],
+      status: validation.valid ? 'done' : 'review',
+      output,
+      validationErrors: validation.valid ? undefined : validation.errors,
+    };
+    updatePipeline(pipeline.id, {
+      stages,
+      ...(validation.valid ? {} : {
+        status: stages[stageIdx].outputPolicy?.onFailure === 'failed' ? 'failed' : 'blocked',
+        currentStageIndex: stageIdx,
+        ...(stages[stageIdx].outputPolicy?.onFailure === 'failed'
+          ? { completedAt: new Date().toISOString() }
+          : {}),
+      }),
     });
+    this.writeRunSnapshot({ ...pipeline, stages });
+
+    // Invalid structured outputs are intentionally not checkpointed; otherwise
+    // restart recovery could mark a rejected/review stage as completed.
+    const gitSha = this.stageGitShas.get(`${pipeline.id}:${stageIdx}`);
+    if (validation.valid) {
+      saveCheckpoint({
+        pipelineId: pipeline.id,
+        stageIndex: stageIdx,
+        stageName: stages[stageIdx].name,
+        stageOutput: task.output || '',
+        context: task.input || '',
+        timestamp: new Date().toISOString(),
+        gitSha,
+      });
+    }
     this.stageGitShas.delete(`${pipeline.id}:${stageIdx}`);
 
     // Write stage artifact to workspace
@@ -407,7 +610,16 @@ export class PipelineEngine {
       stageIndex: stageIdx,
       workspaceId: pipeline.workspaceId,
       output: task.output,
+      validationErrors: validation.errors,
     });
+
+    if (!validation.valid) {
+      logger.warn(
+        { pipelineId: pipeline.id, stageIndex: stageIdx, errors: validation.errors },
+        'Pipeline stage output failed validation'
+      );
+      return;
+    }
 
     // Check if pipeline is complete (all stages done)
     const updatedPipeline = getPipeline(pipeline.id)!;
@@ -436,8 +648,14 @@ export class PipelineEngine {
     }
 
     // Gate check
-    if (pipeline.gateMode === 'manual') {
-      updatePipeline(pipeline.id, { status: 'paused', stages });
+    if (
+      pipeline.gateMode === 'manual'
+      && (
+        stages[stageIdx].requiresApproval
+        || !explicitApprovalStagesEnabled(stages)
+      )
+    ) {
+      updatePipeline(pipeline.id, { status: 'paused', stages, currentStageIndex: stageIdx });
       return;
     }
 
@@ -500,80 +718,117 @@ export class PipelineEngine {
 
       if (pipeline.status !== 'running') continue;
 
-      const current = pipeline.stages[pipeline.currentStageIndex];
-      if (!current) continue;
-
-      if (current.status === 'running' && current.taskId) {
-        const task = getTask(current.taskId);
+      let terminalFailure = false;
+      // Parallel pipelines may have several running tasks; recover every one
+      // rather than trusting the single currentStageIndex cursor.
+      for (const [stageIndex, stage] of pipeline.stages.entries()) {
+        if (stage.status !== 'running' || !stage.taskId) continue;
+        const task = getTask(stage.taskId);
         if (task?.status === 'done') {
-          await this.onTaskComplete(current.taskId);
-        } else if (task?.status === 'failed' || task?.status === 'cancelled' || !task) {
-          const stages = [...pipeline.stages];
-          if (
-            task?.error === PUBLISH_RECONFIRMATION_ERROR
-            && stageHasAutonomousPublishCapability({
-              role: current.agentRole,
-              publishTools: current.publishTools,
-            })
-          ) {
-            stages[pipeline.currentStageIndex] = { ...current, status: 'rolled_back' };
-            updatePipeline(pipeline.id, {
-              stages,
-              status: 'awaiting_retry',
-            });
-            eventBus.emit('pipeline:awaiting_retry', {
-              pipelineId: pipeline.id,
-              stageIndex: pipeline.currentStageIndex,
-              taskId: current.taskId,
-              workspaceId: pipeline.workspaceId,
-              recovered: true,
-              reason: PUBLISH_RECONFIRMATION_ERROR,
-            });
-            continue;
-          }
-          stages[pipeline.currentStageIndex] = { ...current, status: 'failed' };
+          await this.onTaskComplete(stage.taskId);
+          continue;
+        }
+        if (task?.status !== 'failed' && task?.status !== 'cancelled' && task) continue;
+
+        const fresh = getPipeline(pipeline.id);
+        if (!fresh) break;
+        const stages = [...fresh.stages];
+        const currentStage = stages[stageIndex];
+        if (
+          task?.error === PUBLISH_RECONFIRMATION_ERROR
+          && stageHasAutonomousPublishCapability({
+            role: currentStage.agentRole,
+            publishTools: currentStage.publishTools,
+          })
+        ) {
+          stages[stageIndex] = { ...currentStage, status: 'rolled_back' };
+          updatePipeline(pipeline.id, { stages, status: 'awaiting_retry', currentStageIndex: stageIndex });
+          eventBus.emit('pipeline:awaiting_retry', {
+            pipelineId: pipeline.id,
+            stageIndex,
+            taskId: currentStage.taskId,
+            workspaceId: pipeline.workspaceId,
+            recovered: true,
+            reason: PUBLISH_RECONFIRMATION_ERROR,
+          });
+        } else {
+          stages[stageIndex] = { ...currentStage, status: 'failed' };
           updatePipeline(pipeline.id, {
             stages,
             status: 'failed',
+            currentStageIndex: stageIndex,
             completedAt: new Date().toISOString(),
           });
           eventBus.emit('pipeline:failed', {
             pipelineId: pipeline.id,
-            stageIndex: pipeline.currentStageIndex,
-            taskId: current.taskId,
+            stageIndex,
+            taskId: currentStage.taskId,
             workspaceId: pipeline.workspaceId,
-            error: task?.error || `Stage task ${current.taskId} is not recoverable`,
+            error: task?.error || `Stage task ${currentStage.taskId} is not recoverable`,
             recovered: true,
           });
         }
-        continue;
+        terminalFailure = true;
+        break;
       }
-
-      if (current.status === 'pending') {
-        await this.startStage(pipeline.id, pipeline.currentStageIndex);
+      if (!terminalFailure && getPipeline(pipeline.id)?.status === 'running') {
+        this.startReadyStages(pipeline.id);
       }
     }
   }
 
   /** Approve gate and advance to next stage */
-  async approveGate(pipelineId: string, confirmPublish = false) {
+  async approveGate(
+    pipelineId: string,
+    confirmPublish = false,
+    actor: OperatorActor = { id: 'unknown-operator', role: 'operator', source: 'local' },
+    note?: string,
+  ) {
     const pipeline = getPipeline(pipelineId);
     if (!pipeline || pipeline.status !== 'paused') return;
 
-    const nextIdx = pipeline.currentStageIndex + 1;
-    const nextStage = pipeline.stages[nextIdx];
-    if (
-      nextStage
-      && stageHasAutonomousPublishCapability({ role: nextStage.agentRole, publishTools: nextStage.publishTools })
-      && !confirmPublish
-    ) {
+    const stages = [...pipeline.stages];
+    const current = stages[pipeline.currentStageIndex];
+    if (current?.requiresApproval && current.status === 'done' && !current.approval) {
+      stages[pipeline.currentStageIndex] = {
+        ...current,
+        gateApproved: true,
+        approval: {
+          actorId: actor.id,
+          actorRole: actor.role,
+          actorSource: actor.source,
+          approvedAt: new Date().toISOString(),
+          contentHash: contentHashForApproval({ ...pipeline, stages }),
+          kind: current.approvalKind || 'content',
+          ...(note?.trim() ? { note: note.trim() } : {}),
+        },
+      };
+    }
+
+    const readyPublishStages = readyPublishStageIndices(stages);
+    if (readyPublishStages.length > 0 && !confirmPublish) {
       throw new PublishConfirmationRequiredError('Publishing requires explicit confirmation');
     }
-    if (nextStage && stageHasAutonomousPublishCapability({ role: nextStage.agentRole, publishTools: nextStage.publishTools })) {
-      this.publishStageApprovals.add(`${pipelineId}:${nextIdx}`);
+    if (confirmPublish) {
+      for (const index of readyPublishStages) {
+        this.publishStageApprovals.add(`${pipelineId}:${index}`);
+        stages[index] = {
+          ...stages[index],
+          approval: {
+            actorId: actor.id,
+            actorRole: actor.role,
+            actorSource: actor.source,
+            approvedAt: new Date().toISOString(),
+            contentHash: contentHashForApproval({ ...pipeline, stages }),
+            kind: 'publish',
+            ...(note?.trim() ? { note: note.trim() } : {}),
+          },
+        };
+      }
     }
-    updatePipeline(pipelineId, { status: 'running' });
-    await this.startStage(pipelineId, nextIdx);
+    updatePipeline(pipelineId, { status: 'running', stages });
+    this.writeRunSnapshot({ ...pipeline, status: 'running', stages });
+    this.startReadyStages(pipelineId);
   }
 
   /** Skip current stage */
@@ -634,6 +889,17 @@ export class PipelineEngine {
         stages[idx] = { ...stages[idx], status: 'done' };
       }
     }
+    const approvalIndex = stages.findIndex(stage =>
+      stage.requiresApproval && stage.status === 'done' && !stage.approval
+    );
+    if (approvalIndex >= 0) {
+      updatePipeline(pipelineId, {
+        stages,
+        status: 'paused',
+        currentStageIndex: approvalIndex,
+      });
+      return getPipeline(pipelineId)!;
+    }
     const readyPublishStages = readyPublishStageIndices(stages);
     if (pipeline.gateMode === 'manual' && readyPublishStages.length > 0 && !confirmPublish) {
       throw new PublishConfirmationRequiredError('Resuming into publishing requires explicit confirmation');
@@ -679,8 +945,8 @@ export class PipelineEngine {
 
     const stage = pipeline.stages[stageIndex];
     if (!stage) throw new Error(`Stage ${stageIndex} not found`);
-    if (stage.status !== 'rolled_back') {
-      throw new Error(`Stage ${stageIndex} is not in rolled_back status (current: ${stage.status})`);
+    if (stage.status !== 'rolled_back' && stage.status !== 'review') {
+      throw new Error(`Stage ${stageIndex} is not retryable (current: ${stage.status})`);
     }
     if (
       stageHasAutonomousPublishCapability({ role: stage.agentRole, publishTools: stage.publishTools })
@@ -702,6 +968,47 @@ export class PipelineEngine {
 
     eventBus.emit('pipeline:awaiting_retry', { pipelineId, stageIndex, action: 'retry', workspaceId: pipeline.workspaceId });
 
+    this.startReadyStages(pipelineId);
+  }
+
+  /** Re-run a completed non-publish stage and invalidate all downstream outputs. */
+  async rerunStage(pipelineId: string, stageIndex: number): Promise<void> {
+    const pipeline = getPipeline(pipelineId);
+    if (!pipeline) throw new Error(`Pipeline ${pipelineId} not found`);
+    const stage = pipeline.stages[stageIndex];
+    if (!stage) throw new Error(`Stage ${stageIndex} not found`);
+    if (stage.status === 'running') throw new Error('A running stage cannot be re-run');
+    if (stageHasAutonomousPublishCapability({ role: stage.agentRole, publishTools: stage.publishTools })) {
+      throw new PublishConfirmationRequiredError('Publish stages cannot be regenerated as content stages');
+    }
+
+    const affected = stageAndDescendantIndices(pipeline.stages, stageIndex);
+    const stages = [...pipeline.stages];
+    for (const index of affected) {
+      const current = stages[index];
+      if (current.taskId) {
+        this.taskToPipeline.delete(current.taskId);
+        this.stageGitShas.delete(`${pipelineId}:${index}`);
+        if (current.status === 'running') this.agentManager.cancelTask(current.taskId);
+      }
+      stages[index] = {
+        ...current,
+        status: 'pending',
+        taskId: undefined,
+        input: undefined,
+        output: undefined,
+        validationErrors: undefined,
+        gateApproved: undefined,
+        approval: undefined,
+      };
+    }
+    clearStageCheckpoints(pipelineId, affected);
+    updatePipeline(pipelineId, {
+      stages,
+      status: 'running',
+      currentStageIndex: Math.max(-1, stageIndex - 1),
+      completedAt: undefined,
+    });
     this.startReadyStages(pipelineId);
   }
 }

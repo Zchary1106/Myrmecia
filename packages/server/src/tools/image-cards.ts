@@ -42,7 +42,7 @@ export interface CardSpec {
 
 export interface CardRenderSpec {
   cards: CardSpec[];
-  theme?: 'warm' | 'clean' | 'dark';
+  theme?: 'warm' | 'clean' | 'dark' | 'tech' | 'editorial' | 'notebook';
 }
 
 export interface WeChatCoverSpec {
@@ -55,6 +55,27 @@ const THEMES = {
   warm: { bg: 'linear-gradient(160deg,#FFF8F0 0%,#FFE8E0 100%)', accent: '#FF2E4D', text: '#1a1a1a', muted: '#555', card: 'rgba(255,255,255,.72)' },
   clean: { bg: 'linear-gradient(160deg,#F5F9FF 0%,#E8F0FE 100%)', accent: '#2563eb', text: '#111827', muted: '#4b5563', card: 'rgba(255,255,255,.8)' },
   dark: { bg: 'linear-gradient(160deg,#1f2430 0%,#11141c 100%)', accent: '#FF6B81', text: '#f8fafc', muted: '#c3c9d5', card: 'rgba(255,255,255,.08)' },
+  tech: {
+    bg: 'radial-gradient(circle at 84% 10%,rgba(38,208,255,.24),transparent 26%),radial-gradient(circle at 8% 92%,rgba(124,92,255,.24),transparent 28%),linear-gradient(rgba(74,144,255,.08) 1px,transparent 1px),linear-gradient(90deg,rgba(74,144,255,.08) 1px,transparent 1px),linear-gradient(145deg,#0C1221 0%,#151B30 100%)',
+    accent: '#53D8FF',
+    text: '#F7FAFF',
+    muted: '#B9C6DE',
+    card: 'rgba(83,216,255,.10)',
+  },
+  editorial: {
+    bg: 'radial-gradient(circle at 92% 8%,rgba(210,56,46,.12),transparent 24%),linear-gradient(155deg,#F7F0E5 0%,#EFE4D2 100%)',
+    accent: '#C9342C',
+    text: '#201D19',
+    muted: '#625A51',
+    card: 'rgba(255,255,255,.62)',
+  },
+  notebook: {
+    bg: 'linear-gradient(rgba(48,95,74,.09) 1px,transparent 1px),linear-gradient(90deg,rgba(48,95,74,.09) 1px,transparent 1px),linear-gradient(160deg,#FFFDF0 0%,#F3F7E8 100%)',
+    accent: '#217A57',
+    text: '#1D2923',
+    muted: '#52645B',
+    card: 'rgba(255,255,255,.72)',
+  },
 } as const;
 
 const COVER_THEMES = {
@@ -162,7 +183,8 @@ function cardHtml(card: CardSpec, theme: keyof typeof THEMES): string {
   return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{width:${CARD_WIDTH}px;height:${CARD_HEIGHT}px;font-family:${FONT_STACK};
-  background:${t.bg};color:${t.text};padding:96px 84px;display:flex;flex-direction:column;overflow:hidden}
+  background:${t.bg};background-size:auto,auto,54px 54px,54px 54px,auto;color:${t.text};
+  padding:96px 84px;display:flex;flex-direction:column;overflow:hidden}
 main{flex:1;display:flex;flex-direction:column;justify-content:center;min-height:0}
 .tag{display:inline-block;background:${t.accent};color:#fff;font-size:32px;font-weight:600;
   padding:14px 34px;border-radius:100px;align-self:flex-start}
