@@ -26,6 +26,17 @@
 - `performance-report.schema.json`：效果监控
 - `publishing-schedule.schema.json`：多账号排期记录
 
+## 创作 Skills
+
+- `social-trend-evidence`：按 7 天窗口抓取和验证热点证据，识别高收藏/高分享的内容缺口。
+- `cross-platform-content-core`：把选题证据压缩为三平台共享的事实、方法和素材清单。
+- `douyin-hot-video-writer`：生成结果前置、可演示、可保存的抖音视频脚本。
+- `xiaohongshu-save-first-writer`：生成搜索友好、可收藏的笔记与 6–8 张卡片 brief。
+- `wechat-depth-writer`：把热点转成有证据、有机制、有实施步骤的公众号长文。
+- `xiaohongshu-visual-creator`：将审核终稿渲染为 3:4 卡片并执行逐图 QA。
+
+调研依据与当前内容模式快照见 `hot-content-research-2026-08.md`；热点结论超过 7 天必须重新采样。
+
 ## 运行时保护
 
 - 设置了 `output_schema` 的阶段会使用 JSON Schema 校验真实输出。

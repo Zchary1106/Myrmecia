@@ -1,0 +1,8 @@
+interface:
+  display_name: "抖音高留存视频脚本"
+  short_description: "基于热点证据生成可拍、可保存、可分享的视频包"
+  brand_color: "#111111"
+  default_prompt: "Use $douyin-hot-video-writer to turn this approved content core into one production-ready Douyin video package."
+
+policy:
+  allow_implicit_invocation: true

@@ -1,0 +1,8 @@
+interface:
+  display_name: "跨平台内容核心包"
+  short_description: "把热点证据变成三平台可复用的事实与方法"
+  brand_color: "#4F7CFF"
+  default_prompt: "Use $cross-platform-content-core to turn this evidence package into one auditable content core for Douyin, Xiaohongshu, and WeChat."
+
+policy:
+  allow_implicit_invocation: true

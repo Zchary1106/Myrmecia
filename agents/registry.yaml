@@ -331,8 +331,8 @@ agents:
     name: 公众号写手
     emoji: ✍️
     role: content-writer
-    description: 微信公众号文章创作，科技/AI/互联网方向，有传播力的深度内容
-    skill: agents/wechat-writer.md
+    description: 微信公众号深度文章创作，把热点转成有证据、有机制、有实施步骤的长期内容
+    skill: skills/wechat-depth-writer/SKILL.md
     model:
       provider: openai
       model: gpt-5.3-codex
@@ -350,8 +350,8 @@ agents:
     name: 小红书写手
     emoji: 📕
     role: content-writer
-    description: 小红书图文笔记创作，种草/测评/教程，高互动爆款内容
-    skill: agents/xiaohongshu-writer.md
+    description: 小红书搜索友好、高收藏图文创作，输出唯一终稿与完整卡片故事
+    skill: skills/xiaohongshu-save-first-writer/SKILL.md
     model:
       provider: openai
       model: gpt-5.3-codex
@@ -376,7 +376,7 @@ agents:
       model: gpt-5.3-codex
       tier: balanced
       fallbackModel: gpt-5.4
-      maxTokens: 40000
+      maxTokens: 80000
       maxResponseTokens: 8192
       maxToolCalls: 20
       maxWallClockMs: 900000
@@ -388,8 +388,8 @@ agents:
     name: 抖音编导
     emoji: 🎬
     role: douyin-writer
-    description: 抖音短视频脚本创作，知识科普/生活好物/工作方法方向，分镜+口播稿+字幕
-    skill: agents/douyin-writer.md
+    description: 抖音高留存实用视频脚本，基于热点证据输出 Hook、分镜、口播、字幕和证明素材
+    skill: skills/douyin-hot-video-writer/SKILL.md
     model:
       provider: openai
       model: gpt-5.3-codex
@@ -485,8 +485,8 @@ agents:
     name: 选题侦察
     emoji: 🔥
     role: trend-scout
-    description: 跨平台（小红书+抖音）真实热度调研，基于 MCP 抓取的真实数据给出选题建议
-    skill: agents/trend-scout.md
+    description: 抖音、小红书和公众号热点证据调研，基于真实数据识别高收藏、高分享的内容缺口
+    skill: skills/social-trend-evidence/SKILL.md
     model:
       provider: openai
       model: gpt-5.4-mini
@@ -509,7 +509,7 @@ agents:
     emoji: 🧭
     role: content-strategist
     description: 将选题证据转化为可复用、可审计的跨平台内容核心包
-    skill: agents/content-strategist.md
+    skill: skills/cross-platform-content-core/SKILL.md
     model:
       provider: openai
       model: gpt-5.4-mini

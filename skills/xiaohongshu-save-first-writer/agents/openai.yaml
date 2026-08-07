@@ -1,0 +1,8 @@
+interface:
+  display_name: "小红书高收藏笔记"
+  short_description: "生成搜索友好、可保存的笔记与 3:4 卡片故事"
+  brand_color: "#FF2E4D"
+  default_prompt: "Use $xiaohongshu-save-first-writer to create one search-first Xiaohongshu note and its complete card brief."
+
+policy:
+  allow_implicit_invocation: true

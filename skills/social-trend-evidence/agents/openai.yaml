@@ -1,0 +1,8 @@
+interface:
+  display_name: "社媒热点证据调研"
+  short_description: "用真实数据发现抖音、小红书和公众号内容机会"
+  brand_color: "#FF5A36"
+  default_prompt: "Use $social-trend-evidence to research current evidence and recommend one specific cross-platform content opportunity."
+
+policy:
+  allow_implicit_invocation: true
