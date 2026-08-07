@@ -376,7 +376,7 @@ agents:
       model: gpt-5.3-codex
       tier: balanced
       fallbackModel: gpt-5.4
-      maxTokens: 40000
+      maxTokens: 80000
       maxResponseTokens: 8192
       maxToolCalls: 20
       maxWallClockMs: 900000
