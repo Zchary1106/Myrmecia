@@ -6,7 +6,7 @@ settings:
 
 patchedDependencies:
   wechat-official-account-mcp@2.0.0:
-    hash: c110496c4a53168499295f791a7f7623aa5b4de00936dd1f01083b01a0e970f6
+    hash: baunzjub3xexobax2qurzwgsbq
     path: patches/wechat-official-account-mcp@2.0.0.patch
 
 importers:
@@ -187,7 +187,7 @@ importers:
         version: 11.1.0
       wechat-official-account-mcp:
         specifier: 2.0.0
-        version: 2.0.0(patch_hash=c110496c4a53168499295f791a7f7623aa5b4de00936dd1f01083b01a0e970f6)
+        version: 2.0.0(patch_hash=baunzjub3xexobax2qurzwgsbq)
       ws:
         specifier: ^8.18.0
         version: 8.20.0
@@ -8743,7 +8743,7 @@ snapshots:
 
   webidl-conversions@7.0.0: {}
 
-  wechat-official-account-mcp@2.0.0(patch_hash=c110496c4a53168499295f791a7f7623aa5b4de00936dd1f01083b01a0e970f6):
+  wechat-official-account-mcp@2.0.0(patch_hash=baunzjub3xexobax2qurzwgsbq):
     dependencies:
       '@modelcontextprotocol/sdk': 1.30.0(zod@3.25.76)
       axios: 1.18.1
