@@ -1,5 +1,5 @@
-import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'fs';
-import { join } from 'path';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'fs';
+import { basename, extname, isAbsolute, join, resolve } from 'path';
 import { createHash } from 'crypto';
 import { parse as parseYaml } from 'yaml';
 import { exec } from 'child_process';
@@ -22,6 +22,26 @@ import type { OperatorActor, Pipeline, PipelineStage, PipelineTemplate } from '.
 import { GOVERNED_PUBLISH_MCP_TOOLS } from '../tools/mcp-manager.js';
 
 const execAsync = promisify(exec);
+const DOUYIN_VIDEO_TEMPLATE_NAME = 'Douyin Video Publish';
+const DOUYIN_VIDEO_EXTENSIONS = new Set(['.mp4', '.mov', '.m4v', '.webm', '.mkv']);
+
+export function parseDeclaredVideoPath(input: string): string | undefined {
+  const match = input.match(/(?:^|\n)\s*(?:video_path|videoPath)\s*:\s*(.+?)\s*(?:\n|$)/i);
+  if (!match) return undefined;
+  return match[1].trim().replace(/^['"]|['"]$/g, '');
+}
+
+function validateDeclaredVideoPath(path: string): string {
+  if (!isAbsolute(path)) throw new Error('Douyin video_path must be an absolute local file path');
+  const resolved = resolve(path);
+  if (!existsSync(resolved) || !statSync(resolved).isFile()) {
+    throw new Error(`Douyin video file does not exist: ${path}`);
+  }
+  if (!DOUYIN_VIDEO_EXTENSIONS.has(extname(resolved).toLowerCase())) {
+    throw new Error('Douyin video must use MP4, MOV, M4V, WebM, or MKV format');
+  }
+  return resolved;
+}
 
 interface PipelineTemplateYaml {
   name?: string;
@@ -326,6 +346,12 @@ export class PipelineEngine {
   }): Promise<Pipeline> {
     const template = getTemplate(data.templateId);
     if (!template) throw new Error(`Template ${data.templateId} not found`);
+    const declaredVideoPath = template.name === DOUYIN_VIDEO_TEMPLATE_NAME
+      ? parseDeclaredVideoPath(data.input)
+      : undefined;
+    const validatedVideoPath = declaredVideoPath
+      ? validateDeclaredVideoPath(declaredVideoPath)
+      : undefined;
 
     const stages: PipelineStage[] = template.stages.map((s, i) => ({
       index: i,
@@ -362,8 +388,30 @@ export class PipelineEngine {
     // Create isolated workspace for this pipeline
     try {
       const ws = await workspaceManager.createPipelineWorkspace(pipeline.id);
+      if (validatedVideoPath && declaredVideoPath) {
+        const inputAssetsDir = join(ws.path, 'input-assets');
+        mkdirSync(inputAssetsDir, { recursive: true });
+        const importedVideoPath = join(inputAssetsDir, basename(validatedVideoPath));
+        if (resolve(importedVideoPath) !== resolve(validatedVideoPath)) {
+          copyFileSync(validatedVideoPath, importedVideoPath);
+        }
+        updatePipeline(pipeline.id, {
+          input: data.input.replace(declaredVideoPath, importedVideoPath),
+        });
+        logger.info({
+          pipelineId: pipeline.id,
+          fileName: basename(importedVideoPath),
+        }, 'Imported user-approved Douyin video into pipeline workspace');
+      }
       logger.info({ path: ws.path, gitWorktree: ws.isGitWorktree }, 'Created pipeline workspace');
     } catch (err: any) {
+      if (validatedVideoPath) {
+        updatePipeline(pipeline.id, {
+          status: 'failed',
+          completedAt: new Date().toISOString(),
+        });
+        throw new Error(`Failed to import Douyin video into the pipeline workspace: ${err.message}`);
+      }
       logger.warn({ err: err.message }, 'Pipeline workspace creation failed; using default cwd');
     }
 

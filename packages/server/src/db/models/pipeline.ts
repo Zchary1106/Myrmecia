@@ -61,6 +61,7 @@ export function updatePipeline(id: string, updates: Partial<{
   currentStageIndex: number;
   completedAt: string;
   stageCheckpoints: string;
+  input: string;
 }>): Pipeline | undefined {
   const db = getDb();
   const sets: string[] = [];
@@ -71,6 +72,7 @@ export function updatePipeline(id: string, updates: Partial<{
   if (updates.currentStageIndex !== undefined) { sets.push('current_stage_index = ?'); params.push(updates.currentStageIndex); }
   if (updates.completedAt !== undefined) { sets.push('completed_at = ?'); params.push(updates.completedAt); }
   if (updates.stageCheckpoints !== undefined) { sets.push('stage_checkpoints = ?'); params.push(updates.stageCheckpoints); }
+  if (updates.input !== undefined) { sets.push('input = ?'); params.push(updates.input); }
 
   if (sets.length === 0) return getPipeline(id);
   params.push(id);

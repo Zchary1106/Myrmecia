@@ -263,13 +263,17 @@ export function Layout() {
 
   return (
     <div className="flex flex-col h-screen">
-      <CopilotModelSwitcher />
       <div className="flex flex-1 min-h-0">
         <GlobalNavRail />
 
-        <main className={cn('min-w-0 flex-1 bg-background', activeView === 'agents' ? 'overflow-hidden' : 'overflow-y-auto')}>
-          <MainContent />
-        </main>
+        <div className="flex min-w-0 flex-1 flex-col">
+          <header className="flex h-14 flex-none items-center justify-end border-b border-border bg-surface/80 px-4 empty:hidden">
+            <CopilotModelSwitcher />
+          </header>
+          <main className={cn('min-h-0 min-w-0 flex-1 bg-background', activeView === 'agents' ? 'overflow-hidden' : 'overflow-y-auto')}>
+            <MainContent />
+          </main>
+        </div>
       </div>
 
       {activeView !== 'agents' && <CommandBar />}

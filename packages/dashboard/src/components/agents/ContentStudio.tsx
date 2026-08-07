@@ -7,6 +7,7 @@ import { StageOutputPreview } from './StageOutputPreview';
 
 const CROSSPOST_TEMPLATE_NAME = 'Xiaohongshu Douyin Crosspost';
 const XIAOHONGSHU_TEMPLATE_NAME = 'Xiaohongshu Publish';
+const DOUYIN_TEMPLATE_NAME = 'Douyin Video Publish';
 const WECHAT_TEMPLATE_NAME = 'WeChat Article';
 
 const xiaohongshuStages: Array<Pick<PipelineStage, 'name' | 'agentRole'>> = [
@@ -27,6 +28,18 @@ const crosspostStages: Array<Pick<PipelineStage, 'name' | 'agentRole'>> = [
   { name: '合规审核', agentRole: 'review' },
   { name: '配图生成', agentRole: 'xiaohongshu-writer' },
   { name: '发布执行', agentRole: 'social-publisher' },
+];
+
+const douyinStages: Array<Pick<PipelineStage, 'name' | 'agentRole'>> = [
+  { name: '抖音选题调研', agentRole: 'trend-scout' },
+  { name: '抖音视频脚本', agentRole: 'douyin-writer' },
+  { name: '自动合规初筛', agentRole: 'social-compliance-reviewer' },
+  { name: '人工审核材料', agentRole: 'social-review-coordinator' },
+  { name: '视频媒体 QA', agentRole: 'media-qa' },
+  { name: '发布预检', agentRole: 'social-preflight' },
+  { name: '抖音视频发布', agentRole: 'social-publisher' },
+  { name: '发布补偿计划', agentRole: 'social-ops' },
+  { name: '发布后监控计划', agentRole: 'social-analytics' },
 ];
 
 const wechatStages: Array<Pick<PipelineStage, 'name' | 'agentRole'>> = [
@@ -55,6 +68,15 @@ export function contentStudioWorkflow(selectedAgentId: string | null) {
       subtitle: '小红书独立生产线 · 图文预览 · 人工审核发布',
       stages: xiaohongshuStages,
       createLabel: 'Create Xiaohongshu run',
+    };
+  }
+  if (selectedAgentId === 'douyin-writer') {
+    return {
+      templateName: DOUYIN_TEMPLATE_NAME,
+      title: 'Douyin Video Studio',
+      subtitle: '抖音独立视频生产线 · 本地视频 QA · 人工确认发布',
+      stages: douyinStages,
+      createLabel: 'Create Douyin video run',
     };
   }
   return {
@@ -96,6 +118,14 @@ function isXiaohongshuPipeline(pipeline: Pipeline, templateId?: string) {
   // Keep legacy crosspost runs visible so their copy/images can still be
   // inspected or regenerated. New runs use the standalone template above.
   return roles.includes('xiaohongshu-writer') && roles.includes('social-publisher');
+}
+
+function isDouyinPipeline(pipeline: Pipeline, templateId?: string) {
+  if (templateId && pipeline.templateId === templateId) return true;
+  const roles = pipeline.stages.map(stage => String(stage.agentRole));
+  return roles.includes('douyin-writer')
+    && roles.includes('social-publisher')
+    && !roles.includes('xiaohongshu-writer');
 }
 
 function isWeChatPipeline(pipeline: Pipeline, templateId?: string) {
@@ -222,6 +252,7 @@ export function ContentStudio() {
 
   const isWeChatMode = selectedAgentId === 'wechat-writer';
   const isXiaohongshuMode = selectedAgentId === 'xiaohongshu-writer';
+  const isDouyinMode = selectedAgentId === 'douyin-writer';
   const workflow = contentStudioWorkflow(selectedAgentId);
   const workflowTemplate = useMemo(
     () => templates.find(template => template.name === workflow.templateName),
@@ -233,9 +264,11 @@ export function ContentStudio() {
         ? isWeChatPipeline(pipeline, workflowTemplate?.id)
         : isXiaohongshuMode
           ? isXiaohongshuPipeline(pipeline, workflowTemplate?.id)
-          : isCrosspostPipeline(pipeline, workflowTemplate?.id))
+          : isDouyinMode
+            ? isDouyinPipeline(pipeline, workflowTemplate?.id)
+            : isCrosspostPipeline(pipeline, workflowTemplate?.id))
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()),
-    [pipelines, isWeChatMode, isXiaohongshuMode, workflowTemplate?.id],
+    [pipelines, isWeChatMode, isXiaohongshuMode, isDouyinMode, workflowTemplate?.id],
   );
   const pipeline = contentPipelines.find(item => item.id === selectedRunId) || null;
   const artifactVersion = pipeline?.stages
@@ -298,6 +331,7 @@ export function ContentStudio() {
     agent.id === selectedStageDetails?.agentRole || agent.role === selectedStageDetails?.agentRole,
   );
   const imageArtifacts = artifacts.filter(artifact => artifact.kind === 'image' && /\.png$/i.test(artifact.name));
+  const videoArtifacts = artifacts.filter(artifact => artifact.kind === 'video');
   const participantRoles = Array.from(new Set(workflow.stages.map(stage => String(stage.agentRole))));
   const publishStageAhead = pipeline
     ? (pipeline.stages[pipeline.currentStageIndex + 1] || workflow.stages[pipeline.currentStageIndex + 1])?.agentRole === 'social-publisher'
@@ -345,7 +379,7 @@ export function ContentStudio() {
     setActionError(null);
     try {
       const created = await api.pipelines.create({
-        name: runName.trim() || `${isWeChatMode ? 'WeChat' : isXiaohongshuMode ? 'Xiaohongshu' : 'Crosspost'} · ${runInput.trim().slice(0, 42)}`,
+        name: runName.trim() || `${isWeChatMode ? 'WeChat' : isXiaohongshuMode ? 'Xiaohongshu' : isDouyinMode ? 'Douyin' : 'Crosspost'} · ${runInput.trim().slice(0, 42)}`,
         templateId: workflowTemplate.id,
         input: runInput.trim(),
         gateMode,
@@ -504,7 +538,9 @@ export function ContentStudio() {
             <div className="text-3xl">🧩</div>
             <h3 className="mt-3 text-base font-bold">{workflow.createLabel}</h3>
             <p className="mt-2 text-xs leading-relaxed text-gray-500">
-              Research, write, review, generate images, and explicitly approve publication from one artifact-first workspace.
+              {isDouyinMode
+                ? 'Research, write the video script, validate a real local video file, then explicitly approve the Douyin upload.'
+                : 'Research, write, review, generate images, and explicitly approve publication from one artifact-first workspace.'}
             </p>
             {!workflowTemplate && <p className="mt-3 text-xs text-amber-300">The “{workflow.templateName}” template is not available yet.</p>}
             <button
@@ -578,14 +614,16 @@ export function ContentStudio() {
                 </div>
               </section>
 
-              <section data-testid="content-image-gallery" className="rounded-2xl border border-border bg-surface p-4">
+              <section data-testid="content-media-gallery" className="rounded-2xl border border-border bg-surface p-4">
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-accent-light">Generated PNGs</div>
-                    <h3 className="mt-1 text-sm font-bold">Image artifact gallery</h3>
+                    <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-accent-light">
+                      {isDouyinMode ? 'Local video files' : 'Generated PNGs'}
+                    </div>
+                    <h3 className="mt-1 text-sm font-bold">{isDouyinMode ? 'Video artifact gallery' : 'Image artifact gallery'}</h3>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className="text-[10px] text-gray-600">{imageArtifacts.length} files</span>
+                    <span className="text-[10px] text-gray-600">{isDouyinMode ? videoArtifacts.length : imageArtifacts.length} files</span>
                     <button
                       type="button"
                       onClick={() => void refreshArtifacts()}
@@ -598,18 +636,30 @@ export function ContentStudio() {
                 </div>
                 {artifactLoading && <div className="py-8 text-center text-xs text-gray-500">Loading generated artifacts…</div>}
                 {artifactError && <div role="alert" className="mt-3 rounded-lg bg-red-500/10 px-3 py-2 text-xs text-red-300">{artifactError}</div>}
-                {!artifactLoading && !artifactError && imageArtifacts.length === 0 && (
+                {!artifactLoading && !artifactError && (isDouyinMode ? videoArtifacts.length === 0 : imageArtifacts.length === 0) && (
                   <div className="mt-3 rounded-xl border border-dashed border-border bg-background/60 px-4 py-8 text-center text-xs text-gray-600">
-                    PNG cards generated by the image stage will appear here.
+                    {isDouyinMode
+                      ? 'Add a real local MP4/MOV/WebM path to the production brief. Video files copied into this run workspace will appear here.'
+                      : 'PNG cards generated by the image stage will appear here.'}
                   </div>
                 )}
-                {imageArtifacts.length > 0 && (
+                {!isDouyinMode && imageArtifacts.length > 0 && (
                   <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
                     {imageArtifacts.map(artifact => (
                       <button key={artifact.id} type="button" onClick={() => setPreviewArtifact(artifact)} className={cn('group overflow-hidden rounded-xl border border-border bg-background text-left hover:border-accent/50', isWeChatMode && 'col-span-2')}>
                         <img src={artifact.url} alt={artifact.name} className={cn('w-full object-cover transition duration-200 group-hover:scale-[1.02]', isWeChatMode ? 'aspect-[900/383]' : 'aspect-[3/4]')} />
                         <span className="block truncate px-2 py-1.5 text-[10px] text-gray-500">{artifact.name}</span>
                       </button>
+                    ))}
+                  </div>
+                )}
+                {isDouyinMode && videoArtifacts.length > 0 && (
+                  <div className="mt-4 grid gap-3 xl:grid-cols-2">
+                    {videoArtifacts.map(artifact => (
+                      <div key={artifact.id} className="overflow-hidden rounded-xl border border-border bg-background">
+                        <video src={artifact.url} controls preload="metadata" className="aspect-video w-full bg-black object-contain" />
+                        <span className="block truncate px-3 py-2 text-[10px] text-gray-500">{artifact.name}</span>
+                      </div>
                     ))}
                   </div>
                 )}
@@ -750,8 +800,18 @@ export function ContentStudio() {
                   <input value={runName} onChange={event => setRunName(event.target.value)} placeholder="e.g. Productivity tips · July" className="mt-1.5 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-accent" />
                 </label>
                 <label className="block">
-                  <span className="text-[11px] font-medium text-gray-300">Production brief</span>
-                  <textarea value={runInput} onChange={event => setRunInput(event.target.value)} rows={5} placeholder="Describe the audience, topic, evidence to cover, and desired outcome…" className="mt-1.5 w-full resize-y rounded-lg border border-border bg-background px-3 py-2 text-sm leading-relaxed outline-none placeholder:text-gray-700 focus:border-accent" />
+                  <span className="text-[11px] font-medium text-gray-300">
+                    {isDouyinMode ? 'Video production brief and local video path' : 'Production brief'}
+                  </span>
+                  <textarea
+                    value={runInput}
+                    onChange={event => setRunInput(event.target.value)}
+                    rows={isDouyinMode ? 7 : 5}
+                    placeholder={isDouyinMode
+                      ? 'Describe the topic and audience, then provide the real absolute video path, for example:\nvideo_path: /Users/me/Videos/final.mp4\nThe path must exist before media QA and publishing.'
+                      : 'Describe the audience, topic, evidence to cover, and desired outcome…'}
+                    className="mt-1.5 w-full resize-y rounded-lg border border-border bg-background px-3 py-2 text-sm leading-relaxed outline-none placeholder:text-gray-700 focus:border-accent"
+                  />
                 </label>
                 <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-accent/20 bg-accent/5 p-3">
                   <input type="checkbox" checked={gateMode === 'manual'} onChange={event => setGateMode(event.target.checked ? 'manual' : 'auto')} className="mt-0.5 accent-[var(--color-accent)]" />
@@ -782,7 +842,7 @@ export function ContentStudio() {
             <p className="mt-2 text-xs leading-relaxed text-gray-400">
               {publishConfirmAction === 'retry'
                 ? `This creates a new publisher task for “${pipeline.name}”. Check the platform first because the interrupted attempt may have reached it.`
-                : `This advances “${pipeline.name}” to the social publisher. Verify the final copy and generated PNGs before allowing platform publishing tools to run.`}
+                : `This advances “${pipeline.name}” to the social publisher. Verify the final copy and ${isDouyinMode ? 'local video file' : 'generated PNGs'} before allowing platform publishing tools to run.`}
             </p>
             <label className="mt-4 block text-[11px] font-medium text-gray-300">
               Type <span className="rounded bg-background px-1.5 py-0.5 font-mono text-amber-200">PUBLISH</span> to continue
@@ -812,13 +872,17 @@ export function ContentStudio() {
           <div className="flex max-h-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-border bg-surface shadow-2xl" onClick={event => event.stopPropagation()}>
             <div className="flex items-center justify-between border-b border-border px-4 py-3">
               <div className="min-w-0">
-                <div className="text-[10px] uppercase tracking-[0.18em] text-accent-light">Image preview</div>
+                <div className="text-[10px] uppercase tracking-[0.18em] text-accent-light">
+                  {previewArtifact.kind === 'video' ? 'Video preview' : 'Image preview'}
+                </div>
                 <div className="mt-1 truncate text-sm font-semibold">{previewArtifact.name}</div>
               </div>
               <button type="button" onClick={() => setPreviewArtifact(null)} className="rounded-lg px-3 py-1.5 text-sm text-gray-400 hover:bg-surface-hover hover:text-white">✕</button>
             </div>
             <div className="min-h-0 overflow-auto bg-black/30 p-4">
-              <img src={previewArtifact.url} alt={previewArtifact.name} className="mx-auto max-h-[78vh] max-w-full object-contain" />
+              {previewArtifact.kind === 'video'
+                ? <video src={previewArtifact.url} controls autoPlay className="mx-auto max-h-[78vh] max-w-full object-contain" />
+                : <img src={previewArtifact.url} alt={previewArtifact.name} className="mx-auto max-h-[78vh] max-w-full object-contain" />}
             </div>
           </div>
         </div>

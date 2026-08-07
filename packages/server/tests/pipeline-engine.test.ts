@@ -11,10 +11,21 @@ import {
   PipelineEngine,
   PublishConfirmationRequiredError,
   PublishStageSkipForbiddenError,
+  parseDeclaredVideoPath,
 } from '../src/pipelines/pipeline-engine.js';
 import { PUBLISH_RECONFIRMATION_ERROR, TaskQueue } from '../src/queue/task-queue.js';
 import { workspaceManager } from '../src/workspace/workspace-manager.js';
 import { buildMcpPolicyContext } from '../src/agents/ts-agent-loop.js';
+
+describe('Douyin video input parsing', () => {
+  it('extracts quoted and unquoted video paths without consuming later lines', () => {
+    expect(parseDeclaredVideoPath('topic: Codex\nvideo_path: /Users/me/Videos/final cut.mp4\naudience: developers'))
+      .toBe('/Users/me/Videos/final cut.mp4');
+    expect(parseDeclaredVideoPath('videoPath: \"/tmp/final.mp4\"'))
+      .toBe('/tmp/final.mp4');
+    expect(parseDeclaredVideoPath('topic only')).toBeUndefined();
+  });
+});
 
 describe('PipelineEngine durable task resolution', () => {
   beforeEach(() => {

@@ -17,7 +17,7 @@ import {
 import { createSavedView, savedViewScope } from '../src/lib/savedViews';
 import { buildActivitySummary, handoffTotal } from '../src/lib/activitySummary';
 import { useStore } from '../src/stores/store';
-import { isContentProductionAgent } from '../src/components/agents/AgentWorkspace';
+import { isContentProductionAgent, usesContentStudio } from '../src/components/agents/AgentWorkspace';
 import { contentStudioWorkflow } from '../src/components/agents/ContentStudio';
 import { hasPublishStageAhead } from '../src/pages/Pipelines';
 
@@ -140,7 +140,7 @@ describe('Agent Workbench navigation state', () => {
     expect(useStore.getState().agentDirectoryCollapsed).toBe(false);
   });
 
-  it('routes social and WeChat content specialists to Content Studio', () => {
+  it('groups social and WeChat specialists in the content directory', () => {
     expect(isContentProductionAgent({
       id: 'xiaohongshu-writer',
       role: 'content-writer',
@@ -161,6 +161,17 @@ describe('Agent Workbench navigation state', () => {
       role: 'developer',
       capabilities: ['typescript'],
     } as any)).toBe(false);
+  });
+
+  it('opens Content Studio only for agents with a dedicated platform workflow', () => {
+    expect(usesContentStudio({ id: 'xiaohongshu-writer' } as any)).toBe(true);
+    expect(usesContentStudio({ id: 'wechat-writer' } as any)).toBe(true);
+
+    // Supporting specialists keep their own Agent chat/history/inspector.
+    expect(usesContentStudio({ id: 'douyin-writer' } as any)).toBe(true);
+    expect(usesContentStudio({ id: 'trend-scout' } as any)).toBe(false);
+    expect(usesContentStudio({ id: 'social-publisher' } as any)).toBe(false);
+    expect(usesContentStudio({ id: 'xiaohongshu-visual-designer' } as any)).toBe(false);
   });
 
   it('uses the governed WeChat article workflow for the WeChat writer', () => {
@@ -192,6 +203,23 @@ describe('Agent Workbench navigation state', () => {
       '小红书发布',
     ]);
     expect(workflow.stages.some(stage => stage.agentRole === 'douyin-writer')).toBe(false);
+  });
+
+  it('uses a standalone video publishing workflow for the Douyin writer', () => {
+    const workflow = contentStudioWorkflow('douyin-writer');
+    expect(workflow.templateName).toBe('Douyin Video Publish');
+    expect(workflow.stages.map(stage => stage.name)).toEqual([
+      '抖音选题调研',
+      '抖音视频脚本',
+      '自动合规初筛',
+      '人工审核材料',
+      '视频媒体 QA',
+      '发布预检',
+      '抖音视频发布',
+      '发布补偿计划',
+      '发布后监控计划',
+    ]);
+    expect(workflow.stages.some(stage => stage.agentRole === 'xiaohongshu-writer')).toBe(false);
   });
 
   it('detects a generic pipeline publish gate before approval', () => {
