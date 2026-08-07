@@ -6,11 +6,16 @@ import { AgentChatPanel } from './AgentChatPanel';
 import { ContentStudio } from './ContentStudio';
 
 const contentAgentIds = new Set(['trend-scout', 'xiaohongshu-writer', 'douyin-writer', 'wechat-writer', 'social-publisher']);
+const contentStudioAgentIds = new Set(['xiaohongshu-writer', 'wechat-writer']);
 
 export function isContentProductionAgent(agent: AgentSummary | undefined): boolean {
   if (!agent) return false;
   return contentAgentIds.has(agent.id)
     || agent.capabilities?.some(capability => ['xiaohongshu', 'douyin', 'tiktok', 'wechat', 'publishing', 'trend-research'].includes(capability));
+}
+
+export function usesContentStudio(agent: AgentSummary | undefined): boolean {
+  return Boolean(agent && contentStudioAgentIds.has(agent.id));
 }
 
 function agentGroup(agent: AgentSummary): 'Core' | 'Content' | 'Specialists' {
@@ -336,15 +341,15 @@ function AgentInspector() {
 export function AgentWorkspace() {
   const { agentInspectorOpen, selectedAgentId, agents } = useStore();
   const selectedAgent = agents.find(agent => agent.id === selectedAgentId);
-  const isContentAgent = isContentProductionAgent(selectedAgent);
+  const showContentStudio = usesContentStudio(selectedAgent);
 
   return (
     <div className="relative flex h-full min-h-0 overflow-hidden bg-background">
       <AgentDirectory />
       <section className="min-w-0 flex-1 bg-background">
-        {isContentAgent ? <ContentStudio /> : <AgentChatPanel />}
+        {showContentStudio ? <ContentStudio key={selectedAgentId} /> : <AgentChatPanel key={selectedAgentId} />}
       </section>
-      {!isContentAgent && agentInspectorOpen && <AgentInspector />}
+      {!showContentStudio && agentInspectorOpen && <AgentInspector />}
     </div>
   );
 }
