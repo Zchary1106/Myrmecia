@@ -5,6 +5,7 @@ import {
   assignSkillVersionToAgent,
   checksumSkillContent,
   createSkillVersion,
+  getSkill,
   getSkillAssignmentForAgent,
   getLatestPublishedSkillForSource,
   getSkillVersionByChecksum,
@@ -59,8 +60,25 @@ export function syncBuiltinSkills(agentsDir: string, skillsDir?: string): void {
 
   for (const agent of listAgents()) {
     if (!agent.skillPath) continue;
-    if (getSkillAssignmentForAgent(agent.id)) continue;
     const imported = getLatestPublishedSkillForSource(agent.skillPath);
-    if (imported) assignSkillVersionToAgent(agent.id, imported.version.id);
+    if (!imported) continue;
+    const assignment = getSkillAssignmentForAgent(agent.id);
+    const assignedSkill = assignment ? getSkill(assignment.skillId) : undefined;
+    const assignmentIsBuiltin = Boolean(
+      assignedSkill?.sourcePath
+      && (
+        assignedSkill.sourcePath.startsWith('agents/')
+        || assignedSkill.sourcePath.startsWith('skills/')
+      )
+    );
+    if (
+      !assignment
+      || (
+        assignmentIsBuiltin
+        && assignedSkill?.sourcePath !== agent.skillPath
+      )
+    ) {
+      assignSkillVersionToAgent(agent.id, imported.version.id);
+    }
   }
 }

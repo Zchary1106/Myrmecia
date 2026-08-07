@@ -66,6 +66,49 @@ describe('skill versioning', () => {
     expect(resolveSkillForAgent(agent)?.version.content).toContain('Render and inspect.');
   });
 
+  it('moves auto-managed agents to a new builtin skill path while preserving custom assignments', () => {
+    const agentsDir = mkdtempSync(join(tmpdir(), 'agent-skills-migrate-'));
+    const skillsDir = mkdtempSync(join(tmpdir(), 'standard-skills-migrate-'));
+    const modernDir = join(skillsDir, 'modern-writer');
+    mkdirSync(modernDir, { recursive: true });
+    writeFileSync(join(agentsDir, 'legacy-writer.md'), '# Legacy Writer\n\nLegacy.', 'utf8');
+    writeFileSync(join(modernDir, 'SKILL.md'), '---\nname: modern-writer\ndescription: Modern.\n---\n\n# Modern Writer\n\nModern.', 'utf8');
+
+    const managedAgent = createAgent({
+      id: 'managed-writer',
+      name: 'Managed Writer',
+      role: 'writer',
+      skillPath: 'agents/legacy-writer.md',
+    });
+    syncBuiltinSkills(agentsDir, skillsDir);
+    expect(getSkillAssignmentForAgent(managedAgent.id)?.skillId).toBe('legacy-writer');
+
+    const custom = upsertSkill({ id: 'custom-writer', name: 'Custom Writer' });
+    const customVersion = createSkillVersion({
+      skillId: custom.id,
+      content: 'Custom.',
+      status: 'published',
+      createdBy: 'test',
+    });
+    assignSkillVersionToAgent(managedAgent.id, customVersion.id);
+
+    // Custom assignments remain explicit overrides.
+    syncBuiltinSkills(agentsDir, skillsDir);
+    expect(getSkillAssignmentForAgent(managedAgent.id)?.skillId).toBe('custom-writer');
+
+    // A builtin assignment follows a registry skill-path migration.
+    const migratedAgent = createAgent({
+      id: 'migrated-writer',
+      name: 'Migrated Writer',
+      role: 'writer',
+      skillPath: 'skills/modern-writer/SKILL.md',
+    });
+    const legacy = getSkillDetail('legacy-writer')!;
+    assignSkillVersionToAgent(migratedAgent.id, legacy.versions[0].id);
+    syncBuiltinSkills(agentsDir, skillsDir);
+    expect(getSkillAssignmentForAgent(migratedAgent.id)?.skillId).toBe('modern-writer');
+  });
+
   it('supports draft publish and assignment rollback', () => {
     const skill = upsertSkill({ id: 'writer', name: 'Writer' });
     const v1 = createSkillVersion({ skillId: skill.id, content: 'v1', status: 'published', createdBy: 'test' });
