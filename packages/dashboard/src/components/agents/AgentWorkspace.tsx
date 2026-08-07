@@ -6,7 +6,7 @@ import { AgentChatPanel } from './AgentChatPanel';
 import { ContentStudio } from './ContentStudio';
 
 const contentAgentIds = new Set(['trend-scout', 'xiaohongshu-writer', 'douyin-writer', 'wechat-writer', 'social-publisher']);
-const contentStudioAgentIds = new Set(['xiaohongshu-writer', 'wechat-writer']);
+const contentStudioAgentIds = new Set(['xiaohongshu-writer', 'douyin-writer', 'wechat-writer']);
 
 export function isContentProductionAgent(agent: AgentSummary | undefined): boolean {
   if (!agent) return false;

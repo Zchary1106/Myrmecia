@@ -128,14 +128,22 @@ export function createPipelineRoutes(pipelineEngine: PipelineEngine): Router {
       const workspace = workspaceManager.getWorkspaceInfo(req.params.id, 'pipeline');
       if (!workspace) return res.json([]);
       const files = listFiles(workspace.path)
-        .filter(path => ['.png', '.jpg', '.jpeg', '.webp', '.md', '.json'].includes(extname(path).toLowerCase()))
-        .map(path => ({
-          id: path,
-          name: basename(path),
-          path,
-          kind: ['.png', '.jpg', '.jpeg', '.webp'].includes(extname(path).toLowerCase()) ? 'image' : 'document',
-          url: `/api/v1/pipelines/${encodeURIComponent(req.params.id)}/artifacts/file?path=${encodeURIComponent(path)}`,
-        }));
+        .filter(path => ['.png', '.jpg', '.jpeg', '.webp', '.mp4', '.mov', '.m4v', '.webm', '.mkv', '.md', '.json'].includes(extname(path).toLowerCase()))
+        .map(path => {
+          const extension = extname(path).toLowerCase();
+          const kind = ['.png', '.jpg', '.jpeg', '.webp'].includes(extension)
+            ? 'image'
+            : ['.mp4', '.mov', '.m4v', '.webm', '.mkv'].includes(extension)
+              ? 'video'
+              : 'document';
+          return {
+            id: path,
+            name: basename(path),
+            path,
+            kind,
+            url: `/api/v1/pipelines/${encodeURIComponent(req.params.id)}/artifacts/file?path=${encodeURIComponent(path)}`,
+          };
+        });
       res.json(files);
     } catch (err) {
       sendError(res, err);

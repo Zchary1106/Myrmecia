@@ -490,7 +490,7 @@ export interface PipelineArtifact {
   id: string;
   name: string;
   path: string;
-  kind: 'image' | 'document';
+  kind: 'image' | 'video' | 'document';
   url: string;
 }
 
