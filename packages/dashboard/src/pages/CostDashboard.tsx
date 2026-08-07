@@ -63,7 +63,7 @@ export function CostDashboardPage() {
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-2xl font-bold">Cost Dashboard</h2>
-          <p className="text-sm text-gray-500">Token consumption and cost trends</p>
+          <p className="text-sm text-gray-500">Real tokens, Copilot AI units, and provider-specific USD cost</p>
         </div>
         <div className="flex gap-1 bg-surface border border-border rounded-lg p-0.5">
           {periods.map(p => (

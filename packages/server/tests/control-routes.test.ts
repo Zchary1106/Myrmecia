@@ -271,8 +271,20 @@ describe('control routes', () => {
       }))
         .resolves.toMatchObject({ status: 200, body: { success: true } });
 
-      expect(engine.approveGate).toHaveBeenNthCalledWith(1, 'pipe1', false);
-      expect(engine.approveGate).toHaveBeenNthCalledWith(2, 'pipe1', true);
+      expect(engine.approveGate).toHaveBeenNthCalledWith(
+        1,
+        'pipe1',
+        false,
+        { id: 'local-admin', role: 'admin', source: 'local' },
+        undefined,
+      );
+      expect(engine.approveGate).toHaveBeenNthCalledWith(
+        2,
+        'pipe1',
+        true,
+        { id: 'local-admin', role: 'admin', source: 'local' },
+        undefined,
+      );
       expect(engine.skipStage).toHaveBeenCalledWith('pipe1');
       expect(engine.cancel).toHaveBeenCalledWith('pipe1');
     });
@@ -404,6 +416,14 @@ describe('control routes', () => {
         name: 'Claude Sonnet 4.5',
         capabilities: {},
         supportedReasoningEfforts: ['low', 'high'],
+        policy: { state: 'enabled', terms: 'Allowed by organization policy' },
+        billing: { multiplier: 1 },
+      },
+      {
+        id: 'disabled-model',
+        name: 'Disabled Model',
+        capabilities: {},
+        policy: { state: 'disabled', terms: 'Disabled by organization policy' },
       },
     ] as any);
 
@@ -416,6 +436,15 @@ describe('control routes', () => {
       expect(discovered.status).toBe(200);
       expect(discovered.body.provider).toBe('copilot');
       expect(discovered.body.models.map((model: any) => model.id)).toContain('claude-sonnet-4.5');
+      expect(discovered.body.models.find((model: any) => model.id === 'claude-sonnet-4.5')).toMatchObject({
+        selectable: true,
+        policyState: 'enabled',
+        billingMultiplier: 1,
+      });
+      expect(discovered.body.models.find((model: any) => model.id === 'disabled-model')).toMatchObject({
+        selectable: false,
+        policyState: 'disabled',
+      });
 
       const selected = await jsonFetch<any>(baseUrl, '/models/provider-settings', {
         method: 'PUT',
@@ -425,6 +454,14 @@ describe('control routes', () => {
       expect(selected.status).toBe(200);
       expect(selected.body.selectedModelId).toBe('claude-sonnet-4.5');
       expect(getModelRoute('provider:copilot')?.defaultModelId).toBe('claude-sonnet-4.5');
+
+      const disabled = await jsonFetch<any>(baseUrl, '/models/provider-settings', {
+        method: 'PUT',
+        body: JSON.stringify({ modelId: 'disabled-model' }),
+        headers: { 'x-operator-id': 'ops1', 'x-operator-role': 'operator' },
+      });
+      expect(disabled.status).toBe(409);
+      expect(disabled.body.error.code).toBe('MODEL_DISABLED');
     });
   });
 

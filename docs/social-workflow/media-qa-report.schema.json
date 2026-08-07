@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Social Media QA Report",
+  "type": "object",
+  "required": ["schema_version", "content_id", "status", "assets", "missing_required_assets", "repair_actions"],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "content_id": { "type": "string", "minLength": 1 },
+    "status": { "enum": ["pass", "partial", "blocked"] },
+    "assets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["platform", "purpose", "path", "exists", "format", "validations", "warnings"],
+        "properties": {
+          "platform": { "enum": ["douyin", "xiaohongshu", "wechat"] },
+          "purpose": { "enum": ["video", "card", "cover", "inline_image"] },
+          "path": { "type": "string" },
+          "exists": { "type": "boolean" },
+          "format": { "type": "string" },
+          "dimensions": {
+            "type": "object",
+            "properties": {
+              "width": { "type": "integer" },
+              "height": { "type": "integer" }
+            }
+          },
+          "validations": { "type": "array", "items": { "type": "string" } },
+          "warnings": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "missing_required_assets": { "type": "array", "items": { "type": "string" } },
+    "repair_actions": { "type": "array", "items": { "type": "string" } }
+  }
+}

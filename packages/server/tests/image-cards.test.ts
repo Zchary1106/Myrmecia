@@ -105,4 +105,19 @@ describeIfChrome('image-cards rendering', () => {
     expect(html).not.toContain('项目7');
   }, 120_000);
 
+  it('honours newlines in headings, not just body copy', async () => {
+    const outDir = mkdtempSync(join(tmpdir(), 'cards-nl-'));
+    await renderCards({
+      cards: [{ type: 'cover', title: '第一行\n第二行', subtitle: '副标题上\n副标题下' }],
+    }, outDir, { timeoutMs: 60_000 });
+
+    // Titles are where a deliberate line break matters most — a cover headline
+    // that collapses onto one line overflows or shrinks below the intended size.
+    const html = readFileSync(join(outDir, 'card-01.html'), 'utf-8');
+    const h1 = html.match(/h1\{[^}]*\}/)?.[0] ?? '';
+    const sub = html.match(/\.sub\{[^}]*\}/)?.[0] ?? '';
+    expect(h1).toContain('white-space:pre-line');
+    expect(sub).toContain('white-space:pre-line');
+  }, 120_000);
+
 });

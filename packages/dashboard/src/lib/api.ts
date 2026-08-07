@@ -199,6 +199,10 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ confirmPublish }),
       }),
+    rerunStage: (id: string, stageIndex: number) =>
+      request<{ success: boolean; message: string }>(`/pipelines/${id}/stages/${stageIndex}/rerun`, {
+        method: 'POST',
+      }),
     skip: (id: string) => request<{ success: boolean }>(`/pipelines/${id}/skip`, { method: 'POST' }),
     cancel: (id: string, confirmed = false) =>
       request<{ success: boolean }>(`/pipelines/${id}/cancel`, { method: 'POST', body: JSON.stringify({ confirm: confirmed }) }),
@@ -471,7 +475,7 @@ export interface DomainPackInputDTO {
   knowledgeIds?: string[]; agentIds?: string[];
 }
 export interface DomainUsageDTO {
-  taskCount: number; executionCount: number; costUSD: number; tokens: number;
+  taskCount: number; executionCount: number; costUSD: number | null; tokens: number;
 }
 export interface TeamRosterMember { role: string; agentId: string; name: string }
 export interface TeamDTO {

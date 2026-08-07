@@ -275,7 +275,7 @@ function DomainCard({ domain, usage, onEdit, onCopy, onDelete, onUpload }: {
       </div>
       {usage && usage.taskCount > 0 && (
         <div className="flex items-center gap-3 mt-3 pt-3 border-t border-border text-[11px] text-gray-400">
-          <span title="该领域累计花费">💰 ${usage.costUSD.toFixed(3)}</span>
+          <span title="该领域累计花费">💰 {usage.costUSD == null ? 'N/A' : `$${usage.costUSD.toFixed(3)}`}</span>
           <span title="任务数">📋 {usage.taskCount} 任务</span>
           <span title="累计 tokens">🔢 {formatTokens(usage.tokens)} tokens</span>
         </div>

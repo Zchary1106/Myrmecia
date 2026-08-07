@@ -90,7 +90,8 @@ export function createDomainRoutes(): Router {
         `SELECT t.domain_id AS domainId,
                 COUNT(DISTINCT t.id) AS taskCount,
                 COUNT(te.id) AS executionCount,
-                COALESCE(SUM(te.cost_usd), 0) AS costUSD,
+                COALESCE(SUM(CASE WHEN te.cost_type IN ('exact','estimated') THEN te.cost_usd ELSE 0 END), 0) AS costUSD,
+                SUM(CASE WHEN te.cost_type IN ('exact','estimated') THEN 1 ELSE 0 END) AS usdExecutionCount,
                 COALESCE(SUM(te.token_count), 0) AS tokens
            FROM tasks t
            JOIN task_executions te ON te.task_id = t.id
@@ -98,12 +99,12 @@ export function createDomainRoutes(): Router {
           GROUP BY t.domain_id`,
         ws,
       ) as any[];
-      const usage: Record<string, { taskCount: number; executionCount: number; costUSD: number; tokens: number }> = {};
+      const usage: Record<string, { taskCount: number; executionCount: number; costUSD: number | null; tokens: number }> = {};
       for (const r of rows) {
         usage[r.domainId] = {
           taskCount: Number(r.taskCount) || 0,
           executionCount: Number(r.executionCount) || 0,
-          costUSD: Number(r.costUSD) || 0,
+          costUSD: Number(r.usdExecutionCount) > 0 ? Number(r.costUSD) || 0 : null,
           tokens: Number(r.tokens) || 0,
         };
       }

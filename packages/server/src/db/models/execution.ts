@@ -9,6 +9,7 @@ const DEFAULT_PROGRESS: AgentProgress = {
 };
 
 function rowToExecution(row: any): TaskExecution {
+  const costType = row.cost_type || 'unavailable';
   return {
     id: row.id,
     taskId: row.task_id,
@@ -16,7 +17,16 @@ function rowToExecution(row: any): TaskExecution {
     skillVersionId: row.skill_version_id || undefined,
     status: row.status,
     progress: JSON.parse(row.progress),
-    costUSD: row.cost_usd,
+    costUSD: costType === 'subscription' || costType === 'unavailable' || row.cost_usd == null
+      ? null
+      : Number(row.cost_usd),
+    costType,
+    provider: row.provider || undefined,
+    actualModelId: row.actual_model_id || undefined,
+    inputTokens: row.input_tokens || 0,
+    outputTokens: row.output_tokens || 0,
+    aiUnits: Number(row.ai_units) || 0,
+    billingMultiplier: row.billing_multiplier == null ? undefined : Number(row.billing_multiplier),
     tokenCount: row.token_count,
     parentExecutionId: row.parent_execution_id || undefined,
     workspaceId: row.workspace_id || 'default',
@@ -77,7 +87,14 @@ export function listExecutions(filter?: {
 export function updateExecution(id: string, updates: Partial<{
   status: ExecutionStatus;
   progress: AgentProgress;
-  costUSD: number;
+  costUSD: number | null;
+  costType: 'exact' | 'estimated' | 'subscription' | 'unavailable';
+  provider: string;
+  actualModelId: string;
+  inputTokens: number;
+  outputTokens: number;
+  aiUnits: number;
+  billingMultiplier: number;
   tokenCount: number;
   completedAt: string;
   modelId: string;
@@ -92,6 +109,13 @@ export function updateExecution(id: string, updates: Partial<{
   if (updates.status !== undefined) { sets.push('status = ?'); params.push(updates.status); }
   if (updates.progress !== undefined) { sets.push('progress = ?'); params.push(JSON.stringify(updates.progress)); }
   if (updates.costUSD !== undefined) { sets.push('cost_usd = ?'); params.push(updates.costUSD); }
+  if (updates.costType !== undefined) { sets.push('cost_type = ?'); params.push(updates.costType); }
+  if (updates.provider !== undefined) { sets.push('provider = ?'); params.push(updates.provider); }
+  if (updates.actualModelId !== undefined) { sets.push('actual_model_id = ?'); params.push(updates.actualModelId); }
+  if (updates.inputTokens !== undefined) { sets.push('input_tokens = ?'); params.push(updates.inputTokens); }
+  if (updates.outputTokens !== undefined) { sets.push('output_tokens = ?'); params.push(updates.outputTokens); }
+  if (updates.aiUnits !== undefined) { sets.push('ai_units = ?'); params.push(updates.aiUnits); }
+  if (updates.billingMultiplier !== undefined) { sets.push('billing_multiplier = ?'); params.push(updates.billingMultiplier); }
   if (updates.tokenCount !== undefined) { sets.push('token_count = ?'); params.push(updates.tokenCount); }
   if (updates.completedAt !== undefined) { sets.push('completed_at = ?'); params.push(updates.completedAt); }
   if (updates.modelId !== undefined) { sets.push('model_id = ?'); params.push(updates.modelId); }

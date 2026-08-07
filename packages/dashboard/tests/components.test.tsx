@@ -178,6 +178,22 @@ describe('Agent Workbench navigation state', () => {
     expect(workflow.stages[5].agentRole).toBe('social-publisher');
   });
 
+  it('uses a standalone publishing workflow for the Xiaohongshu writer', () => {
+    const workflow = contentStudioWorkflow('xiaohongshu-writer');
+    expect(workflow.templateName).toBe('Xiaohongshu Publish');
+    expect(workflow.stages.map(stage => stage.name)).toEqual([
+      '小红书选题调研',
+      '小红书笔记创作',
+      '自动合规初筛',
+      '人工审核材料',
+      '配图生成',
+      '媒体 QA',
+      '发布预检',
+      '小红书发布',
+    ]);
+    expect(workflow.stages.some(stage => stage.agentRole === 'douyin-writer')).toBe(false);
+  });
+
   it('detects a generic pipeline publish gate before approval', () => {
     expect(hasPublishStageAhead({
       currentStageIndex: 0,

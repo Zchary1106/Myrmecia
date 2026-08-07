@@ -7,6 +7,7 @@ import { CommandCenter } from '../common/CommandCenter';
 import { CommandBar } from '../common/CommandBar';
 import { cn } from '../../lib/utils';
 import { operatorRoleLabel, runtimeControlsAllowed } from '../../lib/permissions';
+import { CopilotModelSwitcher } from '../models/CopilotModelSwitcher';
 
 // Lazy-loaded page components for code splitting
 const OrchestratorView = lazy(() => import('../orchestrator/OrchestratorView').then(m => ({ default: m.OrchestratorView })));
@@ -83,20 +84,20 @@ function GlobalNavRail() {
   return (
     <aside
       data-testid="global-nav-rail"
-      className="flex h-full w-[88px] flex-none flex-col border-r border-border bg-surface"
+      className="flex h-full w-[104px] flex-none flex-col border-r border-border bg-surface"
     >
-      <div className="flex flex-col items-center border-b border-border px-2 py-3">
-        <img src="/myrmecia-mark.png" alt="" className="h-9 w-9 rounded-xl shadow-lg shadow-accent/20" />
-        <div className="mt-1.5 text-[8px] font-bold tracking-[0.16em] text-gray-500">MYRMECIA</div>
+      <div className="flex flex-col items-center border-b border-border px-2.5 py-3.5">
+        <img src="/myrmecia-mark.png" alt="" className="h-10 w-10 rounded-xl shadow-lg shadow-accent/20" />
+        <div className="mt-2 text-[9px] font-bold tracking-[0.16em] text-gray-500">MYRMECIA</div>
       </div>
 
-      <nav className="flex-1 overflow-y-auto px-1.5 py-2">
+      <nav className="flex-1 overflow-y-auto px-2 py-2.5">
         {globalSections.map((section, sectionIndex) => (
-          <div key={section.label} className={cn(sectionIndex > 0 && 'mt-2 border-t border-border pt-2')}>
-            <div className="mb-1 text-center text-[7px] font-semibold uppercase tracking-[0.14em] text-gray-700">
+          <div key={section.label} className={cn(sectionIndex > 0 && 'mt-2.5 border-t border-border pt-2.5')}>
+            <div className="mb-1.5 text-center text-[8px] font-semibold uppercase tracking-[0.14em] text-gray-700">
               {section.label}
             </div>
-            <div className="space-y-1">
+            <div className="space-y-1.5">
               {section.views.map(view => {
                 const badge = view.badge === 'notifications' ? unreadCount : view.badge === 'inbox' ? pendingInboxCount : 0;
                 const selected = activeView === view.id || (view.id === 'agents' && activeView === 'agent-settings');
@@ -107,14 +108,14 @@ function GlobalNavRail() {
                   onClick={() => setActiveView(view.id)}
                   title={view.label}
                   className={cn(
-                    'relative flex w-full flex-col items-center justify-center rounded-xl px-1 py-1.5 transition',
+                    'relative flex w-full flex-col items-center justify-center rounded-xl px-1.5 py-2 transition',
                     selected
                       ? 'bg-accent/15 text-accent-light'
                       : 'text-gray-600 hover:bg-surface-hover hover:text-gray-300',
                   )}
                 >
-                  <span className="text-base leading-none">{view.icon}</span>
-                  <span className="mt-1 max-w-full truncate text-[8px] font-medium">{view.label}</span>
+                  <span className="text-lg leading-none">{view.icon}</span>
+                  <span className="mt-1 max-w-full truncate text-[9px] font-medium">{view.label}</span>
                   {badge > 0 && (
                     <span className="absolute right-1 top-1 min-w-4 rounded-full bg-accent px-1 text-[8px] font-bold text-white">
                       {badge > 99 ? '99+' : badge}
@@ -128,10 +129,10 @@ function GlobalNavRail() {
         ))}
       </nav>
 
-      <div className="border-t border-border px-2 py-3 text-center">
+      <div className="border-t border-border px-2.5 py-3.5 text-center">
         <div className="flex items-center justify-center gap-1.5">
           <span className={cn('h-2 w-2 rounded-full', health?.status === 'ok' ? 'bg-emerald-400' : 'bg-gray-600')} />
-          <span className="text-[8px] text-gray-600">
+          <span className="text-[9px] text-gray-600">
             {agents.filter(agent => agent.activeExecutions > 0).length}/{agents.length}
           </span>
           <span data-testid="agent-summary" className="sr-only">
@@ -139,7 +140,7 @@ function GlobalNavRail() {
           </span>
         </div>
         <div
-          className={cn('mt-1 truncate text-[7px]', canControl ? 'text-emerald-500/70' : 'text-yellow-500/70')}
+          className={cn('mt-1.5 truncate text-[8px]', canControl ? 'text-emerald-500/70' : 'text-yellow-500/70')}
           title={`${canControl ? 'Control' : 'Read-only'} · ${operatorRoleLabel(diagnostics)}`}
         >
           {canControl ? 'CONTROL' : 'READ ONLY'}
@@ -262,6 +263,7 @@ export function Layout() {
 
   return (
     <div className="flex flex-col h-screen">
+      <CopilotModelSwitcher />
       <div className="flex flex-1 min-h-0">
         <GlobalNavRail />
 

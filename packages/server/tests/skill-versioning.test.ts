@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtempSync, writeFileSync } from 'fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { closeDb, getDb } from '../src/db/database.js';
@@ -45,6 +45,25 @@ describe('skill versioning', () => {
     expect(detail?.versions[0].status).toBe('published');
     expect(assignment?.skillVersionId).toBe(detail?.versions[0].id);
     expect(resolved?.version.content).toContain('Use sources.');
+  });
+
+  it('imports standard skills/<id>/SKILL.md folders', () => {
+    const agentsDir = mkdtempSync(join(tmpdir(), 'agent-skills-empty-'));
+    const skillsDir = mkdtempSync(join(tmpdir(), 'standard-skills-'));
+    const visualDir = join(skillsDir, 'visual-cards');
+    mkdirSync(visualDir, { recursive: true });
+    writeFileSync(join(visualDir, 'SKILL.md'), '---\nname: visual-cards\ndescription: Render cards.\n---\n\n# Visual Cards\n\nRender and inspect.', 'utf8');
+    const agent = createAgent({
+      id: 'visual-agent',
+      name: 'Visual Agent',
+      role: 'visual',
+      skillPath: 'skills/visual-cards/SKILL.md',
+    });
+
+    syncBuiltinSkills(agentsDir, skillsDir);
+
+    expect(getSkillDetail('visual-cards')?.versions[0].status).toBe('published');
+    expect(resolveSkillForAgent(agent)?.version.content).toContain('Render and inspect.');
   });
 
   it('supports draft publish and assignment rollback', () => {

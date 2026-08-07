@@ -82,6 +82,18 @@ export function AgentChatPanel() {
   const agent = agents.find((a: any) => a.id === selectedAgentId);
   const chatMessages = selectedAgentId ? (agentChats[selectedAgentId] || []) : [];
   const execMessages = activeExecId ? (executionMessages[activeExecId] || []) : [];
+  const latestExecution = activeExecId
+    ? executions.find(execution => execution.id === activeExecId)
+    : executions.find(execution => execution.agentDefId === selectedAgentId);
+  // The chat transcript already renders the user prompt and final Agent reply.
+  // Keep the execution stream focused on tools/progress so the same content
+  // is not displayed a second time.
+  const activityMessages = execMessages.filter(message =>
+    message.type !== 'user_input' && message.type !== 'agent_text'
+  );
+  const modelLabel = latestExecution?.modelId === 'auto'
+    ? 'Copilot · Auto'
+    : latestExecution?.modelId;
 
   // Link the started task to its execution as soon as WebSocket/store updates arrive.
   useEffect(() => {
@@ -102,7 +114,7 @@ export function AgentChatPanel() {
     if (agent && activePlaceholderId) {
       updateChatMessage(agent.id, activePlaceholderId, {
         content: task.status === 'done'
-          ? (task.output?.slice(0, 500) || 'Task completed')
+          ? (task.output || 'Task completed')
           : `Failed: ${task.error || 'Unknown error'}`,
         status: task.status === 'done' ? 'done' : 'error',
       });
@@ -189,8 +201,16 @@ export function AgentChatPanel() {
         <span className="text-xl">{agent.emoji || '🤖'}</span>
         <div className="flex-1 min-w-0">
           <div className="font-semibold text-sm truncate">{agent.name}</div>
-          <div className="text-[11px] text-gray-500">
-            {agent.role}
+          <div className="flex items-center gap-2 text-[11px] text-gray-500">
+            <span>{agent.role}</span>
+            {modelLabel && (
+              <span
+                className="max-w-[180px] truncate rounded-md border border-blue-400/20 bg-blue-500/10 px-1.5 py-0.5 text-[9px] text-blue-300"
+                title={`${latestExecution?.modelId || ''}${latestExecution?.modelRouteReason ? ` · ${latestExecution.modelRouteReason}` : ''}`}
+              >
+                {modelLabel}
+              </span>
+            )}
             {agent.activeExecutions > 0 && (
               <span className="ml-2 text-blue-400">● {agent.activeExecutions} running</span>
             )}
@@ -244,8 +264,10 @@ export function AgentChatPanel() {
               </div>
             )}
             {msg.role === 'agent' && msg.status === 'done' && msg.content && (
-              <div className="mx-3 my-1 text-[11px] text-green-400/70">
-                ✓ {msg.content}
+              <div className="mx-3 my-2 rounded-lg bg-surface-hover px-3 py-2">
+                <div className="whitespace-pre-wrap text-[12px] leading-relaxed text-gray-300">
+                  {msg.content}
+                </div>
               </div>
             )}
             {msg.role === 'agent' && msg.status === 'error' && (
@@ -256,12 +278,12 @@ export function AgentChatPanel() {
           </div>
         ))}
 
-        {execMessages.length > 0 && (
+        {activityMessages.length > 0 && (
           <div className="border-t border-border mt-2 pt-2">
             <div className="px-3 py-1 text-[10px] text-gray-600 uppercase tracking-wider font-semibold">
               Activity Stream
             </div>
-            {execMessages.map(msg => (
+            {activityMessages.map(msg => (
               <ActivityItem key={msg.id} message={msg} />
             ))}
           </div>

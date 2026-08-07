@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Social Publishing Compensation Plan",
+  "type": "object",
+  "required": ["schema_version", "content_id", "status", "actions"],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "content_id": { "type": "string" },
+    "status": { "enum": ["no_action", "retry_requires_approval", "human_intervention_required"] },
+    "actions": { "type": "array", "items": { "type": "string" } },
+    "retained_artifacts": { "type": "array", "items": { "type": "string" } }
+  }
+}

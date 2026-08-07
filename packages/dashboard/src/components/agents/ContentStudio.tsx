@@ -1,11 +1,24 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { Pipeline, PipelineArtifact, PipelineStage } from '@myrmecia/shared';
 import { api } from '../../lib/api';
 import { cn } from '../../lib/utils';
 import { useStore } from '../../stores/store';
+import { StageOutputPreview } from './StageOutputPreview';
 
 const CROSSPOST_TEMPLATE_NAME = 'Xiaohongshu Douyin Crosspost';
+const XIAOHONGSHU_TEMPLATE_NAME = 'Xiaohongshu Publish';
 const WECHAT_TEMPLATE_NAME = 'WeChat Article';
+
+const xiaohongshuStages: Array<Pick<PipelineStage, 'name' | 'agentRole'>> = [
+  { name: '小红书选题调研', agentRole: 'trend-scout' },
+  { name: '小红书笔记创作', agentRole: 'xiaohongshu-writer' },
+  { name: '自动合规初筛', agentRole: 'social-compliance-reviewer' },
+  { name: '人工审核材料', agentRole: 'social-review-coordinator' },
+  { name: '配图生成', agentRole: 'xiaohongshu-visual-designer' },
+  { name: '媒体 QA', agentRole: 'media-qa' },
+  { name: '发布预检', agentRole: 'social-preflight' },
+  { name: '小红书发布', agentRole: 'social-publisher' },
+];
 
 const crosspostStages: Array<Pick<PipelineStage, 'name' | 'agentRole'>> = [
   { name: '选题调研', agentRole: 'trend-scout' },
@@ -26,21 +39,31 @@ const wechatStages: Array<Pick<PipelineStage, 'name' | 'agentRole'>> = [
 ];
 
 export function contentStudioWorkflow(selectedAgentId: string | null) {
-  return selectedAgentId === 'wechat-writer'
-    ? {
+  if (selectedAgentId === 'wechat-writer') {
+    return {
       templateName: WECHAT_TEMPLATE_NAME,
       title: 'WeChat Official Account Studio',
       subtitle: '选题 · 写作 · 审核 · 排版 · 草稿箱 · 人工发布',
       stages: wechatStages,
       createLabel: 'Create WeChat article run',
-    }
-    : {
+    };
+  }
+  if (selectedAgentId === 'xiaohongshu-writer') {
+    return {
+      templateName: XIAOHONGSHU_TEMPLATE_NAME,
+      title: 'Xiaohongshu Content Studio',
+      subtitle: '小红书独立生产线 · 图文预览 · 人工审核发布',
+      stages: xiaohongshuStages,
+      createLabel: 'Create Xiaohongshu run',
+    };
+  }
+  return {
       templateName: CROSSPOST_TEMPLATE_NAME,
       title: 'Content Production Studio',
       subtitle: 'Xiaohongshu + Douyin · artifacts first · human-gated publishing',
       stages: crosspostStages,
       createLabel: 'Create crosspost run',
-    };
+  };
 }
 
 const stageStyle: Record<string, { dot: string; badge: string; label: string }> = {
@@ -64,7 +87,15 @@ function isActivePipeline(pipeline: Pipeline) {
 function isCrosspostPipeline(pipeline: Pipeline, templateId?: string) {
   if (templateId && pipeline.templateId === templateId) return true;
   const roles = pipeline.stages.map(stage => String(stage.agentRole));
-  return roles.includes('trend-scout') && roles.includes('social-publisher');
+  return roles.includes('xiaohongshu-writer') && roles.includes('douyin-writer') && roles.includes('social-publisher');
+}
+
+function isXiaohongshuPipeline(pipeline: Pipeline, templateId?: string) {
+  if (templateId && pipeline.templateId === templateId) return true;
+  const roles = pipeline.stages.map(stage => String(stage.agentRole));
+  // Keep legacy crosspost runs visible so their copy/images can still be
+  // inspected or regenerated. New runs use the standalone template above.
+  return roles.includes('xiaohongshu-writer') && roles.includes('social-publisher');
 }
 
 function isWeChatPipeline(pipeline: Pipeline, templateId?: string) {
@@ -178,6 +209,8 @@ export function ContentStudio() {
   const [revisionPrompt, setRevisionPrompt] = useState('');
   const [revisionState, setRevisionState] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
   const [revisionMessage, setRevisionMessage] = useState('');
+  const [artifactView, setArtifactView] = useState<'preview' | 'raw'>('preview');
+  const [previewArtifact, setPreviewArtifact] = useState<PipelineArtifact | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -188,6 +221,7 @@ export function ContentStudio() {
   }, [loadPipelines, loadTemplates]);
 
   const isWeChatMode = selectedAgentId === 'wechat-writer';
+  const isXiaohongshuMode = selectedAgentId === 'xiaohongshu-writer';
   const workflow = contentStudioWorkflow(selectedAgentId);
   const workflowTemplate = useMemo(
     () => templates.find(template => template.name === workflow.templateName),
@@ -197,11 +231,16 @@ export function ContentStudio() {
     () => pipelines
       .filter(pipeline => isWeChatMode
         ? isWeChatPipeline(pipeline, workflowTemplate?.id)
-        : isCrosspostPipeline(pipeline, workflowTemplate?.id))
+        : isXiaohongshuMode
+          ? isXiaohongshuPipeline(pipeline, workflowTemplate?.id)
+          : isCrosspostPipeline(pipeline, workflowTemplate?.id))
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()),
-    [pipelines, isWeChatMode, workflowTemplate?.id],
+    [pipelines, isWeChatMode, isXiaohongshuMode, workflowTemplate?.id],
   );
   const pipeline = contentPipelines.find(item => item.id === selectedRunId) || null;
+  const artifactVersion = pipeline?.stages
+    .map(stage => `${stage.index}:${stage.status}:${stage.output?.length || 0}`)
+    .join('|') || '';
 
   useEffect(() => {
     if (!contentPipelines.length) {
@@ -216,32 +255,38 @@ export function ContentStudio() {
 
   useEffect(() => {
     if (!pipeline) return;
-    setSelectedStageIndex(Math.min(Math.max(pipeline.currentStageIndex, 0), workflow.stages.length - 1));
+    setSelectedStageIndex(Math.min(Math.max(pipeline.currentStageIndex, 0), pipeline.stages.length - 1));
     setRevisionPrompt('');
     setRevisionMessage('');
     setRevisionState('idle');
     setCancelArmed(false);
+    setArtifactView('preview');
   }, [
     pipeline?.id,
     pipeline?.status,
     pipeline?.stages.map(stage => `${stage.index}:${stage.status}:${stage.output?.length || 0}`).join('|'),
   ]);
 
-  useEffect(() => {
+  const refreshArtifacts = useCallback(async () => {
     if (!pipeline) {
       setArtifacts([]);
       setArtifactError(null);
       return;
     }
-    let mounted = true;
     setArtifactLoading(true);
     setArtifactError(null);
-    api.pipelines.artifacts(pipeline.id)
-      .then(result => { if (mounted) setArtifacts(result); })
-      .catch(error => { if (mounted) setArtifactError(errorMessage(error, 'Could not load generated artifacts.')); })
-      .finally(() => { if (mounted) setArtifactLoading(false); });
-    return () => { mounted = false; };
+    try {
+      setArtifacts(await api.pipelines.artifacts(pipeline.id));
+    } catch (error) {
+      setArtifactError(errorMessage(error, 'Could not load generated artifacts.'));
+    } finally {
+      setArtifactLoading(false);
+    }
   }, [pipeline?.id]);
+
+  useEffect(() => {
+    void refreshArtifacts();
+  }, [refreshArtifacts, artifactVersion]);
 
   const selectedStage = pipeline?.stages[selectedStageIndex];
   const selectedStageDetails = selectedStage || (pipeline ? {
@@ -268,6 +313,13 @@ export function ContentStudio() {
       || (retryableStage.publishTools?.length || 0) > 0
     )
   );
+  const canRegenerateSelectedStage = Boolean(
+    pipeline
+    && selectedStageDetails?.status === 'done'
+    && /配图|image/i.test(selectedStageDetails.name)
+    && selectedStageDetails.agentRole !== 'social-publisher'
+    && !(selectedStageDetails.publishTools?.length)
+  );
 
   const selectRun = (id: string) => {
     setSelectedRunId(id);
@@ -293,7 +345,7 @@ export function ContentStudio() {
     setActionError(null);
     try {
       const created = await api.pipelines.create({
-        name: runName.trim() || `${isWeChatMode ? 'WeChat' : 'Crosspost'} · ${runInput.trim().slice(0, 42)}`,
+        name: runName.trim() || `${isWeChatMode ? 'WeChat' : isXiaohongshuMode ? 'Xiaohongshu' : 'Crosspost'} · ${runInput.trim().slice(0, 42)}`,
         templateId: workflowTemplate.id,
         input: runInput.trim(),
         gateMode,
@@ -363,6 +415,21 @@ export function ContentStudio() {
       return;
     }
     void retryCurrentStage();
+  };
+
+  const regenerateSelectedStage = async () => {
+    if (!pipeline || !selectedStageDetails || !canRegenerateSelectedStage || busyAction) return;
+    setBusyAction('regenerate');
+    setActionError(null);
+    try {
+      await api.pipelines.rerunStage(pipeline.id, selectedStageDetails.index);
+      await refreshPipeline(pipeline.id);
+      setArtifacts([]);
+    } catch (error) {
+      setActionError(errorMessage(error, 'Could not regenerate this stage.'));
+    } finally {
+      setBusyAction(null);
+    }
   };
 
   const submitRevision = async () => {
@@ -452,7 +519,12 @@ export function ContentStudio() {
         </div>
       ) : (
         <>
-          <StageStepper pipeline={pipeline} workflowStages={workflow.stages} selectedStageIndex={selectedStageIndex} onSelect={setSelectedStageIndex} />
+          <StageStepper
+            pipeline={pipeline}
+            workflowStages={pipeline.stages.length ? pipeline.stages : workflow.stages}
+            selectedStageIndex={selectedStageIndex}
+            onSelect={setSelectedStageIndex}
+          />
           <div className="grid min-h-0 flex-1 grid-cols-1 overflow-y-auto 2xl:grid-cols-[minmax(0,1fr)_300px] 2xl:overflow-hidden">
             <main className="min-w-0 space-y-4 p-4 2xl:overflow-y-auto">
               <section data-testid="content-artifact-canvas" className="rounded-2xl border border-border bg-surface shadow-lg shadow-black/10">
@@ -462,17 +534,40 @@ export function ContentStudio() {
                     <h3 className="mt-1 truncate text-base font-bold">{selectedStageDetails?.name}</h3>
                     <p className="mt-1 text-[11px] text-gray-500">{selectedAgent?.name || selectedStageDetails?.agentRole} · output captured from this workflow stage</p>
                   </div>
-                  {selectedStageDetails && (
-                    <span className={cn('rounded-full px-2 py-1 text-[10px] font-medium', (stageStyle[selectedStageDetails.status] || stageStyle.pending).badge)}>
-                      {(stageStyle[selectedStageDetails.status] || stageStyle.pending).label}
-                    </span>
-                  )}
+                  <div className="flex items-center gap-2">
+                    {selectedStageDetails?.output && (
+                      <div className="flex rounded-lg border border-border bg-background p-0.5">
+                        {(['preview', 'raw'] as const).map(view => (
+                          <button
+                            key={view}
+                            type="button"
+                            onClick={() => setArtifactView(view)}
+                            className={cn(
+                              'rounded-md px-2.5 py-1 text-[10px] font-medium capitalize',
+                              artifactView === view ? 'bg-accent/15 text-accent-light' : 'text-gray-500 hover:text-gray-300',
+                            )}
+                          >
+                            {view}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {selectedStageDetails && (
+                      <span className={cn('rounded-full px-2 py-1 text-[10px] font-medium', (stageStyle[selectedStageDetails.status] || stageStyle.pending).badge)}>
+                        {(stageStyle[selectedStageDetails.status] || stageStyle.pending).label}
+                      </span>
+                    )}
+                  </div>
                 </div>
                 <div className="p-4">
                   {selectedStageDetails?.output ? (
-                    <pre className="max-h-[380px] overflow-auto whitespace-pre-wrap break-words rounded-xl border border-border bg-background p-4 font-sans text-xs leading-6 text-gray-300">
-                      {selectedStageDetails.output}
-                    </pre>
+                    artifactView === 'preview'
+                      ? <StageOutputPreview output={selectedStageDetails.output} />
+                      : (
+                        <pre className="max-h-[520px] overflow-auto whitespace-pre-wrap break-words rounded-xl border border-border bg-background p-4 font-mono text-xs leading-6 text-gray-300">
+                          {selectedStageDetails.output}
+                        </pre>
+                      )
                   ) : (
                     <div className="rounded-xl border border-dashed border-border bg-background/60 px-4 py-10 text-center text-xs text-gray-600">
                       {selectedStageDetails?.status === 'running'
@@ -489,7 +584,17 @@ export function ContentStudio() {
                     <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-accent-light">Generated PNGs</div>
                     <h3 className="mt-1 text-sm font-bold">Image artifact gallery</h3>
                   </div>
-                  <span className="text-[10px] text-gray-600">{imageArtifacts.length} files</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] text-gray-600">{imageArtifacts.length} files</span>
+                    <button
+                      type="button"
+                      onClick={() => void refreshArtifacts()}
+                      disabled={artifactLoading}
+                      className="rounded-md border border-border bg-background px-2 py-1 text-[9px] font-medium text-gray-500 hover:text-gray-200 disabled:opacity-40"
+                    >
+                      {artifactLoading ? 'Loading…' : 'Refresh'}
+                    </button>
+                  </div>
                 </div>
                 {artifactLoading && <div className="py-8 text-center text-xs text-gray-500">Loading generated artifacts…</div>}
                 {artifactError && <div role="alert" className="mt-3 rounded-lg bg-red-500/10 px-3 py-2 text-xs text-red-300">{artifactError}</div>}
@@ -501,10 +606,10 @@ export function ContentStudio() {
                 {imageArtifacts.length > 0 && (
                   <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
                     {imageArtifacts.map(artifact => (
-                      <a key={artifact.id} href={artifact.url} target="_blank" rel="noreferrer" className={cn('group overflow-hidden rounded-xl border border-border bg-background hover:border-accent/50', isWeChatMode && 'col-span-2')}>
+                      <button key={artifact.id} type="button" onClick={() => setPreviewArtifact(artifact)} className={cn('group overflow-hidden rounded-xl border border-border bg-background text-left hover:border-accent/50', isWeChatMode && 'col-span-2')}>
                         <img src={artifact.url} alt={artifact.name} className={cn('w-full object-cover transition duration-200 group-hover:scale-[1.02]', isWeChatMode ? 'aspect-[900/383]' : 'aspect-[3/4]')} />
                         <span className="block truncate px-2 py-1.5 text-[10px] text-gray-500">{artifact.name}</span>
-                      </a>
+                      </button>
                     ))}
                   </div>
                 )}
@@ -555,6 +660,16 @@ export function ContentStudio() {
                     Cancel
                   </button>
                 </div>
+                {canRegenerateSelectedStage && (
+                  <button
+                    type="button"
+                    onClick={() => void regenerateSelectedStage()}
+                    disabled={!!busyAction}
+                    className="mt-2 w-full rounded-lg border border-blue-400/20 bg-blue-500/10 px-3 py-2 text-[10px] font-semibold text-blue-300 hover:bg-blue-500/20 disabled:opacity-40"
+                  >
+                    {busyAction === 'regenerate' ? 'Regenerating images…' : 'Regenerate images'}
+                  </button>
+                )}
                 {cancelArmed && (
                   <div className="mt-3 rounded-xl border border-red-500/30 bg-red-500/10 p-3">
                     <p className="text-[11px] leading-relaxed text-red-200">Cancel this run and stop its active workflow stage?</p>
@@ -687,6 +802,23 @@ export function ContentStudio() {
               >
                 {publishConfirmAction === 'retry' ? 'Retry publish stage' : 'Approve publish stage'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {previewArtifact && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/85 p-6" onClick={() => setPreviewArtifact(null)}>
+          <div className="flex max-h-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-border bg-surface shadow-2xl" onClick={event => event.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-border px-4 py-3">
+              <div className="min-w-0">
+                <div className="text-[10px] uppercase tracking-[0.18em] text-accent-light">Image preview</div>
+                <div className="mt-1 truncate text-sm font-semibold">{previewArtifact.name}</div>
+              </div>
+              <button type="button" onClick={() => setPreviewArtifact(null)} className="rounded-lg px-3 py-1.5 text-sm text-gray-400 hover:bg-surface-hover hover:text-white">✕</button>
+            </div>
+            <div className="min-h-0 overflow-auto bg-black/30 p-4">
+              <img src={previewArtifact.url} alt={previewArtifact.name} className="mx-auto max-h-[78vh] max-w-full object-contain" />
             </div>
           </div>
         </div>

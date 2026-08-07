@@ -273,7 +273,7 @@ export function ExecutionTimeline() {
                       {agent && <span>{agent.emoji} {agent.name}</span>}
                       {execution && (
                         <span>
-                          {execution.status} · {execution.tokenCount} tokens · ${execution.costUSD.toFixed(4)}
+                          {execution.status} · {execution.tokenCount} tokens · {execution.costUSD == null ? 'Cost N/A' : `$${execution.costUSD.toFixed(4)}`}
                         </span>
                       )}
                       {!execution && <span>No execution yet</span>}

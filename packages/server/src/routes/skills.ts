@@ -288,7 +288,7 @@ export function createSkillRoutes(): Router {
           ROUND(AVG(CASE WHEN te.status = 'done' THEN
             (julianday(te.completed_at) - julianday(te.started_at)) * 86400000
           END)) as avg_duration_ms,
-          ROUND(SUM(te.cost_usd), 4) as total_cost_usd
+          ROUND(SUM(CASE WHEN te.cost_type IN ('exact','estimated') THEN te.cost_usd ELSE 0 END), 4) as total_cost_usd
         FROM skills s
         JOIN skill_versions sv ON sv.skill_id = s.id
         JOIN task_executions te ON te.skill_version_id = sv.id

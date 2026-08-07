@@ -332,7 +332,7 @@ export function AgentWorkbench({ agent, onEdit }: { agent: AgentSummary; onEdit:
                         {execution.status}
                       </span>
                     </div>
-                    <div className="mt-2 text-[11px] text-gray-500">{execution.tokenCount} tokens · ${execution.costUSD.toFixed(4)} · skill {execution.skillVersionId || '-'}</div>
+                    <div className="mt-2 text-[11px] text-gray-500">{execution.tokenCount} tokens · {execution.costUSD == null ? 'Cost N/A' : `$${execution.costUSD.toFixed(4)}`} · skill {execution.skillVersionId || '-'}</div>
                   </button>
                 );
               })}

@@ -1,6 +1,6 @@
 import { getDb } from '../db/database.js';
 import { envWithAlias } from '../lib/brand-config.js';
-import type { AgentDefinition, ModelDefinition, ModelHealthStatus, ModelRoute, ModelSelection, ModelTier, Task } from '../types.js';
+import type { AgentDefinition, ModelCostType, ModelDefinition, ModelHealthStatus, ModelRoute, ModelSelection, ModelTier, Task } from '../types.js';
 
 interface BuiltinModel {
   id: string;
@@ -335,6 +335,8 @@ export function syncProviderModels(
     name: string;
     capabilities?: unknown;
     supportsReasoningEffort?: boolean;
+    policy?: unknown;
+    billing?: unknown;
   }>,
 ): ModelDefinition[] {
   const db = getDb();
@@ -367,6 +369,8 @@ export function syncProviderModels(
         JSON.stringify({
           source: 'provider-discovery',
           capabilities: model.capabilities || {},
+          policy: model.policy || {},
+          billing: model.billing || {},
         }),
         90,
         provider,
@@ -742,13 +746,18 @@ export function recordModelHealth(data: {
 
 export function recordModelUsage(data: {
   modelId: string;
+  provider?: string;
+  actualModelId?: string;
   agentId?: string;
   taskId?: string;
   executionId?: string;
   status: 'success' | 'failed';
   inputTokens?: number;
   outputTokens?: number;
-  costUSD?: number;
+  costUSD?: number | null;
+  costType?: ModelCostType;
+  aiUnits?: number;
+  billingMultiplier?: number;
   latencyMs?: number;
   routeReason?: string;
   routeSource?: ModelSelection['source'];
@@ -757,17 +766,26 @@ export function recordModelUsage(data: {
   pipelineId?: string;
   stageIndex?: number;
 }): void {
-  if (!getModel(data.modelId)) return;
+  const model = getModel(data.modelId);
+  if (!model) return;
+  const provider = data.provider || model.provider;
+  const costType: ModelCostType = provider === COPILOT_PROVIDER
+    ? 'subscription'
+    : data.costType || (data.costUSD != null ? 'exact' : 'estimated');
+  const costUSD = costType === 'subscription' || costType === 'unavailable'
+    ? null
+    : data.costUSD ?? estimateModelCost(data.modelId, data.inputTokens || 0, data.outputTokens || 0);
   const taskRow = data.taskId
     ? getDb().get('SELECT workspace_id, pipeline_id, stage_index FROM tasks WHERE id = ?', data.taskId) as any
     : undefined;
   getDb().run(`
     INSERT INTO model_usage_stats (
       model_id, task_id, execution_id, agent_id, status,
-      input_tokens, output_tokens, cost_usd, model_tier, route_source,
-      latency_ms, route_reason, workspace_id, pipeline_id, stage_index
+      input_tokens, output_tokens, cost_usd, cost_type, provider, actual_model_id,
+      ai_units, billing_multiplier, model_tier, route_source, latency_ms,
+      route_reason, workspace_id, pipeline_id, stage_index
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
     data.modelId,
     data.taskId || null,
@@ -776,8 +794,13 @@ export function recordModelUsage(data: {
     data.status,
     data.inputTokens || 0,
     data.outputTokens || 0,
-    data.costUSD && data.costUSD > 0 ? data.costUSD : estimateModelCost(data.modelId, data.inputTokens || 0, data.outputTokens || 0),
-    data.modelTier || getModel(data.modelId)?.tier || null,
+    costUSD,
+    costType,
+    provider,
+    data.actualModelId || null,
+    data.aiUnits || 0,
+    data.billingMultiplier ?? null,
+    data.modelTier || model.tier || null,
     data.routeSource || null,
     data.latencyMs ?? null,
     data.routeReason || null,

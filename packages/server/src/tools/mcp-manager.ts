@@ -393,6 +393,16 @@ function assertWeChatMcpCallAllowed(
   }
   const action = typeof args.action === 'string' ? args.action : '';
 
+  if (tool === 'wechat_auth') {
+    if (context.agentId !== 'social-preflight') {
+      throw new McpPolicyError('Only social-preflight may inspect WeChat authentication status');
+    }
+    if (!['get_token', 'refresh_token', 'get_config'].includes(action)) {
+      throw new McpPolicyError(`WeChat auth action "${action || 'missing'}" is not allowed`);
+    }
+    return;
+  }
+
   if (tool === 'wechat_permanent_media') {
     if (context.agentId !== 'wechat-writer') {
       throw new McpPolicyError('Only wechat-writer may manage WeChat article media');

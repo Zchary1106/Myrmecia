@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Xiaohongshu Image Generation Report",
+  "type": "object",
+  "required": ["schema_version", "status", "paths"],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "content_id": { "type": "string" },
+    "status": { "const": "generated" },
+    "paths": {
+      "type": "array",
+      "minItems": 6,
+      "maxItems": 8,
+      "items": {
+        "type": "string",
+        "pattern": "^(?:/.+|[A-Za-z]:\\\\.+)\\.(png|jpg|jpeg|webp)$"
+      }
+    },
+    "count": { "type": "integer", "minimum": 6, "maximum": 8 },
+    "notes": { "type": "array", "items": { "type": "string" } }
+  }
+}

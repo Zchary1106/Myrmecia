@@ -1,0 +1,132 @@
+name: Xiaohongshu Publish
+description: 小红书独立图文生产与人工发布流水线，不生成抖音脚本，不触碰公众号。
+stages:
+  - name: 小红书选题调研
+    role: trend-scout
+    prompt_template: |
+      只围绕小红书平台调研以下主题，不生成抖音或公众号建议。
+      使用 `web.search` 查找公开可访问的小红书相关内容和搜索趋势。
+      输出目标人群、关键词、竞品角度、差异化切入点和证据限制；
+      无法取得的数据必须标记未知，不得编造互动数字。
+
+      主题：
+      {input}
+
+  - name: 小红书笔记创作
+    role: xiaohongshu-writer
+    depends_on: [0]
+    prompt_template: |
+      根据调研结果生成唯一确定的小红书图文终稿：
+      - 唯一标题，20 个中文字符以内；
+      - 正文 1000 字以内；
+      - 6-8 张 1080x1440 卡片 brief；
+      - 标签与互动 CTA；
+      - 不保留多个备选标题，不生成抖音脚本。
+
+      调研结果：
+      {input}
+
+  - name: 自动合规初筛
+    role: social-compliance-reviewer
+    depends_on: [1]
+    output_schema: docs/social-workflow/compliance-report.schema.json
+    prompt_template: |
+      从上下文读取 Workspace ID，调用 `content.compliance_check`，
+      只审核以下小红书终稿。输出必须符合
+      `docs/social-workflow/compliance-report.schema.json`。
+
+      小红书终稿：
+      {input}
+
+  - name: 人工审核材料
+    role: social-review-coordinator
+    depends_on: [1, 2]
+    requires_approval: true
+    approval_kind: content
+    output_schema: docs/social-workflow/review-package.schema.json
+    prompt_template: |
+      将小红书完整终稿和合规报告整理成人工审核包。
+      platforms 数组只包含 xiaohongshu。
+      你只能给出机器 recommendation，不能冒充真人审批。
+      输出必须符合 `docs/social-workflow/review-package.schema.json`。
+
+      审核输入：
+      {input}
+
+  - name: 配图生成
+    role: xiaohongshu-visual-designer
+    depends_on: [1, 3]
+    output_schema: docs/social-workflow/image-generation-report.schema.json
+    output_policy:
+      field: status
+      allowed_values: [generated]
+      on_failure: blocked
+      message: 配图工具没有生成真实图片文件。
+    prompt_template: |
+      使用 $xiaohongshu-visual-creator 的完整工作流处理以下已审核内容。
+      必须先确认 Verified Human Approval Records，完成视觉概念、6-8 页叙事、
+      `image.generate_cards` 出图和逐图 `media.inspect`。
+      最终输出必须符合 `docs/social-workflow/image-generation-report.schema.json`，
+      paths 必须逐项复制真实绝对路径。
+
+      小红书终稿和审核材料：
+      {input}
+
+  - name: 媒体 QA
+    role: media-qa
+    depends_on: [4]
+    output_schema: docs/social-workflow/media-qa-report.schema.json
+    output_policy:
+      field: status
+      allowed_values: [pass]
+      on_failure: blocked
+      message: 小红书配图未通过媒体 QA，禁止进入发布预检。
+    prompt_template: |
+      对配图生成阶段返回的每一个路径调用 `media.inspect`。
+      必须确认文件存在、格式为 PNG/JPEG、尺寸为 1080x1440。
+      缺图、路径无效或尺寸错误时输出 status=blocked；
+      全部通过时输出 status=pass。
+
+      配图资产：
+      {input}
+
+  - name: 发布预检
+    role: social-preflight
+    depends_on: [1, 3, 4, 5]
+    output_schema: docs/social-workflow/preflight-result.schema.json
+    output_policy:
+      field: ok
+      allowed_values: [true]
+      on_failure: blocked
+      message: 小红书发布预检未通过。
+    prompt_template: |
+      只对小红书执行发布预检，不得发布：
+      - 核对真人审批记录；
+      - 检查唯一终稿；
+      - 检查登录状态；
+      - 再次调用 `media.inspect` 核对图片；
+      - 检查排期冲突并生成幂等键。
+      输出必须符合 `docs/social-workflow/preflight-result.schema.json`，
+      platforms 数组只包含 xiaohongshu。
+
+      预检输入：
+      {input}
+
+  - name: 小红书发布
+    role: social-publisher
+    depends_on: [1, 3, 4, 5, 6]
+    publish_tools:
+      - mcp__xiaohongshu__publish_content
+      - mcp__xiaohongshu__publish_with_video
+    prompt_template: |
+      仅发布到小红书。必须满足：
+      - 存在真人内容审批；
+      - 发布预检 ok=true；
+      - 唯一标题与正文；
+      - 所有图片路径真实存在；
+      - 当前发布阶段已获得显式 PUBLISH 确认。
+      本流程不发布抖音或公众号。输出必须符合
+      `docs/social-workflow/publish-result.schema.json`。
+
+      已审核终稿、图片和预检结果：
+      {input}

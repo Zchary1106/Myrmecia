@@ -26,7 +26,19 @@ export interface CopilotSessionLike {
   sendAndWait(options: { prompt: string }, timeout?: number): Promise<{ data: { content: string } } | undefined>;
   disconnect(): Promise<void>;
   abort(): Promise<void>;
-  on(event: 'assistant.message_delta', handler: (event: { data: { deltaContent: string } }) => void): () => void;
+  on(
+    event: 'assistant.message_delta' | 'assistant.usage',
+    handler: (event: {
+      data: {
+        deltaContent?: string;
+        inputTokens?: number;
+        outputTokens?: number;
+        model?: string;
+        cost?: number;
+        copilotUsage?: { totalNanoAiu: number };
+      };
+    }) => void,
+  ): () => void;
 }
 
 export interface CopilotClientLike {
@@ -43,6 +55,7 @@ export interface CopilotClientLike {
       description?: string;
       parameters?: Record<string, unknown>;
       defer: 'never';
+      skipPermission?: boolean;
       handler: (args: unknown, invocation: { toolCallId: string; toolName: string }) => Promise<string>;
     }>;
   }): Promise<CopilotSessionLike>;
@@ -153,11 +166,25 @@ export class CopilotProvider {
       ...(tools.length ? { tools } : {}),
     });
 
-    const unsubscribe = options?.onDelta
+    let inputTokens = 0;
+    let outputTokens = 0;
+    let actualModelId: string | undefined;
+    let aiUnits = 0;
+    let billingMultiplier: number | undefined;
+    const unsubscribeDelta = options?.onDelta
       ? session.on('assistant.message_delta', event => {
           if (event.data.deltaContent) options.onDelta!(event.data.deltaContent);
         })
       : undefined;
+    const unsubscribeUsage = session.on('assistant.usage', event => {
+      inputTokens += event.data.inputTokens || 0;
+      outputTokens += event.data.outputTokens || 0;
+      actualModelId = event.data.model || actualModelId;
+      if (typeof event.data.cost === 'number') billingMultiplier = event.data.cost;
+      if (typeof event.data.copilotUsage?.totalNanoAiu === 'number') {
+        aiUnits += event.data.copilotUsage.totalNanoAiu / 1_000_000_000;
+      }
+    });
     const abort = () => { void session.abort().catch(() => undefined); };
     options?.signal?.addEventListener('abort', abort, { once: true });
 
@@ -172,12 +199,22 @@ export class CopilotProvider {
           message: { role: 'assistant', content: response.data.content || null },
           finish_reason: 'stop',
         }],
-        // The SDK's final message event does not provide OpenAI usage fields.
-        usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+        usage: {
+          prompt_tokens: inputTokens,
+          completion_tokens: outputTokens,
+          total_tokens: inputTokens + outputTokens,
+          provider: 'copilot',
+          actual_model_id: actualModelId,
+          ai_units: aiUnits,
+          billing_multiplier: billingMultiplier,
+          cost_type: 'subscription',
+          cost_usd: null,
+        },
       };
     } finally {
       options?.signal?.removeEventListener('abort', abort);
-      unsubscribe?.();
+      unsubscribeDelta?.();
+      unsubscribeUsage();
       await session.disconnect().catch(err => {
         logger.warn({ err: err instanceof Error ? err.message : String(err) }, 'failed to disconnect Copilot session');
       });
@@ -229,6 +266,11 @@ export class CopilotProvider {
         // The SDK's tool-search built-in remains denied in empty mode, so
         // server-approved tools must be eagerly visible to the model.
         defer: 'never' as const,
+        // Myrmecia already enforces registry permissions, argument schemas,
+        // workspace confinement, guardian checks and audit logging. Letting
+        // the SDK ask for another permission leaves headless custom-tool
+        // requests pending and returns "Permission denied" to the model.
+        skipPermission: true,
         handler: async (args: unknown, invocation: { toolCallId: string; toolName: string }) => onToolCall({
           id: invocation.toolCallId,
           function: {

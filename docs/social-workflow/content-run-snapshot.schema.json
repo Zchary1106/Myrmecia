@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Social Content Run Snapshot",
+  "type": "object",
+  "required": ["schema_version", "content_id", "content_hash", "created_at", "stages", "assets", "approval"],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "content_id": { "type": "string" },
+    "content_hash": { "type": "string" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "stages": { "type": "array", "items": { "type": "object" } },
+    "assets": { "type": "array", "items": { "type": "object" } },
+    "approval": { "type": "object" },
+    "publish_results": { "type": "array", "items": { "type": "object" } }
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Social Compliance Report",
+  "type": "object",
+  "required": ["schema_version", "content_id", "status", "summary", "findings", "required_human_checks", "reviewed_at"],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "content_id": { "type": "string", "minLength": 1 },
+    "status": { "enum": ["pass", "needs_revision", "blocked"] },
+    "summary": { "type": "string" },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["rule_id", "severity", "platforms", "evidence", "recommendation", "confidence"],
+        "properties": {
+          "rule_id": { "type": "string" },
+          "severity": { "enum": ["blocker", "warning", "info"] },
+          "platforms": {
+            "type": "array",
+            "items": { "enum": ["douyin", "xiaohongshu", "wechat"] }
+          },
+          "evidence": { "type": "string" },
+          "recommendation": { "type": "string" },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+        }
+      }
+    },
+    "required_human_checks": { "type": "array", "items": { "type": "string" } },
+    "reviewed_at": { "type": "string", "format": "date-time" }
+  }
+}

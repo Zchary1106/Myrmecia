@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Social Performance Report",
+  "type": "object",
+  "required": ["schema_version", "content_id", "collected_at", "window_hours", "platform_reports"],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "content_id": { "type": "string" },
+    "collected_at": { "type": "string", "format": "date-time" },
+    "window_hours": { "enum": [48, 72, 168] },
+    "platform_reports": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["platform", "publish_id", "metrics_status", "metrics"],
+        "properties": {
+          "platform": { "enum": ["douyin", "xiaohongshu", "wechat"] },
+          "publish_id": { "type": "string" },
+          "metrics_status": { "enum": ["available", "unavailable"] },
+          "metrics": { "type": "object" },
+          "source": { "type": "string" }
+        }
+      }
+    },
+    "next_topic_hypotheses": { "type": "array", "items": { "type": "string" } }
+  }
+}

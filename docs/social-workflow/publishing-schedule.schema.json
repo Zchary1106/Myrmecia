@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Social Publishing Schedule Entry",
+  "type": "object",
+  "required": ["content_id", "platform", "account_id", "schedule_at", "status"],
+  "properties": {
+    "content_id": { "type": "string" },
+    "platform": { "enum": ["douyin", "xiaohongshu", "wechat"] },
+    "account_id": { "type": "string" },
+    "schedule_at": { "type": "string", "format": "date-time" },
+    "status": { "enum": ["draft", "scheduled", "published", "cancelled"] }
+  }
+}

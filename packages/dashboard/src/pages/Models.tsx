@@ -134,6 +134,7 @@ export function ModelsPage() {
   };
 
   const usesCopilot = providerSettings?.provider === 'copilot';
+  const selectedProviderModel = providerSettings?.models.find(model => model.id === providerModelId);
 
   return (
     <div className="p-6 space-y-6">
@@ -180,6 +181,7 @@ export function ModelsPage() {
               <h3 className="mt-3 text-lg font-semibold">当前 Copilot 模型</h3>
               <p className="mt-1 text-xs text-gray-400">
                 模型来自当前已登录的 GitHub Copilot 账号。这里的选择会用于全部 Agent，下次启动仍然保留。
+                Auto 表示由 Copilot 在每次请求时动态选择，执行记录会另外保存实际使用的模型。
               </p>
             </div>
             <div className="flex min-w-0 flex-col gap-2 sm:min-w-[360px] sm:flex-row">
@@ -191,14 +193,18 @@ export function ModelsPage() {
               >
                 {providerSettings.models.length === 0 && <option value="">没有可用模型</option>}
                 {providerSettings.models.map(model => (
-                  <option key={model.id} value={model.id}>
-                    {model.name} · {model.id}{model.supportsReasoningEffort ? ' · reasoning' : ''}
+                  <option key={model.id} value={model.id} disabled={!model.selectable}>
+                    {model.name} · {model.id}
+                    {model.id === 'auto' ? ' · dynamic' : ''}
+                    {model.supportsReasoningEffort ? ' · reasoning' : ''}
+                    {model.billingMultiplier != null ? ` · ${model.billingMultiplier}x` : ''}
+                    {!model.selectable ? ' · disabled by policy' : ''}
                   </option>
                 ))}
               </select>
               <button
                 onClick={saveProviderModel}
-                disabled={!providerModelId || savingId === 'provider:copilot'}
+                disabled={!providerModelId || !selectedProviderModel?.selectable || savingId === 'provider:copilot'}
                 className="rounded-xl bg-blue-500 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
               >
                 {savingId === 'provider:copilot' ? '保存中…' : '应用模型'}
@@ -208,6 +214,11 @@ export function ModelsPage() {
           {providerSettings.error && (
             <div className="mt-4 rounded-lg border border-yellow-500/20 bg-yellow-500/10 p-3 text-xs text-yellow-200">
               无法刷新 Copilot 模型列表：{providerSettings.error}
+            </div>
+          )}
+          {selectedProviderModel?.policyTerms && (
+            <div className="mt-3 text-[11px] text-gray-500">
+              Policy: {selectedProviderModel.policyState || 'unconfigured'} · {selectedProviderModel.policyTerms}
             </div>
           )}
         </section>

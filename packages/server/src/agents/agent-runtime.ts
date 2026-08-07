@@ -1,7 +1,7 @@
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { spawnSync } from 'node:child_process';
-import type { AgentDefinition, Task, AgentProgress, ToolActivity, ProgressTracker } from '../types.js';
+import type { AgentDefinition, ModelCostType, Task, AgentProgress, ToolActivity, ProgressTracker } from '../types.js';
 import { eventBus } from '../events/event-bus.js';
 import { updateTask, addTaskLog, getTask } from '../db/models/task.js';
 import { updateAgent } from '../db/models/agent.js';
@@ -61,7 +61,12 @@ function resolvePythonRuntimeInvocation(executorName: string): { command: string
 
 export interface TaskResult {
   output: string;
-  costUSD: number;
+  costUSD: number | null;
+  costType?: ModelCostType;
+  provider?: string;
+  actualModelId?: string;
+  aiUnits?: number;
+  billingMultiplier?: number;
   inputTokens: number;
   outputTokens: number;
   durationMs: number;
@@ -204,12 +209,20 @@ export class AgentRuntime {
       const safeResult: TaskResult = { ...result, output: safeOutput, executionId: execution.id };
       assertExecutionTokenBudget(safeResult.inputTokens, safeResult.outputTokens, safeResult.output, 'agent execution');
 
-      guardrails.trackCost(task.id, safeResult.costUSD);
+      if (safeResult.costUSD != null) guardrails.trackCost(task.id, safeResult.costUSD);
 
       const finalProgress = getProgressSnapshot(tracker, 'Completed');
       updateExecution(execution.id, {
         status: 'done', progress: finalProgress,
-        costUSD: safeResult.costUSD, tokenCount: safeResult.inputTokens + safeResult.outputTokens,
+        costUSD: safeResult.costUSD,
+        costType: safeResult.costType || (safeResult.costUSD == null ? 'unavailable' : 'estimated'),
+        provider: safeResult.provider,
+        actualModelId: safeResult.actualModelId,
+        inputTokens: safeResult.inputTokens,
+        outputTokens: safeResult.outputTokens,
+        aiUnits: safeResult.aiUnits || 0,
+        billingMultiplier: safeResult.billingMultiplier,
+        tokenCount: safeResult.inputTokens + safeResult.outputTokens,
         completedAt: new Date().toISOString(),
       });
 
@@ -227,6 +240,10 @@ export class AgentRuntime {
         summary: `Execution completed in ${Math.round(safeResult.durationMs / 1000)}s`,
         metadata: {
           costUSD: safeResult.costUSD,
+          costType: safeResult.costType,
+          provider: safeResult.provider,
+          actualModelId: safeResult.actualModelId,
+          aiUnits: safeResult.aiUnits,
           inputTokens: safeResult.inputTokens,
           outputTokens: safeResult.outputTokens,
           numTurns: safeResult.numTurns,
@@ -251,7 +268,8 @@ export class AgentRuntime {
       stats.avgDurationMs = Math.round(totalDuration / stats.tasksCompleted);
       updateAgent(agent.id, { stats });
 
-      addTaskLog(task.id, 'info', `Done ${Math.round(safeResult.durationMs / 1000)}s | $${safeResult.costUSD.toFixed(4)} | ${safeResult.numTurns} turns`, agent.id);
+      const costLabel = safeResult.costUSD == null ? 'cost N/A' : `$${safeResult.costUSD.toFixed(4)}`;
+      addTaskLog(task.id, 'info', `Done ${Math.round(safeResult.durationMs / 1000)}s | ${costLabel} | ${safeResult.numTurns} turns`, agent.id);
       completeTraceSpan(agentSpan.id, { status: 'done', metadata: { durationMs: safeResult.durationMs, numTurns: safeResult.numTurns } });
       completeRunTrace(trace.id, { status: 'done', summary: 'Completed' });
       if (!settledDuringRun) {
@@ -260,14 +278,16 @@ export class AgentRuntime {
       eventBus.emit('execution:done', { executionId: execution.id, taskId: task.id, workspaceId: task.workspaceId, progress: finalProgress });
 
       // Record trajectory for semantic routing learning
-      this.recordTrajectory(task, agent.id, true, safeResult.durationMs, safeResult.costUSD, safeResult.output);
+      this.recordTrajectory(task, agent.id, true, safeResult.durationMs, safeResult.costUSD || 0, safeResult.output);
 
       // Emit telemetry metrics
       metrics.taskExecutions.add(1, { status: 'done' });
       metrics.taskDuration.record(safeResult.durationMs);
       metrics.agentExecutions.add(1, { agentId: agent.id, status: 'done' });
       metrics.tokenUsage.add(safeResult.inputTokens + safeResult.outputTokens);
-      metrics.costMicrodollars.add(Math.round(safeResult.costUSD * 1_000_000));
+      if (safeResult.costUSD != null) {
+        metrics.costMicrodollars.add(Math.round(safeResult.costUSD * 1_000_000));
+      }
 
       return safeResult;
     } catch (err: any) {

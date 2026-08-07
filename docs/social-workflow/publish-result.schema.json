@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Social Publish Result",
+  "type": "object",
+  "required": ["schema_version", "content_id", "attempted_at", "results"],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "content_id": { "type": "string" },
+    "attempted_at": { "type": "string", "format": "date-time" },
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["platform", "status", "idempotency_key"],
+        "properties": {
+          "platform": { "enum": ["douyin", "xiaohongshu", "wechat"] },
+          "status": { "enum": ["published", "skipped", "failed", "partially_completed"] },
+          "idempotency_key": { "type": "string" },
+          "publish_id": { "type": "string" },
+          "media_ids": { "type": "array", "items": { "type": "string" } },
+          "url": { "type": "string" },
+          "error_code": { "type": "string" },
+          "error_message": { "type": "string" },
+          "retryable": { "type": "boolean" },
+          "raw_response_artifact": { "type": "string" }
+        }
+      }
+    }
+  }
+}

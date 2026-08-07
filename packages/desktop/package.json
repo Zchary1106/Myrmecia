@@ -52,6 +52,14 @@
         "to": "templates"
       },
       {
+        "from": "../../skills",
+        "to": "skills"
+      },
+      {
+        "from": "../../docs/social-workflow",
+        "to": "docs/social-workflow"
+      },
+      {
         "from": "../python-runtime",
         "to": "python-runtime"
       },

@@ -83,6 +83,8 @@ import { createArtifactRoutes } from './routes/artifacts.js';
 import { artifactCleanupWorker } from './workers/artifact-cleanup.js';
 import { agentRuntime } from './agents/agent-runtime.js';
 import { eventBus } from './events/event-bus.js';
+import { createSocialWorkflowRoutes } from './routes/social-workflow.js';
+import { SocialMonitorWorker } from './workers/social-monitor.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3000;
@@ -174,7 +176,7 @@ async function main() {
   logger.info({ registryPath }, 'Loading agents from registry...');
   await agentManager.initializeFromRegistry();
   logger.info('Syncing skill registry...');
-  syncBuiltinSkills(agentsDirectory);
+  syncBuiltinSkills(agentsDirectory, runtimeAssetPath('skills'));
   seedDefaultSources();
   startAutoSync();
   const skillWatcher = new SkillWatcher(agentsDirectory);
@@ -190,6 +192,7 @@ async function main() {
   // Initialize task queue (uses Redis if REDIS_URL is set, otherwise in-memory)
   logger.info('Initializing task queue...');
   const taskQueue = new TaskQueue(agentManager);
+  const socialMonitorWorker = new SocialMonitorWorker(taskQueue, agentManager);
 
   // Initialize pipeline engine
   const pipelineEngine = new PipelineEngine(taskQueue, agentManager);
@@ -211,6 +214,7 @@ async function main() {
 
   // Connect configured MCP servers (best-effort; from MCP_SERVERS env)
   await getMcpManager().init().catch(() => undefined);
+  socialMonitorWorker.start();
 
   // Initialize notification service
   new NotifierService();
@@ -290,6 +294,7 @@ async function main() {
   app.use('/api/v1/executions', executionRoutes);
   app.use('/api/v1/pipelines', createPipelineRoutes(pipelineEngine));
   app.use('/api/v1/templates', createTemplateRoutes());
+  app.use('/api/v1/social-workflow', createSocialWorkflowRoutes());
   app.use('/api/v1', createSystemRoutes());
   app.use('/api/v1/knowledge', createKnowledgeRoutes());
   app.use('/api/v1/memory', createMemoryRoutes());

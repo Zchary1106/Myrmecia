@@ -182,7 +182,7 @@ export const metricsHandler: RequestHandler = async (_req, res) => {
     const execStats = db.get(`
       SELECT
         COUNT(*) as total,
-        SUM(cost_usd) as totalCost,
+        SUM(CASE WHEN cost_type IN ('exact','estimated') THEN cost_usd ELSE 0 END) as totalCost,
         SUM(token_count) as totalTokens
       FROM task_executions
     `) as any;

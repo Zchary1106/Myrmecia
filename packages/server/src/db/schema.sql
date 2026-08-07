@@ -625,6 +625,52 @@ ALTER TABLE pipelines ADD COLUMN domain_id TEXT;
 -- Runtime handles this migration by rebuilding the pipelines table because SQLite cannot ALTER CHECK constraints.
 SELECT 1;
 
+-- Migration: 202608040001_add_social_workflow_operations
+CREATE TABLE IF NOT EXISTS social_publish_schedules (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  content_id TEXT NOT NULL,
+  platform TEXT NOT NULL CHECK(platform IN ('douyin','xiaohongshu','wechat')),
+  account_id TEXT NOT NULL,
+  schedule_at TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','scheduled','published','cancelled')),
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_social_schedule_lookup
+  ON social_publish_schedules(workspace_id, platform, account_id, schedule_at);
+
+CREATE TABLE IF NOT EXISTS social_monitor_jobs (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  content_id TEXT NOT NULL,
+  platform TEXT NOT NULL CHECK(platform IN ('douyin','xiaohongshu','wechat')),
+  publish_id TEXT NOT NULL,
+  window_hours INTEGER NOT NULL CHECK(window_hours IN (48,72,168)),
+  due_at TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','running','completed','failed')),
+  task_id TEXT,
+  result TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(workspace_id, platform, publish_id, window_hours)
+);
+CREATE INDEX IF NOT EXISTS idx_social_monitor_due
+  ON social_monitor_jobs(status, due_at);
+
+CREATE TABLE IF NOT EXISTS social_compliance_rulebooks (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  version INTEGER NOT NULL,
+  yaml TEXT NOT NULL,
+  created_by TEXT NOT NULL,
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(workspace_id, version)
+);
+CREATE INDEX IF NOT EXISTS idx_social_rulebook_active
+  ON social_compliance_rulebooks(workspace_id, active, version);
+
 -- Migration: 202606280002_add_workspace_id_to_platform_events
 ALTER TABLE platform_events ADD COLUMN workspace_id TEXT DEFAULT 'default';
 CREATE INDEX IF NOT EXISTS idx_platform_events_workspace ON platform_events(workspace_id);
@@ -670,3 +716,17 @@ CREATE TABLE IF NOT EXISTS wechat_draft_outputs (
 );
 CREATE INDEX IF NOT EXISTS idx_wechat_draft_outputs_pipeline
   ON wechat_draft_outputs(pipeline_id, stage_index);
+
+-- Migration: 202608060001_add_provider_usage_accounting
+ALTER TABLE task_executions ADD COLUMN cost_type TEXT NOT NULL DEFAULT 'unavailable';
+ALTER TABLE task_executions ADD COLUMN provider TEXT;
+ALTER TABLE task_executions ADD COLUMN actual_model_id TEXT;
+ALTER TABLE task_executions ADD COLUMN input_tokens INTEGER DEFAULT 0;
+ALTER TABLE task_executions ADD COLUMN output_tokens INTEGER DEFAULT 0;
+ALTER TABLE task_executions ADD COLUMN ai_units REAL DEFAULT 0;
+ALTER TABLE task_executions ADD COLUMN billing_multiplier REAL;
+ALTER TABLE model_usage_stats ADD COLUMN cost_type TEXT NOT NULL DEFAULT 'unavailable';
+ALTER TABLE model_usage_stats ADD COLUMN provider TEXT;
+ALTER TABLE model_usage_stats ADD COLUMN actual_model_id TEXT;
+ALTER TABLE model_usage_stats ADD COLUMN ai_units REAL DEFAULT 0;
+ALTER TABLE model_usage_stats ADD COLUMN billing_multiplier REAL;
