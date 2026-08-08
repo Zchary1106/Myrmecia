@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, safeStorage, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, nativeImage, safeStorage, shell } from 'electron';
 import { spawn, spawnSync, type ChildProcessByStdio } from 'node:child_process';
 import { createServer } from 'node:net';
 import { createWriteStream, existsSync, type WriteStream } from 'node:fs';
@@ -108,6 +108,8 @@ const DEEPSEEK_BASE_URL = 'https://api.deepseek.com';
 const DEEPSEEK_DEFAULT_MODEL = 'deepseek-v4-flash';
 const COPILOT_DEFAULT_MODEL = 'auto';
 const moduleDir = dirname(fileURLToPath(import.meta.url));
+app.setName('Myrmecia');
+app.setAppUserModelId('io.myrmecia.desktop');
 type ServerChild = ChildProcessByStdio<null, Readable, Readable>;
 
 const configuredUserDataDirectory = process.env.MYRMECIA_DESKTOP_USER_DATA?.trim();
@@ -501,7 +503,7 @@ function createSplashWindow(): void {
   const layout = getResourceLayout();
   splashWindow = new BrowserWindow({
     width: 620,
-    height: 780,
+    height: 700,
     resizable: false,
     maximizable: false,
     show: false,
@@ -1074,9 +1076,15 @@ if (!hasSingleInstanceLock) {
 } else {
   app.whenReady().then(async () => {
     const layout = getResourceLayout();
-    if (process.platform === 'darwin') {
-      if (!app.dock) throw new Error('macOS Dock API is unavailable.');
-      app.dock.setIcon(layout.iconPath);
+    if (process.platform === 'darwin' && app.dock) {
+      const dockIcon = nativeImage.createFromPath(layout.iconPath);
+      if (!dockIcon.isEmpty()) app.dock.setIcon(dockIcon);
+      app.setAboutPanelOptions({
+        applicationName: 'Myrmecia',
+        applicationVersion: app.getVersion(),
+        version: app.getVersion(),
+        iconPath: layout.iconPath,
+      });
     }
     createSplashWindow();
     ipcMain.handle('desktop:get-startup-state', () => startupState);
