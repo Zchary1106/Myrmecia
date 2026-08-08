@@ -487,7 +487,12 @@ describe('control routes', () => {
     await withApp(app, async (baseUrl) => {
       const discovered = await jsonFetch<any>(baseUrl, '/models/provider-settings');
       expect(discovered.status).toBe(200);
-      expect(discovered.body.models.map((model: any) => model.id)).toEqual(['auto', 'gpt-cached']);
+      expect(discovered.body.models.map((model: any) => model.id)).toEqual(expect.arrayContaining([
+        'auto',
+        'gpt-cached',
+        'gpt-5.3-codex',
+        'gpt-5.4',
+      ]));
       expect(discovered.body.error).toContain('showing the last discovered');
 
       const selected = await jsonFetch<any>(baseUrl, '/models/provider-settings', {

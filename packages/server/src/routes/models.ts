@@ -5,6 +5,7 @@ import { actorFromRequest, HttpError, notFound, parseBody, parseQuery, requireOp
 import {
   getModel,
   getModelRoute,
+  COPILOT_COMPATIBILITY_MODEL_IDS,
   listModelRoutes,
   listModels,
   recordModelHealth,
@@ -71,6 +72,20 @@ function cachedCopilotModels(): ProviderModelOption[] {
     }));
 }
 
+function compatibilityCopilotModels(): ProviderModelOption[] {
+  const ids = new Set<string>(COPILOT_COMPATIBILITY_MODEL_IDS);
+  return listModels({ enabled: true })
+    .filter(model => ids.has(model.id))
+    .map(model => ({
+      id: model.id,
+      name: model.displayName,
+      supportsReasoningEffort: model.capabilityTags.includes('reasoning') || model.capabilityTags.includes('reasoning-effort'),
+      policyState: 'unconfigured' as const,
+      policyTerms: 'Compatibility model. GitHub Copilot may remap the request when the account model catalog is temporarily unavailable.',
+      selectable: true,
+    }));
+}
+
 function mergeProviderModels(primary: ProviderModelOption[], fallback: ProviderModelOption[]): ProviderModelOption[] {
   const merged = new Map(fallback.map(model => [model.id, model]));
   for (const model of primary) merged.set(model.id, model);
@@ -86,7 +101,10 @@ async function availableCopilotModels(): Promise<{ models: ProviderModelOption[]
   const onlyAuto = liveModels.length === 1 && liveModels[0]?.id === 'auto';
   if (!onlyAuto) return { models: liveModels };
 
-  const models = mergeProviderModels(liveModels, cachedCopilotModels());
+  const models = mergeProviderModels(
+    liveModels,
+    mergeProviderModels(cachedCopilotModels(), compatibilityCopilotModels()),
+  );
   return {
     models,
     ...(models.length > liveModels.length
