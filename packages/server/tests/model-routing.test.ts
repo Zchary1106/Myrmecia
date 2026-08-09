@@ -139,6 +139,41 @@ describe('model registry and routing', () => {
     expect(selection.reason).toContain('selected in Dashboard');
   });
 
+  it('allows a Copilot compatibility model selected in Dashboard', () => {
+    process.env.MYRMECIA_MODEL_PROVIDER = 'copilot';
+    upsertModelRoute({
+      routeKey: 'provider:copilot',
+      defaultModelId: 'gpt-5.4',
+      fallbackGroup: 'copilot',
+    });
+    const agent = createAgent({
+      id: 'dashboard-compatibility-agent',
+      name: 'Dashboard Compatibility Agent',
+      role: 'developer',
+    });
+
+    const selection = selectModelForAgent(agent);
+
+    expect(selection.modelId).toBe('gpt-5.4');
+    expect(selection.reason).toContain('selected in Dashboard');
+  });
+
+  it('does not overwrite account-discovered models during builtin sync', () => {
+    syncProviderModels('copilot', [{
+      id: 'gpt-5.4',
+      name: 'GPT-5.4 Account Model',
+      supportsReasoningEffort: true,
+      policy: { state: 'enabled' },
+    }]);
+
+    syncBuiltinModels();
+
+    expect(getModel('gpt-5.4')).toMatchObject({
+      provider: 'copilot',
+      displayName: 'GPT-5.4 Account Model',
+    });
+  });
+
   it('selects a model by explicit agent tier when no model is pinned', () => {
     const agent = createAgent({
       id: 'cheap-agent',

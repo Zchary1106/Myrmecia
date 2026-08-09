@@ -5,6 +5,7 @@ import { actorFromRequest, HttpError, notFound, parseBody, parseQuery, requireOp
 import {
   getModel,
   getModelRoute,
+  COPILOT_COMPATIBILITY_MODEL_IDS,
   listModelRoutes,
   listModels,
   recordModelHealth,
@@ -57,6 +58,61 @@ async function discoverCopilotModels(): Promise<ProviderModelOption[]> {
   return models;
 }
 
+function cachedCopilotModels(): ProviderModelOption[] {
+  return listModels({ enabled: true })
+    .filter(model => model.provider === 'copilot')
+    .map(model => ({
+      id: model.id,
+      name: model.displayName,
+      supportsReasoningEffort: model.capabilityTags.includes('reasoning-effort'),
+      policyState: (model.costProfile.policy as { state?: ProviderModelOption['policyState'] } | undefined)?.state,
+      policyTerms: (model.costProfile.policy as { terms?: string } | undefined)?.terms,
+      billingMultiplier: (model.costProfile.billing as { multiplier?: number } | undefined)?.multiplier,
+      selectable: (model.costProfile.policy as { state?: string } | undefined)?.state !== 'disabled',
+    }));
+}
+
+function compatibilityCopilotModels(): ProviderModelOption[] {
+  const ids = new Set<string>(COPILOT_COMPATIBILITY_MODEL_IDS);
+  return listModels({ enabled: true })
+    .filter(model => ids.has(model.id))
+    .map(model => ({
+      id: model.id,
+      name: model.displayName,
+      supportsReasoningEffort: model.capabilityTags.includes('reasoning') || model.capabilityTags.includes('reasoning-effort'),
+      policyState: 'unconfigured' as const,
+      policyTerms: 'Compatibility model. GitHub Copilot may remap the request when the account model catalog is temporarily unavailable.',
+      selectable: true,
+    }));
+}
+
+function mergeProviderModels(primary: ProviderModelOption[], fallback: ProviderModelOption[]): ProviderModelOption[] {
+  const merged = new Map(fallback.map(model => [model.id, model]));
+  for (const model of primary) merged.set(model.id, model);
+  return [...merged.values()].sort((left, right) => {
+    if (left.id === 'auto') return -1;
+    if (right.id === 'auto') return 1;
+    return left.name.localeCompare(right.name);
+  });
+}
+
+async function availableCopilotModels(): Promise<{ models: ProviderModelOption[]; warning?: string }> {
+  const liveModels = await discoverCopilotModels();
+  const onlyAuto = liveModels.length === 1 && liveModels[0]?.id === 'auto';
+  if (!onlyAuto) return { models: liveModels };
+
+  const models = mergeProviderModels(
+    liveModels,
+    mergeProviderModels(cachedCopilotModels(), compatibilityCopilotModels()),
+  );
+  return {
+    models,
+    ...(models.length > liveModels.length
+      ? { warning: 'Copilot model discovery temporarily returned only Auto; showing the last discovered account models.' }
+      : {}),
+  };
+}
+
 async function providerSettings(): Promise<ModelProviderSettings> {
   const provider = configuredProvider();
   if (provider !== 'copilot') {
@@ -72,26 +128,17 @@ async function providerSettings(): Promise<ModelProviderSettings> {
     || process.env.AGENT_FACTORY_MODEL
     || 'auto';
   try {
-    const models = await discoverCopilotModels();
+    const { models, warning } = await availableCopilotModels();
     return {
       provider,
       selectedModelId: models.some(model => model.id === selectedModelId && model.selectable)
         ? selectedModelId
         : models.find(model => model.selectable)?.id || selectedModelId,
       models,
+      ...(warning ? { error: warning } : {}),
     };
   } catch (err) {
-    const fallbackModels = listModels({ enabled: true })
-      .filter(model => model.provider === 'copilot')
-      .map(model => ({
-        id: model.id,
-        name: model.displayName,
-        supportsReasoningEffort: model.capabilityTags.includes('reasoning-effort'),
-        policyState: (model.costProfile.policy as { state?: ProviderModelOption['policyState'] } | undefined)?.state,
-        policyTerms: (model.costProfile.policy as { terms?: string } | undefined)?.terms,
-        billingMultiplier: (model.costProfile.billing as { multiplier?: number } | undefined)?.multiplier,
-        selectable: (model.costProfile.policy as { state?: string } | undefined)?.state !== 'disabled',
-      }));
+    const fallbackModels = cachedCopilotModels();
     return {
       provider,
       selectedModelId,
@@ -128,7 +175,7 @@ export function createModelRoutes(): Router {
         throw new HttpError(409, 'PROVIDER_NOT_ACTIVE', 'GitHub Copilot is not the active model provider');
       }
       const { modelId } = parseBody(providerModelSchema, req);
-      const models = await discoverCopilotModels();
+      const { models, warning } = await availableCopilotModels();
       const selected = models.find(model => model.id === modelId);
       if (!selected) notFound('MODEL_NOT_FOUND', 'Model is not available for the signed-in Copilot account');
       if (!selected.selectable) {
@@ -148,7 +195,12 @@ export function createModelRoutes(): Router {
         targetId: selected.id,
         metadata: { provider: 'copilot', modelId: selected.id },
       });
-      res.json({ provider: 'copilot', selectedModelId: selected.id, models } satisfies ModelProviderSettings);
+      res.json({
+        provider: 'copilot',
+        selectedModelId: selected.id,
+        models,
+        ...(warning ? { error: warning } : {}),
+      } satisfies ModelProviderSettings);
     } catch (err) {
       sendError(res, err);
     }

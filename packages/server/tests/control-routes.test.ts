@@ -22,7 +22,7 @@ import { createInboxEntry } from '../src/db/models/inbox.js';
 import { createAgent } from '../src/db/models/agent.js';
 import { getDb } from '../src/db/database.js';
 import { syncBuiltinTools } from '../src/tools/tool-registry.js';
-import { getModelRoute, syncBuiltinModels } from '../src/models/model-registry.js';
+import { getModelRoute, syncBuiltinModels, syncProviderModels } from '../src/models/model-registry.js';
 import { getModelGateway } from '../src/models/gateway.js';
 import type { TaskQueue } from '../src/queue/task-queue.js';
 import { isPipelinePublisherTask } from '../src/queue/task-queue.js';
@@ -462,6 +462,46 @@ describe('control routes', () => {
       });
       expect(disabled.status).toBe(409);
       expect(disabled.body.error.code).toBe('MODEL_DISABLED');
+    });
+  });
+
+  it('keeps cached Copilot models selectable when live discovery temporarily returns only Auto', async () => {
+    process.env.MYRMECIA_MODEL_PROVIDER = 'copilot';
+    syncBuiltinModels();
+    syncProviderModels('copilot', [{
+      id: 'gpt-cached',
+      name: 'GPT Cached',
+      supportsReasoningEffort: true,
+      policy: { state: 'enabled', terms: 'Previously discovered for this account' },
+    }]);
+    vi.spyOn(getModelGateway(), 'listProviderModels').mockResolvedValue([{
+      id: 'auto',
+      name: 'Auto',
+      capabilities: {},
+    }] as any);
+
+    const app = express();
+    app.use(express.json());
+    app.use('/models', createModelRoutes());
+
+    await withApp(app, async (baseUrl) => {
+      const discovered = await jsonFetch<any>(baseUrl, '/models/provider-settings');
+      expect(discovered.status).toBe(200);
+      expect(discovered.body.models.map((model: any) => model.id)).toEqual(expect.arrayContaining([
+        'auto',
+        'gpt-cached',
+        'gpt-5.3-codex',
+        'gpt-5.4',
+      ]));
+      expect(discovered.body.error).toContain('showing the last discovered');
+
+      const selected = await jsonFetch<any>(baseUrl, '/models/provider-settings', {
+        method: 'PUT',
+        body: JSON.stringify({ modelId: 'gpt-cached' }),
+        headers: { 'x-operator-id': 'ops1', 'x-operator-role': 'operator' },
+      });
+      expect(selected.status).toBe(200);
+      expect(selected.body.selectedModelId).toBe('gpt-cached');
     });
   });
 

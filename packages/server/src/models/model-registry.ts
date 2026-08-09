@@ -19,6 +19,13 @@ interface BuiltinModel {
 const PROVIDER = 'copilot-api';
 const COPILOT_PROVIDER = 'copilot';
 const COPILOT_DEFAULT_MODEL = 'auto';
+export const COPILOT_COMPATIBILITY_MODEL_IDS = [
+  'gpt-5.3-codex',
+  'gpt-5.4-mini',
+  'gpt-5.4',
+  'gpt-5.5',
+] as const;
+const COPILOT_COMPATIBILITY_MODEL_ID_SET = new Set<string>(COPILOT_COMPATIBILITY_MODEL_IDS);
 const DEEPSEEK_PROVIDER = 'deepseek';
 const DEEPSEEK_DEFAULT_MODEL = 'deepseek-v4-flash';
 const DEEPSEEK_STRONG_MODEL = 'deepseek-v4-pro';
@@ -274,6 +281,10 @@ export function syncBuiltinModels(): void {
       );
     }
     for (const model of BUILTIN_MODELS) {
+      // Provider discovery and the builtin catalog intentionally share model
+      // IDs. Do not erase the account-specific provider/policy/billing cache
+      // every time the server starts.
+      if (getModel(model.id)?.provider === COPILOT_PROVIDER) continue;
       db.run(`
         INSERT INTO model_registry (
           id, provider, display_name, description, capability_tags, cost_profile,
@@ -591,8 +602,15 @@ function selectCopilotModel(
   const taskRoute = routeFromTask(agent, task, options?.promptText);
   const configured = envWithAlias('MYRMECIA_MODEL', 'AGENT_FACTORY_MODEL');
   const persisted = getModelRoute('provider:copilot')?.defaultModelId;
-  const selected = enabledProviderModel(persisted, COPILOT_PROVIDER)
-    ?? enabledProviderModel(configured, COPILOT_PROVIDER)
+  const enabledCopilotModel = (modelId: string | undefined) => {
+    const model = enabledModel(modelId);
+    if (!model) return undefined;
+    return model.provider === COPILOT_PROVIDER || COPILOT_COMPATIBILITY_MODEL_ID_SET.has(model.id)
+      ? model
+      : undefined;
+  };
+  const selected = enabledCopilotModel(persisted)
+    ?? enabledCopilotModel(configured)
     ?? enabledProviderModel(COPILOT_DEFAULT_MODEL, COPILOT_PROVIDER);
 
   if (!selected) {

@@ -8,165 +8,187 @@
     <style>
       :root {
         color-scheme: dark;
-        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Segoe UI", sans-serif;
-        --bg: #0a0e0b;
-        --panel: #111712;
-        --panel-strong: #151c16;
-        --border: #2a352c;
-        --text: #f0f5ed;
-        --muted: #91a093;
-        --dim: #68766b;
-        --accent: #b7f36b;
-        --warning: #ffb86b;
-        --danger: #ff8d8d;
+        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", "Segoe UI", sans-serif;
+        --bg: #090b0f;
+        --surface: #11141a;
+        --surface-soft: #151922;
+        --border: #272c37;
+        --border-strong: #3b4352;
+        --text: #f5f7fb;
+        --muted: #9aa3b2;
+        --dim: #657083;
+        --accent: #8b7cff;
+        --accent-soft: #8b7cff20;
+        --success: #55d69e;
+        --warning: #f1bc68;
+        --danger: #ff858f;
         --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
       }
 
       * { box-sizing: border-box; }
-      html, body { min-height: 100%; }
+      html, body { width: 100%; min-height: 100%; }
       body {
         margin: 0;
         min-height: 100vh;
         overflow: auto;
-        background:
-          radial-gradient(circle at 88% 4%, #b7f36b0e, transparent 27%),
-          linear-gradient(#b7f36b08 1px, transparent 1px),
-          linear-gradient(90deg, #b7f36b08 1px, transparent 1px),
-          var(--bg);
-        background-size: auto, 26px 26px, 26px 26px, auto;
         color: var(--text);
+        background:
+          radial-gradient(circle at 50% -16%, #7c6cff28, transparent 34%),
+          linear-gradient(180deg, #0d1016 0%, var(--bg) 48%);
       }
 
-      body::after {
+      body::before {
         content: "";
         position: fixed;
         inset: 0;
         pointer-events: none;
-        box-shadow: inset 0 0 90px #0009;
+        background-image: linear-gradient(#ffffff05 1px, transparent 1px);
+        background-size: 100% 34px;
+        mask-image: linear-gradient(to bottom, black, transparent 72%);
       }
 
       button, input, select { font: inherit; }
       button { cursor: pointer; }
-      button[hidden], #doctor[hidden], #runtime-config[hidden], #runtime-config label[hidden], #provider-options[hidden] {
-        display: none !important;
-      }
+      button[hidden],
+      #doctor[hidden],
+      #runtime-config[hidden],
+      #runtime-config label[hidden],
+      #provider-options[hidden] { display: none !important; }
 
       .shell {
         position: relative;
-        width: min(552px, calc(100vw - 56px));
+        width: min(536px, calc(100vw - 52px));
         margin: 0 auto;
-        padding: 26px 0 22px;
-      }
-
-      .circuit {
-        position: absolute;
-        top: 22px;
-        right: 3px;
-        width: 102px;
-        height: 66px;
-        opacity: .38;
-        pointer-events: none;
+        padding: 28px 0 22px;
       }
 
       .topbar {
         display: flex;
         align-items: center;
         justify-content: space-between;
-        min-height: 44px;
       }
 
-      .brand { display: flex; align-items: center; gap: 12px; }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
       .brand-mark {
         position: relative;
-        width: 40px;
-        height: 40px;
+        width: 38px;
+        height: 38px;
+        overflow: hidden;
+        border: 1px solid #ffffff26;
         border-radius: 12px;
-        background: var(--accent);
-        box-shadow: 0 0 28px #b7f36b24;
+        background: linear-gradient(145deg, #a295ff, #5cc6d0);
+        box-shadow: 0 12px 34px #7669ff35;
       }
-      .brand-mark::before {
-        content: "";
-        position: absolute;
-        left: 13px;
-        top: 9px;
-        width: 14px;
-        height: 20px;
-        border-radius: 50%;
-        background: #0c110d;
-        box-shadow: 0 -5px 0 -2px #0c110d;
-      }
+
+      .brand-mark::before,
       .brand-mark::after {
         content: "";
         position: absolute;
-        left: 7px;
-        top: 19px;
-        width: 26px;
+        border-radius: 999px;
+        background: #fff;
+      }
+
+      .brand-mark::before {
+        width: 8px;
+        height: 24px;
+        left: 15px;
+        top: 7px;
+        box-shadow: -8px 6px 0 -2px #fff, 8px 6px 0 -2px #fff;
+      }
+
+      .brand-mark::after {
+        width: 22px;
         height: 2px;
-        background: #0c110d;
-        transform: rotate(-18deg);
-        box-shadow: 0 7px 0 #0c110d;
+        left: 8px;
+        top: 20px;
+        transform: rotate(18deg);
+        box-shadow: 0 6px 0 #fff;
       }
+
       .brand-name {
-        font-size: 16px;
-        font-weight: 750;
-        letter-spacing: .16em;
+        font-size: 15px;
+        font-weight: 720;
+        letter-spacing: .02em;
       }
+
       .brand-subtitle {
-        margin-top: 3px;
+        margin-top: 2px;
         color: var(--dim);
-        font-family: var(--mono);
-        font-size: 8px;
-        letter-spacing: .14em;
+        font-size: 9px;
       }
+
       .runtime-badge {
-        margin-right: 112px;
-        color: var(--accent);
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        padding: 6px 9px;
+        color: #b9c0cc;
+        background: #ffffff05;
         font-family: var(--mono);
         font-size: 8px;
         letter-spacing: .08em;
       }
 
-      .intro { margin-top: 38px; }
+      .intro {
+        margin-top: 34px;
+      }
+
+      .eyebrow {
+        color: #9d94ff;
+        font-family: var(--mono);
+        font-size: 9px;
+        font-weight: 700;
+        letter-spacing: .15em;
+        text-transform: uppercase;
+      }
+
       .intro h1 {
-        margin: 0;
-        font-size: 27px;
-        font-weight: 680;
-        letter-spacing: -.035em;
+        max-width: 430px;
+        margin: 9px 0 0;
+        font-size: 30px;
+        font-weight: 690;
+        letter-spacing: -.045em;
+        line-height: 1.12;
       }
-      .intro-row {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 18px;
-        margin-top: 9px;
-      }
+
       .intro-copy {
+        max-width: 430px;
+        margin: 10px 0 0;
         color: var(--muted);
         font-size: 12px;
-        line-height: 1.5;
-      }
-      .keyboard-hint {
-        flex: none;
-        color: #667268;
-        font-family: var(--mono);
-        font-size: 8px;
+        line-height: 1.65;
       }
 
       #status {
-        min-height: 18px;
-        margin: 13px 0 0;
-        color: #849286;
+        display: flex;
+        align-items: center;
+        min-height: 20px;
+        margin: 15px 0 0;
+        color: #a3acba;
         font-size: 10px;
-        line-height: 1.45;
       }
+
       #status::before {
-        content: "●";
-        margin-right: 7px;
-        color: var(--accent);
-        font-size: 8px;
+        content: "";
+        width: 6px;
+        height: 6px;
+        margin-right: 8px;
+        border-radius: 50%;
+        background: var(--success);
+        box-shadow: 0 0 12px #55d69e70;
       }
+
+      #status.pulse::before { animation: pulse 1.2s infinite; }
       #status.failed { color: var(--danger); }
-      #status.failed::before { color: var(--danger); }
+      #status.failed::before { background: var(--danger); box-shadow: 0 0 12px #ff858f70; }
+
+      @keyframes pulse {
+        50% { opacity: .35; transform: scale(.75); }
+      }
 
       .recovery-actions {
         display: flex;
@@ -176,291 +198,239 @@
 
       #provider-options {
         display: grid;
-        gap: 10px;
-        margin-top: 15px;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 9px;
+        margin-top: 20px;
       }
 
       .provider-option {
-        --provider-accent: var(--accent);
         position: relative;
-        display: grid;
-        grid-template-columns: 48px minmax(0, 1fr) auto;
-        align-items: center;
-        gap: 14px;
-        min-height: 96px;
-        width: 100%;
-        padding: 14px 17px 14px 15px;
-        overflow: hidden;
+        min-height: 122px;
+        padding: 13px;
         border: 1px solid var(--border);
-        border-radius: 13px;
-        background: linear-gradient(100deg, #141a15, #111612);
+        border-radius: 16px;
         color: var(--text);
+        background: linear-gradient(180deg, #161a22, #11141a);
         text-align: left;
-        transition: border-color .16s ease, background .16s ease, transform .16s ease, box-shadow .16s ease;
+        transition: transform .15s ease, border-color .15s ease, background .15s ease;
       }
-      .provider-option::before {
-        content: "";
-        position: absolute;
-        left: 0;
-        top: 15px;
-        bottom: 15px;
-        width: 3px;
-        border-radius: 0 3px 3px 0;
-        background: var(--provider-accent);
-        opacity: 0;
-        box-shadow: 0 0 16px var(--provider-accent);
-        transition: opacity .16s ease;
-      }
+
       .provider-option:hover {
-        transform: translateX(2px);
-        border-color: color-mix(in srgb, var(--provider-accent) 45%, var(--border));
-        background: linear-gradient(100deg, #182019, #121713);
+        transform: translateY(-1px);
+        border-color: var(--border-strong);
       }
-      .provider-option:focus-visible {
-        outline: 2px solid color-mix(in srgb, var(--provider-accent) 65%, white);
-        outline-offset: 2px;
-      }
+
       .provider-option.selected {
-        border-color: var(--provider-accent);
-        background: linear-gradient(100deg, color-mix(in srgb, var(--provider-accent) 11%, #151b16), #131814);
-        box-shadow: 0 0 0 1px color-mix(in srgb, var(--provider-accent) 18%, transparent), 0 12px 32px #0003;
+        border-color: #8b7cff90;
+        background: linear-gradient(180deg, #211f35, #151523);
+        box-shadow: 0 0 0 1px #8b7cff18, 0 14px 34px #00000028;
       }
-      .provider-option.selected::before { opacity: 1; }
-      .provider-option[data-provider-choice="deepseek"] { --provider-accent: #8db5ff; }
-      .provider-option[data-provider-choice="openai-compatible"] { --provider-accent: #d0adff; }
 
       .provider-icon {
-        display: grid;
-        place-items: center;
-        width: 42px;
-        height: 42px;
-        border: 1px solid color-mix(in srgb, var(--provider-accent) 55%, transparent);
-        border-radius: 50%;
-        background: color-mix(in srgb, var(--provider-accent) 8%, transparent);
-        color: var(--provider-accent);
-        font-family: var(--mono);
-        font-size: 10px;
-        font-weight: 750;
-      }
-      .provider-copy { min-width: 0; }
-      .provider-eyebrow {
-        color: #748177;
-        font-family: var(--mono);
-        font-size: 7.5px;
-        letter-spacing: .12em;
-      }
-      .provider-title {
-        display: block;
-        margin-top: 6px;
-        font-size: 15px;
-        font-weight: 660;
-      }
-      .provider-description {
-        display: block;
-        margin-top: 5px;
-        color: #96a298;
-        font-size: 10.5px;
-        font-weight: 400;
-      }
-      .provider-tags {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 5px;
-        margin-top: 8px;
-      }
-      .provider-tag {
-        padding: 3px 7px;
-        border-radius: 999px;
-        background: color-mix(in srgb, var(--provider-accent) 9%, transparent);
-        color: color-mix(in srgb, var(--provider-accent) 80%, white);
-        font-family: var(--mono);
-        font-size: 7px;
-      }
-      .provider-side {
-        display: grid;
-        justify-items: end;
-        align-content: space-between;
-        align-self: stretch;
-        min-width: 92px;
-        padding: 8px 0;
-      }
-      .provider-state {
-        color: #758178;
-        font-family: var(--mono);
-        font-size: 7.5px;
-      }
-      .provider-action {
-        color: #748177;
+        display: inline-flex;
+        height: 29px;
+        min-width: 29px;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid #ffffff12;
+        border-radius: 9px;
+        color: #d6d9e0;
+        background: #ffffff08;
         font-family: var(--mono);
         font-size: 9px;
+        font-weight: 700;
       }
-      .provider-option.selected .provider-action,
-      .provider-option.selected .provider-state { color: var(--provider-accent); }
+
+      .provider-copy,
+      .provider-title,
+      .provider-description,
+      .provider-side { display: block; }
+
+      .provider-eyebrow,
+      .provider-tags,
+      .provider-state { display: none; }
+
+      .provider-title {
+        margin-top: 12px;
+        font-size: 12px;
+        font-weight: 650;
+      }
+
+      .provider-description {
+        min-height: 32px;
+        margin-top: 5px;
+        color: var(--dim);
+        font-size: 9px;
+        line-height: 1.55;
+      }
+
+      .provider-side {
+        margin-top: 9px;
+      }
+
+      .provider-action {
+        color: #a8a0ff;
+        font-size: 9px;
+        font-weight: 650;
+      }
 
       #runtime-config {
-        margin-top: 12px;
-        padding: 14px 15px 15px;
-        border: 1px solid #29332b;
-        border-radius: 12px;
-        background: #0e130fdd;
+        margin-top: 11px;
+        padding: 15px;
+        border: 1px solid var(--border);
+        border-radius: 17px;
+        background: #11141ad9;
+        box-shadow: 0 18px 50px #00000024;
       }
+
       #runtime-config label {
-        display: grid;
-        gap: 6px;
-        margin-top: 10px;
-        color: #9dab9e;
-        font-family: var(--mono);
-        font-size: 8px;
-        letter-spacing: .06em;
+        display: block;
+        margin-bottom: 11px;
+        color: #bac1cd;
+        font-size: 9px;
+        font-weight: 600;
       }
-      #runtime-config label:first-of-type:not([hidden]) { margin-top: 0; }
+
       #runtime-config input,
       #runtime-config select {
         width: 100%;
-        border: 1px solid #303b32;
-        border-radius: 8px;
-        padding: 9px 10px;
-        outline: 0;
-        background: #090d0a;
-        color: #eef4eb;
+        margin-top: 6px;
+        padding: 10px 11px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        outline: none;
+        color: var(--text);
+        background: #090c11;
         font-family: var(--mono);
         font-size: 10px;
-        transition: border-color .15s ease, box-shadow .15s ease;
       }
+
       #runtime-config input:focus,
-      #runtime-config select:focus {
-        border-color: #7da74f;
-        box-shadow: 0 0 0 2px #b7f36b12;
-      }
+      #runtime-config select:focus { border-color: #8b7cff90; }
+
       #storage-status {
-        margin: 11px 0 0;
-        color: #727f74;
+        margin: 2px 0 0;
+        color: var(--dim);
         font-size: 9px;
         line-height: 1.5;
       }
+
       .actions {
         display: flex;
-        flex-wrap: wrap;
         gap: 8px;
-        margin-top: 13px;
+        margin-top: 14px;
       }
-      .action-button {
-        border: 1px solid #354138;
-        border-radius: 8px;
+
+      .action-button,
+      #doctor-button {
+        border: 1px solid var(--border);
+        border-radius: 10px;
         padding: 9px 12px;
-        background: #1b241d;
-        color: #d7e0d4;
-        font-size: 9.5px;
-        font-weight: 650;
+        color: #c4cad4;
+        background: #171b23;
+        font-size: 10px;
+        font-weight: 620;
       }
-      .action-button:hover { border-color: #526358; }
+
+      .action-button:hover,
+      #doctor-button:hover { border-color: var(--border-strong); color: #fff; }
+      .action-button:disabled,
+      #doctor-button:disabled { cursor: not-allowed; opacity: .45; }
+
       .action-button.primary {
-        border-color: #a5df62;
-        background: var(--accent);
-        color: #0b100c;
+        flex: 1;
+        border-color: #8b7cff90;
+        color: #fff;
+        background: linear-gradient(135deg, #7c6cff, #6658e8);
+        box-shadow: 0 10px 28px #7669ff28;
       }
-      .action-button:disabled { cursor: not-allowed; opacity: .45; }
 
       #doctor {
-        display: grid;
-        gap: 6px;
-        margin: 10px 0 0;
+        max-height: 116px;
+        margin: 12px 0 0;
         padding: 11px 13px;
-        border: 1px solid #29332b;
-        border-radius: 10px;
-        background: #0d120e;
+        overflow: auto;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: #0d1015;
         list-style: none;
-        font-family: var(--mono);
-        font-size: 8px;
       }
-      #doctor li { line-height: 1.45; }
-      .pass { color: #91dfa9; }
-      .warn { color: #ffd17a; }
-      .fail { color: #ff9696; }
+
+      #doctor li {
+        margin: 4px 0;
+        color: var(--muted);
+        font-size: 9px;
+        line-height: 1.4;
+      }
+
+      #doctor li.pass { color: var(--success); }
+      #doctor li.warn { color: var(--warning); }
+      #doctor li.fail { color: var(--danger); }
 
       .footer-status {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) auto;
-        align-items: center;
-        gap: 14px;
-        margin-top: 13px;
-        padding: 11px 13px;
-        border: 1px solid #263029;
-        border-radius: 11px;
-        background: #0d120e;
-      }
-      .footer-title {
         display: flex;
         align-items: center;
-        gap: 8px;
-        color: #cdd7ca;
-        font-size: 9.5px;
+        justify-content: space-between;
+        gap: 16px;
+        margin-top: 14px;
+        padding-top: 13px;
+        border-top: 1px solid #ffffff0d;
       }
+
+      .footer-title {
+        color: #adb5c2;
+        font-size: 9px;
+        font-weight: 620;
+      }
+
       .footer-dot {
-        width: 7px;
-        height: 7px;
+        display: inline-block;
+        width: 6px;
+        height: 6px;
+        margin-right: 7px;
         border-radius: 50%;
-        background: var(--accent);
-        box-shadow: 0 0 12px #b7f36b70;
+        background: var(--success);
       }
+
       .footer-meta {
         margin-top: 4px;
-        color: #606d63;
+        color: #555f70;
         font-family: var(--mono);
         font-size: 7px;
+        letter-spacing: .08em;
       }
+
       #doctor-button {
-        border: 1px solid #334037;
-        border-radius: 8px;
-        padding: 8px 10px;
-        background: #19211b;
-        color: #bdc9bb;
-        font-size: 8.5px;
-        font-weight: 600;
+        padding: 7px 9px;
+        color: var(--dim);
+        background: transparent;
       }
-      #doctor-button:hover { border-color: #526358; color: #e2e9e0; }
 
       .legal {
         margin: 11px 0 0;
+        color: #4d5665;
+        font-size: 8px;
         text-align: center;
-        color: #4f5b52;
-        font-family: var(--mono);
-        font-size: 7px;
-        letter-spacing: .04em;
-      }
-
-      @media (prefers-reduced-motion: no-preference) {
-        .pulse { animation: pulse 1.4s ease-in-out infinite; }
-        @keyframes pulse { 50% { opacity: .55; } }
       }
     </style>
   </head>
   <body>
     <main class="shell">
-      <svg class="circuit" viewBox="0 0 102 66" aria-hidden="true">
-        <path d="M2 4h38l17 17v33M10 22h21l12 12v24M66 8h18l14 14v25" fill="none" stroke="#b7f36b" stroke-width="1.2"/>
-        <circle cx="2" cy="4" r="2.5" fill="#b7f36b"/>
-        <circle cx="57" cy="54" r="2.5" fill="#b7f36b"/>
-        <circle cx="98" cy="47" r="2.5" fill="#b7f36b"/>
-      </svg>
-
       <header class="topbar">
         <div class="brand">
           <span class="brand-mark" aria-hidden="true"></span>
-          <div>
-            <div class="brand-name">MYRMECIA</div>
-            <div class="brand-subtitle">LOCAL AGENT FABRIC</div>
-          </div>
+          <span>
+            <span class="brand-name">Myrmecia</span>
+            <span class="brand-subtitle">Local AI workspace</span>
+          </span>
         </div>
-        <div class="runtime-badge">v0.1 / LOCAL</div>
+        <span class="runtime-badge">LOCAL · PRIVATE</span>
       </header>
 
       <section class="intro">
-        <h1>选择你的推理入口</h1>
-        <div class="intro-row">
-          <div class="intro-copy">凭据只保存在这台设备，稍后可随时切换。</div>
-          <div class="keyboard-hint">↑↓ 选择 · ↵ 继续</div>
-        </div>
+        <div class="eyebrow">Model provider</div>
+        <h1>选择模型，开始工作。</h1>
+        <p class="intro-copy">连接本机 Copilot 或你自己的模型服务。凭据仅保存在当前设备，启动后仍可随时切换。</p>
         <p id="status" class="pulse" aria-live="polite">正在准备本地服务…</p>
         <div class="recovery-actions">
           <button id="retry" class="action-button" hidden>重试启动</button>
@@ -472,81 +442,63 @@
         <button type="button" class="provider-option" data-provider-choice="copilot">
           <span class="provider-icon">GH</span>
           <span class="provider-copy">
-            <span class="provider-eyebrow">01 / GITHUB COPILOT</span>
+            <span class="provider-eyebrow">01 / GitHub</span>
             <strong class="provider-title">GitHub Copilot</strong>
-            <span class="provider-description">使用本机已登录的 GitHub 凭据</span>
-            <span class="provider-tags">
-              <span class="provider-tag">无需 API KEY</span>
-              <span class="provider-tag">模型在应用内切换</span>
-            </span>
+            <span class="provider-description">使用本机已登录账号，无需填写 API Key。</span>
+            <span class="provider-tags"><span class="provider-tag">Local login</span></span>
           </span>
-          <span class="provider-side">
-            <span class="provider-state">本机凭据</span>
-            <span class="provider-action">选择 →</span>
-          </span>
+          <span class="provider-side"><span class="provider-state">本机凭据</span><span class="provider-action">选择 →</span></span>
         </button>
 
         <button type="button" class="provider-option" data-provider-choice="deepseek">
           <span class="provider-icon">DS</span>
           <span class="provider-copy">
-            <span class="provider-eyebrow">02 / DEEPSEEK DIRECT</span>
-            <strong class="provider-title">DeepSeek 官方 API</strong>
-            <span class="provider-description">无需代理，使用你的 DeepSeek API Key</span>
-            <span class="provider-tags">
-              <span class="provider-tag">官方直连</span>
-              <span class="provider-tag">V4 FLASH / PRO</span>
-            </span>
+            <span class="provider-eyebrow">02 / Direct</span>
+            <strong class="provider-title">DeepSeek</strong>
+            <span class="provider-description">连接官方 API，适合独立直连部署。</span>
+            <span class="provider-tags"><span class="provider-tag">API key</span></span>
           </span>
-          <span class="provider-side">
-            <span class="provider-state">需要 API Key</span>
-            <span class="provider-action">选择 →</span>
-          </span>
+          <span class="provider-side"><span class="provider-state">需要密钥</span><span class="provider-action">选择 →</span></span>
         </button>
 
         <button type="button" class="provider-option" data-provider-choice="openai-compatible">
-          <span class="provider-icon">•••</span>
+          <span class="provider-icon">API</span>
           <span class="provider-copy">
-            <span class="provider-eyebrow">03 / CUSTOM GATEWAY</span>
-            <strong class="provider-title">高级 / OpenAI 兼容</strong>
-            <span class="provider-description">连接自建网关、本地模型或其他兼容服务</span>
-            <span class="provider-tags">
-              <span class="provider-tag">BASE URL</span>
-              <span class="provider-tag">MODEL · KEY</span>
-            </span>
+            <span class="provider-eyebrow">03 / Custom</span>
+            <strong class="provider-title">自定义网关</strong>
+            <span class="provider-description">OpenAI-compatible、本地模型或自建服务。</span>
+            <span class="provider-tags"><span class="provider-tag">Base URL</span></span>
           </span>
-          <span class="provider-side">
-            <span class="provider-state">自定义连接</span>
-            <span class="provider-action">选择 →</span>
-          </span>
+          <span class="provider-side"><span class="provider-state">高级配置</span><span class="provider-action">选择 →</span></span>
         </button>
       </section>
 
       <form id="runtime-config" hidden>
-          <label id="provider-field" hidden>
-            模型 Provider
-            <select id="provider">
-              <option value="copilot">GitHub Copilot（本机登录）</option>
-              <option value="deepseek">DeepSeek API（直连）</option>
-              <option value="openai-compatible">OpenAI-compatible API</option>
-            </select>
-          </label>
-          <label id="base-url-field">
-            模型 Base URL
-            <input id="base-url" type="url" inputmode="url" placeholder="https://api.example.com/v1" autocomplete="url" />
-          </label>
-          <label id="model-field">
-            模型名称
-            <input id="model" type="text" placeholder="gpt-5.4-mini" autocomplete="off" />
-          </label>
-          <label id="api-key-field">
-            API Key
-            <input id="api-key" type="password" autocomplete="new-password" />
-          </label>
-          <p id="storage-status"></p>
-          <div class="actions">
-            <button id="save-config" type="submit" class="action-button primary">安全保存并启动</button>
-            <button id="continue-without-config" type="button" class="action-button">仅浏览仪表板</button>
-          </div>
+        <label id="provider-field" hidden>
+          模型 Provider
+          <select id="provider">
+            <option value="copilot">GitHub Copilot（本机登录）</option>
+            <option value="deepseek">DeepSeek API（直连）</option>
+            <option value="openai-compatible">OpenAI-compatible API</option>
+          </select>
+        </label>
+        <label id="base-url-field">
+          模型 Base URL
+          <input id="base-url" type="url" inputmode="url" placeholder="https://api.example.com/v1" autocomplete="url" />
+        </label>
+        <label id="model-field">
+          模型名称
+          <input id="model" type="text" placeholder="gpt-5.4-mini" autocomplete="off" />
+        </label>
+        <label id="api-key-field">
+          API Key
+          <input id="api-key" type="password" autocomplete="new-password" />
+        </label>
+        <p id="storage-status"></p>
+        <div class="actions">
+          <button id="save-config" type="submit" class="action-button primary">安全保存并启动</button>
+          <button id="continue-without-config" type="button" class="action-button">仅浏览</button>
+        </div>
       </form>
 
       <ul id="doctor" hidden></ul>
@@ -556,9 +508,9 @@
           <div id="footer-title" class="footer-title"><span id="footer-dot" class="footer-dot"></span>本地工作区待启动</div>
           <div id="footer-meta" class="footer-meta">NODE · WORKSPACE · CREDENTIALS / LOCAL ONLY</div>
         </div>
-        <button id="doctor-button" type="button">运行环境检查</button>
+        <button id="doctor-button" type="button">环境检查</button>
       </footer>
-      <p class="legal">PYTHON RUNTIME 可选 · 密钥经系统凭据库加密保存</p>
+      <p class="legal">Python Runtime 可选 · 凭据经系统安全存储加密</p>
     </main>
     <script src="splash.js"></script>
   </body>
