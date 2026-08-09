@@ -563,13 +563,15 @@ If Myrmecia is useful in your work, a citation is appreciated:
 ## Star History
 
 <div align="center">
-<a href="https://star-history.com/#Zchary1106/Myrmecia&Date">
+<a href="https://github.com/Zchary1106/Myrmecia/stargazers">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=Zchary1106/Myrmecia&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=Zchary1106/Myrmecia&type=Date" />
-   <img alt="Myrmecia Star History" src="https://api.star-history.com/svg?repos=Zchary1106/Myrmecia&type=Date" style="width: 80%; height: auto;" />
+   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/star-history-dark.svg" />
+   <source media="(prefers-color-scheme: light)" srcset="docs/assets/star-history-light.svg" />
+   <img alt="Myrmecia Star History" src="docs/assets/star-history-light.svg" style="width: 80%; height: auto;" />
  </picture>
 </a>
+<br />
+<sub>Generated daily by <a href=".github/workflows/star-history.yml">GitHub Actions</a>.</sub>
 </div>
 
 ## License
