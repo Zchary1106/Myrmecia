@@ -730,3 +730,31 @@ ALTER TABLE model_usage_stats ADD COLUMN provider TEXT;
 ALTER TABLE model_usage_stats ADD COLUMN actual_model_id TEXT;
 ALTER TABLE model_usage_stats ADD COLUMN ai_units REAL DEFAULT 0;
 ALTER TABLE model_usage_stats ADD COLUMN billing_multiplier REAL;
+
+-- Migration: 202608080001_add_github_fix_runs
+CREATE TABLE IF NOT EXISTS github_fix_runs (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  repository TEXT NOT NULL,
+  repository_url TEXT NOT NULL,
+  issue_number INTEGER,
+  issue_url TEXT,
+  issue_title TEXT,
+  base_branch TEXT NOT NULL,
+  work_branch TEXT NOT NULL,
+  local_path TEXT NOT NULL,
+  viewer_permission TEXT NOT NULL DEFAULT 'READ',
+  fork_repository TEXT,
+  status TEXT NOT NULL DEFAULT 'preparing'
+    CHECK(status IN ('preparing','running','ready','failed','pr_created')),
+  task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL,
+  team_run_id TEXT,
+  pr_url TEXT,
+  error TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_github_fix_runs_workspace
+  ON github_fix_runs(workspace_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_github_fix_runs_task
+  ON github_fix_runs(task_id);

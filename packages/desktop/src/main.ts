@@ -108,7 +108,11 @@ const DEEPSEEK_BASE_URL = 'https://api.deepseek.com';
 const DEEPSEEK_DEFAULT_MODEL = 'deepseek-v4-flash';
 const COPILOT_DEFAULT_MODEL = 'auto';
 const moduleDir = dirname(fileURLToPath(import.meta.url));
+const persistedUserDataPath = app.getPath('userData');
 app.setName('Myrmecia');
+// Keep the established database/config location even though the visible app
+// name changes from the package name to "Myrmecia".
+app.setPath('userData', persistedUserDataPath);
 app.setAppUserModelId('io.myrmecia.desktop');
 type ServerChild = ChildProcessByStdio<null, Readable, Readable>;
 

@@ -204,8 +204,8 @@ agents:
       model: claude-haiku-4.5
       tier: cheap
       fallbackModel: gpt-5.4-mini
-      maxTokens: 4096
-      maxResponseTokens: 2048
+      maxTokens: 16384
+      maxResponseTokens: 4096
       maxToolCalls: 12
       maxWallClockMs: 120000
     capabilities: [gitops, cicd, docker, release, rollback, dependency-license, production-readiness]
@@ -223,8 +223,8 @@ agents:
       model: claude-haiku-4.5
       tier: cheap
       fallbackModel: gpt-5.4-mini
-      maxTokens: 4096
-      maxResponseTokens: 2048
+      maxTokens: 16384
+      maxResponseTokens: 4096
       maxToolCalls: 6
       maxWallClockMs: 90000
     capabilities: [issue-triage, prd, specification, acceptance-criteria, release-notes]

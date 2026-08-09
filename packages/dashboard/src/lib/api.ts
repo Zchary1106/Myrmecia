@@ -37,6 +37,9 @@ import type {
   WorkspacePreferenceRestoreResult,
   DynamicWorkflowRun,
   DynamicWorkflowPlan,
+  GitHubConnectionStatus,
+  GitHubFixDiff,
+  GitHubFixRun,
 } from '@myrmecia/shared';
 import { getApiAuthToken } from './auth';
 
@@ -137,6 +140,26 @@ export const api = {
       request<ModelDefinition>(`/models/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(data) }),
     healthCheck: (id: string) =>
       request<ModelDefinition>(`/models/${encodeURIComponent(id)}/health-check`, { method: 'POST' }),
+  },
+  githubFixes: {
+    status: () => request<GitHubConnectionStatus>('/github-fixes/status'),
+    list: () => request<GitHubFixRun[]>('/github-fixes'),
+    get: (id: string) => request<GitHubFixRun>(`/github-fixes/${encodeURIComponent(id)}`),
+    create: (data: { repository: string; issue?: string; bugDescription?: string; baseBranch?: string; sparsePaths?: string[]; teamId?: string }) =>
+      request<GitHubFixRun>('/github-fixes', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    diff: (id: string) => request<GitHubFixDiff>(`/github-fixes/${encodeURIComponent(id)}/diff`),
+    createPullRequest: (id: string, data: {
+      confirm: true;
+      title?: string;
+      body?: string;
+      commitMessage?: string;
+    }) => request<GitHubFixRun>(`/github-fixes/${encodeURIComponent(id)}/pull-request`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
   },
   skills: {
     list: () => request<SkillDefinition[]>('/skills'),
