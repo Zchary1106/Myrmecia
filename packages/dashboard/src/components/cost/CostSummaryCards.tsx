@@ -28,7 +28,7 @@ export function CostSummaryCards({ data }: { data: SummaryData | null }) {
       value: data ? data.requestCount.toLocaleString() : '—',
       sub: data?.unavailableRequestCount
         ? `${data.requestCount - data.unavailableRequestCount} measured / ${data.unavailableRequestCount} legacy unavailable`
-        : '',
+        : 'Provider-reported requests',
       icon: '📊',
     },
     {

@@ -58,10 +58,37 @@ teams:
     blurb: Refine, test, security-audit, and gate a release.
 
   - id: content
-    name: Content Team
+    name: WeChat Content Team
     emoji: "✍️"
     lead: master
-    members: [product-manager, content-writer, reviewer]
+    members: [product-manager, wechat-writer, reviewer]
     template: WeChat Article
     triggers: [article, post, blog, write, 公众号, 文章, content]
-    blurb: Plan, write, and review long-form content.
+    blurb: Plan, write, lay out, and review long-form WeChat content.
+
+  - id: xiaohongshu
+    name: Xiaohongshu Team
+    emoji: "📕"
+    lead: master
+    members: [trend-scout, xiaohongshu-writer, social-compliance-reviewer, social-review-coordinator, xiaohongshu-visual-designer, media-qa, social-preflight, social-publisher]
+    template: Xiaohongshu Publish
+    triggers: [小红书, rednote, 笔记, 图文, 卡片, 种草]
+    blurb: Research, write, illustrate, review, and publish a human-approved Xiaohongshu note.
+
+  - id: douyin
+    name: Douyin Video Team
+    emoji: "🎬"
+    lead: master
+    members: [trend-scout, douyin-writer, social-compliance-reviewer, social-review-coordinator, media-qa, social-preflight, social-publisher, social-ops, social-analytics]
+    template: Douyin Video Publish
+    triggers: [抖音, douyin, 视频, 分镜, 口播, 短视频]
+    blurb: Research and script a Douyin video, validate the supplied media, and publish only after approval.
+
+  - id: social-three-lanes
+    name: Social Three-Lane Team
+    emoji: "📣"
+    lead: master
+    members: [trend-scout, content-strategist, douyin-writer, xiaohongshu-writer, wechat-writer, social-compliance-reviewer, social-review-coordinator, media-qa, social-preflight, social-publisher, social-ops, social-analytics]
+    template: Social Content Three Lanes
+    triggers: [三平台, 全平台, 小红书抖音公众号, 社媒矩阵, 内容矩阵]
+    blurb: Share research and a content core, then run independent Douyin, Xiaohongshu, and WeChat production lanes.

@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useStore } from '../../stores/store';
-import { api, type DomainPackDTO } from '../../lib/api';
+import { api, type DomainPackDTO, type TeamDTO } from '../../lib/api';
 import { cn } from '../../lib/utils';
 import { readOnlyControlMessage, runtimeControlsAllowed } from '../../lib/permissions';
 import type { Priority, TaskMode } from '@myrmecia/shared';
 
-type LaunchMode = Extract<TaskMode, 'direct' | 'master'> | 'pipeline';
+type LaunchMode = Extract<TaskMode, 'direct' | 'master'> | 'team' | 'pipeline';
 
 export function WorkLauncher({
   initialInput = '',
@@ -18,13 +18,16 @@ export function WorkLauncher({
 }) {
   const {
     agents, templates, diagnostics,
-    loadTasks, loadPipelines, loadTemplates,
+    loadTasks, loadPipelines, loadTemplates, setActiveView,
   } = useStore();
   const [mode, setMode] = useState<LaunchMode>('direct');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState(initialInput);
   const [assigneeId, setAssigneeId] = useState('');
   const [templateId, setTemplateId] = useState('');
+  const [teams, setTeams] = useState<TeamDTO[]>([]);
+  const [teamId, setTeamId] = useState('');
+  const [workspacePath, setWorkspacePath] = useState('');
   const [gateMode, setGateMode] = useState<'auto' | 'manual'>('auto');
   const [confirmAutonomousPublish, setConfirmAutonomousPublish] = useState(false);
   const [priority, setPriority] = useState<Priority>('normal');
@@ -37,6 +40,13 @@ export function WorkLauncher({
   useEffect(() => {
     if (templates.length === 0) void loadTemplates();
     api.domains.list().then(setDomains).catch(() => { /* domains optional */ });
+    api.teams.list().then(next => {
+      setTeams(next);
+      setTeamId(current => current || next[0]?.id || '');
+    }).catch(() => { /* teams optional */ });
+    void window.myrmeciaDesktopIntegrations?.getWorkspace().then(workspace => {
+      setWorkspacePath(workspace.path);
+    }).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -56,16 +66,21 @@ export function WorkLauncher({
     if (!title.trim()) return 'Title is required.';
     if (!description.trim()) return 'Input or description is required.';
     if (mode === 'direct' && !assigneeId) return 'Select an agent for direct work.';
+    if (mode === 'team' && !teamId) return 'Select an Agent Team.';
+    if (mode === 'team' && !workspacePath) return 'Choose a local project in Agent Teams before dispatching.';
     if (mode === 'pipeline' && !templateId) return 'Select a pipeline template.';
     return null;
-  }, [canLaunch, title, description, mode, assigneeId, templateId]);
+  }, [canLaunch, title, description, mode, assigneeId, teamId, templateId, workspacePath]);
 
   const submit = async () => {
     if (validationError || busy) return;
     setBusy(true);
     setError(null);
     try {
-      if (mode === 'pipeline') {
+      if (mode === 'team') {
+        await api.teams.dispatch(teamId, `${title.trim()}\n\n${description.trim()}`, workspacePath);
+        setActiveView('teams');
+      } else if (mode === 'pipeline') {
         await api.pipelines.create({
           name: title.trim(),
           templateId,
@@ -110,10 +125,11 @@ export function WorkLauncher({
         </div>
 
         <div className="space-y-5">
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             {([
               { id: 'direct' as const, title: 'Direct', detail: 'Assign one agent', icon: '🎯' },
               { id: 'master' as const, title: 'Master', detail: 'Let orchestrator decide', icon: '🧠' },
+              { id: 'team' as const, title: 'Team', detail: 'Use a specialist squad', icon: '🐜' },
               { id: 'pipeline' as const, title: 'Pipeline', detail: 'Run a template flow', icon: '🔗' },
             ]).map(option => (
               <button
@@ -166,7 +182,25 @@ export function WorkLauncher({
             </div>
           )}
 
-          {mode !== 'pipeline' && (
+          {mode === 'team' && (
+            <div>
+              <label className="text-[11px] text-gray-500 mb-1 block">Agent Team</label>
+              <select
+                value={teamId}
+                onChange={event => setTeamId(event.target.value)}
+                disabled={!canLaunch || teams.length === 0}
+                className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm focus:border-accent outline-none disabled:opacity-50"
+              >
+                <option value="">Select team...</option>
+                {teams.map(team => <option key={team.id} value={team.id}>{team.emoji} {team.name}</option>)}
+              </select>
+              <div className="mt-2 rounded-lg border border-border bg-background p-3 text-[11px] text-gray-500">
+                Project: {workspacePath || 'No local project selected. Open Agent Teams and choose a folder.'}
+              </div>
+            </div>
+          )}
+
+          {mode !== 'pipeline' && mode !== 'team' && (
             <div>
               <label className="text-[11px] text-gray-500 mb-1 block">Priority</label>
               <select
