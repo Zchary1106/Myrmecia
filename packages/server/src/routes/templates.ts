@@ -9,6 +9,15 @@ import { listTemplates, createTemplate, getTemplate, updateTemplate } from '../d
 import { notFound, parseBody, requireOperatorRole, sendError } from './http.js';
 import type { PipelineTemplateGalleryItem, PipelineTemplateValidationResult } from '../types.js';
 
+const ARCHIVED_TEMPLATE_NAMES = new Set([
+  'Xiaohongshu Note',
+  'Xiaohongshu Douyin Crosspost',
+]);
+
+function launchableTemplates() {
+  return listTemplates().filter(template => !ARCHIVED_TEMPLATE_NAMES.has(template.name));
+}
+
 const templateStageSchema = z.object({
   name: z.string().trim().min(1),
   role: z.string().trim().min(1),
@@ -62,7 +71,7 @@ function validateTemplateShape(data: {
   const errors: PipelineTemplateValidationResult['errors'] = [];
   const warnings: PipelineTemplateValidationResult['warnings'] = [];
   const agents = listAgents();
-  const roles = new Set(agents.map(agent => agent.role));
+  const roles = new Set(agents.flatMap(agent => [agent.role, agent.id]));
   if (!data.stages.length) errors.push({ field: 'stages', message: 'Template must include at least one stage' });
   data.stages.forEach((stage, index) => {
     if (!stage.name?.trim()) errors.push({ stageIndex: index, field: 'name', message: 'Stage name is required' });
@@ -90,7 +99,7 @@ function loadTemplateGallery(): PipelineTemplateGalleryItem[] {
   ].filter((path): path is string => Boolean(path)).find(path => existsSync(path));
   if (!galleryPath) return [];
   const parsed = parseYaml(readFileSync(galleryPath, 'utf-8')) as { items?: any[] } | undefined;
-  const templates = listTemplates();
+  const templates = launchableTemplates();
   const byName = new Map(templates.map(template => [template.name.toLowerCase(), template]));
   return (parsed?.items || []).map(item => {
     const templateName = String(item.template_name || item.templateName || item.title || item.id);
@@ -111,14 +120,14 @@ function loadTemplateGallery(): PipelineTemplateGalleryItem[] {
       risk: String(item.risk || 'Review generated output before applying changes.'),
       stages: template?.stages || [],
     };
-  });
+  }).filter(item => !ARCHIVED_TEMPLATE_NAMES.has(item.templateName));
 }
 
 export function createTemplateRoutes(): Router {
   const router = Router();
 
   router.get('/', (req, res) => {
-    res.json(listTemplates());
+    res.json(launchableTemplates());
   });
 
   router.get('/gallery', (_req, res) => {

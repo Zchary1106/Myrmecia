@@ -20,6 +20,7 @@ import { addWorkspaceMember, createOrganization, createUser, createWorkspace, te
 import { createTask, updateTask } from '../src/db/models/task.js';
 import { createInboxEntry } from '../src/db/models/inbox.js';
 import { createAgent } from '../src/db/models/agent.js';
+import { createTemplate } from '../src/db/models/pipeline.js';
 import { getDb } from '../src/db/database.js';
 import { syncBuiltinTools } from '../src/tools/tool-registry.js';
 import { getModelRoute, syncBuiltinModels, syncProviderModels } from '../src/models/model-registry.js';
@@ -345,6 +346,9 @@ describe('control routes', () => {
 
   it('validates, guards, and audits template builder controls', async () => {
     createAgent({ id: 'builder-dev', name: 'Builder Dev', role: 'developer' });
+    createAgent({ id: 'special-writer', name: 'Special Writer', role: 'special-role' });
+    createTemplate({ name: 'Xiaohongshu Note', stages: [{ name: 'Legacy', role: 'developer', promptTemplate: 'Use {input}' }] });
+    createTemplate({ name: 'Current Template', stages: [{ name: 'Current', role: 'developer', promptTemplate: 'Use {input}' }] });
     const app = express();
     app.use(express.json());
     app.use('/templates', createTemplateRoutes());
@@ -364,6 +368,16 @@ describe('control routes', () => {
       expect(validation.status).toBe(200);
       expect(validation.body.valid).toBe(false);
       expect(validation.body.errors[0].message).toContain('No available Agent');
+
+      const idValidation = await jsonFetch<any>(baseUrl, '/templates/validate', {
+        method: 'POST',
+        body: JSON.stringify({ name: 'By id', stages: [{ name: 'Write', role: 'special-writer', promptTemplate: 'Use {input}' }] }),
+      });
+      expect(idValidation.body.valid).toBe(true);
+
+      const launchable = await jsonFetch<any[]>(baseUrl, '/templates');
+      expect(launchable.body.map(template => template.name)).toContain('Current Template');
+      expect(launchable.body.map(template => template.name)).not.toContain('Xiaohongshu Note');
 
       const denied = await jsonFetch<any>(baseUrl, '/templates', {
         method: 'POST',

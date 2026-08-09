@@ -18,6 +18,14 @@ const statusClass: Record<ToolExecution['status'], string> = {
   blocked: 'text-yellow-300',
 };
 
+function effectiveApprovalRequired(tool: ToolDefinition, permission?: ToolPermission): boolean {
+  if (permission?.approvalRequired !== undefined) return permission.approvalRequired;
+  return tool.approvalRequired
+    || tool.riskLevel === 'high'
+    || tool.metadata?.destructive === true
+    || tool.metadata?.writesOutsideWorkspace === true;
+}
+
 export function ToolsPage() {
   const { tools, toolExecutions, agents, loadTools, loadToolExecutions, loadAgents } = useStore();
   const [query, setQuery] = useState('');
@@ -158,7 +166,7 @@ export function ToolsPage() {
         <div className="mt-6 grid grid-cols-2 gap-3 md:grid-cols-4">
           <Metric label="Tools" value={tools.length} />
           <Metric label="Enabled" value={tools.filter(tool => tool.enabled).length} tone="green" />
-          <Metric label="Approval Required" value={tools.filter(tool => tool.approvalRequired).length} tone="yellow" />
+          <Metric label="Policy Gated" value={tools.filter(tool => effectiveApprovalRequired(tool)).length} tone="yellow" />
           <Metric label="Executions" value={toolExecutions.length} tone="blue" />
         </div>
       </div>
@@ -344,7 +352,7 @@ function ToolPolicyPanel({
           const requested = requestedTools.includes(tool.id);
           const permission = permissionByAgent.get(agent.id);
           const policyAllowed = permission?.enabled ?? true;
-          const approvalRequired = permission?.approvalRequired ?? tool.approvalRequired;
+          const approvalRequired = effectiveApprovalRequired(tool, permission);
           const disabled = Boolean(savingKey?.startsWith(`${tool.id}:${agent.id}:`));
           const effectiveState = !tool.enabled
             ? 'tool disabled'

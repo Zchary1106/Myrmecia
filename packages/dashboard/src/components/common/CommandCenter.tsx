@@ -470,8 +470,6 @@ export function CommandCenter() {
     setActivePipelineId, markNotificationRead, markNotificationsRead, markAllNotificationsRead,
   } = useStore();
   const [commandInput, setCommandInput] = useState('');
-  const [dispatching, setDispatching] = useState(false);
-  const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [showLauncher, setShowLauncher] = useState(false);
   const [handoffCheckpoint, setHandoffCheckpoint] = useState<string | undefined>(() => getHandoffCheckpoint(null));
@@ -532,19 +530,8 @@ export function CommandCenter() {
 
   const dispatchCommand = async (event: FormEvent) => {
     event.preventDefault();
-    if (!commandInput.trim() || dispatching) return;
-    setDispatching(true);
-    setResult(null);
-    try {
-      const response: any = await api.supervisor.dispatch(commandInput.trim());
-      setResult({ ok: true, message: `Dispatched via ${response.mode || 'supervisor'} mode` });
-      setCommandInput('');
-      await Promise.all([loadTasks(), loadPipelines(), loadPlatformEvents()]);
-    } catch (err: any) {
-      setResult({ ok: false, message: err.message });
-    } finally {
-      setDispatching(false);
-    }
+    if (!commandInput.trim()) return;
+    setShowLauncher(true);
   };
 
   const acknowledgeNotifications = async (ids: string[]) => {
@@ -607,22 +594,21 @@ export function CommandCenter() {
             value={commandInput}
             onChange={event => setCommandInput(event.target.value)}
             placeholder="Tell Myrmecia what to build, fix, investigate, or review..."
-            disabled={dispatching}
             className="flex-1 bg-background border border-border rounded-xl px-4 py-3 text-sm focus:border-accent outline-none placeholder-gray-600"
           />
           <button
             type="submit"
-            disabled={dispatching || !commandInput.trim()}
+            disabled={!commandInput.trim()}
             className="px-5 py-3 bg-accent text-white rounded-xl text-sm font-medium hover:bg-accent-light transition disabled:opacity-50"
           >
-            {dispatching ? 'Dispatching...' : 'Dispatch'}
+            New Work
           </button>
           <button
             type="button"
             onClick={() => setShowLauncher(true)}
             className="px-4 py-3 bg-surface-hover text-gray-300 rounded-xl text-sm hover:text-white transition"
           >
-            Guided Launch
+            Choose work type
           </button>
           <button
             type="button"
@@ -632,14 +618,6 @@ export function CommandCenter() {
             Queue
           </button>
         </form>
-        {result && (
-          <div className={cn(
-            'mt-3 border rounded-lg px-3 py-2 text-xs',
-            result.ok ? 'bg-green-500/10 border-green-500/20 text-green-400' : 'bg-red-500/10 border-red-500/20 text-red-400',
-          )}>
-            {result.message}
-          </div>
-        )}
       </div>
 
       <div className="grid grid-cols-5 gap-4">
