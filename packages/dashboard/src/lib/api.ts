@@ -449,8 +449,11 @@ export const api = {
     update: (id: string, data: Partial<TeamInputDTO>) =>
       request<TeamDTO>(`/teams/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
     remove: (id: string) => request<{ ok: boolean; reverted: boolean }>(`/teams/${id}`, { method: 'DELETE' }),
-    dispatch: (id: string, goal: string) =>
-      request<{ run: TeamRunDTO; team: TeamDTO; board: TeamBoardItem[] }>(`/teams/${id}/dispatch`, { method: 'POST', body: JSON.stringify({ goal }) }),
+    dispatch: (id: string, goal: string, workdir?: string) =>
+      request<{ run: TeamRunDTO; team: TeamDTO; board: TeamBoardItem[] }>(`/teams/${id}/dispatch`, {
+        method: 'POST',
+        body: JSON.stringify({ goal, workdir }),
+      }),
     runs: (teamId?: string) =>
       request<{ runs: TeamRunDTO[] }>(`/teams/runs${teamId ? `?teamId=${teamId}` : ''}`).then(r => r.runs),
     run: (runId: string) => request<{ run: TeamRunDTO; board: TeamBoardItem[] }>(`/teams/runs/${runId}`),

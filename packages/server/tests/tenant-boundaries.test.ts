@@ -168,7 +168,7 @@ describe('tenant boundary enforcement', () => {
         body: JSON.stringify({ goal: 'Build', workspaceId: workspaceB.id }),
       });
       expect(dispatched.status).toBe(201);
-      expect(coordinator.dispatch).toHaveBeenCalledWith('feature', 'Build', workspaceA.id);
+      expect(coordinator.dispatch).toHaveBeenCalledWith('feature', 'Build', workspaceA.id, undefined);
     });
   });
 });

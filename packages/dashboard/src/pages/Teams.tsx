@@ -28,6 +28,8 @@ export function TeamsPage() {
   const [teams, setTeams] = useState<TeamDTO[]>([]);
   const [picked, setPicked] = useState<string | null>(null);
   const [goal, setGoal] = useState('');
+  const [workspacePath, setWorkspacePath] = useState('');
+  const [workspaceIsGit, setWorkspaceIsGit] = useState(false);
   const [githubConnection, setGitHubConnection] = useState<GitHubConnectionStatus | null>(null);
   const [githubRuns, setGitHubRuns] = useState<GitHubFixRun[]>([]);
   const [repository, setRepository] = useState('');
@@ -63,6 +65,10 @@ export function TeamsPage() {
       if (ts.length && !picked) setPicked(ts.find(team => team.id === 'bugfix')?.id || ts[0].id);
     }).catch(e => setError(e.message));
     api.teams.runs().then(setRuns).catch(() => {});
+    void window.myrmeciaDesktopIntegrations?.getWorkspace().then(workspace => {
+      setWorkspacePath(workspace.path);
+      setWorkspaceIsGit(workspace.isGitRepository);
+    }).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -164,7 +170,7 @@ export function TeamsPage() {
           if (!githubRun.teamRunId) throw new Error('The repository workspace was created without a team run');
           return api.teams.run(githubRun.teamRunId).then(result => result.run);
         })
-        : await api.teams.dispatch(team.id, description).then(result => result.run);
+        : await api.teams.dispatch(team.id, description, workspacePath.trim()).then(result => result.run);
       setGoal('');
       setActiveRunId(run.id);
       setRun(run);
@@ -312,6 +318,11 @@ export function TeamsPage() {
                   setBaseBranch={setBaseBranch}
                   goal={goal}
                   setGoal={setGoal}
+                  workspacePath={workspacePath}
+                  setWorkspacePath={setWorkspacePath}
+                  workspaceIsGit={workspaceIsGit}
+                  setWorkspaceIsGit={setWorkspaceIsGit}
+                  setError={setError}
                   busy={busy}
                   onDispatch={dispatch}
                 />
@@ -563,6 +574,11 @@ function TeamLaunchPanel({
   setBaseBranch,
   goal,
   setGoal,
+  workspacePath,
+  setWorkspacePath,
+  workspaceIsGit,
+  setWorkspaceIsGit,
+  setError,
   busy,
   onDispatch,
 }: {
@@ -578,12 +594,30 @@ function TeamLaunchPanel({
   setBaseBranch: (value: string) => void;
   goal: string;
   setGoal: (value: string) => void;
+  workspacePath: string;
+  setWorkspacePath: (value: string) => void;
+  workspaceIsGit: boolean;
+  setWorkspaceIsGit: (value: boolean) => void;
+  setError: (value: string) => void;
   busy: boolean;
   onDispatch: () => void;
 }) {
   const disabled = busy || !team
-    || (source === 'workspace' ? !goal.trim() : !repository.trim() || (!issue.trim() && !goal.trim()))
+    || (source === 'workspace'
+      ? !goal.trim() || !workspacePath.trim()
+      : !repository.trim() || (!issue.trim() && !goal.trim()))
     || (source === 'github' && githubConnection?.authenticated === false);
+  const chooseWorkspace = async () => {
+    const desktop = window.myrmeciaDesktopIntegrations;
+    if (!desktop) return;
+    try {
+      const workspace = await desktop.selectWorkspace();
+      setWorkspacePath(workspace.path);
+      setWorkspaceIsGit(workspace.isGitRepository);
+    } catch (e: any) {
+      setError(e.message || 'Unable to select workspace');
+    }
+  };
 
   return (
     <section>
@@ -642,8 +676,31 @@ function TeamLaunchPanel({
               </div>
             </>
           ) : (
-            <div className="rounded-lg border border-border bg-background p-3 text-[10px] leading-relaxed text-gray-500">
-              Agents will work in the current Myrmecia workspace. Choose GitHub repository when the task belongs to an external repository or Issue.
+            <div className="space-y-2 rounded-lg border border-border bg-background p-3">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[10px] font-medium text-gray-400">Local project</span>
+                {window.myrmeciaDesktopIntegrations && (
+                  <button type="button" onClick={() => void chooseWorkspace()}
+                    className="rounded-md bg-accent/10 px-2 py-1 text-[10px] text-accent-light hover:bg-accent/20">
+                    Choose folder
+                  </button>
+                )}
+              </div>
+              <input
+                value={workspacePath}
+                onChange={event => {
+                  setWorkspacePath(event.target.value);
+                  setWorkspaceIsGit(false);
+                }}
+                readOnly={Boolean(window.myrmeciaDesktopIntegrations)}
+                placeholder="Select an absolute local project directory"
+                className="w-full truncate rounded-md border border-border bg-surface px-2 py-1.5 text-[10px] text-gray-300 outline-none focus:border-accent"
+              />
+              <div className="text-[10px] leading-relaxed text-gray-500">
+                {workspacePath
+                  ? `${workspaceIsGit ? 'Git repository' : 'Directory'} · Agents share this exact worktree.`
+                  : 'Choose a project before dispatching. Myrmecia will not use its application-data folder as your code workspace.'}
+              </div>
             </div>
           )}
           <button onClick={onDispatch} disabled={disabled}

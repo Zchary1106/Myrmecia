@@ -52,6 +52,25 @@ describe('ContextManager', () => {
     expect(input).toContain('Write spec for:');
   });
 
+  it('includes each direct dependency output only once', () => {
+    const pipeline = makePipeline();
+    const input = cm.buildStageInput(pipeline, 2);
+    expect(input.match(/This is the design output\./g)).toHaveLength(1);
+  });
+
+  it('caps large multi-dependency inputs before execution', () => {
+    const manager = new ContextManager(8_000);
+    const huge = 'x'.repeat(20_000);
+    const pipeline = makePipeline({
+      stages: [
+        { index: 0, name: 'A', agentRole: 'pm', status: 'done', output: huge, promptTemplate: '{input}' },
+        { index: 1, name: 'B', agentRole: 'ui', status: 'done', output: huge, promptTemplate: '{input}' },
+        { index: 2, name: 'C', agentRole: 'dev', status: 'pending', dependsOn: [0, 1], promptTemplate: 'Use: {input}' },
+      ],
+    });
+    expect(manager.buildStageInput(pipeline, 2).length).toBeLessThanOrEqual(8_050);
+  });
+
   it('should handle pipeline with no previous stages gracefully', () => {
     const pipeline = makePipeline({ stages: [
       { index: 0, name: 'Only', agentRole: 'dev', status: 'pending', promptTemplate: 'Do: {input}' },
