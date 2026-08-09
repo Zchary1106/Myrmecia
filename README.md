@@ -571,7 +571,7 @@ If Myrmecia is useful in your work, a citation is appreciated:
  </picture>
 </a>
 <br />
-<sub>Generated daily by <a href=".github/workflows/star-history.yml">GitHub Actions</a>.</sub>
+<sub>Generated daily by <a href=".github/workflows/star-history.yml">GitHub Actions</a> using the open-source <a href="https://github.com/star-history/star-history">Star History</a> visual style.</sub>
 </div>
 
 ## License
