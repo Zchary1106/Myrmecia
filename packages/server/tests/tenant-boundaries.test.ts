@@ -129,6 +129,26 @@ describe('tenant boundary enforcement', () => {
     });
   });
 
+  it('deduplicates identical notification bursts in the same workspace', () => {
+    const { workspaceA } = createTenant();
+    const first = createNotification({
+      type: 'task_failed',
+      title: 'Repeated failure',
+      message: 'Same deterministic failure',
+      workspaceId: workspaceA.id,
+    });
+    const second = createNotification({
+      type: 'task_failed',
+      title: 'Repeated failure',
+      message: 'Same deterministic failure',
+      workspaceId: workspaceA.id,
+    });
+
+    expect(second.id).toBe(first.id);
+    const count = getDb().get('SELECT COUNT(*) AS count FROM notifications WHERE workspace_id = ?', workspaceA.id) as any;
+    expect(count.count).toBe(1);
+  });
+
   it('scopes team run routes and ignores body-provided dispatch workspace ids', async () => {
     const { workspaceA, workspaceB, headersA } = createTenant();
     createTeam({ id: 'feature', name: 'Feature', members: ['dev'] }, workspaceA.id);

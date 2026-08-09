@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { ContextManager } from '../src/pipelines/context-manager.js';
+import { lintDeterministicOutput } from '../src/pipelines/stage-output-validator.js';
 import type { Pipeline } from '../src/types.js';
 
 const cm = new ContextManager();
@@ -77,5 +78,20 @@ describe('ContextManager', () => {
     ]});
     const input = cm.buildStageInput(pipeline, 0);
     expect(input).toContain('Build a weather app');
+  });
+});
+
+describe('deterministic content lint', () => {
+  it('rejects Unicode command flags and malformed URL punctuation', () => {
+    expect(lintDeterministicOutput('```bash\ngit diff —staged\n```')).toEqual([
+      expect.stringContaining('Unicode dash'),
+    ]);
+    expect(lintDeterministicOutput('参考 https：//example.com')).toEqual([
+      expect.stringContaining('full-width colon'),
+    ]);
+  });
+
+  it('accepts valid command flags and URLs', () => {
+    expect(lintDeterministicOutput('```bash\ngit diff --staged\n```\nhttps://example.com')).toEqual([]);
   });
 });
