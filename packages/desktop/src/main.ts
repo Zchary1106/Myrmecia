@@ -1,10 +1,10 @@
-import { app, BrowserWindow, ipcMain, nativeImage, safeStorage, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, safeStorage, shell } from 'electron';
 import { spawn, spawnSync, type ChildProcessByStdio } from 'node:child_process';
 import { createServer } from 'node:net';
 import { createWriteStream, existsSync, type WriteStream } from 'node:fs';
 import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { request } from 'node:http';
 import type { Readable } from 'node:stream';
@@ -30,6 +30,7 @@ interface StoredRuntimeConfiguration {
   baseUrl?: string;
   model?: string;
   encryptedApiKey?: string;
+  workspacePath?: string;
   wechatAppId?: string;
   encryptedWechatAppSecret?: string;
   encryptedWechatStorageKey?: string;
@@ -62,6 +63,14 @@ interface WeChatConfigurationSummary {
 interface WeChatConfigurationInput {
   appId?: string;
   appSecret?: string;
+}
+
+interface WorkspaceConfigurationSummary {
+  available: true;
+  configured: boolean;
+  path: string;
+  name: string;
+  isGitRepository: boolean;
 }
 
 interface LoadedRuntimeConfiguration {
@@ -275,6 +284,7 @@ async function readStoredRuntimeConfiguration(): Promise<StoredRuntimeConfigurat
   const baseUrl = normalizeBaseUrl(parsed.baseUrl);
   const model = optionalString(parsed.model, '模型名称', 256);
   const encryptedApiKey = optionalString(parsed.encryptedApiKey, '加密 API Key', 65_536);
+  const workspacePath = optionalString(parsed.workspacePath, '工作区路径', 16_384);
   const wechatAppId = optionalString(parsed.wechatAppId, '微信公众号 AppID', 32);
   const encryptedWechatAppSecret = optionalString(parsed.encryptedWechatAppSecret, '加密微信公众号 AppSecret', 65_536);
   const encryptedWechatStorageKey = optionalString(parsed.encryptedWechatStorageKey, '加密微信公众号存储密钥', 65_536);
@@ -284,6 +294,7 @@ async function readStoredRuntimeConfiguration(): Promise<StoredRuntimeConfigurat
     baseUrl,
     model,
     encryptedApiKey,
+    ...(workspacePath ? { workspacePath: resolve(workspacePath) } : {}),
     wechatAppId,
     encryptedWechatAppSecret,
     encryptedWechatStorageKey,
@@ -404,6 +415,7 @@ async function saveRuntimeConfiguration(value: unknown): Promise<RuntimeConfigur
     ...(baseUrl ? { baseUrl } : {}),
     ...(model ? { model } : {}),
     ...(encryptedApiKey ? { encryptedApiKey } : {}),
+    ...(current.workspacePath ? { workspacePath: current.workspacePath } : {}),
     ...(current.wechatAppId ? { wechatAppId: current.wechatAppId } : {}),
     ...(current.encryptedWechatAppSecret ? { encryptedWechatAppSecret: current.encryptedWechatAppSecret } : {}),
     ...(current.encryptedWechatStorageKey ? { encryptedWechatStorageKey: current.encryptedWechatStorageKey } : {}),
@@ -415,16 +427,19 @@ async function weChatConfigurationSummary(): Promise<WeChatConfigurationSummary>
   const loaded = await loadStoredRuntimeConfiguration();
   const { configuration } = loaded;
   let recoveryMessage = loaded.recoveryMessage;
+  let credentialsValid = Boolean(configuration.wechatAppId && configuration.encryptedWechatAppSecret);
   if (!recoveryMessage && configuration.encryptedWechatAppSecret) {
     try {
       decryptStoredSecret(configuration.encryptedWechatAppSecret, '微信公众号 AppSecret');
+      decryptStoredSecret(configuration.encryptedWechatStorageKey, '微信公众号 MCP 存储密钥');
     } catch (error) {
+      credentialsValid = false;
       recoveryMessage = error instanceof Error ? error.message : '无法读取微信公众号凭据。';
     }
   }
   return {
     available: true,
-    configured: Boolean(configuration.wechatAppId && configuration.encryptedWechatAppSecret),
+    configured: credentialsValid,
     appId: configuration.wechatAppId || '',
     secureStorageAvailable: secureStorageAvailable(),
     ...(recoveryMessage ? { recoveryMessage } : {}),
@@ -435,14 +450,64 @@ async function saveWeChatConfiguration(value: unknown): Promise<WeChatConfigurat
   const input = parseWeChatConfigurationInput(value);
   const loaded = await loadStoredRuntimeConfiguration();
   const current = loaded.configuration;
+  let encryptedWechatStorageKey = current.encryptedWechatStorageKey;
+  if (encryptedWechatStorageKey) {
+    try {
+      decryptStoredSecret(encryptedWechatStorageKey, '微信公众号 MCP 存储密钥');
+    } catch {
+      encryptedWechatStorageKey = undefined;
+    }
+  }
   await writeStoredRuntimeConfiguration({
     ...current,
     wechatAppId: input.appId,
     encryptedWechatAppSecret: encryptStoredSecret(input.appSecret!, '微信公众号 AppSecret'),
-    encryptedWechatStorageKey: current.encryptedWechatStorageKey
+    encryptedWechatStorageKey: encryptedWechatStorageKey
       || encryptStoredSecret(randomBytes(32).toString('hex'), '微信公众号 MCP 存储密钥'),
   });
   return weChatConfigurationSummary();
+}
+
+async function workspaceConfigurationSummary(): Promise<WorkspaceConfigurationSummary> {
+  const loaded = await loadStoredRuntimeConfiguration();
+  const configuredPath = loaded.configuration.workspacePath;
+  const validPath = configuredPath && isAbsolute(configuredPath) && existsSync(configuredPath)
+    ? resolve(configuredPath)
+    : '';
+  return {
+    available: true,
+    configured: Boolean(validPath),
+    path: validPath,
+    name: validPath ? basename(validPath) : '',
+    isGitRepository: Boolean(validPath && existsSync(join(validPath, '.git'))),
+  };
+}
+
+async function selectWorkspace(): Promise<WorkspaceConfigurationSummary> {
+  const current = await workspaceConfigurationSummary();
+  const options = {
+    title: '选择 Myrmecia 工作区',
+    defaultPath: current.path || undefined,
+    properties: ['openDirectory'] as Array<'openDirectory'>,
+  };
+  const result = dashboardWindow
+    ? await dialog.showOpenDialog(dashboardWindow, options)
+    : await dialog.showOpenDialog(options);
+  if (result.canceled || !result.filePaths[0]) return current;
+  const workspacePath = resolve(result.filePaths[0]);
+  const loaded = await loadStoredRuntimeConfiguration();
+  await writeStoredRuntimeConfiguration({
+    ...loaded.configuration,
+    workspacePath,
+  });
+  return workspaceConfigurationSummary();
+}
+
+async function clearWorkspace(): Promise<WorkspaceConfigurationSummary> {
+  const loaded = await loadStoredRuntimeConfiguration();
+  const { workspacePath: _workspacePath, ...rest } = loaded.configuration;
+  await writeStoredRuntimeConfiguration(rest);
+  return workspaceConfigurationSummary();
 }
 
 async function clearWeChatConfiguration(): Promise<WeChatConfigurationSummary> {
@@ -1098,6 +1163,9 @@ if (!hasSingleInstanceLock) {
     ipcMain.handle('desktop:get-wechat-config', () => weChatConfigurationSummary());
     ipcMain.handle('desktop:save-wechat-config', (_event, configuration) => saveWeChatConfiguration(configuration));
     ipcMain.handle('desktop:clear-wechat-config', () => clearWeChatConfiguration());
+    ipcMain.handle('desktop:get-workspace', () => workspaceConfigurationSummary());
+    ipcMain.handle('desktop:select-workspace', () => selectWorkspace());
+    ipcMain.handle('desktop:clear-workspace', () => clearWorkspace());
     ipcMain.on('desktop:restart-local-server', () => {
       setTimeout(() => { void launchDashboard(); }, 50);
     });

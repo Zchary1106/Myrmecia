@@ -1,5 +1,5 @@
 import { getTask, updateTask, addTaskLog, listTasks } from '../db/models/task.js';
-import { getAgent, listAgents, updateAgent } from '../db/models/agent.js';
+import { getAgent, listAgents } from '../db/models/agent.js';
 import { getActiveExecutionCount } from '../db/models/execution.js';
 import { agentRuntime } from '../agents/agent-runtime.js';
 import { eventBus } from '../events/event-bus.js';
@@ -11,7 +11,7 @@ import type { Task } from '../types.js';
  * 5-level recovery strategy for failed tasks:
  *   Level 1: Retry with reformulated prompt
  *   Level 2: Reassign to a different agent
- *   Level 3: Upgrade to a stronger model
+ *   Level 3: Retry with fresh execution context
  *   Level 4: Decompose into smaller subtasks
  *   Level 5: Escalate to supervisor (human)
  */
@@ -41,13 +41,18 @@ export class SelfHealingEngine {
       return;
     }
 
+    if (isNonRetryableExecutionError(error)) {
+      addTaskLog(taskId, 'warn', `Self-healing skipped automatic retries for deterministic failure: ${error}`, 'self-healing');
+      return this.escalateToSupervisor(task, error, 'Automatic retries were skipped because the failure needs configuration or context changes.');
+    }
+
     const healingLevel = this.getHealingLevel(task);
     addTaskLog(taskId, 'info', `Self-healing: attempting level ${healingLevel} recovery`, 'system');
 
     switch (healingLevel) {
       case 1: return this.retryWithBetterPrompt(task, error);
       case 2: return this.reassignAgent(task, error);
-      case 3: return this.upgradeModel(task, error);
+      case 3: return this.retryWithFreshContext(task, error);
       case 4: return this.decomposeSmaller(task, error);
       case 5: return this.escalateToSupervisor(task, error);
     }
@@ -91,16 +96,16 @@ Please avoid this error and try a different approach. Be more careful and method
   private async reassignAgent(task: Task, error: string) {
     addTaskLog(task.id, 'info', 'Level 2: Reassigning to a different agent', 'self-healing');
 
-    const agents = listAgents();
+    const currentAgent = task.assigneeId ? getAgent(task.assigneeId) : undefined;
+    const agents = currentAgent ? listAgents({ role: currentAgent.role }) : [];
     const alternativeAgent = agents.find(a =>
       a.id !== task.assigneeId &&
-      getActiveExecutionCount(a.id) < (a.config.maxConcurrent || 1) &&
-      a.role !== 'orchestrator'
+      getActiveExecutionCount(a.id) < (a.config.maxConcurrent || 1)
     );
 
     if (!alternativeAgent) {
       addTaskLog(task.id, 'warn', 'No alternative agent available, moving to level 3', 'self-healing');
-      return this.upgradeModel(task, error);
+      return this.retryWithFreshContext(task, error);
     }
 
     updateTask(task.id, {
@@ -114,8 +119,8 @@ Please avoid this error and try a different approach. Be more careful and method
     agentRuntime.execute(alternativeAgent, updatedTask).catch(() => {});
   }
 
-  /** Level 3: Upgrade to a stronger model */
-  private async upgradeModel(task: Task, error: string) {
+  /** Level 3: Retry without adding the previous failure text to the prompt. */
+  private async retryWithFreshContext(task: Task, error: string) {
     addTaskLog(task.id, 'info', 'Level 3: Retrying with fresh context', 'self-healing');
 
     if (task.assigneeId) {
@@ -153,7 +158,7 @@ Please avoid this error and try a different approach. Be more careful and method
   }
 
   /** Level 5: Give up and notify the supervisor */
-  private async escalateToSupervisor(task: Task, error: string) {
+  private async escalateToSupervisor(task: Task, error: string, recoveryNote?: string) {
     addTaskLog(task.id, 'error', 'Level 5: Escalating to supervisor — all auto-recovery attempts exhausted', 'self-healing');
 
     updateTask(task.id, { status: 'failed', error: `Self-healing exhausted. Last error: ${error}` });
@@ -161,10 +166,21 @@ Please avoid this error and try a different approach. Be more careful and method
     const notif = createNotification({
       type: 'needs_input',
       title: `Task needs attention: ${task.title}`,
-      message: `Tried ${task.retryCount} recovery strategies. Last error: ${error}. Please review and intervene.`,
+      message: `${recoveryNote || `Tried ${task.retryCount} recovery strategies.`} Last error: ${error} Please review and intervene.`,
       taskId: task.id,
     });
 
     eventBus.emit('notification', { notification: notif });
   }
+}
+
+export function isNonRetryableExecutionError(error: string): boolean {
+  return [
+    /exceeded token budget/i,
+    /exceeded max output length/i,
+    /approval required/i,
+    /publish confirmation required/i,
+    /dangerous shell command/i,
+    /authentication.+(?:missing|required|unavailable)/i,
+  ].some(pattern => pattern.test(error || ''));
 }

@@ -10,19 +10,28 @@ import { getMemoryService } from '../memory/memory-service.js';
  * - Relevant long-term memory recalled (semantic + procedural + episodic)
  */
 export class ContextManager {
+  private readonly maxInputChars: number;
+
+  constructor(maxInputChars = Number.parseInt(process.env.PIPELINE_STAGE_CONTEXT_MAX_CHARS || '48000', 10)) {
+    this.maxInputChars = Number.isFinite(maxInputChars) && maxInputChars >= 8_000 ? maxInputChars : 48_000;
+  }
+
   /** Build optimized input for a pipeline stage */
   buildStageInput(pipeline: Pipeline, stageIndex: number): string {
     const parts: string[] = [];
+    const currentStage = pipeline.stages[stageIndex];
+    const dependencyIndices = currentStage.dependsOn ?? (stageIndex > 0 ? [stageIndex - 1] : []);
+    const dependencySet = new Set(dependencyIndices);
 
     // 1. Project context header
-    parts.push(`# Project: ${pipeline.name}\nWorkspace ID: ${pipeline.workspaceId || 'default'}\nOriginal requirement: ${pipeline.input}\n`);
+    parts.push(`# Project: ${pipeline.name}\nWorkspace ID: ${pipeline.workspaceId || 'default'}\nOriginal requirement: ${this.summarize(pipeline.input, 8_000)}\n`);
 
     // 2. Previous stages — summaries only (not full output)
     if (stageIndex > 1) {
       parts.push('## Previous Stage Summaries');
       for (let i = 0; i < stageIndex - 1; i++) {
         const stage = pipeline.stages[i];
-        if (stage.status === 'done' && stage.output) {
+        if (stage.status === 'done' && stage.output && !dependencySet.has(i)) {
           const summary = this.summarize(stage.output, 500);
           parts.push(`### Stage ${i}: ${stage.name}\n${summary}`);
         }
@@ -32,16 +41,12 @@ export class ContextManager {
     // 3. Direct dependencies — full output. A stage with explicit `dependsOn`
     // can receive several upstream deliverables produced in parallel. Fall
     // back to the immediately preceding stage for legacy sequential templates.
-    const currentStage = pipeline.stages[stageIndex];
-    const dependencyIndices = currentStage.dependsOn ?? (stageIndex > 0 ? [stageIndex - 1] : []);
+    const dependencyBudget = Math.min(32_000, Math.floor(this.maxInputChars * 0.66));
+    const perDependencyBudget = Math.max(2_000, Math.floor(dependencyBudget / Math.max(1, dependencyIndices.length)));
     const dependencyOutputs = dependencyIndices
       .map(index => pipeline.stages[index])
       .filter((stage): stage is NonNullable<typeof stage> => Boolean(stage?.output))
-      .map(stage => `## Detailed Input from: ${stage.name}\n${stage.output}`);
-
-    if (dependencyOutputs.length > 0) {
-      parts.push(...dependencyOutputs);
-    }
+      .map(stage => `## Detailed Input from: ${stage.name}\n${this.summarize(stage.output!, perDependencyBudget)}`);
 
     // 4. Persisted human approvals — downstream stages must never infer
     // approval from an LLM-produced JSON blob.
@@ -64,7 +69,7 @@ export class ContextManager {
       parts.push(`## Your Task\n${currentStage.promptTemplate.replace('{input}', stageInput)}`);
     }
 
-    return parts.join('\n\n---\n\n');
+    return this.summarize(parts.join('\n\n---\n\n'), this.maxInputChars);
   }
 
   /**

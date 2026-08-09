@@ -1,14 +1,27 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { existsSync, statSync } from 'node:fs';
+import { isAbsolute, resolve } from 'node:path';
 import { listTeams, getTeam, resolveTeamAgents, suggestTeam, createTeam, updateTeam, deleteTeam } from '../agents/team-registry.js';
 import type { TeamCoordinator } from '../agents/team-coordinator.js';
-import { notFound, parseBody, sendError } from './http.js';
+import { HttpError, notFound, parseBody, sendError } from './http.js';
 import { requestCanAccessWorkspace, workspaceIdFromRequest } from '../auth/tenant.js';
 
 const dispatchSchema = z.object({
   goal: z.string().trim().min(1, 'goal is required'),
   workspaceId: z.string().trim().optional(),
+  workdir: z.string().trim().min(1).max(16_384).optional(),
 });
+
+function validateWorkdir(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  if (!isAbsolute(value)) throw new HttpError(400, 'INVALID_WORKDIR', 'Workspace path must be absolute');
+  const workdir = resolve(value);
+  if (!existsSync(workdir) || !statSync(workdir).isDirectory()) {
+    throw new HttpError(400, 'INVALID_WORKDIR', 'Workspace directory does not exist');
+  }
+  return workdir;
+}
 
 const messageSchema = z.object({
   to: z.string().trim().min(1, 'to is required'),       // taskId | agentId | role | 'all'
@@ -124,7 +137,7 @@ export function createTeamRoutes(coordinator: TeamCoordinator): Router {
       const team = getTeam(req.params.id, ws(req));
       if (!team) notFound('TEAM_NOT_FOUND', 'Team not found');
       const body = parseBody(dispatchSchema, req);
-      const result = await coordinator.dispatch(team!.id, body.goal, ws(req));
+      const result = await coordinator.dispatch(team!.id, body.goal, ws(req), validateWorkdir(body.workdir));
       res.status(201).json(result);
     } catch (err) {
       sendError(res, err);
