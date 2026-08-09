@@ -71,6 +71,15 @@ describe('api module structure', () => {
     expect(api.models.selectProviderModel).toBeTypeOf('function');
   });
 
+  it('exports GitHub fix workflow methods', () => {
+    expect(api.githubFixes).toBeDefined();
+    expect(api.githubFixes.status).toBeTypeOf('function');
+    expect(api.githubFixes.list).toBeTypeOf('function');
+    expect(api.githubFixes.create).toBeTypeOf('function');
+    expect(api.githubFixes.diff).toBeTypeOf('function');
+    expect(api.githubFixes.createPullRequest).toBeTypeOf('function');
+  });
+
   it('exports executions namespace', () => {
     expect(api.executions).toBeDefined();
     expect(api.executions.list).toBeTypeOf('function');
@@ -99,7 +108,7 @@ describe('api module structure', () => {
       'pipelines', 'templates', 'events', 'preferences', 'notifications',
       'inbox', 'supervisor', 'knowledge', 'audit', 'plugins', 'billing',
       'usage', 'apiKeys', 'releases', 'eval', 'notificationChannels',
-      'operatorActions', 'workspaceSnapshot',
+      'operatorActions', 'workspaceSnapshot', 'githubFixes',
     ];
     for (const ns of namespaces) {
       expect((api as any)[ns], `api.${ns} should exist`).toBeDefined();
