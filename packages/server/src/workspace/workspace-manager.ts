@@ -1,5 +1,5 @@
-import { execSync, exec } from 'child_process';
-import { mkdirSync, existsSync, rmSync, writeFileSync, readFileSync } from 'fs';
+import { execFileSync } from 'child_process';
+import { mkdirSync, existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { eventBus } from '../events/event-bus.js';
 import { addTaskLog } from '../db/models/task.js';
@@ -28,9 +28,9 @@ export class WorkspaceManager {
     const branchName = `agent-factory/pipeline-${pipelineId}`;
 
     if (this.isGitRepo()) {
-      return this.createGitWorktree(wsPath, branchName, pipelineId);
+      return this.createGitWorktree(wsPath, branchName, pipelineId, 'pipeline');
     } else {
-      return this.createPlainWorkspace(wsPath, pipelineId);
+      return this.createPlainWorkspace(wsPath, pipelineId, 'pipeline');
     }
   }
 
@@ -42,9 +42,9 @@ export class WorkspaceManager {
 
     if (this.isGitRepo()) {
       const branchName = `agent-factory/task-${taskId}`;
-      return this.createGitWorktree(wsPath, branchName, taskId);
+      return this.createGitWorktree(wsPath, branchName, taskId, 'task');
     } else {
-      return this.createPlainWorkspace(wsPath, taskId);
+      return this.createPlainWorkspace(wsPath, taskId, 'task');
     }
   }
 
@@ -96,17 +96,18 @@ export class WorkspaceManager {
     try {
       // Commit any uncommitted changes in the worktree
       try {
-        execSync(`git -C "${wsPath}" add -A`, { stdio: 'pipe' });
-        execSync(`git -C "${wsPath}" commit -m "${commitMessage || `Agent Factory: pipeline ${pipelineId} output`}" --allow-empty`, { stdio: 'pipe' });
+        execFileSync('git', ['-C', wsPath, 'add', '-A'], { stdio: 'pipe' });
+        execFileSync(
+          'git',
+          ['-C', wsPath, 'commit', '-m', commitMessage || `Agent Factory: pipeline ${pipelineId} output`, '--allow-empty'],
+          { stdio: 'pipe' },
+        );
       } catch {
         // No changes to commit, that's fine
       }
 
-      // Get the current branch of main repo
-      const mainBranch = execSync(`git -C "${this.baseDir}" rev-parse --abbrev-ref HEAD`, { encoding: 'utf-8' }).trim();
-
       // Merge the pipeline branch into main
-      execSync(`git -C "${this.baseDir}" merge "${branchName}" --no-edit`, { stdio: 'pipe' });
+      execFileSync('git', ['-C', this.baseDir, 'merge', branchName, '--no-edit'], { stdio: 'pipe' });
 
       return { success: true };
     } catch (err: any) {
@@ -125,14 +126,14 @@ export class WorkspaceManager {
 
     if (this.isGitRepo()) {
       try {
-        execSync(`git -C "${this.baseDir}" worktree remove "${wsPath}" --force`, { stdio: 'pipe' });
+        execFileSync('git', ['-C', this.baseDir, 'worktree', 'remove', wsPath, '--force'], { stdio: 'pipe' });
       } catch {
         // Force remove if worktree remove fails
         rmSync(wsPath, { recursive: true, force: true });
       }
 
       try {
-        execSync(`git -C "${this.baseDir}" branch -D "${branchName}"`, { stdio: 'pipe' });
+        execFileSync('git', ['-C', this.baseDir, 'branch', '-D', branchName], { stdio: 'pipe' });
       } catch {
         // Branch might not exist
       }
@@ -172,7 +173,6 @@ export class WorkspaceManager {
    * List all active workspaces.
    */
   listWorkspaces(): WorkspaceInfo[] {
-    const { readdirSync } = require('fs');
     try {
       const entries = readdirSync(this.workspacesDir, { withFileTypes: true });
       return entries
@@ -188,32 +188,95 @@ export class WorkspaceManager {
     }
   }
 
+  /**
+   * Remove terminal/orphaned workspaces after the configured retention window.
+   * Active task and pipeline ids must be supplied as `task:<id>` or
+   * `pipeline:<id>` keys so a long-running job is never deleted.
+   */
+  async cleanupExpiredWorkspaces(options: {
+    retentionMs: number;
+    protectedWorkspaceKeys?: ReadonlySet<string>;
+    now?: number;
+  }): Promise<WorkspaceCleanupResult> {
+    const protectedWorkspaceKeys = options.protectedWorkspaceKeys ?? new Set<string>();
+    const now = options.now ?? Date.now();
+    const result: WorkspaceCleanupResult = { removed: 0, protected: 0, retained: 0, errors: [] };
+
+    if (!Number.isFinite(options.retentionMs) || options.retentionMs < 0) {
+      throw new Error('Workspace retention must be a non-negative number of milliseconds');
+    }
+
+    const entries = (() => {
+      try {
+        return readdirSync(this.workspacesDir, { withFileTypes: true, encoding: 'utf8' });
+      } catch {
+        return [];
+      }
+    })();
+
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const match = entry.name.match(/^(pipeline|task)-(.+)$/);
+      if (!match) continue;
+      const type = match[1] as 'pipeline' | 'task';
+      const id = match[2];
+      const key = `${type}:${id}`;
+      if (protectedWorkspaceKeys.has(key)) {
+        result.protected++;
+        continue;
+      }
+
+      const path = join(this.workspacesDir, entry.name);
+      try {
+        const ageMs = Math.max(0, now - statSync(path).mtimeMs);
+        if (ageMs < options.retentionMs) {
+          result.retained++;
+          continue;
+        }
+        await this.cleanupWorkspace(id, type);
+        result.removed++;
+      } catch (error) {
+        result.errors.push({
+          key,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    return result;
+  }
+
   // === Private Methods ===
 
   private isGitRepo(): boolean {
     try {
-      execSync(`git -C "${this.baseDir}" rev-parse --git-dir`, { stdio: 'pipe' });
+      execFileSync('git', ['-C', this.baseDir, 'rev-parse', '--git-dir'], { stdio: 'pipe' });
       return true;
     } catch {
       return false;
     }
   }
 
-  private createGitWorktree(wsPath: string, branchName: string, id: string): WorkspaceInfo {
+  private createGitWorktree(
+    wsPath: string,
+    branchName: string,
+    id: string,
+    type: 'pipeline' | 'task',
+  ): WorkspaceInfo {
     if (existsSync(wsPath)) {
-      return { path: wsPath, type: 'pipeline', id, isGitWorktree: true, branchName };
+      return { path: wsPath, type, id, isGitWorktree: true, branchName };
     }
 
     try {
       // Create a new branch from HEAD and set up worktree
-      execSync(`git -C "${this.baseDir}" worktree add -b "${branchName}" "${wsPath}" HEAD`, { stdio: 'pipe' });
+      execFileSync('git', ['-C', this.baseDir, 'worktree', 'add', '-b', branchName, wsPath, 'HEAD'], { stdio: 'pipe' });
     } catch (err: any) {
       // Branch might already exist; try without -b
       try {
-        execSync(`git -C "${this.baseDir}" worktree add "${wsPath}" "${branchName}"`, { stdio: 'pipe' });
+        execFileSync('git', ['-C', this.baseDir, 'worktree', 'add', wsPath, branchName], { stdio: 'pipe' });
       } catch {
         // Fall back to plain workspace
-        return this.createPlainWorkspace(wsPath, id);
+        return this.createPlainWorkspace(wsPath, id, type);
       }
     }
 
@@ -223,21 +286,21 @@ export class WorkspaceManager {
 
     return {
       path: wsPath,
-      type: 'pipeline',
+      type,
       id,
       isGitWorktree: true,
       branchName,
     };
   }
 
-  private createPlainWorkspace(wsPath: string, id: string): WorkspaceInfo {
+  private createPlainWorkspace(wsPath: string, id: string, type: 'pipeline' | 'task'): WorkspaceInfo {
     mkdirSync(wsPath, { recursive: true });
     mkdirSync(join(wsPath, '.agent-factory', 'shared'), { recursive: true });
     mkdirSync(join(wsPath, 'output'), { recursive: true });
 
     return {
       path: wsPath,
-      type: 'pipeline',
+      type,
       id,
       isGitWorktree: false,
     };
@@ -250,6 +313,13 @@ export interface WorkspaceInfo {
   id: string;
   isGitWorktree: boolean;
   branchName?: string;
+}
+
+export interface WorkspaceCleanupResult {
+  removed: number;
+  protected: number;
+  retained: number;
+  errors: Array<{ key: string; message: string }>;
 }
 
 // Singleton

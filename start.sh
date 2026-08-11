@@ -40,7 +40,7 @@ fi
 if ! command -v pnpm >/dev/null 2>&1; then
   echo -e "${BLUE}📦 Provisioning pnpm via corepack...${NC}"
   corepack enable pnpm 2>/dev/null || true
-  corepack prepare pnpm@latest --activate 2>/dev/null || true
+  corepack prepare pnpm@9.15.9 --activate 2>/dev/null || true
   if ! command -v pnpm >/dev/null 2>&1; then
     echo -e "${YELLOW}❌ pnpm unavailable. Run: npm install -g pnpm${NC}"
     exit 1
