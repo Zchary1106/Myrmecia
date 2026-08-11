@@ -81,14 +81,20 @@ import { createCapabilityRoutes } from './routes/capabilities.js';
 import { createAgentCommsRoutes } from './routes/agent-comms.js';
 import { createArtifactRoutes } from './routes/artifacts.js';
 import { artifactCleanupWorker } from './workers/artifact-cleanup.js';
+import { workspaceCleanupWorker } from './workers/workspace-cleanup.js';
 import { agentRuntime } from './agents/agent-runtime.js';
 import { eventBus } from './events/event-bus.js';
 import { createSocialWorkflowRoutes } from './routes/social-workflow.js';
 import { SocialMonitorWorker } from './workers/social-monitor.js';
+import { GitHubFixService } from './github/github-fix-service.js';
+import { createGitHubFixRoutes } from './routes/github-fixes.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3000;
-const HOST = process.env.HOST;
+// Local mode is unauthenticated by default, so never expose it to the LAN
+// unless the operator explicitly sets HOST. Production/Docker keeps Node's
+// normal all-interface behavior when HOST is omitted.
+const HOST = process.env.HOST?.trim() || (process.env.NODE_ENV === 'production' ? undefined : '127.0.0.1');
 const RESERVED_DASHBOARD_PATHS = ['/api', '/auth', '/health', '/metrics', '/ws'];
 
 function runtimeAssetPath(relativePath: string): string {
@@ -206,6 +212,7 @@ async function main() {
   // Agent teams (parallel squads with a shared task board)
   loadTeams();
   const teamCoordinator = new TeamCoordinator(taskQueue);
+  const githubFixService = new GitHubFixService(teamCoordinator);
   logger.info({ teams: listTeams().length }, 'Agent teams ready');
 
   // Domain packs (domain-specialized persona + knowledge overlay)
@@ -295,6 +302,7 @@ async function main() {
   app.use('/api/v1/pipelines', createPipelineRoutes(pipelineEngine));
   app.use('/api/v1/templates', createTemplateRoutes());
   app.use('/api/v1/social-workflow', createSocialWorkflowRoutes());
+  app.use('/api/v1/github-fixes', createGitHubFixRoutes(githubFixService));
   app.use('/api/v1', createSystemRoutes());
   app.use('/api/v1/knowledge', createKnowledgeRoutes());
   app.use('/api/v1/memory', createMemoryRoutes());
@@ -354,6 +362,11 @@ async function main() {
 
   // Artifact cleanup worker
   setInterval(() => artifactCleanupWorker.run({ logger, emit: (t, p) => eventBus.emit(t as any, p) }), artifactCleanupWorker.intervalMs);
+  const workspaceCleanupTimer = setInterval(
+    () => workspaceCleanupWorker.run({ logger, emit: (t, p) => eventBus.emit(t as any, p) }),
+    workspaceCleanupWorker.intervalMs,
+  );
+  workspaceCleanupTimer.unref?.();
 
   const onListening = async () => {
     logger.info(`Agent Factory running on http://localhost:${PORT}`);
@@ -366,10 +379,10 @@ async function main() {
     taskQueue.startWorker();
     await qualityLoop.recoverInterruptedAttempts();
     teamCoordinator.recover();
+    await workspaceCleanupWorker.run({ logger, emit: (t, p) => eventBus.emit(t as any, p) });
   };
-  // Existing server/Docker launches retain Node's default interface when HOST is
-  // unset. Desktop explicitly supplies 127.0.0.1 so its local service is never
-  // exposed on a LAN interface.
+  // Local development defaults to loopback. Production/Docker can either set
+  // HOST explicitly or retain Node's all-interface default.
   if (HOST) {
     server.listen(PORT, HOST, onListening);
   } else {
@@ -381,6 +394,7 @@ async function main() {
     logger.info('Shutting down gracefully...');
     const { shutdownTelemetry } = await import('./observability/telemetry.js');
     await shutdownTelemetry();
+    clearInterval(workspaceCleanupTimer);
     await workerPool.shutdown();
     await pubsub.shutdown();
     await taskQueue.shutdown();

@@ -206,6 +206,7 @@ function AgentInspector() {
     [executions, selectedAgentId],
   );
   const latestExecution = agentExecutions[0];
+  const hasActiveExecution = latestExecution?.status === 'running';
   const latestMessages = latestExecution ? executionMessages[latestExecution.id] || [] : [];
 
   useEffect(() => {
@@ -247,7 +248,7 @@ function AgentInspector() {
             rightPanelTab === 'chat' ? 'bg-accent/15 text-accent-light' : 'text-gray-500 hover:text-gray-300',
           )}
         >
-          Current Run
+          {hasActiveExecution ? 'Active Run' : 'Latest Run'}
         </button>
         <button
           type="button"
@@ -273,7 +274,9 @@ function AgentInspector() {
               <>
                 <div className="rounded-xl border border-border bg-background p-3">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-[10px] uppercase tracking-wider text-gray-600">Execution</span>
+                    <span className="text-[10px] uppercase tracking-wider text-gray-600">
+                      {hasActiveExecution ? 'Active execution' : 'Latest execution'}
+                    </span>
                     <span className={cn('rounded px-2 py-1 text-[9px]', statusClass(latestExecution.status))}>
                       {latestExecution.status}
                     </span>

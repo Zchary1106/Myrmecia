@@ -3,7 +3,7 @@ import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-http';
 import { PeriodicExportingMetricReader, MeterProvider } from '@opentelemetry/sdk-metrics';
 import { trace, metrics } from '@opentelemetry/api';
-import { Resource } from '@opentelemetry/resources';
+import { resourceFromAttributes } from '@opentelemetry/resources';
 import { ATTR_SERVICE_NAME } from '@opentelemetry/semantic-conventions';
 import { logger } from '../lib/logger.js';
 
@@ -15,7 +15,7 @@ export function initRealTelemetry(): {
   const endpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT || 'http://localhost:4318';
   const serviceName = process.env.OTEL_SERVICE_NAME || 'agent-factory';
 
-  const resource = new Resource({ [ATTR_SERVICE_NAME]: serviceName });
+  const resource = resourceFromAttributes({ [ATTR_SERVICE_NAME]: serviceName });
 
   const traceExporter = new OTLPTraceExporter({
     url: `${endpoint.replace(/\/$/, '')}/v1/traces`,

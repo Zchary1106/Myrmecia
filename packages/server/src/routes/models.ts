@@ -265,15 +265,35 @@ export function createModelRoutes(): Router {
     }
   });
 
-  router.post('/:id/health-check', (req, res) => {
+  router.post('/:id/health-check', async (req, res) => {
     try {
       const model = getModel(req.params.id);
       if (!model) notFound('MODEL_NOT_FOUND', 'Model not found');
       const actor = actorFromRequest(req);
+      let status: 'healthy' | 'degraded' | 'disabled' = model.enabled ? 'healthy' : 'disabled';
+      let error: string | undefined;
+      const startedAt = Date.now();
+      if (model.provider === 'copilot' && model.enabled) {
+        try {
+          const discovered = await getModelGateway().listProviderModels('copilot');
+          const match = discovered.find(candidate => candidate.id === model.id);
+          if (!match) {
+            status = 'degraded';
+            error = 'Model is not present in the latest authenticated Copilot catalog; cached compatibility entry only.';
+          } else if (match.policy?.state === 'disabled') {
+            status = 'disabled';
+            error = match.policy.terms || 'Disabled by Copilot policy';
+          }
+        } catch (healthError) {
+          status = 'degraded';
+          error = healthError instanceof Error ? healthError.message : 'Copilot model discovery failed';
+        }
+      }
       const checked = recordModelHealth({
         modelId: req.params.id,
-        status: model.enabled ? 'healthy' : 'disabled',
-        latencyMs: 0,
+        status,
+        latencyMs: Date.now() - startedAt,
+        error,
       });
       createOperatorAction({
         action: 'model.health_check',

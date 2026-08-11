@@ -2,6 +2,7 @@
   "name": "myrmecia",
   "version": "0.1.0",
   "private": true,
+  "packageManager": "pnpm@9.15.9",
   "description": "Myrmecia — autonomous multi-agent orchestration platform (formerly Agent Factory)",
   "scripts": {
     "start:local": "bash scripts/start.sh",
@@ -37,6 +38,12 @@
     ],
     "patchedDependencies": {
       "wechat-official-account-mcp@2.0.0": "patches/wechat-official-account-mcp@2.0.0.patch"
+    },
+    "overrides": {
+      "wechat-official-account-mcp>sqlite3": "6.0.1",
+      "fast-uri": "3.1.5",
+      "form-data": "4.0.6",
+      "ip-address": "10.3.1"
     }
   }
 }

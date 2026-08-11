@@ -31,8 +31,22 @@ export function createNotification(data: {
   workspaceId?: string;
 }): Notification {
   const db = getDb();
-  const id = `notif_${uuid().slice(0, 8)}`;
   const workspaceId = notificationWorkspaceId(data);
+  const duplicate = db.get(`
+    SELECT * FROM notifications
+    WHERE type = ?
+      AND title = ?
+      AND message = ?
+      AND COALESCE(task_id, '') = COALESCE(?, '')
+      AND COALESCE(pipeline_id, '') = COALESCE(?, '')
+      AND workspace_id = ?
+      AND created_at >= datetime('now', '-30 seconds')
+    ORDER BY created_at DESC
+    LIMIT 1
+  `, data.type, data.title, data.message, data.taskId || null, data.pipelineId || null, workspaceId) as any;
+  if (duplicate) return rowToNotification(duplicate);
+
+  const id = `notif_${uuid().slice(0, 8)}`;
   db.run(`
     INSERT INTO notifications (id, type, title, message, task_id, pipeline_id, workspace_id)
     VALUES (?, ?, ?, ?, ?, ?, ?)

@@ -19,7 +19,7 @@ mkdirSync(stageRoot, { recursive: true });
 run(['--filter', '@myrmecia/shared', 'build']);
 run(['--filter', '@myrmecia/server', 'build']);
 run(['--filter', '@myrmecia/dashboard', 'build']);
-run(['--filter', '@myrmecia/server', 'deploy', '--prod', '--legacy', resolve(stageRoot, 'server')]);
+run(['--filter', '@myrmecia/server', 'deploy', '--prod', resolve(stageRoot, 'server')]);
 
 const stagedServer = resolve(stageRoot, 'server');
 writeFileSync(

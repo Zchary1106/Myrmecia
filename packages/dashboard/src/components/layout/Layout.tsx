@@ -84,17 +84,17 @@ function GlobalNavRail() {
   return (
     <aside
       data-testid="global-nav-rail"
-      className="flex h-full w-[104px] flex-none flex-col border-r border-border bg-surface"
+      className="flex h-full w-[68px] flex-none flex-col border-r border-border bg-surface transition-[width] md:w-[76px] lg:w-[104px]"
     >
-      <div className="flex flex-col items-center border-b border-border px-2.5 py-3.5">
-        <img src="/myrmecia-mark.png" alt="" className="h-10 w-10 rounded-xl shadow-lg shadow-accent/20" />
-        <div className="mt-2 text-[9px] font-bold tracking-[0.16em] text-gray-500">MYRMECIA</div>
+      <div className="flex flex-col items-center border-b border-border px-2 py-3">
+        <img src="/myrmecia-mark.png" alt="Myrmecia" className="h-9 w-9 rounded-xl shadow-lg shadow-accent/20 lg:h-10 lg:w-10" />
+        <div className="mt-2 hidden text-[9px] font-bold tracking-[0.16em] text-gray-500 lg:block">MYRMECIA</div>
       </div>
 
       <nav className="flex-1 overflow-y-auto px-2 py-2.5">
         {globalSections.map((section, sectionIndex) => (
           <div key={section.label} className={cn(sectionIndex > 0 && 'mt-2.5 border-t border-border pt-2.5')}>
-            <div className="mb-1.5 text-center text-[8px] font-semibold uppercase tracking-[0.14em] text-gray-700">
+            <div className="mb-1.5 hidden text-center text-[8px] font-semibold uppercase tracking-[0.14em] text-gray-700 lg:block">
               {section.label}
             </div>
             <div className="space-y-1.5">
@@ -115,7 +115,7 @@ function GlobalNavRail() {
                   )}
                 >
                   <span className="text-lg leading-none">{view.icon}</span>
-                  <span className="mt-1 max-w-full truncate text-[9px] font-medium">{view.label}</span>
+                  <span className="mt-1 hidden max-w-full truncate text-[10px] font-medium lg:block">{view.label}</span>
                   {badge > 0 && (
                     <span className="absolute right-1 top-1 min-w-4 rounded-full bg-accent px-1 text-[8px] font-bold text-white">
                       {badge > 99 ? '99+' : badge}

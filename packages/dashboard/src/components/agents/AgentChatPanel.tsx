@@ -70,7 +70,7 @@ export function AgentChatPanel() {
   const {
     selectedAgentId, agents, agentChats, addChatMessage, updateChatMessage,
     rightPanelTab, setRightPanelTab, tasks, executions, executionMessages,
-    loadExecutionMessages, loadTasks, loadExecutions
+    loadExecutionMessages, loadTasks, loadExecutions, setActiveView,
   } = useStore();
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
@@ -138,6 +138,12 @@ export function AgentChatPanel() {
       </div>
     );
   }
+
+  const quickPrompts = agent.role === 'developer'
+    ? ['Inspect this project and suggest the safest next change.', 'Fix a small bug and show me the diff before committing.']
+    : agent.role === 'tester'
+      ? ['Review the current changes and propose regression tests.', 'Run the relevant tests and summarize failures.']
+      : ['Review the current project and recommend the next action.', `Create a concise plan for a task suited to ${agent.name}.`];
 
   const handleSend = async () => {
     if (!input.trim() || sending) return;
@@ -236,7 +242,7 @@ export function AgentChatPanel() {
       <div className="flex-1 overflow-y-auto py-2">
         {chatMessages.length === 0 && execMessages.length === 0 && (
           <div className="h-full flex items-center justify-center">
-            <div className="text-center text-gray-600">
+            <div className="w-full max-w-xl px-6 text-center text-gray-600">
               <div className="text-3xl mb-2">{agent.emoji || '🤖'}</div>
               <p className="text-sm">Start a task with {agent.name}</p>
               <p className="text-[11px] text-gray-700 mt-1">
@@ -244,6 +250,18 @@ export function AgentChatPanel() {
                   ? `Capabilities: ${agent.capabilities.slice(0, 3).join(', ')}`
                   : `Role: ${agent.role}`}
               </p>
+              <div className="mx-auto mt-5 grid max-w-md gap-2 sm:grid-cols-2">
+                {quickPrompts.map(prompt => (
+                  <button key={prompt} type="button" onClick={() => setInput(prompt)}
+                    className="rounded-xl border border-border bg-surface px-3 py-3 text-left text-[11px] leading-relaxed text-gray-400 hover:border-accent/40 hover:text-gray-200">
+                    {prompt}
+                  </button>
+                ))}
+              </div>
+              <button type="button" onClick={() => setActiveView('teams')}
+                className="mt-4 text-[11px] font-medium text-accent-light hover:underline">
+                Need several specialists? Open Agent Teams →
+              </button>
             </div>
           </div>
         )}

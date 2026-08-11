@@ -45,7 +45,11 @@ export function TaskCostTable({ tasks }: { tasks: TaskCost[] }) {
               <tr key={t.taskId} className="border-b border-border/50 hover:bg-surface-hover">
                 <td className="py-2 px-2 truncate max-w-[200px]" title={t.title}>{t.title}</td>
                 <td className="py-2 px-2 text-gray-400">{t.agentId}</td>
-                <td className="py-2 px-2 text-right text-gray-400">{formatTokens(t.inputTokens + t.outputTokens)}</td>
+                <td className="py-2 px-2 text-right text-gray-400">
+                  {t.inputTokens + t.outputTokens > 0 ? formatTokens(t.inputTokens + t.outputTokens) : (
+                    <span title="The provider reported AI Units but did not return token counts for this request.">Not reported</span>
+                  )}
+                </td>
                 <td className="py-2 px-2 text-right font-mono text-blue-300">{t.aiUnits ? t.aiUnits.toFixed(3) : '—'}</td>
                 <td className="py-2 px-2 text-right font-mono">
                   {t.costUSD == null ? (

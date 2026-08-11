@@ -5,7 +5,7 @@ import { cn } from '../../lib/utils';
 import { useStore } from '../../stores/store';
 import { StageOutputPreview } from './StageOutputPreview';
 
-const CROSSPOST_TEMPLATE_NAME = 'Xiaohongshu Douyin Crosspost';
+const CROSSPOST_TEMPLATE_NAME = 'Social Content Three Lanes';
 const XIAOHONGSHU_TEMPLATE_NAME = 'Xiaohongshu Publish';
 const DOUYIN_TEMPLATE_NAME = 'Douyin Video Publish';
 const WECHAT_TEMPLATE_NAME = 'WeChat Article';
@@ -22,12 +22,20 @@ const xiaohongshuStages: Array<Pick<PipelineStage, 'name' | 'agentRole'>> = [
 ];
 
 const crosspostStages: Array<Pick<PipelineStage, 'name' | 'agentRole'>> = [
-  { name: '选题调研', agentRole: 'trend-scout' },
-  { name: '小红书笔记创作', agentRole: 'xiaohongshu-writer' },
-  { name: '抖音脚本创作', agentRole: 'douyin-writer' },
-  { name: '合规审核', agentRole: 'review' },
-  { name: '配图生成', agentRole: 'xiaohongshu-writer' },
+  { name: '选题证据包', agentRole: 'trend-scout' },
+  { name: '内容核心包', agentRole: 'content-strategist' },
+  { name: '抖音视频生产线', agentRole: 'douyin-writer' },
+  { name: '小红书生产线', agentRole: 'xiaohongshu-writer' },
+  { name: '公众号生产线', agentRole: 'wechat-writer' },
+  { name: '自动合规初筛', agentRole: 'social-compliance-reviewer' },
+  { name: '人工审核材料', agentRole: 'social-review-coordinator' },
+  { name: '小红书卡片生成', agentRole: 'xiaohongshu-visual-designer' },
+  { name: '公众号草稿箱同步', agentRole: 'wechat-writer' },
+  { name: '媒体 QA', agentRole: 'media-qa' },
+  { name: '发布预检', agentRole: 'social-preflight' },
   { name: '发布执行', agentRole: 'social-publisher' },
+  { name: '发布补偿计划', agentRole: 'social-ops' },
+  { name: '发布后监控计划', agentRole: 'social-analytics' },
 ];
 
 const douyinStages: Array<Pick<PipelineStage, 'name' | 'agentRole'>> = [
@@ -73,16 +81,16 @@ export function contentStudioWorkflow(selectedAgentId: string | null) {
   if (selectedAgentId === 'douyin-writer') {
     return {
       templateName: DOUYIN_TEMPLATE_NAME,
-      title: 'Douyin Video Studio',
-      subtitle: '抖音独立视频生产线 · 本地视频 QA · 人工确认发布',
+      title: 'Douyin Script & Publish Studio',
+      subtitle: '脚本与发布工作台 · 需要用户提供真实本地视频 · 人工确认上传',
       stages: douyinStages,
       createLabel: 'Create Douyin video run',
     };
   }
   return {
       templateName: CROSSPOST_TEMPLATE_NAME,
-      title: 'Content Production Studio',
-      subtitle: 'Xiaohongshu + Douyin · artifacts first · human-gated publishing',
+    title: 'Social Three-Lane Studio',
+    subtitle: 'Douyin + Xiaohongshu + WeChat · shared research · independent production lanes',
       stages: crosspostStages,
       createLabel: 'Create crosspost run',
   };
@@ -210,6 +218,7 @@ function PipelineStatus({ status }: { status: Pipeline['status'] }) {
 export function ContentStudio() {
   const {
     agents,
+    tasks,
     pipelines,
     templates,
     activePipelineId,
@@ -271,6 +280,9 @@ export function ContentStudio() {
     [pipelines, isWeChatMode, isXiaohongshuMode, isDouyinMode, workflowTemplate?.id],
   );
   const pipeline = contentPipelines.find(item => item.id === selectedRunId) || null;
+  const currentTask = pipeline?.stages[pipeline.currentStageIndex]?.taskId
+    ? tasks.find(task => task.id === pipeline.stages[pipeline.currentStageIndex].taskId)
+    : undefined;
   const artifactVersion = pipeline?.stages
     .map(stage => `${stage.index}:${stage.status}:${stage.output?.length || 0}`)
     .join('|') || '';
@@ -667,6 +679,22 @@ export function ContentStudio() {
             </main>
 
             <aside className="border-t border-border bg-surface p-4 2xl:overflow-y-auto 2xl:border-l 2xl:border-t-0">
+              {pipeline.status === 'awaiting_retry' && retryableStage && (
+                <section className="mb-5 rounded-xl border border-orange-500/30 bg-orange-500/10 p-3">
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-orange-300">Recovery required</div>
+                  <div className="mt-2 text-[12px] font-medium text-orange-100">{retryableStage.name}</div>
+                  <p className="mt-1 text-[10px] leading-relaxed text-orange-200/80">
+                    {currentTask?.error || 'This stage was rolled back and is waiting for an operator decision.'}
+                  </p>
+                  <p className="mt-2 text-[10px] leading-relaxed text-gray-400">
+                    Review the failed input or credentials, then retry from this stage. Completed upstream artifacts will be preserved.
+                  </p>
+                  <button type="button" onClick={requestRetry} disabled={!!busyAction}
+                    className="mt-3 w-full rounded-lg bg-orange-400 px-3 py-2 text-[10px] font-semibold text-black disabled:opacity-40">
+                    {busyAction === 'retry' ? 'Retrying…' : `Retry from ${retryableStage.name}`}
+                  </button>
+                </section>
+              )}
               <section>
                 <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-gray-600">Run controls</div>
                 <div className="mt-3 grid grid-cols-4 gap-2">

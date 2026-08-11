@@ -99,13 +99,15 @@ stages:
       {input}
 
   - name: 小红书卡片生成
-    role: xiaohongshu-writer
+    role: xiaohongshu-visual-designer
     depends_on: [3, 6]
     prompt_template: |
       必须从上下文读取系统生成的 Verified Human Approval Records。
-      仅在存在有效人工审批且小红书内容形态为图文时，调用 `image.generate_cards`
-      生成 6-8 张 1080x1440 PNG 卡片。卡片必须从已审核稿提炼，不得新增事实。
-      输出卡片绝对路径和内容摘要；如果审核未通过、形态为视频或工具失败，明确停止原因。
+      仅在存在有效人工审批且小红书内容形态为图文时，使用
+      `$xiaohongshu-visual-creator` 设计卡片叙事并调用 `image.generate_cards`
+      生成 6-8 张 1080x1440 PNG 卡片，再逐图调用 `media.inspect`。
+      卡片必须从已审核稿提炼，不得新增事实。输出真实绝对路径和内容摘要；
+      如果审核未通过、形态为视频或工具失败，明确停止原因。
 
       小红书完整终稿与审核包：
       {input}
