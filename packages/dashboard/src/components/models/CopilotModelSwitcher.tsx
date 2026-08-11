@@ -61,10 +61,10 @@ export function CopilotModelSwitcher() {
   return (
     <div
       ref={rootRef}
-      className="relative flex max-w-full items-center gap-2 rounded-xl border border-blue-400/20 bg-background/80 px-3 py-1.5"
+      className="relative flex max-w-full min-w-0 items-center gap-1.5 rounded-xl border border-blue-400/20 bg-background/80 px-2 py-1.5 sm:gap-2 sm:px-3"
       title="切换后，新启动的任务会使用所选模型；正在运行的任务不受影响。"
     >
-      <span className="whitespace-nowrap text-[10px] font-semibold tracking-wider text-blue-300">当前执行模型</span>
+      <span className="hidden whitespace-nowrap text-[10px] font-semibold tracking-wider text-blue-300 md:inline">当前执行模型</span>
       <button
         type="button"
         aria-label="当前执行模型"
@@ -72,7 +72,7 @@ export function CopilotModelSwitcher() {
         aria-expanded={open}
         disabled={saving || refreshing}
         onClick={() => setOpen(current => !current)}
-        className="flex min-w-[150px] max-w-[240px] items-center justify-between gap-3 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-left text-xs outline-none hover:border-blue-400/60 focus:border-blue-400 disabled:opacity-50"
+        className="flex min-w-[112px] max-w-[190px] items-center justify-between gap-2 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-left text-xs outline-none hover:border-blue-400/60 focus:border-blue-400 disabled:opacity-50 sm:min-w-[150px] sm:max-w-[240px]"
         title={selected?.id === 'auto' ? 'Auto 会由 Copilot 在每次请求时动态选择实际模型' : selected?.name}
       >
         <span className="truncate">{selected?.name || settings.selectedModelId || '选择模型'}</span>
@@ -82,7 +82,7 @@ export function CopilotModelSwitcher() {
         <div
           role="listbox"
           aria-label="可用 Copilot 模型"
-          className="absolute right-0 top-[calc(100%+8px)] z-[100] max-h-[360px] min-w-[300px] overflow-y-auto rounded-xl border border-border bg-surface p-1.5 shadow-2xl"
+          className="absolute right-0 top-[calc(100%+8px)] z-[100] max-h-[360px] w-[min(340px,calc(100vw-2rem))] overflow-y-auto rounded-xl border border-border bg-surface p-1.5 shadow-2xl"
         >
           {settings.models.map(model => {
             const active = model.id === settings.selectedModelId;
@@ -125,7 +125,7 @@ export function CopilotModelSwitcher() {
         {refreshing ? '…' : '↻'}
       </button>
       <span
-        className={`max-w-[180px] truncate text-[10px] ${error ? 'text-amber-300' : 'text-gray-500'}`}
+        className={`hidden max-w-[180px] truncate text-[10px] xl:inline ${error ? 'text-amber-300' : 'text-gray-500'}`}
         title={error || undefined}
       >
         {saving ? '切换中…' : error ? '⚠ 使用缓存模型列表' : (selected?.id === 'auto' ? '新任务动态选模' : `新任务 · ${selected?.id}`)}

@@ -85,6 +85,8 @@ import { agentRuntime } from './agents/agent-runtime.js';
 import { eventBus } from './events/event-bus.js';
 import { createSocialWorkflowRoutes } from './routes/social-workflow.js';
 import { SocialMonitorWorker } from './workers/social-monitor.js';
+import { GitHubFixService } from './github/github-fix-service.js';
+import { createGitHubFixRoutes } from './routes/github-fixes.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3000;
@@ -206,6 +208,7 @@ async function main() {
   // Agent teams (parallel squads with a shared task board)
   loadTeams();
   const teamCoordinator = new TeamCoordinator(taskQueue);
+  const githubFixService = new GitHubFixService(teamCoordinator);
   logger.info({ teams: listTeams().length }, 'Agent teams ready');
 
   // Domain packs (domain-specialized persona + knowledge overlay)
@@ -295,6 +298,7 @@ async function main() {
   app.use('/api/v1/pipelines', createPipelineRoutes(pipelineEngine));
   app.use('/api/v1/templates', createTemplateRoutes());
   app.use('/api/v1/social-workflow', createSocialWorkflowRoutes());
+  app.use('/api/v1/github-fixes', createGitHubFixRoutes(githubFixService));
   app.use('/api/v1', createSystemRoutes());
   app.use('/api/v1/knowledge', createKnowledgeRoutes());
   app.use('/api/v1/memory', createMemoryRoutes());

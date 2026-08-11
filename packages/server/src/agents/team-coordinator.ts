@@ -108,7 +108,12 @@ export class TeamCoordinator {
 
   /** Dispatch a goal to a team: the lead decomposes it across the roster and the
    *  members run in parallel. Returns immediately with the run + initial board. */
-  async dispatch(teamId: string, goal: string, workspaceId = 'default'): Promise<{ run: TeamRun; team: Team; board: BoardItem[] }> {
+  async dispatch(
+    teamId: string,
+    goal: string,
+    workspaceId = 'default',
+    workdir?: string,
+  ): Promise<{ run: TeamRun; team: Team; board: BoardItem[] }> {
     const team = getTeam(teamId);
     if (!team) throw new Error(`Unknown team: ${teamId}`);
     if (!goal || !goal.trim()) throw new Error('goal is required');
@@ -132,6 +137,8 @@ export class TeamCoordinator {
       input: goal,
       priority: 'normal',
       workspaceId,
+      workdir,
+      workspacePath: workdir,
     });
     db.run('UPDATE team_runs SET parent_task_id = ?, status = ? WHERE id = ?', parent.id, 'running', id);
 

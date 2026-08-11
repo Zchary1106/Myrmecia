@@ -406,6 +406,44 @@ export interface TaskExecution {
   completedAt?: string;
 }
 
+export type GitHubFixStatus = 'preparing' | 'running' | 'ready' | 'failed' | 'pr_created';
+
+export interface GitHubFixRun {
+  id: string;
+  workspaceId: string;
+  repository: string;
+  repositoryUrl: string;
+  issueNumber?: number;
+  issueUrl?: string;
+  issueTitle?: string;
+  baseBranch: string;
+  workBranch: string;
+  localPath: string;
+  viewerPermission: string;
+  forkRepository?: string;
+  status: GitHubFixStatus;
+  taskId?: string;
+  teamRunId?: string;
+  taskStatus?: TaskStatus;
+  prUrl?: string;
+  error?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface GitHubFixDiff {
+  status: string;
+  stat: string;
+  patch: string;
+  hasChanges: boolean;
+}
+
+export interface GitHubConnectionStatus {
+  authenticated: boolean;
+  login?: string;
+  message?: string;
+}
+
 export type ModelCostType = 'exact' | 'estimated' | 'subscription' | 'unavailable';
 
 export type ExecutionMessageType = 'user_input' | 'agent_text' | 'tool_use' | 'tool_result' | 'progress' | 'error';

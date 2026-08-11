@@ -22,6 +22,9 @@ const routeLabels: Record<string, string> = {
   'role:devops': 'DevOps',
   'role:reviewer': 'Reviewer',
   'role:content-writer': 'Content Writer',
+  'role:wechat-writer': 'WeChat Writer',
+  'role:xiaohongshu-writer': 'Xiaohongshu Writer',
+  'role:douyin-writer': 'Douyin Writer',
   'role:researcher': 'Researcher',
 };
 

@@ -15,6 +15,26 @@ export interface StageOutputValidation {
   errors: string[];
 }
 
+export function lintDeterministicOutput(output: string): string[] {
+  const errors: string[] = [];
+  const codeBlocks = [...output.matchAll(/```(?:bash|sh|shell|zsh|console|text)?\s*\n([\s\S]*?)```/gi)]
+    .map(match => match[1] || '');
+  for (const block of codeBlocks) {
+    const badCommand = block.split('\n').find(line =>
+      /\b(?:git|gh|pnpm|npm|yarn|node|python|pip|curl|wget|docker)\b.*[—–−]\w/.test(line)
+    );
+    if (badCommand) {
+      errors.push(`Command contains a Unicode dash instead of ASCII "--": ${badCommand.trim().slice(0, 160)}`);
+      break;
+    }
+  }
+  if (/https?：\/\//i.test(output)) {
+    errors.push('URL contains a full-width colon; use https:// with ASCII punctuation');
+  }
+  if (output.includes('\u0000')) errors.push('Output contains a NUL character');
+  return errors;
+}
+
 export function extractStructuredOutput(output: string): unknown {
   const trimmed = output.trim();
   if (!trimmed) throw new Error('Stage output is empty');
@@ -57,8 +77,9 @@ function valueAtPath(value: unknown, field: string): unknown {
 }
 
 export function validateStageOutput(stage: PipelineStage, output: string): StageOutputValidation {
+  const deterministicErrors = lintDeterministicOutput(output);
   if (!stage.outputSchema && !stage.outputPolicy) {
-    return { valid: true, errors: [] };
+    return { valid: deterministicErrors.length === 0, errors: deterministicErrors };
   }
 
   let value: unknown;
@@ -68,7 +89,7 @@ export function validateStageOutput(stage: PipelineStage, output: string): Stage
     return { valid: false, errors: [(error as Error).message] };
   }
 
-  const errors: string[] = [];
+  const errors: string[] = [...deterministicErrors];
   if (stage.outputSchema) {
     const schemaPath = resolveRuntimeAsset(stage.outputSchema);
     if (!schemaPath) {

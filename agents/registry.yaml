@@ -204,8 +204,8 @@ agents:
       model: claude-haiku-4.5
       tier: cheap
       fallbackModel: gpt-5.4-mini
-      maxTokens: 4096
-      maxResponseTokens: 2048
+      maxTokens: 16384
+      maxResponseTokens: 4096
       maxToolCalls: 12
       maxWallClockMs: 120000
     capabilities: [gitops, cicd, docker, release, rollback, dependency-license, production-readiness]
@@ -223,8 +223,8 @@ agents:
       model: claude-haiku-4.5
       tier: cheap
       fallbackModel: gpt-5.4-mini
-      maxTokens: 4096
-      maxResponseTokens: 2048
+      maxTokens: 16384
+      maxResponseTokens: 4096
       maxToolCalls: 6
       maxWallClockMs: 90000
     capabilities: [issue-triage, prd, specification, acceptance-criteria, release-notes]
@@ -330,7 +330,7 @@ agents:
   - id: wechat-writer
     name: 公众号写手
     emoji: ✍️
-    role: content-writer
+    role: wechat-writer
     description: 微信公众号深度文章创作，把热点转成有证据、有机制、有实施步骤的长期内容
     skill: skills/wechat-depth-writer/SKILL.md
     model:
@@ -349,7 +349,7 @@ agents:
   - id: xiaohongshu-writer
     name: 小红书写手
     emoji: 📕
-    role: content-writer
+    role: xiaohongshu-writer
     description: 小红书搜索友好、高收藏图文创作，输出唯一终稿与完整卡片故事
     skill: skills/xiaohongshu-save-first-writer/SKILL.md
     model:
