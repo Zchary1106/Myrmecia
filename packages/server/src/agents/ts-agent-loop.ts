@@ -30,6 +30,7 @@ import { recordLedgerEntry } from '../db/models/execution-ledger.js';
 import { resolveDomainForTask, applyDomainOverlay, applyDomainKnowledge } from './domain-context.js';
 import { buildAgentSystemPrompt } from './agent-prompt.js';
 import { getSandboxProfile } from './sandbox-profile.js';
+import type { ExecutionMiddlewareChain } from './execution-middleware.js';
 
 const MAX_RECENT_ACTIVITIES = 5;
 
@@ -208,6 +209,7 @@ export class TsAgentLoop {
     rootSpanId: string,
     tracker: ProgressTracker,
     runtimeSkill?: { skill: SkillDefinition; version: SkillVersion; source: 'assignment' | 'skillPath' },
+    middleware?: ExecutionMiddlewareChain,
   ): Promise<TaskResult> {
     const startTime = Date.now();
     const toolPolicy = resolveAllowedToolsForAgent(agent);
@@ -262,7 +264,7 @@ export class TsAgentLoop {
     if (parsedSkill?.isStructured && parsedSkill.config && !usesCopilot) {
       return this.executeWithSkillExecutor(
         agent, task, abortController, executionId, traceId, rootSpanId,
-        tracker, parsedSkill as { config: SkillExecutorConfig; promptContent: string }, toolPolicy, systemPrompt,
+        tracker, parsedSkill as { config: SkillExecutorConfig; promptContent: string }, toolPolicy, systemPrompt, middleware,
       );
     }
     if (parsedSkill?.isStructured && usesCopilot) {
@@ -471,6 +473,17 @@ export class TsAgentLoop {
           });
           return output;
         }
+        const workdir = task.workdir || process.cwd();
+        const middlewareDecision = middleware?.beforeToolCall(toolName, toolInput, workdir);
+        if (middlewareDecision && !middlewareDecision.allowed) {
+          const output = middlewareDecision.reason || `Tool ${toolName} blocked by execution middleware`;
+          addTaskLog(task.id, 'warn', output, 'middleware');
+          eventBus.emit('tool:blocked', {
+            toolId: toolName, taskId: task.id, workspaceId: task.workspaceId, executionId, agentId: agent.id,
+            reason: output,
+          });
+          return output;
+        }
 
         if (totalToolCalls >= limits.maxToolCallsPerExecution) {
           throw new Error(`Tool call limit exceeded (${limits.maxToolCallsPerExecution})`);
@@ -504,7 +517,7 @@ export class TsAgentLoop {
                 Math.min(limits.maxToolCallTimeoutMs, limits.maxToolRuntimeMsPerExecution - totalToolRuntimeMs),
                 buildMcpPolicyContext(agent, task),
               )
-            : await executeTool(toolName, toolInput, task.workdir || process.cwd(), {
+            : await executeTool(toolName, toolInput, workdir, {
                 allowedTools: toolPolicy.allowedTools,
                 workspaceId: task.workspaceId,
                 timeoutMs: Math.min(limits.maxToolCallTimeoutMs, limits.maxToolRuntimeMsPerExecution - totalToolRuntimeMs),
@@ -521,6 +534,7 @@ export class TsAgentLoop {
 
         const durationMs = Date.now() - startedAt;
         totalToolRuntimeMs += durationMs;
+        middleware?.afterToolCall(toolName, toolInput, status, String(output), workdir, durationMs);
         if (!mcpTool) {
           completeToolExecution(toolExecId, {
             status, output, outputSummary: String(output).slice(0, 200),
@@ -551,6 +565,12 @@ export class TsAgentLoop {
           messages.push(...compaction.messages);
           addTaskLog(task.id, 'info', `🗜️ auto-compacted context ~${compaction.before}→${compaction.after} tokens`, agent.id);
         }
+        middleware?.beforeModelTurn({
+          estimatedContextTokens: compaction.after,
+          maxContextTokens: limits.maxExecutionTokens,
+          turn: numTurns,
+          compacted: compaction.compacted,
+        });
 
         const completionParams = {
           model: selectedModel,
@@ -658,6 +678,18 @@ export class TsAgentLoop {
               messages.push({ role: 'tool', tool_call_id: toolCallId, content: toolOutput });
               continue;
             }
+            const workdir = task.workdir || process.cwd();
+            const middlewareDecision = middleware?.beforeToolCall(toolName, toolInput, workdir);
+            if (middlewareDecision && !middlewareDecision.allowed) {
+              const blockedOutput = middlewareDecision.reason || `Tool ${toolName} blocked by execution middleware`;
+              addTaskLog(task.id, 'warn', blockedOutput, 'middleware');
+              eventBus.emit('tool:blocked', {
+                toolId: toolName, taskId: task.id, workspaceId: task.workspaceId, executionId, agentId: agent.id,
+                reason: blockedOutput,
+              });
+              messages.push({ role: 'tool', tool_call_id: toolCallId, content: blockedOutput });
+              continue;
+            }
 
             // Record tool execution
             const toolExecId = `ts_${executionId}_${toolCallId}`;
@@ -708,7 +740,7 @@ export class TsAgentLoop {
                     Math.min(limits.maxToolCallTimeoutMs, limits.maxToolRuntimeMsPerExecution - totalToolRuntimeMs),
                     buildMcpPolicyContext(agent, task),
                   )
-                : await executeTool(toolName, toolInput, task.workdir || process.cwd(), {
+                : await executeTool(toolName, toolInput, workdir, {
                     allowedTools: toolPolicy.allowedTools,
                     workspaceId: task.workspaceId,
                     timeoutMs: Math.min(limits.maxToolCallTimeoutMs, limits.maxToolRuntimeMsPerExecution - totalToolRuntimeMs),
@@ -736,6 +768,7 @@ export class TsAgentLoop {
 
             const durationMs = Date.now() - toolStartTime;
             totalToolRuntimeMs += durationMs;
+            middleware?.afterToolCall(toolName, toolInput, toolStatus, String(toolOutput), workdir, durationMs);
             recordLedgerEntry({
               executionId, taskId: task.id, agentId: agent.id, workspaceId: task.workspaceId,
               type: 'tool.executed', decision: toolStatus,
@@ -865,6 +898,7 @@ export class TsAgentLoop {
     parsedSkill: { config: SkillExecutorConfig; promptContent: string },
     toolPolicy: ReturnType<typeof resolveAllowedToolsForAgent>,
     systemPrompt: string,
+    middleware?: ExecutionMiddlewareChain,
   ): Promise<TaskResult> {
     const startTime = Date.now();
     const modelSelection = selectModelForAgent(agent, task, {
@@ -946,6 +980,12 @@ export class TsAgentLoop {
           messages.push(...compaction.messages);
           addTaskLog(task.id, 'info', `🗜️ auto-compacted step context ~${compaction.before}→${compaction.after} tokens`, agent.id);
         }
+        middleware?.beforeModelTurn({
+          estimatedContextTokens: compaction.after,
+          maxContextTokens: limits.maxExecutionTokens,
+          turn: turn + 1,
+          compacted: compaction.compacted,
+        });
 
         const completion = await getModelGateway().completeForModel(selectedModel, {
           model: selectedModel,
@@ -1011,6 +1051,17 @@ export class TsAgentLoop {
               messages.push({ role: 'tool', tool_call_id: tc.id, content: blockedOutput });
               continue;
             }
+            const middlewareDecision = middleware?.beforeToolCall(toolName, toolInput, workdir);
+            if (middlewareDecision && !middlewareDecision.allowed) {
+              const blockedOutput = middlewareDecision.reason || `Tool ${toolName} blocked by execution middleware`;
+              addTaskLog(task.id, 'warn', blockedOutput, 'middleware');
+              eventBus.emit('tool:blocked', {
+                toolId: toolName, taskId: task.id, workspaceId: task.workspaceId, executionId, agentId: agent.id,
+                reason: blockedOutput,
+              });
+              messages.push({ role: 'tool', tool_call_id: tc.id, content: blockedOutput });
+              continue;
+            }
 
             // Log tool use
             addTaskLog(task.id, 'info', `  🔧 ${toolName}(${JSON.stringify(toolInput).slice(0, 100)})`, agent.id);
@@ -1060,6 +1111,7 @@ export class TsAgentLoop {
               executionId,
               purpose: `tool ${toolName} result`,
             });
+            middleware?.afterToolCall(toolName, toolInput, result.status, safeToolOutput, workdir, toolElapsedMs);
 
             messages.push({
               role: 'tool',

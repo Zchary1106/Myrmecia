@@ -50,6 +50,7 @@ describe('Database Schema', () => {
     expect(names).toContain('model_health_checks');
     expect(names).toContain('model_usage_stats');
     expect(names).toContain('github_fix_runs');
+    expect(names).toContain('execution_artifacts');
   });
 
   it('should insert and retrieve an agent', () => {

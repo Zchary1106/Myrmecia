@@ -23,7 +23,7 @@ import type {
   ToolExecution,
 } from '@myrmecia/shared';
 
-export type DashboardView = 'command' | 'console' | 'agents' | 'agent-settings' | 'tools' | 'models' | 'skills' | 'orchestrator' | 'board' | 'tasks' | 'timeline' | 'inbox' | 'observability' | 'audit' | 'settings' | 'cost' | 'memory' | 'orchestrate' | 'teams' | 'domains';
+export type DashboardView = 'command' | 'console' | 'agents' | 'agent-settings' | 'tools' | 'models' | 'skills' | 'artifacts' | 'orchestrator' | 'board' | 'tasks' | 'timeline' | 'inbox' | 'observability' | 'audit' | 'settings' | 'cost' | 'memory' | 'orchestrate' | 'teams' | 'domains';
 
 // Legacy ChatMessage for backward compat
 export interface ChatMessage {

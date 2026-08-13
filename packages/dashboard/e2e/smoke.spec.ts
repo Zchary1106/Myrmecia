@@ -13,6 +13,13 @@ test('tasks page is accessible', async ({ page }) => {
   await expect(page.locator('body')).toBeVisible();
 });
 
+test('artifact workbench is accessible', async ({ page }) => {
+  await page.goto('/');
+  await page.getByTitle('Artifacts').click();
+  await expect(page.getByRole('heading', { name: 'Outputs you can actually inspect' })).toBeVisible();
+  await expect(page.getByText('No artifacts yet')).toBeVisible();
+});
+
 test('WeChat writer opens the governed article studio', async ({ page }) => {
   await page.goto('/');
   await page.getByTitle('Agents').click();

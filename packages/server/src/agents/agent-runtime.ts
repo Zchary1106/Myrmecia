@@ -30,6 +30,8 @@ import { resolveDomainForTask, applyDomainOverlay, applyDomainKnowledge } from '
 import { buildAgentSystemPrompt } from './agent-prompt.js';
 import { shouldUseTsAgentLoop, selectRuntimeAdapter, type RuntimeAdapter } from './runtime-adapter.js';
 import { logger } from '../lib/logger.js';
+import { ExecutionMiddlewareChain } from './execution-middleware.js';
+import { indexExecutionArtifacts } from '../artifacts/execution-artifact-indexer.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MAX_RECENT_ACTIVITIES = 5;
@@ -109,7 +111,7 @@ export class AgentRuntime {
         name: 'ts-agent-loop',
         canHandle: (agent) => shouldUseTsAgentLoop(agent),
         execute: (ctx) => tsAgentLoop.execute(
-          ctx.agent, ctx.task, ctx.abortController, ctx.executionId, ctx.traceId, ctx.spanId, ctx.tracker, ctx.runtimeSkill,
+          ctx.agent, ctx.task, ctx.abortController, ctx.executionId, ctx.traceId, ctx.spanId, ctx.tracker, ctx.runtimeSkill, ctx.middleware,
         ),
       },
       {
@@ -129,6 +131,7 @@ export class AgentRuntime {
   }
 
   async execute(agent: AgentDefinition, task: Task): Promise<TaskResult> {
+    const executionStartedAtMs = Date.now();
     const abortController = new AbortController();
     this.abortControllers.set(task.id, abortController);
     const tracker = createProgressTracker();
@@ -158,6 +161,12 @@ export class AgentRuntime {
       workspaceId: task.workspaceId,
     });
     const trace = createRunTrace({ taskId: task.id, executionId: execution.id, agentId: agent.id });
+    const middleware = new ExecutionMiddlewareChain(
+      agent,
+      task,
+      execution.id,
+      resolveAgentRuntimeLimits(agent),
+    );
     const agentSpan = createTraceSpan({
       traceId: trace.id,
       type: 'agent.start',
@@ -183,6 +192,7 @@ export class AgentRuntime {
       });
 
       const adapter = selectRuntimeAdapter(agent, this.runtimeAdapters) || this.runtimeAdapters[this.runtimeAdapters.length - 1];
+      middleware.beforeExecution(adapter.name);
       addTaskLog(task.id, 'info', `Executor: ${adapter.name}`, 'system');
       recordLedgerEntry({
         executionId: execution.id, taskId: task.id, agentId: agent.id, workspaceId: task.workspaceId,
@@ -198,6 +208,7 @@ export class AgentRuntime {
         spanId: agentSpan.id,
         tracker,
         runtimeSkill,
+        middleware,
       });
       const safeOutput = sanitizeAgentOutput(result.output, {
         agentId: agent.id,
@@ -210,6 +221,12 @@ export class AgentRuntime {
       assertExecutionTokenBudget(safeResult.inputTokens, safeResult.outputTokens, safeResult.output, 'agent execution');
 
       if (safeResult.costUSD != null) guardrails.trackCost(task.id, safeResult.costUSD);
+      middleware.afterExecution({
+        inputTokens: safeResult.inputTokens,
+        outputTokens: safeResult.outputTokens,
+        durationMs: safeResult.durationMs,
+        numTurns: safeResult.numTurns,
+      });
 
       const finalProgress = getProgressSnapshot(tracker, 'Completed');
       updateExecution(execution.id, {
@@ -233,6 +250,17 @@ export class AgentRuntime {
       const settledDuringRun = priorStatus === 'cancelled' || priorStatus === 'failed' || priorStatus === 'done';
       if (!settledDuringRun) {
         updateTask(task.id, { status: 'done', output: safeResult.output, completedAt: new Date().toISOString() });
+      }
+      try {
+        const artifactCount = indexExecutionArtifacts({
+          task,
+          executionId: execution.id,
+          output: safeResult.output,
+          startedAtMs: executionStartedAtMs,
+        });
+        addTaskLog(task.id, 'info', `Indexed ${artifactCount} previewable artifacts`, 'artifacts');
+      } catch (artifactError) {
+        logger.warn({ err: artifactError, taskId: task.id, executionId: execution.id }, 'Artifact indexing failed');
       }
       recordLedgerEntry({
         executionId: execution.id, taskId: task.id, agentId: agent.id, workspaceId: task.workspaceId,
@@ -291,6 +319,7 @@ export class AgentRuntime {
 
       return safeResult;
     } catch (err: any) {
+      middleware.onError(err);
       const errorMsg = err.message || 'Unknown error';
       updateExecution(execution.id, { status: 'failed', progress: getProgressSnapshot(tracker), completedAt: new Date().toISOString() });
       addExecutionMessage({ executionId: execution.id, type: 'error', content: errorMsg });
