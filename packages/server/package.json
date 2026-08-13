@@ -11,6 +11,7 @@
     "test": "vitest run --pool=forks --maxWorkers=1",
     "test:watch": "vitest",
     "harness:eval": "tsx src/testing/harness-eval.ts",
+    "validate:contracts": "tsx src/contracts/validate-repository-contracts.ts",
     "validate:social-workflow": "node scripts/validate-social-workflow.mjs",
     "health:social-workflow": "node scripts/social-workflow-health-check.mjs"
   },

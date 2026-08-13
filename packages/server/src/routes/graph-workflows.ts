@@ -42,19 +42,27 @@ export function createGraphWorkflowRoutes(engine: GraphWorkflowEngine): Router {
 
   // POST / — create
   router.post('/', (req, res) => {
-    const { name, description, graph, input } = req.body || {};
-    if (!name) return res.status(400).json({ error: { message: 'name required' } });
-    const wf = createGraphWorkflow({ name, description, graph, input, workspaceId: ws(req) });
-    res.status(201).json(wf);
+    try {
+      const { name, description, graph, input } = req.body || {};
+      if (!name) return res.status(400).json({ error: { message: 'name required' } });
+      const wf = createGraphWorkflow({ name, description, graph, input, workspaceId: ws(req) });
+      res.status(201).json(wf);
+    } catch (err: any) {
+      res.status(400).json({ error: { message: err.message } });
+    }
   });
 
   // PATCH /:id — update (canvas save)
   router.patch('/:id', (req, res) => {
-    const existing = getAccessibleWorkflow(req, req.params.id);
-    if (!existing) return res.status(404).json({ error: { message: 'workflow not found' } });
-    const { name, description, graph, input } = req.body || {};
-    const wf = updateGraphWorkflow(req.params.id, { name, description, graph, input });
-    res.json(wf);
+    try {
+      const existing = getAccessibleWorkflow(req, req.params.id);
+      if (!existing) return res.status(404).json({ error: { message: 'workflow not found' } });
+      const { name, description, graph, input } = req.body || {};
+      const wf = updateGraphWorkflow(req.params.id, { name, description, graph, input });
+      res.json(wf);
+    } catch (err: any) {
+      res.status(400).json({ error: { message: err.message } });
+    }
   });
 
   // DELETE /:id

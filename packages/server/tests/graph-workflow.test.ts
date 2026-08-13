@@ -116,6 +116,34 @@ describe('GraphWorkflowEngine', () => {
     expect(events).toContain('run_done');
   });
 
+  it('rejects a malformed or cyclic graph before it is stored', () => {
+    expect(() => createGraphWorkflow({
+      name: 'Cyclic',
+      graph: {
+        nodes: [
+          { id: 'A', agentRole: 'developer' },
+          { id: 'B', agentRole: 'tester' },
+        ],
+        edges: [
+          { id: 'e1', source: 'A', target: 'B' },
+          { id: 'e2', source: 'B', target: 'A' },
+        ],
+      },
+    })).toThrow(/contains a cycle/);
+  });
+
+  it('saves but does not execute a human approval node before its state machine exists', async () => {
+    const workflow = createGraphWorkflow({
+      name: 'Approval',
+      graph: {
+        nodes: [{ id: 'approve', kind: 'human-approval', label: 'Approve release' }],
+        edges: [],
+      },
+    });
+
+    await expect(engine.run(workflow.id, 'release')).rejects.toThrow(/human-approval state machine/);
+  });
+
   it('cascades skip + fails the run when a node fails', async () => {
     const wf = createGraphWorkflow({
       name: 'Linear',

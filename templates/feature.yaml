@@ -3,24 +3,45 @@ description: Feature development with code review
 stages:
   - name: Spec
     role: pm
+    inputs:
+      - { name: user-goal, kind: text, required: true }
+    outputs:
+      - { name: product-spec, kind: markdown, required: true }
     prompt_template: |
       Write a brief feature spec for the following:
       {input}
 
   - name: Code
     role: dev
+    depends_on: [0]
+    inputs:
+      - { name: product-spec, kind: markdown, required: true }
+    outputs:
+      - { name: implementation, kind: code, required: true }
+      - { name: validation-evidence, kind: report, required: true }
     prompt_template: |
       Implement this feature:
       {input}
 
   - name: Test
     role: qa
+    depends_on: [1]
+    inputs:
+      - { name: implementation, kind: code, required: true }
+    outputs:
+      - { name: test-report, kind: report, required: true }
     prompt_template: |
       Test this feature implementation:
       {input}
 
   - name: Review
     role: review
+    depends_on: [1, 2]
+    inputs:
+      - { name: implementation, kind: code, required: true }
+      - { name: test-report, kind: report, required: true }
+    outputs:
+      - { name: review-report, kind: report, required: true }
     prompt_template: |
       Review this code for quality, security, and best practices:
       {input}

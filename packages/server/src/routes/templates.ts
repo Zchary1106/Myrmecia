@@ -8,6 +8,11 @@ import { createOperatorAction } from '../db/models/operator-action.js';
 import { listTemplates, createTemplate, getTemplate, updateTemplate } from '../db/models/pipeline.js';
 import { notFound, parseBody, requireOperatorRole, sendError } from './http.js';
 import type { PipelineTemplateGalleryItem, PipelineTemplateValidationResult } from '../types.js';
+import {
+  artifactDeclarationSchema,
+  artifactRequirementSchema,
+  validateIndexedWorkflowDependencies,
+} from '../contracts/team-composer-contracts.js';
 
 const ARCHIVED_TEMPLATE_NAMES = new Set([
   'Xiaohongshu Note',
@@ -23,6 +28,9 @@ const templateStageSchema = z.object({
   role: z.string().trim().min(1),
   promptTemplate: z.string().trim().min(1),
   dependsOn: z.array(z.number().int().nonnegative()).optional(),
+  inputs: z.array(artifactRequirementSchema).optional(),
+  outputs: z.array(artifactDeclarationSchema).optional(),
+  requiredSkills: z.array(z.string().trim().min(1)).optional(),
   publishTools: z.array(z.string().trim().min(1)).optional(),
   requiresApproval: z.boolean().optional(),
   approvalKind: z.enum(['content', 'publish']).optional(),
@@ -52,6 +60,9 @@ const validateTemplateBodySchema = z.object({
     role: z.string().optional(),
     promptTemplate: z.string().optional(),
     dependsOn: z.array(z.number().int().nonnegative()).optional(),
+    inputs: z.array(artifactRequirementSchema).optional(),
+    outputs: z.array(artifactDeclarationSchema).optional(),
+    requiredSkills: z.array(z.string().trim().min(1)).optional(),
     publishTools: z.array(z.string().trim().min(1)).optional(),
     requiresApproval: z.boolean().optional(),
     approvalKind: z.enum(['content', 'publish']).optional(),
@@ -87,6 +98,11 @@ function validateTemplateShape(data: {
       warnings.push({ stageIndex: index, field: 'promptTemplate', message: 'Prompt template does not include {input}' });
     }
   });
+  const dependencyValidation = validateIndexedWorkflowDependencies(data.stages);
+  errors.push(...dependencyValidation.errors.map(issue => ({
+    field: issue.path,
+    message: issue.message,
+  })));
   return { valid: errors.length === 0, errors, warnings };
 }
 

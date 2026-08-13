@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://myrmecia.local/schemas/workflow-contract.schema.json",
+  "title": "Myrmecia Workflow Graph Contract",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["nodes", "edges"],
+  "properties": {
+    "schemaVersion": { "const": "1.0" },
+    "nodes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "label": { "type": "string" },
+          "kind": { "enum": ["agent", "gate", "human-approval", "publisher"] },
+          "agentId": { "type": "string", "minLength": 1 },
+          "agentRole": { "type": "string", "minLength": 1 },
+          "prompt": { "type": "string" },
+          "inputArtifacts": { "type": "array", "items": { "$ref": "agent-contract.schema.json#/$defs/artifactRequirement" } },
+          "outputArtifacts": { "type": "array", "items": { "$ref": "agent-contract.schema.json#/$defs/artifactDeclaration" } },
+          "requiredSkills": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+          "qualityGate": {
+            "type": "object",
+            "properties": {
+              "outputSchema": { "type": "string", "minLength": 1 },
+              "approvalRequired": { "type": "boolean" }
+            }
+          },
+          "retryPolicy": {
+            "type": "object",
+            "required": ["maxAttempts"],
+            "properties": {
+              "maxAttempts": { "type": "integer", "minimum": 1, "maximum": 10 },
+              "backoffMs": { "type": "integer", "minimum": 0 },
+              "onExhausted": { "enum": ["fail", "human"] }
+            }
+          },
+          "position": {
+            "type": "object",
+            "required": ["x", "y"],
+            "properties": {
+              "x": { "type": "number" },
+              "y": { "type": "number" }
+            }
+          }
+        }
+      }
+    },
+    "edges": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "source", "target"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "source": { "type": "string", "minLength": 1 },
+          "target": { "type": "string", "minLength": 1 },
+          "kind": { "enum": ["data", "control", "approval"] },
+          "artifactMappings": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["from", "to"],
+              "properties": {
+                "from": { "type": "string", "minLength": 1 },
+                "to": { "type": "string", "minLength": 1 }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

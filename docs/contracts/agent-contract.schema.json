@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://myrmecia.local/schemas/agent-contract.schema.json",
+  "title": "Myrmecia Agent Contract",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "agentId", "role", "responsibility", "inputs", "outputs", "skills", "tools", "quality"],
+  "properties": {
+    "schemaVersion": { "const": "1.0" },
+    "agentId": { "type": "string", "minLength": 1 },
+    "role": { "type": "string", "minLength": 1 },
+    "responsibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["summary", "owns", "doesNotOwn"],
+      "properties": {
+        "summary": { "type": "string", "minLength": 1 },
+        "owns": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+        "doesNotOwn": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "escalatesTo": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "inputs": { "type": "array", "items": { "$ref": "#/$defs/artifactRequirement" } },
+    "outputs": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/artifactDeclaration" } },
+    "skills": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+    "tools": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+    "quality": {
+      "type": "object",
+      "required": ["definitionOfDone"],
+      "properties": {
+        "definitionOfDone": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+        "rubric": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "description"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1 },
+              "description": { "type": "string", "minLength": 1 },
+              "weight": { "type": "number", "exclusiveMinimum": 0 },
+              "blocking": { "type": "boolean" }
+            }
+          }
+        }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "properties": {
+        "maxRetries": { "type": "integer", "minimum": 0, "maximum": 10 },
+        "requiresHumanApproval": { "type": "boolean" }
+      }
+    }
+  },
+  "$defs": {
+    "artifactRequirement": {
+      "type": "object",
+      "required": ["name", "kind"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "kind": { "enum": ["text", "markdown", "json", "code", "image", "video", "audio", "document", "report", "archive", "other"] },
+        "description": { "type": "string" },
+        "schemaRef": { "type": "string", "minLength": 1 },
+        "mimeTypes": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "required": { "type": "boolean" },
+        "multiple": { "type": "boolean" }
+      }
+    },
+    "artifactDeclaration": {
+      "allOf": [
+        { "$ref": "#/$defs/artifactRequirement" },
+        { "type": "object", "required": ["required"] }
+      ]
+    }
+  }
+}
+

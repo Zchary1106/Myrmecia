@@ -19,6 +19,11 @@ import { createTestReportFromOutput, isTestingStage } from '../testing/test-repo
 import { clearStageCheckpoints, saveCheckpoint, getCompletedStageIndices } from './checkpoint.js';
 import { extractStructuredOutput, validateStageOutput } from './stage-output-validator.js';
 import type { OperatorActor, Pipeline, PipelineStage, PipelineTemplate } from '../types.js';
+import {
+  artifactDeclarationSchema,
+  artifactRequirementSchema,
+  validateIndexedWorkflowDependencies,
+} from '../contracts/team-composer-contracts.js';
 import { GOVERNED_PUBLISH_MCP_TOOLS } from '../tools/mcp-manager.js';
 
 const execAsync = promisify(exec);
@@ -54,6 +59,9 @@ interface PipelineTemplateYamlStage {
   role: string;
   prompt_template: string;
   depends_on?: number[];
+  inputs?: unknown[];
+  outputs?: unknown[];
+  required_skills?: string[];
   publish_tools?: string[];
   requires_approval?: boolean;
   approval_kind?: 'content' | 'publish';
@@ -72,6 +80,9 @@ function toTemplateStages(stages: PipelineTemplateYamlStage[]): PipelineTemplate
     role: stage.role,
     promptTemplate: stage.prompt_template,
     ...(stage.depends_on?.length ? { dependsOn: stage.depends_on } : {}),
+    ...(stage.inputs?.length ? { inputs: stage.inputs.map(input => artifactRequirementSchema.parse(input)) } : {}),
+    ...(stage.outputs?.length ? { outputs: stage.outputs.map(output => artifactDeclarationSchema.parse(output)) } : {}),
+    ...(stage.required_skills?.length ? { requiredSkills: stage.required_skills } : {}),
     ...(stage.publish_tools?.length ? { publishTools: stage.publish_tools } : {}),
     ...(stage.requires_approval ? { requiresApproval: true } : {}),
     ...(stage.approval_kind ? { approvalKind: stage.approval_kind } : {}),
@@ -309,6 +320,12 @@ export class PipelineEngine {
           description: tmpl.description || '',
           stages: toTemplateStages(tmpl.stages),
         };
+        const dependencyValidation = validateIndexedWorkflowDependencies(data.stages);
+        if (!dependencyValidation.valid) {
+          throw new Error(
+            `${file}: invalid stage dependencies: ${dependencyValidation.errors.map(issue => issue.message).join('; ')}`
+          );
+        }
         const existing = existingByName.get(data.name);
 
         if (!existing) {
@@ -360,6 +377,9 @@ export class PipelineEngine {
       status: 'pending' as const,
       promptTemplate: s.promptTemplate,
       dependsOn: s.dependsOn,
+      inputs: s.inputs,
+      outputs: s.outputs,
+      requiredSkills: s.requiredSkills,
       publishTools: s.publishTools,
       requiresApproval: s.requiresApproval,
       approvalKind: s.approvalKind,

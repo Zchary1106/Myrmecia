@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://myrmecia.local/schemas/artifact-contract.schema.json",
+  "title": "Myrmecia Artifact Contract",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "id", "name", "kind", "producer", "createdAt"],
+  "anyOf": [
+    { "required": ["uri"] },
+    { "required": ["inlineContent"] }
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.0" },
+    "id": { "type": "string", "minLength": 1 },
+    "name": { "type": "string", "minLength": 1 },
+    "kind": { "enum": ["text", "markdown", "json", "code", "image", "video", "audio", "document", "report", "archive", "other"] },
+    "description": { "type": "string" },
+    "schemaRef": { "type": "string", "minLength": 1 },
+    "mimeType": { "type": "string", "minLength": 1 },
+    "uri": { "type": "string", "minLength": 1 },
+    "inlineContent": { "type": "string" },
+    "producer": {
+      "type": "object",
+      "minProperties": 1,
+      "properties": {
+        "agentId": { "type": "string", "minLength": 1 },
+        "workflowId": { "type": "string", "minLength": 1 },
+        "nodeId": { "type": "string", "minLength": 1 },
+        "runId": { "type": "string", "minLength": 1 }
+      }
+    },
+    "lineage": {
+      "type": "object",
+      "required": ["sourceArtifactIds"],
+      "properties": {
+        "sourceArtifactIds": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "integrity": {
+      "type": "object",
+      "required": ["algorithm", "checksum"],
+      "properties": {
+        "algorithm": { "const": "sha256" },
+        "checksum": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" },
+        "sizeBytes": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "metadata": { "type": "object" },
+    "createdAt": { "type": "string", "format": "date-time" }
+  }
+}
+

@@ -1,3 +1,6 @@
+import type { AgentContract, ArtifactDeclaration, ArtifactRequirement } from './contracts.js';
+export * from './contracts.js';
+
 export type AgentRole = string;
 
 export interface AgentStats {
@@ -10,6 +13,8 @@ export interface AgentStats {
 export interface AgentConfig {
   model?: string;
   modelPolicy?: AgentModelPolicy;
+  /** Normalized Team Composer responsibility and I/O contract. */
+  contract?: AgentContract;
   maxConcurrent?: number;
   timeout?: number;
   workdir?: string;
@@ -499,6 +504,9 @@ export interface PipelineStage {
   output?: string;
   gateApproved?: boolean;
   dependsOn?: number[];  // stage indices this depends on (enables parallel execution)
+  inputs?: ArtifactRequirement[];
+  outputs?: ArtifactDeclaration[];
+  requiredSkills?: string[];
   publishTools?: string[]; // governed live-publish MCP tools explicitly approved for this stage
   requiresApproval?: boolean;
   approvalKind?: 'content' | 'publish';
@@ -537,6 +545,11 @@ export interface PipelineTemplateStage {
   role: AgentRole;
   promptTemplate: string;
   dependsOn?: number[];
+  /** Structured artifacts consumed by this stage. */
+  inputs?: ArtifactRequirement[];
+  /** Structured artifacts produced by this stage. */
+  outputs?: ArtifactDeclaration[];
+  requiredSkills?: string[];
   publishTools?: string[];
   requiresApproval?: boolean;
   approvalKind?: 'content' | 'publish';

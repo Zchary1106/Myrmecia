@@ -21,6 +21,24 @@ agents:
     capabilities: [planning, decomposition, coordination, review, web-research]
     allowed_tools: [web.search, web.fetch]
     triggers: [自动分配, 帮我做, build me, create a]
+    contract:
+      schemaVersion: "1.0"
+      agentId: master
+      role: orchestrator
+      responsibility:
+        summary: 将用户目标标准化，选择团队并协调结构化产物的流转与验收
+        owns: [需求分解, 团队选择, 工作流协调, 风险升级]
+        doesNotOwn: [直接实现全部子任务, 代替人工批准高风险操作]
+      inputs:
+        - { name: user-goal, kind: text, required: true }
+      outputs:
+        - { name: execution-plan, kind: json, required: true }
+      skills: [agents/master.md]
+      tools: [web.search, web.fetch]
+      quality:
+        definitionOfDone:
+          - 每个子任务都有负责人、输入、输出和完成条件
+          - 高风险操作包含明确的人工批准节点
 
   - id: pm
     name: PM Agent
@@ -40,6 +58,25 @@ agents:
     capabilities: [spec, user-stories, requirements, acceptance-criteria, web-research]
     allowed_tools: [web.search, web.fetch, content.hashtag_plan]
     triggers: [需求, spec, PRD, 用户故事, requirement]
+    contract:
+      schemaVersion: "1.0"
+      agentId: pm
+      role: product-manager
+      responsibility:
+        summary: 把模糊需求转化为可实现、可验收的产品规格
+        owns: [需求澄清, 用户故事, 验收标准, 范围界定]
+        doesNotOwn: [生产代码实现, 最终发布审批]
+        escalatesTo: [master]
+      inputs:
+        - { name: user-goal, kind: text, required: true }
+      outputs:
+        - { name: product-spec, kind: markdown, required: true }
+      skills: [agents/pm.md]
+      tools: [web.search, web.fetch, content.hashtag_plan]
+      quality:
+        definitionOfDone:
+          - 需求范围、非目标和验收标准明确
+          - 风险、依赖和待确认项可追踪
 
   - id: ui
     name: UI Agent
@@ -78,6 +115,27 @@ agents:
     capabilities: [typescript, react, express, database, api, frontend, backend, web-research]
     allowed_tools: [file_read, file_list, grep, file_write, apply_patch, shell_exec, web.search, web.fetch]
     triggers: [写代码, 实现, 开发, implement, code, fix]
+    contract:
+      schemaVersion: "1.0"
+      agentId: dev
+      role: developer
+      responsibility:
+        summary: 根据已批准规格实现最小、可验证、符合仓库约定的代码变更
+        owns: [代码实现, 局部重构, 开发验证, 变更说明]
+        doesNotOwn: [产品范围决策, 独立质量放行, 未授权生产发布]
+        escalatesTo: [master, review]
+      inputs:
+        - { name: approved-spec, kind: markdown, required: true }
+        - { name: repository-context, kind: document, required: false }
+      outputs:
+        - { name: implementation, kind: code, required: true }
+        - { name: validation-evidence, kind: report, required: true }
+      skills: [agents/dev.md]
+      tools: [file_read, file_list, grep, file_write, apply_patch, shell_exec, web.search, web.fetch]
+      quality:
+        definitionOfDone:
+          - 变更满足验收标准且不包含无关修改
+          - 已运行最小充分的自动化验证并记录结果
 
   - id: qa
     name: QA Agent
@@ -97,6 +155,26 @@ agents:
     capabilities: [testing, unit-test, integration-test, coverage, edge-cases, web-research]
     allowed_tools: [file_read, file_list, grep, shell_exec, web.search, web.fetch]
     triggers: [测试, test, QA, 验证, coverage]
+    contract:
+      schemaVersion: "1.0"
+      agentId: qa
+      role: tester
+      responsibility:
+        summary: 使用独立上下文验证实现是否满足规格、边界条件和回归要求
+        owns: [测试设计, 自动化验证, 回归检查, 缺陷报告]
+        doesNotOwn: [修改验收标准以迁就实现, 未经授权直接发布]
+        escalatesTo: [master, dev]
+      inputs:
+        - { name: product-spec, kind: markdown, required: true }
+        - { name: implementation, kind: code, required: true }
+      outputs:
+        - { name: test-report, kind: report, required: true }
+      skills: [agents/qa.md]
+      tools: [file_read, file_list, grep, shell_exec, web.search, web.fetch]
+      quality:
+        definitionOfDone:
+          - 测试报告包含执行命令、结果、失败和未覆盖风险
+          - 阻断问题与建议改进明确区分
 
   - id: ops
     name: Ops Agent
@@ -135,6 +213,26 @@ agents:
     capabilities: [code-review, security, best-practices, architecture, web-research]
     allowed_tools: [web.search, web.fetch]
     triggers: [review, 审查, 代码审核, security scan]
+    contract:
+      schemaVersion: "1.0"
+      agentId: review
+      role: reviewer
+      responsibility:
+        summary: 独立检查代码质量、安全、架构一致性和可维护性
+        owns: [代码审查, 风险分级, 架构一致性, 放行建议]
+        doesNotOwn: [替代开发实现修复, 代表真人批准生产操作]
+        escalatesTo: [master]
+      inputs:
+        - { name: implementation, kind: code, required: true }
+        - { name: test-report, kind: report, required: false }
+      outputs:
+        - { name: review-report, kind: report, required: true }
+      skills: [agents/review.md]
+      tools: [web.search, web.fetch]
+      quality:
+        definitionOfDone:
+          - 每个发现包含证据、影响、优先级和修复建议
+          - 明确给出通过、需修改或阻断结论
 
   - id: security-reviewer
     name: Security Reviewer
@@ -655,3 +753,26 @@ agents:
     capabilities: [publishing, xiaohongshu, douyin, wechat, execution]
     allowed_tools: [mcp__xiaohongshu__check_login_status, mcp__xiaohongshu__publish_content, mcp__xiaohongshu__publish_with_video, mcp__douyin-upload__douyin_check_login, mcp__douyin-upload__douyin_upload_video, mcp__wechat-official-account__wechat_publish]
     triggers: [发布, 发到小红书, 发到抖音, publish]
+    contract:
+      schemaVersion: "1.0"
+      agentId: social-publisher
+      role: social-publisher
+      responsibility:
+        summary: 将经过预检和人工批准的最终内容幂等地交付到指定平台
+        owns: [账号检查, 发布执行, 发布结果记录, 可重试错误处理]
+        doesNotOwn: [内容创作, 内容改写, 代表用户批准发布]
+        escalatesTo: [social-ops, master]
+      inputs:
+        - { name: approved-content, kind: document, required: true }
+        - { name: preflight-result, kind: report, required: true }
+      outputs:
+        - { name: publish-result, kind: report, required: true, schemaRef: docs/social-workflow/publish-result.schema.json }
+      skills: [agents/social-publisher.md]
+      tools: [mcp__xiaohongshu__check_login_status, mcp__xiaohongshu__publish_content, mcp__xiaohongshu__publish_with_video, mcp__douyin-upload__douyin_check_login, mcp__douyin-upload__douyin_upload_video, mcp__wechat-official-account__wechat_publish]
+      quality:
+        definitionOfDone:
+          - 发布请求具有幂等标识并保存平台返回 ID
+          - 未获得可验证人工批准时不得调用真实发布工具
+      execution:
+        maxRetries: 1
+        requiresHumanApproval: true
