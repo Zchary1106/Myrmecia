@@ -6,6 +6,16 @@ import { listTeams, getTeam, resolveTeamAgents, suggestTeam, createTeam, updateT
 import type { TeamCoordinator } from '../agents/team-coordinator.js';
 import { HttpError, notFound, parseBody, sendError } from './http.js';
 import { requestCanAccessWorkspace, workspaceIdFromRequest } from '../auth/tenant.js';
+import { workflowGraphContractSchema } from '../contracts/team-composer-contracts.js';
+import {
+  archiveTeamTemplateVersion,
+  createTeamTemplateVersion,
+  getPublishedTeamTemplate,
+  getTeamTemplateVersion,
+  listTeamTemplateVersions,
+  publishTeamTemplateVersion,
+} from '../db/models/team-template-version.js';
+import { createGraphWorkflow } from '../agents/graph-workflow.js';
 
 const dispatchSchema = z.object({
   goal: z.string().trim().min(1, 'goal is required'),
@@ -40,6 +50,15 @@ const teamSchema = z.object({
   blurb: z.string().trim().optional(),
 });
 const teamPatchSchema = teamSchema.partial().refine(d => Object.keys(d).length > 0, { message: 'no fields to update' });
+const teamTemplateVersionSchema = z.object({
+  graph: workflowGraphContractSchema,
+  changeNote: z.string().trim().max(2_000).optional(),
+});
+const instantiateTemplateSchema = z.object({
+  name: z.string().trim().min(1).max(200).optional(),
+  input: z.string().optional(),
+  versionId: z.string().trim().min(1).optional(),
+});
 
 export function createTeamRoutes(coordinator: TeamCoordinator): Router {
   const router = Router();
@@ -97,12 +116,101 @@ export function createTeamRoutes(coordinator: TeamCoordinator): Router {
     }
   });
 
+  // GET /teams/:id/versions — immutable workflow template history
+  router.get('/:id/versions', (req, res) => {
+    try {
+      const team = getTeam(req.params.id, ws(req));
+      if (!team) notFound('TEAM_NOT_FOUND', 'Team not found');
+      res.json({
+        versions: listTeamTemplateVersions(team!.id, ws(req)),
+        published: getPublishedTeamTemplate(team!.id, ws(req)) || null,
+      });
+    } catch (err) {
+      sendError(res, err);
+    }
+  });
+
+  // POST /teams/:id/versions — create a new draft; published versions remain immutable
+  router.post('/:id/versions', (req, res) => {
+    try {
+      const team = getTeam(req.params.id, ws(req));
+      if (!team) notFound('TEAM_NOT_FOUND', 'Team not found');
+      const body = parseBody(teamTemplateVersionSchema, req);
+      const created = createTeamTemplateVersion({
+        teamId: team!.id,
+        workspaceId: ws(req),
+        graph: body.graph,
+        changeNote: body.changeNote,
+        createdBy: String(req.headers['x-operator-id'] || req.headers['x-user-id'] || 'user'),
+      });
+      res.status(201).json(created);
+    } catch (err) {
+      sendError(res, err);
+    }
+  });
+
+  router.post('/:id/versions/:versionId/publish', (req, res) => {
+    try {
+      const team = getTeam(req.params.id, ws(req));
+      if (!team) notFound('TEAM_NOT_FOUND', 'Team not found');
+      const version = getTeamTemplateVersion(req.params.versionId, ws(req));
+      if (!version || version.teamId !== team!.id) notFound('TEAM_TEMPLATE_NOT_FOUND', 'Team template version not found');
+      res.json(publishTeamTemplateVersion(version!.id, ws(req)));
+    } catch (err) {
+      sendError(res, err);
+    }
+  });
+
+  router.post('/:id/versions/:versionId/archive', (req, res) => {
+    try {
+      const team = getTeam(req.params.id, ws(req));
+      if (!team) notFound('TEAM_NOT_FOUND', 'Team not found');
+      const version = getTeamTemplateVersion(req.params.versionId, ws(req));
+      if (!version || version.teamId !== team!.id) notFound('TEAM_TEMPLATE_NOT_FOUND', 'Team template version not found');
+      res.json(archiveTeamTemplateVersion(version!.id, ws(req)));
+    } catch (err) {
+      sendError(res, err);
+    }
+  });
+
+  // POST /teams/:id/instantiate — create an executable graph from a published version
+  router.post('/:id/instantiate', (req, res) => {
+    try {
+      const team = getTeam(req.params.id, ws(req));
+      if (!team) notFound('TEAM_NOT_FOUND', 'Team not found');
+      const body = parseBody(instantiateTemplateSchema, req);
+      const version = body.versionId
+        ? getTeamTemplateVersion(body.versionId, ws(req))
+        : getPublishedTeamTemplate(team!.id, ws(req));
+      if (!version || version.teamId !== team!.id) {
+        notFound('TEAM_TEMPLATE_NOT_FOUND', 'Published team template version not found');
+      }
+      if (!body.versionId && version!.status !== 'published') {
+        throw new HttpError(409, 'TEAM_TEMPLATE_NOT_PUBLISHED', 'Team template must be published before instantiation');
+      }
+      const workflow = createGraphWorkflow({
+        name: body.name || `${team!.name} v${version!.version}`,
+        description: `Instantiated from team ${team!.id} template v${version!.version}`,
+        workspaceId: ws(req),
+        graph: version!.graph,
+        input: body.input,
+      });
+      res.status(201).json({ workflow, teamTemplateVersion: version });
+    } catch (err) {
+      sendError(res, err);
+    }
+  });
+
   // GET /teams/:id — one team
   router.get('/:id', (req, res) => {
     try {
       const team = getTeam(req.params.id, ws(req));
       if (!team) notFound('TEAM_NOT_FOUND', 'Team not found');
-      res.json({ ...team!, roster: resolveTeamAgents(team!) });
+      res.json({
+        ...team!,
+        roster: resolveTeamAgents(team!),
+        publishedTemplate: getPublishedTeamTemplate(team!.id, ws(req)) || null,
+      });
     } catch (err) {
       sendError(res, err);
     }

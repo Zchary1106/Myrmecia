@@ -158,7 +158,11 @@ export function deleteTeam(id: string, workspaceId = 'default'): { reverted: boo
   if (!custom) throw new Error(`team "${id}" is not a custom team`);
   getDb().run('DELETE FROM team_definitions WHERE id = ? AND workspace_id = ?', id, workspaceId);
   // If a built-in with this id exists, deletion just reverts to the built-in.
-  return { reverted: BUILTIN.some(t => t.id === id) };
+  const reverted = BUILTIN.some(t => t.id === id);
+  if (!reverted) {
+    getDb().run('DELETE FROM team_template_versions WHERE team_id = ? AND workspace_id = ?', id, workspaceId);
+  }
+  return { reverted };
 }
 
 /** Resolve a team's member roles to concrete agent ids that currently exist. */

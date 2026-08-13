@@ -151,3 +151,49 @@ export interface ContractValidationResult<T> {
   errors: ContractValidationIssue[];
   warnings: ContractValidationIssue[];
 }
+
+export type WorkflowRunStatus =
+  | 'draft'
+  | 'running'
+  | 'waiting'
+  | 'done'
+  | 'failed'
+  | 'cancelled';
+
+export type WorkflowNodeRunStatus =
+  | 'pending'
+  | 'ready'
+  | 'running'
+  | 'retrying'
+  | 'waiting_approval'
+  | 'blocked'
+  | 'done'
+  | 'failed'
+  | 'skipped'
+  | 'cancelled';
+
+export interface WorkflowIntervention {
+  kind: 'approval' | 'retry' | 'override';
+  requestedAt: string;
+  reason: string;
+  actorId?: string;
+  decidedAt?: string;
+  decision?: 'approved' | 'rejected' | 'retried';
+  note?: string;
+}
+
+export type TeamTemplateVersionStatus = 'draft' | 'published' | 'archived';
+
+export interface TeamTemplateVersion {
+  id: string;
+  teamId: string;
+  workspaceId: string;
+  version: number;
+  status: TeamTemplateVersionStatus;
+  graph: WorkflowGraphContract;
+  changeNote?: string;
+  createdBy: string;
+  createdAt: string;
+  publishedAt?: string;
+  archivedAt?: string;
+}

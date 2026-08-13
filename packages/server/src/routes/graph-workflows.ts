@@ -108,6 +108,59 @@ export function createGraphWorkflowRoutes(engine: GraphWorkflowEngine): Router {
     }
   });
 
+  // GET /:id/artifacts — structured runtime artifacts for the workbench
+  router.get('/:id/artifacts', (req, res) => {
+    const wf = getAccessibleWorkflow(req, req.params.id);
+    if (!wf) return res.status(404).json({ error: { message: 'workflow not found' } });
+    res.json({
+      workflowId: wf.id,
+      runId: wf.runState?.runId,
+      artifacts: Object.values(wf.runState?.artifacts || {}),
+    });
+  });
+
+  // POST /:id/nodes/:nodeId/retry — explicit operator retry
+  router.post('/:id/nodes/:nodeId/retry', async (req, res) => {
+    try {
+      const existing = getAccessibleWorkflow(req, req.params.id);
+      if (!existing) return res.status(404).json({ error: { message: 'workflow not found' } });
+      res.json(await engine.retryNode(req.params.id, req.params.nodeId, {
+        actorId: String(req.headers['x-operator-id'] || req.headers['x-user-id'] || 'user'),
+        note: typeof req.body?.note === 'string' ? req.body.note : undefined,
+      }));
+    } catch (err: any) {
+      res.status(400).json({ error: { message: err.message } });
+    }
+  });
+
+  // POST /:id/nodes/:nodeId/approve — release an approval/intervention gate
+  router.post('/:id/nodes/:nodeId/approve', async (req, res) => {
+    try {
+      const existing = getAccessibleWorkflow(req, req.params.id);
+      if (!existing) return res.status(404).json({ error: { message: 'workflow not found' } });
+      res.json(await engine.approveNode(req.params.id, req.params.nodeId, {
+        actorId: String(req.headers['x-operator-id'] || req.headers['x-user-id'] || 'user'),
+        note: typeof req.body?.note === 'string' ? req.body.note : undefined,
+        output: typeof req.body?.output === 'string' ? req.body.output : undefined,
+      }));
+    } catch (err: any) {
+      res.status(400).json({ error: { message: err.message } });
+    }
+  });
+
+  router.post('/:id/nodes/:nodeId/reject', (req, res) => {
+    try {
+      const existing = getAccessibleWorkflow(req, req.params.id);
+      if (!existing) return res.status(404).json({ error: { message: 'workflow not found' } });
+      res.json(engine.rejectNode(req.params.id, req.params.nodeId, {
+        actorId: String(req.headers['x-operator-id'] || req.headers['x-user-id'] || 'user'),
+        note: typeof req.body?.note === 'string' ? req.body.note : undefined,
+      }));
+    } catch (err: any) {
+      res.status(400).json({ error: { message: err.message } });
+    }
+  });
+
   // POST /:id/cancel
   router.post('/:id/cancel', (req, res) => {
     const existing = getAccessibleWorkflow(req, req.params.id);

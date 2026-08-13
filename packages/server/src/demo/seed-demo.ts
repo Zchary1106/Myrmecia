@@ -123,6 +123,7 @@ function resetDemoDatabase() {
     DELETE FROM knowledge_documents;
     DELETE FROM agent_memories;
     DELETE FROM team_runs;
+    DELETE FROM team_template_versions;
     DELETE FROM team_definitions;
     DELETE FROM agents;
     DELETE FROM tool_permissions;
