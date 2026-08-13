@@ -893,7 +893,7 @@ export type WSEventType =
   | 'inbox:created' | 'inbox:updated'
   | 'quality:updated'
   | 'execution:started' | 'execution:activity' | 'execution:progress'
-  | 'execution:message' | 'execution:done' | 'execution:failed'
+  | 'execution:message' | 'execution:middleware' | 'execution:done' | 'execution:failed'
   | 'tool:started' | 'tool:done' | 'tool:failed' | 'tool:blocked' | 'tool:updated'
   | 'skill:updated' | 'skill:published' | 'skill:assigned'
   | 'agent:message'
@@ -1065,4 +1065,27 @@ export interface Artifact {
   readableBy: string[];
   expiresAt: string;
   createdAt: string;
+}
+
+export type ExecutionArtifactKind =
+  | 'text' | 'code' | 'json' | 'html' | 'image' | 'video' | 'audio' | 'pdf' | 'file';
+
+export interface ExecutionArtifact {
+  id: string;
+  workspaceId: string;
+  taskId: string;
+  executionId: string;
+  pipelineId?: string;
+  stageIndex?: number;
+  name: string;
+  kind: ExecutionArtifactKind;
+  mimeType: string;
+  source: 'result' | 'workspace' | 'output';
+  relativePath: string;
+  sizeBytes: number;
+  metadata: Record<string, unknown>;
+  previewUrl: string;
+  downloadUrl: string;
+  createdAt: string;
+  updatedAt: string;
 }

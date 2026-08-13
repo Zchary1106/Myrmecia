@@ -17,6 +17,7 @@ import type {
   SkillVersion,
 } from '../types.js';
 import { isMcpTool } from '../tools/mcp-manager.js';
+import type { ExecutionMiddlewareChain } from './execution-middleware.js';
 
 export interface RuntimeExecutionContext {
   agent: AgentDefinition;
@@ -26,6 +27,7 @@ export interface RuntimeExecutionContext {
   traceId: string;
   spanId: string;
   tracker: ProgressTracker;
+  middleware: ExecutionMiddlewareChain;
   runtimeSkill?: { skill: SkillDefinition; version: SkillVersion; source: 'assignment' | 'skillPath' };
 }
 

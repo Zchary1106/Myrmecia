@@ -1,6 +1,6 @@
 import { agentRuntime, type TaskResult } from './agent-runtime.js';
 import { getAgent } from '../db/models/agent.js';
-import { createTask, getTask, updateTask } from '../db/models/task.js';
+import { createTask, getTask, listTasks, updateTask } from '../db/models/task.js';
 import { createExecution, getExecution, listExecutionMessages } from '../db/models/execution.js';
 import { messageBus } from './message-bus.js';
 import { eventBus } from '../events/event-bus.js';
@@ -26,6 +26,35 @@ export interface SpawnOptions {
   workspaceId?: string;
 }
 
+function positiveLimit(name: string, fallback: number): number {
+  const value = Number.parseInt(process.env[name] || '', 10);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function taskDepth(taskId: string): number {
+  let depth = 0;
+  let current = getTask(taskId);
+  const seen = new Set<string>();
+  while (current?.parentTaskId && !seen.has(current.id)) {
+    seen.add(current.id);
+    depth++;
+    current = getTask(current.parentTaskId);
+  }
+  return depth;
+}
+
+function assertSubagentCapacity(parentTaskId: string): void {
+  const maxDepth = positiveLimit('AGENT_MAX_SUBAGENT_DEPTH', 3);
+  const maxChildren = positiveLimit('AGENT_MAX_SUBAGENTS_PER_TASK', 6);
+  if (taskDepth(parentTaskId) + 1 > maxDepth) {
+    throw new Error(`Sub-agent depth limit exceeded (${maxDepth})`);
+  }
+  const children = listTasks({ parentTaskId });
+  if (children.length >= maxChildren) {
+    throw new Error(`Sub-agent limit exceeded for task ${parentTaskId} (${maxChildren})`);
+  }
+}
+
 export class ForkExecutor {
 
   /**
@@ -42,11 +71,14 @@ export class ForkExecutor {
     if (!agent) throw new Error(`Agent ${agentId} not found`);
 
     // Build context from parent's execution messages
+    assertSubagentCapacity(parentExec.taskId);
     const parentMessages = listExecutionMessages(parentExecutionId, { limit: 50 });
+    const maxInheritedChars = positiveLimit('AGENT_MAX_SUBAGENT_CONTEXT_CHARS', 12_000);
     const contextLines = parentMessages
       .filter(m => m.type === 'agent_text' || m.type === 'user_input')
       .map(m => `[${m.type === 'user_input' ? 'User' : 'Agent'}]: ${m.content}`)
-      .join('\n');
+      .join('\n')
+      .slice(-maxInheritedChars);
 
     const fullPrompt = contextLines
       ? `[INHERITED CONTEXT FROM PARENT EXECUTION]\n${contextLines}\n\n[NEW DIRECTIVE]\n${directive}`
@@ -62,6 +94,7 @@ export class ForkExecutor {
       assigneeId: agentId,
       parentTaskId: parentExec.taskId,
       workdir: parentTask?.workdir,
+      workspacePath: parentTask?.workspacePath,
       workspaceId: parentTask?.workspaceId,
       createdBy: 'master',
     });
@@ -84,6 +117,12 @@ export class ForkExecutor {
     const agent = getAgent(agentDefId);
     if (!agent) throw new Error(`Agent ${agentDefId} not found`);
 
+    const parentExecution = opts?.parentExecutionId ? getExecution(opts.parentExecutionId) : undefined;
+    if (opts?.parentExecutionId && !parentExecution) {
+      throw new Error(`Parent execution ${opts.parentExecutionId} not found`);
+    }
+    if (parentExecution) assertSubagentCapacity(parentExecution.taskId);
+
     const task = createTask({
       title: prompt.slice(0, 80),
       description: prompt,
@@ -91,8 +130,9 @@ export class ForkExecutor {
       priority: opts?.priority || 'normal',
       input: prompt,
       assigneeId: agentDefId,
+      parentTaskId: parentExecution?.taskId,
       workdir: opts?.workdir,
-      workspaceId: opts?.workspaceId,
+      workspaceId: opts?.workspaceId || (parentExecution ? getTask(parentExecution.taskId)?.workspaceId : undefined),
       createdBy: 'master',
     });
 

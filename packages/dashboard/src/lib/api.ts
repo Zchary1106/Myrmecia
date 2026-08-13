@@ -40,6 +40,7 @@ import type {
   GitHubConnectionStatus,
   GitHubFixDiff,
   GitHubFixRun,
+  ExecutionArtifact,
 } from '@myrmecia/shared';
 import { getApiAuthToken } from './auth';
 
@@ -73,6 +74,15 @@ async function request<T>(path: string, opts?: RequestInit): Promise<T> {
     }
   }
   throw new Error('unreachable');
+}
+
+async function requestBlob(path: string): Promise<Blob> {
+  const token = getApiAuthToken();
+  const res = await fetch(`${BASE}${path}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => null))?.error || res.statusText);
+  return res.blob();
 }
 
 export const api = {
@@ -415,6 +425,10 @@ export const api = {
   artifacts: {
     list: () => request<Array<{ id: string; ownerId: string; name: string; expiresAt: string; createdAt: string }>>('/artifacts'),
     get: (id: string) => request<{ id: string; ownerId: string; name: string; content: string; expiresAt: string; createdAt: string }>(`/artifacts/${id}`),
+    workbench: (params?: { taskId?: string; executionId?: string; limit?: number }) =>
+      request<ExecutionArtifact[]>(`/artifacts/workbench${params ? `?${new URLSearchParams(Object.entries(params).filter(([, value]) => value !== undefined).map(([key, value]) => [key, String(value)]))}` : ''}`),
+    preview: (id: string) => requestBlob(`/artifacts/workbench/${encodeURIComponent(id)}/preview`),
+    download: (id: string) => requestBlob(`/artifacts/workbench/${encodeURIComponent(id)}/download`),
   },
   memory: {
     list: (params?: { type?: string; limit?: number }) =>

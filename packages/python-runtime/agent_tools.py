@@ -35,6 +35,9 @@ DEFAULT_TIMEOUT = 12
 # remote service's queue + execution.
 BROWSER_QUERY_TIMEOUT = 260
 DEFAULT_BROWSER_QUERY_URL = "https://your-browser-service.example.com/query"
+_last_tool_fingerprint = ""
+_repeated_tool_calls = 0
+_tool_failures: Dict[str, int] = {}
 
 
 def _safe_url(url: str) -> str:
@@ -93,10 +96,25 @@ def _emit_tool_event(event: Dict[str, object]) -> None:
 def _instrument_tool(name: str, fn: Callable) -> Callable:
     @functools.wraps(fn)
     def wrapped(*args, **kwargs):
+        global _last_tool_fingerprint, _repeated_tool_calls
         tool_execution_id = f"tool_{uuid.uuid4().hex[:8]}"
         started = time.time()
         started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(started))
         tool_input = _bind_tool_input(fn, *args, **kwargs)
+        call_fingerprint = f"{name}:{json.dumps(tool_input, ensure_ascii=False, sort_keys=True, default=str)}"
+        if call_fingerprint == _last_tool_fingerprint:
+            _repeated_tool_calls += 1
+        else:
+            _last_tool_fingerprint = call_fingerprint
+            _repeated_tool_calls = 1
+        if _repeated_tool_calls >= 3:
+            raise RuntimeError(
+                f"Loop detector blocked repeated call #{_repeated_tool_calls} to {name}; change strategy or input."
+            )
+        if _tool_failures.get(name, 0) >= 2:
+            raise RuntimeError(
+                f"Tool {name} failed repeatedly; use an alternative tool or ask for operator input."
+            )
         _emit_tool_event({
             "type": "tool_use",
             "toolExecutionId": tool_execution_id,
@@ -116,8 +134,10 @@ def _instrument_tool(name: str, fn: Callable) -> Callable:
                 "durationMs": duration_ms,
                 "completedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             })
+            _tool_failures.pop(name, None)
             return result
         except Exception as exc:
+            _tool_failures[name] = _tool_failures.get(name, 0) + 1
             duration_ms = int((time.time() - started) * 1000)
             _emit_tool_event({
                 "type": "tool_result",

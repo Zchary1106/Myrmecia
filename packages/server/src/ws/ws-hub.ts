@@ -121,6 +121,12 @@ export class WSHub {
       if (p?.skillId) channels.push(`skill:${p.skillId}`);
       if (p?.agentId) channels.push(`agent:${p.agentId}`);
     }
+    if (event.type.startsWith('artifact:')) {
+      channels.push('artifacts');
+      if (p?.artifactId) channels.push(`artifact:${p.artifactId}`);
+      if (p?.executionId) channels.push(`execution:${p.executionId}`);
+      if (p?.taskId) channels.push(`task:${p.taskId}`);
+    }
     // Agent inter-messages
     if (event.type === 'agent:message') {
       channels.push('agents');
@@ -208,6 +214,7 @@ export class WSHub {
       || event.type.startsWith('inbox:')
       || event.type.startsWith('graph:')
       || event.type.startsWith('team:')
+      || (event.type.startsWith('artifact:') && Boolean((event.payload as any)?.workspaceId))
       || event.type === 'notification'
       || event.type === 'agent:message';
   }

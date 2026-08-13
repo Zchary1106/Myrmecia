@@ -8,7 +8,7 @@
     "build": "tsc && node scripts/copy-runtime-assets.mjs",
     "lint": "tsc --noEmit",
     "start": "node dist/index.js",
-    "test": "vitest run --pool=threads --maxWorkers=1",
+    "test": "vitest run --pool=forks --maxWorkers=1",
     "test:watch": "vitest",
     "harness:eval": "tsx src/testing/harness-eval.ts",
     "validate:social-workflow": "node scripts/validate-social-workflow.mjs",

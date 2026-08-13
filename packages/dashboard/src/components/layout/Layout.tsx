@@ -28,6 +28,7 @@ const MemoryPage = lazy(() => import('../../pages/Memory').then(m => ({ default:
 const OrchestratePage = lazy(() => import('../../pages/Orchestrate').then(m => ({ default: m.OrchestratePage })));
 const TeamsPage = lazy(() => import('../../pages/Teams').then(m => ({ default: m.TeamsPage })));
 const DomainsPage = lazy(() => import('../../pages/Domains').then(m => ({ default: m.DomainsPage })));
+const ArtifactsPage = lazy(() => import('../../pages/Artifacts').then(m => ({ default: m.ArtifactsPage })));
 
 const globalSections: {
   label: string;
@@ -42,6 +43,7 @@ const globalSections: {
       { id: 'tools', label: 'Tools', icon: '🧰' },
       { id: 'models', label: 'Models', icon: '◉' },
       { id: 'skills', label: 'Skills', icon: '▤' },
+      { id: 'artifacts', label: 'Artifacts', icon: '◫' },
       { id: 'domains', label: 'Domains', icon: '▥' },
       { id: 'memory', label: 'Memory', icon: '⌁' },
     ],
@@ -172,6 +174,8 @@ function MainContent() {
       return <ModelsPage />;
     case 'skills':
       return <SkillsPage />;
+    case 'artifacts':
+      return <ArtifactsPage />;
     case 'domains':
       return <DomainsPage />;
     case 'memory':

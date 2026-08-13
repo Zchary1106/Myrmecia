@@ -7,6 +7,33 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
   applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS execution_artifacts (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  task_id TEXT NOT NULL,
+  execution_id TEXT NOT NULL,
+  pipeline_id TEXT,
+  stage_index INTEGER,
+  name TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  mime_type TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'workspace',
+  relative_path TEXT NOT NULL,
+  root_path TEXT,
+  content TEXT,
+  size_bytes INTEGER NOT NULL DEFAULT 0,
+  metadata JSON NOT NULL DEFAULT '{}',
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(execution_id, relative_path)
+);
+CREATE INDEX IF NOT EXISTS idx_execution_artifacts_workspace
+  ON execution_artifacts(workspace_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_execution_artifacts_task
+  ON execution_artifacts(task_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_execution_artifacts_execution
+  ON execution_artifacts(execution_id, created_at DESC);
+
 -- Agent Definitions (capability templates, no runtime status)
 CREATE TABLE IF NOT EXISTS agents (
   id TEXT PRIMARY KEY,
