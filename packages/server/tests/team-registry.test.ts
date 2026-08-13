@@ -13,6 +13,13 @@ import {
   loadTeams, listTeams, getTeam, createTeam, updateTeam, deleteTeam,
   resolveTeamAgents, suggestTeam,
 } from '../src/agents/team-registry.js';
+import {
+  archiveTeamTemplateVersion,
+  createTeamTemplateVersion,
+  getPublishedTeamTemplate,
+  listTeamTemplateVersions,
+  publishTeamTemplateVersion,
+} from '../src/db/models/team-template-version.js';
 
 function writeTeamsYaml(): string {
   const dir = mkdtempSync(join(tmpdir(), 'agent-factory-teams-'));
@@ -101,5 +108,54 @@ describe('Team Registry', () => {
   it('suggests a team by trigger keyword and returns undefined when nothing matches', () => {
     expect(suggestTeam('please build a feature for me')?.id).toBe('feature');
     expect(suggestTeam('unrelated request about weather')).toBeUndefined();
+  });
+
+  it('creates immutable team template versions and publishes one at a time', () => {
+    const graph = {
+      schemaVersion: '1.0' as const,
+      nodes: [{ id: 'build', agentRole: 'developer' }],
+      edges: [],
+    };
+    const first = createTeamTemplateVersion({
+      teamId: 'feature',
+      graph,
+      changeNote: 'initial',
+      createdBy: 'tester',
+    });
+    const second = createTeamTemplateVersion({
+      teamId: 'feature',
+      graph: {
+        ...graph,
+        nodes: [
+          { id: 'build', agentRole: 'developer' },
+          { id: 'qa', agentRole: 'tester' },
+        ],
+        edges: [{ id: 'e1', source: 'build', target: 'qa' }],
+      },
+      changeNote: 'add QA',
+      createdBy: 'tester',
+    });
+
+    expect(first.version).toBe(1);
+    expect(second.version).toBe(2);
+    expect(listTeamTemplateVersions('feature').map(version => version.version)).toEqual([2, 1]);
+
+    publishTeamTemplateVersion(first.id);
+    expect(getPublishedTeamTemplate('feature')?.id).toBe(first.id);
+    publishTeamTemplateVersion(second.id);
+
+    const versions = listTeamTemplateVersions('feature');
+    expect(getPublishedTeamTemplate('feature')?.id).toBe(second.id);
+    expect(versions.find(version => version.id === first.id)?.status).toBe('archived');
+    expect(versions.find(version => version.id === second.id)?.status).toBe('published');
+  });
+
+  it('does not republish an explicitly archived team template version', () => {
+    const version = createTeamTemplateVersion({
+      teamId: 'feature',
+      graph: { nodes: [{ id: 'build', agentRole: 'developer' }], edges: [] },
+    });
+    archiveTeamTemplateVersion(version.id);
+    expect(() => publishTeamTemplateVersion(version.id)).toThrow(/Archived/);
   });
 });

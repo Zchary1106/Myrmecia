@@ -919,6 +919,8 @@ export type WSEventType =
   | 'artifact:published' | 'artifact:read'
   | 'graph:run_started' | 'graph:run_done' | 'graph:run_failed' | 'graph:run_cancelled'
   | 'graph:node_started' | 'graph:node_done' | 'graph:node_failed' | 'graph:node_skipped'
+  | 'graph:node_retrying' | 'graph:node_waiting_approval'
+  | 'graph:node_approved' | 'graph:node_gate_passed'
   | 'team:run_created' | 'team:run_planned' | 'team:run_done' | 'team:run_failed'
   | 'token:delta';
 

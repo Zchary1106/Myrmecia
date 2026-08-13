@@ -64,3 +64,7 @@ pnpm validate:contracts
 - 旧 Pipeline Template 可以继续运行。
 - 新增 `inputs`、`outputs`、`required_skills` 字段只提供结构化元数据，不改变第一阶段执行语义。
 
+## 第二阶段 Runtime
+
+节点状态机、Artifact 数据流、Schema Gate、重试、人工接管和 Team Template
+版本管理参见 [runtime-orchestration.md](runtime-orchestration.md)。

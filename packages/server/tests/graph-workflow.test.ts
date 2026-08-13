@@ -3,7 +3,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtempSync } from 'fs';
+import { mkdtempSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { closeDb, getDb } from '../src/db/database.js';
@@ -15,8 +15,13 @@ import {
   listGraphRunEvents,
   type GraphDef,
 } from '../src/agents/graph-workflow.js';
+import {
+  initialWorkflowNodeState,
+  transitionWorkflowNode,
+} from '../src/agents/workflow-runtime-state.js';
 
-const flush = () => new Promise(r => setImmediate(r));
+const flush = () => new Promise(r => setTimeout(r, 10));
+const settle = flush;
 
 // Minimal fakes for the queue + agent manager.
 const enqueued: Array<{ id: string; input: string; assigneeId?: string }> = [];
@@ -116,6 +121,13 @@ describe('GraphWorkflowEngine', () => {
     expect(events).toContain('run_done');
   });
 
+  it('enforces legal node state transitions', () => {
+    const pending = initialWorkflowNodeState({ id: 'build', agentRole: 'developer' });
+    const ready = transitionWorkflowNode(pending, 'ready');
+    const running = transitionWorkflowNode(ready, 'running');
+    expect(() => transitionWorkflowNode(running, 'pending')).toThrow(/Invalid workflow node transition/);
+  });
+
   it('rejects a malformed or cyclic graph before it is stored', () => {
     expect(() => createGraphWorkflow({
       name: 'Cyclic',
@@ -132,7 +144,7 @@ describe('GraphWorkflowEngine', () => {
     })).toThrow(/contains a cycle/);
   });
 
-  it('saves but does not execute a human approval node before its state machine exists', async () => {
+  it('pauses at a human approval node and resumes after approval', async () => {
     const workflow = createGraphWorkflow({
       name: 'Approval',
       graph: {
@@ -141,7 +153,193 @@ describe('GraphWorkflowEngine', () => {
       },
     });
 
-    await expect(engine.run(workflow.id, 'release')).rejects.toThrow(/human-approval state machine/);
+    const waiting = await engine.run(workflow.id, 'release');
+    expect(waiting.status).toBe('waiting');
+    expect(waiting.runState!.nodes.approve.status).toBe('waiting_approval');
+
+    const approved = await engine.approveNode(workflow.id, 'approve', {
+      actorId: 'reviewer-1',
+      note: 'ready',
+    });
+    expect(approved.status).toBe('done');
+    expect(approved.runState!.nodes.approve.status).toBe('done');
+    expect(approved.runState!.nodes.approve.intervention?.decision).toBe('approved');
+    expect(Object.values(approved.runState!.artifacts)).toHaveLength(1);
+  });
+
+  it('passes only mapped artifacts to downstream agents', async () => {
+    const workflow = createGraphWorkflow({
+      name: 'Mapped artifacts',
+      graph: {
+        nodes: [
+          {
+            id: 'build',
+            agentRole: 'developer',
+            outputArtifacts: [
+              { name: 'implementation', kind: 'code', required: true },
+              { name: 'notes', kind: 'markdown', required: true },
+            ],
+          },
+          {
+            id: 'qa',
+            kind: 'gate',
+            agentRole: 'reviewer',
+            inputArtifacts: [{ name: 'candidate', kind: 'code', required: true }],
+            outputArtifacts: [{ name: 'review', kind: 'report', required: true }],
+          },
+        ],
+        edges: [{
+          id: 'build-qa',
+          source: 'build',
+          target: 'qa',
+          artifactMappings: [{ from: 'implementation', to: 'candidate' }],
+        }],
+      },
+    });
+    await engine.run(workflow.id, 'build it');
+    completeNode(workflow.id, 'build', JSON.stringify({
+      implementation: 'const answer = 42;',
+      notes: 'internal notes must not be forwarded',
+    }));
+    await flush();
+
+    const qaInput = enqueued.find(item => item.assigneeId === 'agent-reviewer')!.input;
+    expect(qaInput).toContain('### candidate');
+    expect(qaInput).toContain('const answer = 42;');
+    expect(qaInput).not.toContain('internal notes must not be forwarded');
+    expect(qaInput).toContain('Independent quality gate');
+    const current = getGraphWorkflow(workflow.id)!;
+    expect(Object.values(current.runState!.artifacts).map(artifact => artifact.name)).toEqual([
+      'implementation',
+      'notes',
+    ]);
+  });
+
+  it('retries a schema-invalid output and succeeds on the next attempt', async () => {
+    const schemaPath = join(mkdtempSync(join(tmpdir(), 'workflow-schema-')), 'result.schema.json');
+    writeFileSync(schemaPath, JSON.stringify({
+      type: 'object',
+      required: ['ok'],
+      properties: { ok: { const: true } },
+    }));
+    const workflow = createGraphWorkflow({
+      name: 'Retry schema',
+      graph: {
+        nodes: [{
+          id: 'build',
+          agentRole: 'developer',
+          qualityGate: { outputSchema: schemaPath },
+          retryPolicy: { maxAttempts: 2, backoffMs: 0 },
+          outputArtifacts: [{ name: 'result', kind: 'json', required: true }],
+        }],
+        edges: [],
+      },
+    });
+    await engine.run(workflow.id, 'goal');
+    completeNode(workflow.id, 'build', '{"ok":false}');
+    await settle();
+
+    let current = getGraphWorkflow(workflow.id)!;
+    expect(current.runState!.nodes.build.status).toBe('running');
+    expect(current.runState!.nodes.build.attempt).toBe(2);
+    expect(enqueued).toHaveLength(2);
+
+    completeNode(workflow.id, 'build', '{"ok":true}');
+    await flush();
+    current = getGraphWorkflow(workflow.id)!;
+    expect(current.status).toBe('done');
+    expect(current.runState!.nodes.build.validationErrors).toBeUndefined();
+  });
+
+  it('runs an automatic schema gate against upstream artifacts', async () => {
+    const schemaPath = join(mkdtempSync(join(tmpdir(), 'workflow-gate-schema-')), 'gate.schema.json');
+    writeFileSync(schemaPath, JSON.stringify({
+      type: 'object',
+      required: ['approved'],
+      properties: { approved: { const: true } },
+    }));
+    const workflow = createGraphWorkflow({
+      name: 'Automatic gate',
+      graph: {
+        nodes: [
+          {
+            id: 'producer',
+            agentRole: 'developer',
+            outputArtifacts: [{ name: 'candidate', kind: 'json', required: true }],
+          },
+          {
+            id: 'gate',
+            kind: 'gate',
+            inputArtifacts: [{ name: 'candidate', kind: 'json', required: true }],
+            qualityGate: { outputSchema: schemaPath },
+            outputArtifacts: [{ name: 'validated', kind: 'json', required: true }],
+          },
+        ],
+        edges: [{ id: 'e1', source: 'producer', target: 'gate' }],
+      },
+    });
+    await engine.run(workflow.id, 'goal');
+    completeNode(workflow.id, 'producer', '{"approved":true}');
+    await flush();
+
+    const current = getGraphWorkflow(workflow.id)!;
+    expect(current.status).toBe('done');
+    expect(current.runState!.nodes.gate.status).toBe('done');
+    expect(current.runState!.nodes.gate.taskId).toBeUndefined();
+  });
+
+  it('keeps generated artifacts pending until a quality approval gate is released', async () => {
+    const workflow = createGraphWorkflow({
+      name: 'Approval gate',
+      graph: {
+        nodes: [{
+          id: 'build',
+          agentRole: 'developer',
+          qualityGate: { approvalRequired: true },
+          outputArtifacts: [{ name: 'implementation', kind: 'code', required: true }],
+        }],
+        edges: [],
+      },
+    });
+    await engine.run(workflow.id, 'goal');
+    completeNode(workflow.id, 'build', 'const ready = true;');
+    await flush();
+
+    let current = getGraphWorkflow(workflow.id)!;
+    const artifactId = current.runState!.nodes.build.artifactIds![0];
+    expect(current.status).toBe('waiting');
+    expect(current.runState!.artifacts[artifactId].metadata?.approvalStatus).toBe('pending');
+
+    current = await engine.approveNode(workflow.id, 'build', { actorId: 'reviewer-1' });
+    expect(current.status).toBe('done');
+    expect(current.runState!.nodes.build.artifactIds).toEqual([artifactId]);
+    expect(current.runState!.artifacts[artifactId].metadata?.approvalStatus).toBe('approved');
+  });
+
+  it('waits for intervention after retries are exhausted and supports manual retry', async () => {
+    const workflow = createGraphWorkflow({
+      name: 'Intervention',
+      graph: {
+        nodes: [{
+          id: 'build',
+          agentRole: 'developer',
+          retryPolicy: { maxAttempts: 1, onExhausted: 'human' },
+        }],
+        edges: [],
+      },
+    });
+    await engine.run(workflow.id, 'goal');
+    failNode(workflow.id, 'build', 'boom');
+    await flush();
+
+    let current = getGraphWorkflow(workflow.id)!;
+    expect(current.status).toBe('waiting');
+    expect(current.runState!.nodes.build.status).toBe('waiting_approval');
+
+    await engine.retryNode(workflow.id, 'build', { actorId: 'operator-1' });
+    current = getGraphWorkflow(workflow.id)!;
+    expect(current.status).toBe('running');
+    expect(current.runState!.nodes.build.attempt).toBe(2);
   });
 
   it('cascades skip + fails the run when a node fails', async () => {

@@ -15,6 +15,39 @@ export interface StageOutputValidation {
   errors: string[];
 }
 
+export function validateOutputAgainstSchema(output: string, outputSchema?: string): StageOutputValidation {
+  const deterministicErrors = lintDeterministicOutput(output);
+  if (!outputSchema) {
+    return { valid: deterministicErrors.length === 0, errors: deterministicErrors };
+  }
+
+  let value: unknown;
+  try {
+    value = extractStructuredOutput(output);
+  } catch (error) {
+    return { valid: false, errors: [(error as Error).message] };
+  }
+
+  const errors = [...deterministicErrors];
+  const schemaPath = resolveRuntimeAsset(outputSchema);
+  if (!schemaPath) {
+    errors.push(`Output schema not found: ${outputSchema}`);
+  } else {
+    try {
+      const schema = JSON.parse(readFileSync(schemaPath, 'utf8'));
+      const validate = ajv.compile(schema);
+      if (!validate(value)) {
+        errors.push(...(validate.errors || []).map(error =>
+          `${error.instancePath || '/'} ${error.message || 'is invalid'}`
+        ));
+      }
+    } catch (error) {
+      errors.push(`Unable to validate output schema: ${(error as Error).message}`);
+    }
+  }
+  return { valid: errors.length === 0, value, errors };
+}
+
 export function lintDeterministicOutput(output: string): string[] {
   const errors: string[] = [];
   const codeBlocks = [...output.matchAll(/```(?:bash|sh|shell|zsh|console|text)?\s*\n([\s\S]*?)```/gi)]
@@ -77,37 +110,20 @@ function valueAtPath(value: unknown, field: string): unknown {
 }
 
 export function validateStageOutput(stage: PipelineStage, output: string): StageOutputValidation {
-  const deterministicErrors = lintDeterministicOutput(output);
   if (!stage.outputSchema && !stage.outputPolicy) {
-    return { valid: deterministicErrors.length === 0, errors: deterministicErrors };
+    return validateOutputAgainstSchema(output);
   }
 
-  let value: unknown;
-  try {
-    value = extractStructuredOutput(output);
-  } catch (error) {
-    return { valid: false, errors: [(error as Error).message] };
-  }
-
-  const errors: string[] = [...deterministicErrors];
-  if (stage.outputSchema) {
-    const schemaPath = resolveRuntimeAsset(stage.outputSchema);
-    if (!schemaPath) {
-      errors.push(`Output schema not found: ${stage.outputSchema}`);
-    } else {
-      try {
-        const schema = JSON.parse(readFileSync(schemaPath, 'utf8'));
-        const validate = ajv.compile(schema);
-        if (!validate(value)) {
-          errors.push(...(validate.errors || []).map(error =>
-            `${error.instancePath || '/'} ${error.message || 'is invalid'}`
-          ));
-        }
-      } catch (error) {
-        errors.push(`Unable to validate output schema: ${(error as Error).message}`);
-      }
+  const schemaValidation = validateOutputAgainstSchema(output, stage.outputSchema);
+  if (schemaValidation.value === undefined && stage.outputPolicy) {
+    try {
+      schemaValidation.value = extractStructuredOutput(output);
+    } catch (error) {
+      return { valid: false, errors: [(error as Error).message] };
     }
   }
+  const value = schemaValidation.value;
+  const errors: string[] = [...schemaValidation.errors];
 
   if (stage.outputPolicy) {
     const actual = valueAtPath(value, stage.outputPolicy.field);
