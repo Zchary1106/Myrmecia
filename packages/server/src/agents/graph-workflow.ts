@@ -14,28 +14,18 @@ import { logger } from '../lib/logger.js';
 import { getAgent } from '../db/models/agent.js';
 import type { TaskQueue } from '../queue/task-queue.js';
 import type { AgentManager } from './agent-manager.js';
+import type {
+  WorkflowEdgeContract,
+  WorkflowGraphContract,
+  WorkflowNodeContract,
+} from '../types.js';
+import { validateWorkflowGraphContract } from '../contracts/team-composer-contracts.js';
 
 // ---------- Types ----------
 
-export interface GraphNode {
-  id: string;
-  label?: string;
-  agentId?: string;
-  agentRole?: string;
-  prompt?: string;            // may contain {input}
-  position?: { x: number; y: number };
-}
-
-export interface GraphEdge {
-  id: string;
-  source: string;
-  target: string;
-}
-
-export interface GraphDef {
-  nodes: GraphNode[];
-  edges: GraphEdge[];
-}
+export type GraphNode = WorkflowNodeContract;
+export type GraphEdge = WorkflowEdgeContract;
+export type GraphDef = WorkflowGraphContract;
 
 export type GraphStatus = 'draft' | 'running' | 'done' | 'failed' | 'cancelled';
 export type NodeStatus = 'pending' | 'running' | 'done' | 'failed' | 'skipped';
@@ -135,12 +125,17 @@ function parseJson<T>(value: unknown, fallback: T): T {
 
 export function createGraphWorkflow(data: { name: string; description?: string; workspaceId?: string; graph?: GraphDef; input?: string }): GraphWorkflow {
   ensureSchema();
+  const graph = data.graph ?? { schemaVersion: '1.0', nodes: [], edges: [] };
+  const validation = validateWorkflowGraphContract(graph, { allowEmpty: true });
+  if (!validation.valid) {
+    throw new Error(`Invalid workflow graph: ${validation.errors.map(issue => issue.message).join('; ')}`);
+  }
   const id = `gw_${uuid().slice(0, 12)}`;
   getDb().run(
     `INSERT INTO graph_workflows (id, name, description, workspace_id, graph, status, input)
      VALUES (?, ?, ?, ?, ?, 'draft', ?)`,
     id, data.name, data.description ?? null, data.workspaceId ?? 'default',
-    JSON.stringify(data.graph ?? { nodes: [], edges: [] }), data.input ?? null
+    JSON.stringify(validation.value), data.input ?? null
   );
   return getGraphWorkflow(id)!;
 }
@@ -162,6 +157,13 @@ export function listGraphWorkflows(filter?: { workspaceId?: string; limit?: numb
 
 export function updateGraphWorkflow(id: string, updates: Partial<{ name: string; description: string; graph: GraphDef; status: GraphStatus; input: string; runState: RunState | null; completedAt: string | null }>): GraphWorkflow | undefined {
   ensureSchema();
+  if (updates.graph !== undefined) {
+    const validation = validateWorkflowGraphContract(updates.graph, { allowEmpty: true });
+    if (!validation.valid) {
+      throw new Error(`Invalid workflow graph: ${validation.errors.map(issue => issue.message).join('; ')}`);
+    }
+    updates = { ...updates, graph: validation.value };
+  }
   const sets: string[] = [];
   const params: any[] = [];
   if (updates.name !== undefined) { sets.push('name = ?'); params.push(updates.name); }
@@ -224,7 +226,16 @@ export class GraphWorkflowEngine {
   async run(workflowId: string, input?: string): Promise<GraphWorkflow> {
     const wf = getGraphWorkflow(workflowId);
     if (!wf) throw new Error('workflow not found');
-    if (wf.graph.nodes.length === 0) throw new Error('graph has no nodes');
+    const validation = validateWorkflowGraphContract(wf.graph);
+    if (!validation.valid) {
+      throw new Error(`Invalid workflow graph: ${validation.errors.map(issue => issue.message).join('; ')}`);
+    }
+    const humanApprovalNode = wf.graph.nodes.find(node => node.kind === 'human-approval');
+    if (humanApprovalNode) {
+      throw new Error(
+        `Workflow node "${humanApprovalNode.id}" requires the human-approval state machine, which is not enabled yet`
+      );
+    }
 
     const runId = `run_${uuid().slice(0, 12)}`;
     const nodes: Record<string, NodeState> = {};

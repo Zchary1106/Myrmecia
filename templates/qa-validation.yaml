@@ -3,6 +3,10 @@ description: Focused validation workflow that produces a standardized test-repor
 stages:
   - name: Test Plan
     role: qa-automation
+    inputs:
+      - { name: implementation, kind: code, required: true }
+    outputs:
+      - { name: test-plan, kind: markdown, required: true }
     prompt_template: |
       Identify the smallest useful validation plan for:
       {input}
@@ -12,6 +16,11 @@ stages:
   - name: Run Focused Validation
     role: qa-automation
     depends_on: [0]
+    inputs:
+      - { name: test-plan, kind: markdown, required: true }
+      - { name: implementation, kind: code, required: true }
+    outputs:
+      - { name: test-report, kind: report, required: true }
     prompt_template: |
       Execute or describe the narrowest safe validation for:
       {input}
@@ -21,6 +30,10 @@ stages:
   - name: Regression Summary
     role: reviewer
     depends_on: [1]
+    inputs:
+      - { name: test-report, kind: report, required: true }
+    outputs:
+      - { name: readiness-decision, kind: report, required: true }
     prompt_template: |
       Review the QA test-report and decide whether the implementation is ready:
       {input}

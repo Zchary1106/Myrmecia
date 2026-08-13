@@ -13,8 +13,9 @@ stages:
       {input}
 
   - name: 笔记创作
-    role: content-writer
+    role: xiaohongshu-writer
     agent: xiaohongshu-writer
+    depends_on: [0]
     prompt_template: |
       根据以下策划方案，创作完整的小红书图文笔记。
       
@@ -22,8 +23,9 @@ stages:
       {input}
 
   - name: SEO 优化
-    role: content-writer
+    role: xiaohongshu-writer
     agent: xiaohongshu-writer
+    depends_on: [1]
     prompt_template: |
       优化以下小红书笔记的搜索表现：
       1. 标题关键词密度

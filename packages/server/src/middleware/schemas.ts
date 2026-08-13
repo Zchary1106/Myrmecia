@@ -3,6 +3,7 @@
  */
 
 import { z } from 'zod';
+import { agentContractSchema } from '../contracts/team-composer-contracts.js';
 
 export const createTaskSchema = z.object({
   title: z.string().min(1).max(200),
@@ -36,6 +37,7 @@ export const createAgentSchema = z.object({
     timeout: z.number().int().optional(),
     workdir: z.string().optional(),
     maxTurns: z.number().int().optional(),
+    contract: agentContractSchema.optional(),
   }).optional(),
   capabilities: z.array(z.string()).optional(),
   triggers: z.array(z.string()).optional(),

@@ -7,6 +7,7 @@ import { agentRuntime } from './agent-runtime.js';
 import { domainAgentForRole } from './domain-registry.js';
 import { logger } from '../lib/logger.js';
 import type { AgentDefinition, Task } from '../types.js';
+import { normalizeAgentContract } from '../contracts/team-composer-contracts.js';
 
 export class AgentManager {
   private registryPath: string;
@@ -22,6 +23,7 @@ export class AgentManager {
       const registry = parseYaml(content);
 
       for (const def of registry.agents || []) {
+        const { contract, inferred } = normalizeAgentContract(def);
         const existing = getAgent(def.id);
         const allowedTools = def.allowedTools || def.allowed_tools || [];
         const disallowedTools = def.disallowedTools || def.disallowed_tools || [];
@@ -53,6 +55,7 @@ export class AgentManager {
             config: {
               model: def.model?.model,
               modelPolicy,
+              contract,
               maxConcurrent: 1,
               timeout: 300,
               maxTurns: 50,
@@ -74,9 +77,13 @@ export class AgentManager {
               ...existing.config,
               model: def.model?.model || existing.config.model,
               modelPolicy: modelPolicy || existing.config.modelPolicy,
+              contract,
               allowedTools,
             },
           });
+        }
+        if (inferred) {
+          logger.debug({ agentId: def.id }, 'Agent Contract inferred from legacy registry fields');
         }
       }
     } catch (err: any) {

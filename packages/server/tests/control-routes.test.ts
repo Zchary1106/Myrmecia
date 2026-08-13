@@ -669,6 +669,61 @@ describe('control routes', () => {
     });
   });
 
+  it('validates and preserves custom Agent Contracts across partial config updates', async () => {
+    const app = express();
+    app.use(express.json());
+    app.use('/agents', createAgentRoutes());
+    const contract = {
+      schemaVersion: '1.0',
+      agentId: 'contract-agent',
+      role: 'researcher',
+      responsibility: {
+        summary: 'Produces source-backed research',
+        owns: ['research'],
+        doesNotOwn: ['publishing'],
+      },
+      inputs: [{ name: 'question', kind: 'text', required: true }],
+      outputs: [{ name: 'report', kind: 'report', required: true }],
+      skills: [],
+      tools: ['web.search'],
+      quality: { definitionOfDone: ['Sources and conclusions are included'] },
+    };
+
+    await withApp(app, async (baseUrl) => {
+      const created = await jsonFetch<any>(baseUrl, '/agents', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: 'Contract Agent',
+          role: 'researcher',
+          config: { timeout: 120, contract },
+        }),
+        headers: { 'x-operator-id': 'ops1', 'x-operator-role': 'operator' },
+      });
+      expect(created.status).toBe(201);
+      expect(created.body.id).toBe('contract-agent');
+      expect(created.body.config.contract).toMatchObject({ agentId: 'contract-agent', role: 'researcher' });
+
+      const updated = await jsonFetch<any>(baseUrl, '/agents/contract-agent', {
+        method: 'PATCH',
+        body: JSON.stringify({ config: { timeout: 240 } }),
+        headers: { 'x-operator-id': 'ops1', 'x-operator-role': 'operator' },
+      });
+      expect(updated.status).toBe(200);
+      expect(updated.body.config.timeout).toBe(240);
+      expect(updated.body.config.contract.agentId).toBe('contract-agent');
+
+      const mismatched = await jsonFetch<any>(baseUrl, '/agents/contract-agent', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          config: { contract: { ...contract, agentId: 'other-agent' } },
+        }),
+        headers: { 'x-operator-id': 'ops1', 'x-operator-role': 'operator' },
+      });
+      expect(mismatched.status).toBe(400);
+      expect(mismatched.body.error.code).toBe('AGENT_CONTRACT_ID_MISMATCH');
+    });
+  });
+
   it('guards and audits tool policy controls', async () => {
     syncBuiltinTools();
     const agent = createAgent({ id: 'tool-route-agent', name: 'Tool Route Agent', role: 'researcher' });

@@ -3,6 +3,10 @@ description: Quick bug triage, fix, and verification
 stages:
   - name: Triage
     role: pm
+    inputs:
+      - { name: bug-report, kind: text, required: true }
+    outputs:
+      - { name: triage-report, kind: report, required: true }
     prompt_template: |
       Analyze this bug report. Identify root cause, affected components, and severity.
       
@@ -11,6 +15,12 @@ stages:
 
   - name: Fix
     role: dev
+    depends_on: [0]
+    inputs:
+      - { name: triage-report, kind: report, required: true }
+    outputs:
+      - { name: implementation, kind: code, required: true }
+      - { name: validation-evidence, kind: report, required: true }
     prompt_template: |
       Fix the following bug based on the triage analysis.
       Write minimal, targeted changes.
@@ -20,6 +30,11 @@ stages:
 
   - name: Test
     role: qa
+    depends_on: [1]
+    inputs:
+      - { name: implementation, kind: code, required: true }
+    outputs:
+      - { name: test-report, kind: report, required: true }
     prompt_template: |
       Verify the bug fix. Write a regression test to prevent recurrence.
       

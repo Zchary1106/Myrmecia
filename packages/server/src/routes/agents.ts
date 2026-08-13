@@ -12,6 +12,7 @@ import { eventBus } from '../events/event-bus.js';
 import { logger } from '../lib/logger.js';
 import { HttpError, notFound, parseBody, requireOperatorRole, sendError } from './http.js';
 import { workspaceIdFromRequest } from '../auth/tenant.js';
+import { agentContractSchema } from '../contracts/team-composer-contracts.js';
 
 const prioritySchema = z.enum(['low', 'normal', 'high', 'urgent']);
 const stringListSchema = z.array(z.string().trim().min(1));
@@ -22,6 +23,7 @@ const agentConfigSchema = z.object({
   workdir: z.string().trim().min(1).optional(),
   maxTurns: z.number().int().min(1).optional(),
   allowedTools: stringListSchema.optional(),
+  contract: agentContractSchema.optional(),
 }).passthrough();
 
 const createAgentSchema = z.object({
@@ -65,6 +67,7 @@ function agentAuditSnapshot(agent: AgentDefinition) {
     model: agent.model || agent.config.model,
     maxTurns: agent.maxTurns || agent.config.maxTurns,
     timeout: agent.config.timeout,
+    contract: agent.config.contract,
   };
 }
 
@@ -100,7 +103,14 @@ export function createAgentRoutes(taskQueue?: TaskQueue): Router {
     try {
       const actor = requireOperatorRole(req, 'agent.create', ['admin', 'operator']);
       const body = parseBody(createAgentSchema, req);
-      const agent = createAgent(body);
+      const contract = body.config?.contract;
+      if (contract && contract.role !== body.role) {
+        throw new HttpError(400, 'AGENT_CONTRACT_ROLE_MISMATCH', 'Agent Contract role must match the Agent role');
+      }
+      const agent = createAgent({
+        ...body,
+        id: contract?.agentId,
+      });
       createOperatorAction({
         action: 'agent.create',
         actor,
@@ -121,7 +131,18 @@ export function createAgentRoutes(taskQueue?: TaskQueue): Router {
       const agent = getAgent(req.params.id);
       if (!agent) notFound('AGENT_NOT_FOUND', 'Agent not found');
       const actor = requireOperatorRole(req, 'agent.update', ['admin', 'operator']);
-      const updated = updateAgent(req.params.id, parseBody(updateAgentSchema, req));
+      const patch = parseBody(updateAgentSchema, req);
+      const contract = patch.config?.contract;
+      if (contract && contract.agentId !== agent.id) {
+        throw new HttpError(400, 'AGENT_CONTRACT_ID_MISMATCH', 'Agent Contract agentId must match the Agent being updated');
+      }
+      if (contract && contract.role !== (patch.role || agent.role)) {
+        throw new HttpError(400, 'AGENT_CONTRACT_ROLE_MISMATCH', 'Agent Contract role must match the Agent role');
+      }
+      const updated = updateAgent(req.params.id, {
+        ...patch,
+        ...(patch.config ? { config: { ...agent.config, ...patch.config } } : {}),
+      });
       if (!updated) throw new HttpError(404, 'AGENT_NOT_FOUND', 'Agent not found');
       createOperatorAction({
         action: 'agent.update',
