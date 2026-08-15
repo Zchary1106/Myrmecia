@@ -1,0 +1,135 @@
+name: Desktop installers
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+    paths:
+      - '.github/workflows/desktop-build.yml'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'packages/desktop/**'
+      - 'packages/shared/**'
+      - 'packages/server/**'
+      - 'packages/dashboard/**'
+      - 'packages/python-runtime/**'
+      - 'agents/**'
+      - 'templates/**'
+      - 'skills/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-installers-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-installers:
+    name: Build ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: macOS DMG
+            os: macos-14
+            platform: mac
+            artifact: myrmecia-macos
+          - label: Windows EXE
+            os: windows-latest
+            platform: windows
+            artifact: myrmecia-windows
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder-cache
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 9.15.9
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 20.19.0
+          cache: pnpm
+
+      - name: Restore Electron cache
+        uses: actions/cache@v5
+        with:
+          path: ${{ env.ELECTRON_BUILDER_CACHE }}
+          key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            electron-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build unsigned macOS installer
+        if: matrix.platform == 'mac'
+        run: pnpm --filter @myrmecia/desktop package -- --mac dmg
+
+      - name: Build unsigned Windows installer
+        if: matrix.platform == 'windows'
+        run: pnpm --filter @myrmecia/desktop package -- --win nsis
+
+      - name: Verify macOS installer
+        if: matrix.platform == 'mac'
+        shell: bash
+        run: |
+          test -n "$(find packages/desktop/release -maxdepth 1 -name '*.dmg' -print -quit)"
+          shasum -a 256 packages/desktop/release/*.dmg > packages/desktop/release/SHA256SUMS-macos.txt
+
+      - name: Verify Windows installer
+        if: matrix.platform == 'windows'
+        shell: bash
+        run: |
+          test -n "$(find packages/desktop/release -maxdepth 1 -name '*.exe' -print -quit)"
+          sha256sum packages/desktop/release/*.exe > packages/desktop/release/SHA256SUMS-windows.txt
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            packages/desktop/release/*.dmg
+            packages/desktop/release/*.exe
+            packages/desktop/release/SHA256SUMS-*.txt
+          if-no-files-found: error
+          retention-days: 30
+
+  attach-to-release:
+    name: Attach installers to release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build-installers
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download installer artifacts
+        uses: actions/download-artifact@v7
+        with:
+          path: release-assets
+          merge-multiple: false
+
+      - name: Create release and upload installers
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          if ! gh release view "$TAG" --repo "$REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$TAG" --repo "$REPOSITORY" --generate-notes --title "Myrmecia $TAG"
+          fi
+          find release-assets -type f \( -name '*.dmg' -o -name '*.exe' -o -name 'SHA256SUMS-*.txt' \) -print0 \
+            | xargs -0 gh release upload "$TAG" --repo "$REPOSITORY" --clobber

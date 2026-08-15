@@ -23,6 +23,19 @@ pnpm --filter @myrmecia/desktop typecheck
 pnpm package:desktop      # stage + electron-builder
 ```
 
+## GitHub Actions 远程构建
+
+`.github/workflows/ci.yml` 会在 Pull Request 与 `main` 分支运行构建、Lint、契约校验、Server/Dashboard 测试、Playwright E2E 和桌面资源 staging 校验。失败的 Playwright 报告会保留为 Actions Artifact，便于排查。
+
+`.github/workflows/desktop-build.yml` 在目标系统 runner 上生成桌面安装包：
+
+- **macOS runner 原生架构**：生成未签名 `.dmg`；
+- **Windows runner 原生架构**：生成未签名 NSIS `.exe`；
+- 每个安装包附带 SHA-256 校验文件，并在 Actions 页面保留 30 天；
+- 在 Actions → **Desktop installers** 中可以手动执行；相关桌面或运行时文件合并到 `main` 后也会生成可下载 Artifact；推送 `v*` Tag 时会自动创建或更新对应 GitHub Release，并上传 `.dmg`/`.exe`。
+
+当前默认关闭代码签名（`CSC_IDENTITY_AUTO_DISCOVERY=false`），不需要仓库 Secrets 即可构建。未签名包适合内部测试，但 macOS Gatekeeper 和 Windows SmartScreen 会显示安全提示。正式发布时应配置 Apple Developer ID/Notarization 与 Windows Code Signing 证书，再移除该设置或增加签名步骤。构建产物仍要求用户安装与构建 ABI 兼容的 Node.js 20；Python 能力仍取决于用户本机 Python 环境。
+
 用户数据（SQLite、日志与工作区）均在 Electron `userData`，不会写入安装目录。每次启动都会先显示 Provider 选择页，可选择 **GitHub Copilot**、**DeepSeek** 或通用 OpenAI-compatible Provider；保存的配置只会预选相应 Provider，不会绕过选择页直接启动。Copilot 使用本机已登录的 Copilot CLI/SDK 凭据，不保存 GitHub Token，也不要求 API Key；DeepSeek 默认直连 `https://api.deepseek.com` 和 `deepseek-v4-flash`，其 API Key 仅在 Electron 主进程使用系统凭据库加密后保存于 `runtime-config.json`，不暴露给 Dashboard。Copilot 启动时使用账号自适应的 `auto` 模型，进入 Dashboard 后可在 Models 页面发现并切换当前账号实际可用的模型；用户需先在本机完成 Copilot GitHub 登录并具有有效订阅。配置 JSON 损坏或凭据无法解密时，splash 会回到可编辑的恢复状态，允许用户直接覆盖配置。若 Linux 缺少受支持的凭据库，应用拒绝保存 API Key，并提示通过环境变量提供。`MYRMECIA_DESKTOP_USER_DATA` 可为测试或受控部署指定单独的绝对用户数据目录。`MYRMECIA_NODE_PATH` 可指定系统 Node 可执行文件；否则从继承的 `PATH` 和常见系统安装位置寻找 `node`。`MYRMECIA_PYTHON_PATH` 可指定 Python 可执行文件；未指定时 Windows 按 `py -3`、`python`、`python3` 依次探测，其他系统使用 `python3`。doctor 检查 Node、Python 和 `crewai/litellm/yaml`；Python 检查为可选，不阻止仪表板启动，也不提供不透明的 pip 安装按钮。
 
 ## v1 限制
