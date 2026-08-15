@@ -20,6 +20,7 @@ import { useStore } from '../src/stores/store';
 import { isContentProductionAgent, usesContentStudio } from '../src/components/agents/AgentWorkspace';
 import { contentStudioWorkflow } from '../src/components/agents/ContentStudio';
 import { hasPublishStageAhead } from '../src/pages/Pipelines';
+import { canControlWorkflowNode } from '../src/pages/Orchestrate';
 
 // ─── API module structure ────────────────────────────────────────────────────
 
@@ -87,6 +88,18 @@ describe('api module structure', () => {
     expect(api.artifacts.download).toBeTypeOf('function');
   });
 
+  it('exports workflow runtime and team template methods', () => {
+    expect(api.graphWorkflows.artifacts).toBeTypeOf('function');
+    expect(api.graphWorkflows.retryNode).toBeTypeOf('function');
+    expect(api.graphWorkflows.approveNode).toBeTypeOf('function');
+    expect(api.graphWorkflows.rejectNode).toBeTypeOf('function');
+    expect(api.teams.versions).toBeTypeOf('function');
+    expect(api.teams.createVersion).toBeTypeOf('function');
+    expect(api.teams.publishVersion).toBeTypeOf('function');
+    expect(api.teams.archiveVersion).toBeTypeOf('function');
+    expect(api.teams.instantiate).toBeTypeOf('function');
+  });
+
   it('exports executions namespace', () => {
     expect(api.executions).toBeDefined();
     expect(api.executions.list).toBeTypeOf('function');
@@ -127,6 +140,27 @@ describe('api module structure', () => {
     expect(api.stats).toBeTypeOf('function');
     expect(api.observability).toBeTypeOf('function');
     expect(api.diagnostics).toBeTypeOf('function');
+  });
+});
+
+describe('Team Composer runtime controls', () => {
+  it('only enables approval controls for intervention states', () => {
+    expect(canControlWorkflowNode('waiting_approval')).toEqual({
+      approve: true,
+      reject: true,
+      retry: true,
+    });
+    expect(canControlWorkflowNode('running')).toEqual({
+      approve: false,
+      reject: false,
+      retry: false,
+    });
+  });
+
+  it('enables retry for recoverable terminal states', () => {
+    expect(canControlWorkflowNode('failed').retry).toBe(true);
+    expect(canControlWorkflowNode('skipped').retry).toBe(true);
+    expect(canControlWorkflowNode('done').retry).toBe(false);
   });
 });
 

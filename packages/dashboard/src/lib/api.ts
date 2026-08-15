@@ -41,6 +41,14 @@ import type {
   GitHubFixDiff,
   GitHubFixRun,
   ExecutionArtifact,
+  ArtifactContract,
+  TeamTemplateVersion,
+  WorkflowEdgeContract,
+  WorkflowGraphContract,
+  WorkflowIntervention,
+  WorkflowNodeContract,
+  WorkflowNodeRunStatus,
+  WorkflowRunStatus,
 } from '@myrmecia/shared';
 import { getApiAuthToken } from './auth';
 
@@ -452,6 +460,23 @@ export const api = {
     replay: (id: string, input?: string) => request<GraphWorkflowDTO>(`/graph-workflows/${id}/replay`, { method: 'POST', body: JSON.stringify({ input }) }),
     resume: (id: string) => request<GraphWorkflowDTO>(`/graph-workflows/${id}/resume`, { method: 'POST' }),
     cancel: (id: string) => request<GraphWorkflowDTO>(`/graph-workflows/${id}/cancel`, { method: 'POST' }),
+    artifacts: (id: string) =>
+      request<{ workflowId: string; runId?: string; artifacts: ArtifactContract[] }>(`/graph-workflows/${id}/artifacts`),
+    retryNode: (id: string, nodeId: string, note?: string) =>
+      request<GraphWorkflowDTO>(`/graph-workflows/${id}/nodes/${encodeURIComponent(nodeId)}/retry`, {
+        method: 'POST',
+        body: JSON.stringify({ note }),
+      }),
+    approveNode: (id: string, nodeId: string, data?: { note?: string; output?: string }) =>
+      request<GraphWorkflowDTO>(`/graph-workflows/${id}/nodes/${encodeURIComponent(nodeId)}/approve`, {
+        method: 'POST',
+        body: JSON.stringify(data || {}),
+      }),
+    rejectNode: (id: string, nodeId: string, note?: string) =>
+      request<GraphWorkflowDTO>(`/graph-workflows/${id}/nodes/${encodeURIComponent(nodeId)}/reject`, {
+        method: 'POST',
+        body: JSON.stringify({ note }),
+      }),
     events: (id: string, runId?: string) =>
       request<Array<{ nodeId?: string; type: string; data: any; createdAt: string }>>(`/graph-workflows/${id}/events${runId ? `?runId=${runId}` : ''}`),
   },
@@ -474,6 +499,19 @@ export const api = {
     message: (runId: string, data: { to: string; content: string; redirect?: boolean }) =>
       request<{ delivered: { taskId: string; agentId: string | null; live: boolean }[]; redirected: string[] }>(
         `/teams/runs/${runId}/message`, { method: 'POST', body: JSON.stringify(data) }),
+    versions: (id: string) =>
+      request<{ versions: TeamTemplateVersion[]; published: TeamTemplateVersion | null }>(`/teams/${id}/versions`),
+    createVersion: (id: string, data: { graph: WorkflowGraphContract; changeNote?: string }) =>
+      request<TeamTemplateVersion>(`/teams/${id}/versions`, { method: 'POST', body: JSON.stringify(data) }),
+    publishVersion: (id: string, versionId: string) =>
+      request<TeamTemplateVersion>(`/teams/${id}/versions/${encodeURIComponent(versionId)}/publish`, { method: 'POST' }),
+    archiveVersion: (id: string, versionId: string) =>
+      request<TeamTemplateVersion>(`/teams/${id}/versions/${encodeURIComponent(versionId)}/archive`, { method: 'POST' }),
+    instantiate: (id: string, data?: { name?: string; input?: string; versionId?: string }) =>
+      request<{ workflow: GraphWorkflowDTO; teamTemplateVersion: TeamTemplateVersion }>(`/teams/${id}/instantiate`, {
+        method: 'POST',
+        body: JSON.stringify(data || {}),
+      }),
   },
   domains: {
     list: () => request<{ domains: DomainPackDTO[] }>('/domains').then(r => r.domains),
@@ -535,22 +573,22 @@ export interface TeamBoardItem {
   status: string; dependsOn: string[]; output?: string;
 }
 
-export interface GraphNodeDTO {
-  id: string;
-  label?: string;
-  agentId?: string;
-  agentRole?: string;
-  prompt?: string;
-  position?: { x: number; y: number };
-}
-export interface GraphEdgeDTO { id: string; source: string; target: string }
-export interface GraphDefDTO { nodes: GraphNodeDTO[]; edges: GraphEdgeDTO[] }
+export type GraphNodeDTO = WorkflowNodeContract;
+export type GraphEdgeDTO = WorkflowEdgeContract;
+export type GraphDefDTO = WorkflowGraphContract;
 export interface GraphNodeStateDTO {
-  status: 'pending' | 'running' | 'done' | 'failed' | 'skipped';
+  status: WorkflowNodeRunStatus;
   taskId?: string;
   agentId?: string;
   output?: string;
+  artifactIds?: string[];
+  attempt: number;
+  maxAttempts: number;
   error?: string;
+  validationErrors?: string[];
+  intervention?: WorkflowIntervention;
+  startedAt?: string;
+  completedAt?: string;
 }
 export interface GraphWorkflowDTO {
   id: string;
@@ -558,9 +596,16 @@ export interface GraphWorkflowDTO {
   description?: string;
   workspaceId?: string;
   graph: GraphDefDTO;
-  status: 'draft' | 'running' | 'done' | 'failed' | 'cancelled';
+  status: WorkflowRunStatus;
   input?: string;
-  runState?: { runId: string; input: string; nodes: Record<string, GraphNodeStateDTO>; startedAt: string };
+  runState?: {
+    runId: string;
+    input: string;
+    nodes: Record<string, GraphNodeStateDTO>;
+    artifacts: Record<string, ArtifactContract>;
+    startedAt: string;
+    updatedAt: string;
+  };
   createdAt: string;
   updatedAt: string;
   completedAt?: string;
