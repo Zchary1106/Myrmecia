@@ -2,6 +2,11 @@ name: Desktop installers
 
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Optional existing or new v* tag to receive the installers'
+        required: false
+        type: string
   push:
     branches:
       - main
@@ -47,7 +52,6 @@ jobs:
             artifact: myrmecia-windows
     env:
       CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-      ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder-cache
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -66,7 +70,7 @@ jobs:
       - name: Restore Electron cache
         uses: actions/cache@v5
         with:
-          path: ${{ env.ELECTRON_BUILDER_CACHE }}
+          path: ${{ runner.temp }}/electron-builder-cache
           key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
           restore-keys: |
             electron-${{ runner.os }}-${{ runner.arch }}-
@@ -77,10 +81,14 @@ jobs:
       - name: Build unsigned macOS installer
         if: matrix.platform == 'mac'
         run: pnpm --filter @myrmecia/desktop package -- --mac dmg
+        env:
+          ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder-cache
 
       - name: Build unsigned Windows installer
         if: matrix.platform == 'windows'
         run: pnpm --filter @myrmecia/desktop package -- --win nsis
+        env:
+          ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder-cache
 
       - name: Verify macOS installer
         if: matrix.platform == 'mac'
@@ -109,7 +117,7 @@ jobs:
 
   attach-to-release:
     name: Attach installers to release
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.release_tag != ''
     needs: build-installers
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -125,9 +133,13 @@ jobs:
       - name: Create release and upload installers
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ inputs.release_tag || github.ref_name }}
           REPOSITORY: ${{ github.repository }}
         run: |
+          case "$TAG" in
+            v*) ;;
+            *) echo "::error::Release tag must start with v"; exit 1 ;;
+          esac
           if ! gh release view "$TAG" --repo "$REPOSITORY" >/dev/null 2>&1; then
             gh release create "$TAG" --repo "$REPOSITORY" --generate-notes --title "Myrmecia $TAG"
           fi
