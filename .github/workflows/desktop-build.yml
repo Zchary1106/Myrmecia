@@ -22,7 +22,7 @@ on:
       - 'skills/**'
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: desktop-installers-${{ github.ref }}
@@ -113,6 +113,8 @@ jobs:
     needs: build-installers
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: write
     steps:
       - name: Download installer artifacts
         uses: actions/download-artifact@v7
