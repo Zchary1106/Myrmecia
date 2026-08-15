@@ -20,6 +20,33 @@ test('artifact workbench is accessible', async ({ page }) => {
   await expect(page.getByText('No artifacts yet')).toBeVisible();
 });
 
+test('team composer exposes canvas, contract inspector and versions', async ({ page }) => {
+  await page.goto('/');
+  await page.getByTitle('Canvas').click();
+  await expect(page.getByTestId('team-composer')).toBeVisible();
+  await expect(page.getByText('Building blocks')).toBeVisible();
+  await expect(page.getByText('Compose your agent team')).toBeVisible();
+  await page.getByRole('button', { name: 'Versions' }).click();
+  await expect(page.getByTestId('template-version-bar')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Save draft version' })).toBeVisible();
+});
+
+test('team composer remains usable when the window is resized', async ({ page }) => {
+  await page.setViewportSize({ width: 820, height: 700 });
+  await page.goto('/');
+  await page.getByTitle('Canvas').click();
+
+  await expect(page.getByTestId('team-composer')).toBeVisible();
+  await expect(page.getByText('Building blocks')).toBeVisible();
+  await page.getByTitle('Toggle palette').click();
+  await expect(page.getByText('Building blocks')).toBeHidden();
+
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.getByTitle('Toggle palette').click();
+  await expect(page.getByText('Building blocks')).toBeVisible();
+  await expect(page.getByText('Inspector', { exact: true })).toBeVisible();
+});
+
 test('WeChat writer opens the governed article studio', async ({ page }) => {
   await page.goto('/');
   await page.getByTitle('Agents').click();

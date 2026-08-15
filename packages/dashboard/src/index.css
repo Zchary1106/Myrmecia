@@ -14,3 +14,9 @@ body {
 ::-webkit-scrollbar-track { background: #1a1b23; }
 ::-webkit-scrollbar-thumb { background: #3a3b45; border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: #4a4b55; }
+
+@layer components {
+  .field {
+    @apply w-full rounded-lg border border-border bg-background px-2.5 py-2 text-[11px] text-gray-200 outline-none transition focus:border-accent;
+  }
+}
