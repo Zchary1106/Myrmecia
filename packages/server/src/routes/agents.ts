@@ -80,7 +80,12 @@ function agentAuditSnapshot(agent: AgentDefinition) {
 export function createAgentRoutes(taskQueue?: TaskQueue): Router {
   const router = Router();
   loadLegacyAgentAliases();
-  const hideLegacyByDefault = process.env.MYRMECIA_HIDE_LEGACY_AGENTS === 'true';
+  // Legacy task agents are hidden from the directory by default. Operators can
+  // opt back in with MYRMECIA_SHOW_LEGACY_AGENTS=true (or the legacy
+  // MYRMECIA_HIDE_LEGACY_AGENTS=false), and ?includeLegacy=true overrides per-request.
+  const showLegacyByDefault =
+    process.env.MYRMECIA_SHOW_LEGACY_AGENTS === 'true' ||
+    process.env.MYRMECIA_HIDE_LEGACY_AGENTS === 'false';
 
   function legacyAnnotation(agentId: string) {
     const alias = resolveLegacyAgentId(agentId);
@@ -100,7 +105,7 @@ export function createAgentRoutes(taskQueue?: TaskQueue): Router {
     const { role } = req.query;
     const includeLegacy = req.query.includeLegacy === 'true';
     let agents = listAgents({ role: role as string });
-    if (hideLegacyByDefault && !includeLegacy) {
+    if (!showLegacyByDefault && !includeLegacy) {
       agents = agents.filter(agent => !isLegacyAgent(agent.id));
     }
 

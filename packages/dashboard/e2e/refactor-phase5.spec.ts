@@ -23,16 +23,17 @@ test('agent settings groups legacy aliases in a collapsed section', async ({ pag
   const legacySection = page.getByTestId('legacy-aliases');
   await expect(legacySection).toBeVisible();
   await legacySection.getByText('Legacy aliases').click();
-  await expect(page.getByText('公众号写手', { exact: true })).toBeVisible();
+  await expect(legacySection.getByText('@wechat-writer', { exact: true })).toBeVisible();
+  await expect(legacySection.getByText('content-creator', { exact: true }).first()).toBeVisible();
 });
 
 test('content studio switches teams from the studio header', async ({ page }) => {
   await page.goto('/');
   await page.getByTitle('Agents').click();
-  await page.getByText('小红书写手', { exact: true }).click();
+  await page.getByRole('button', { name: /Content Studio/i }).click();
 
   await expect(page.getByTestId('content-studio')).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Xiaohongshu Content Studio' })).toBeVisible();
+  await expect(page.getByTestId('content-studio-team')).toHaveValue('social-three-lanes');
 
   await page.getByTestId('content-studio-team').selectOption('douyin');
   await expect(page.getByRole('heading', { name: 'Douyin Script & Publish Studio' })).toBeVisible();

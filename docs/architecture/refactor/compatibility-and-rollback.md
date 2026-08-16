@@ -1,7 +1,7 @@
 # T4 兼容与回滚方案
 
 > 来源：`docs/architecture/agent-skill-domain-team-refactor.md`（T4、§5.4、§10）
-> 状态：基线版本 2026-08-15
+> 状态：2026-08-16 更新 —— legacy Agent 已进入“hidden”阶段（默认隐藏、折叠区保留、逃生阀可恢复）；“delete”阶段待两个小版本观测期后执行
 
 ## 1. 原则
 
@@ -16,7 +16,7 @@
 |---|---|---|
 | 1. add | 注册 `legacy-agent-aliases.yaml`，旧 ID 与新角色 + Skills 并存 | PR-B 落地 |
 | 2. deprecate | API 返回 `deprecated: true` + `replacement`，前端提示迁移 | 新运行全部走 Resolver 后 |
-| 3. hidden | Agent Directory 默认隐藏，保留在 “Legacy aliases” 折叠区 | 观测期无回归 |
+| 3. hidden | Agent Directory 默认隐藏，保留在 “Legacy aliases” 折叠区（数据来自 `/api/agents/legacy`，不依赖 `/api/agents` 列表） | 已生效（2026-08-16）；逃生阀 `MYRMECIA_SHOW_LEGACY_AGENTS=true` / `?includeLegacy=true` |
 | 4. delete | 删除旧配置与 alias | 至少保留两个小版本后，且无活跃运行 |
 
 Alias 结构：
@@ -66,8 +66,16 @@ legacyAgentAliases:
 |---|---|---|
 | `MYRMECIA_REFACTOR_V2` | off（分阶段开） | 开启 v2 Team/Pipeline 解析链 |
 | `MYRMECIA_LEGACY_ALIAS` | on | 开启旧 ID alias 解析与 deprecation 标注 |
-| `MYRMECIA_HIDE_LEGACY_AGENTS` | off | Agent Directory 隐藏 legacy Agent |
+| `MYRMECIA_HIDE_LEGACY_AGENTS` | on（默认隐藏，设 `false` 恢复） | Agent Directory 隐藏 legacy Agent |
+| `MYRMECIA_SHOW_LEGACY_AGENTS` | off | 观测期逃生阀：显式恢复展示 legacy Agent |
 | `MYRMECIA_PREFLIGHT_ENFORCE` | off（先 warn） | Preflight 从报告升级为阻断启动 |
+
+## 7. 当前生命周期状态（2026-08-16）
+
+- legacy Agent 默认从 `/api/agents` 隐藏，Agent 页 “Legacy aliases” 折叠区改由 `/api/agents/legacy` 驱动，观测期仍可核对。
+- Content Studio 入口已改为独立 “Content Studio” 入口（Team 选择器驱动），不再依赖 legacy Agent ID；前端 `legacyAgentToTeam` 映射已删除。
+- `agents/legacy-agent-aliases.yaml` 与 Resolver **保留**：历史 Pipeline/执行记录的旧 ID 仍可解析展示与重跑（DoD：“旧 Agent ID、历史 Pipeline 和执行记录仍可读取”）。
+- “delete”阶段条件（至少两个小版本 + 无活跃运行）尚未满足，暂不删除 alias 文件；达到条件后删除 `legacy-agent-aliases.yaml`、Resolver 与 `/agents/legacy` 路由，并同步清理本文档。
 
 ## 6. 偏差记录
 

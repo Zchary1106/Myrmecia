@@ -4,10 +4,10 @@ import { cn } from '../../lib/utils';
 import { useStore } from '../../stores/store';
 import { AgentChatPanel } from './AgentChatPanel';
 import { ContentStudio } from './ContentStudio';
-import { legacyAgentToTeam } from './contentStudioProfiles';
 
 const contentAgentIds = new Set(['trend-scout', 'xiaohongshu-writer', 'douyin-writer', 'wechat-writer', 'social-publisher']);
-const contentStudioAgentIds = new Set(Object.keys(legacyAgentToTeam));
+/** Stable entry id for the Team-driven Content Studio (no longer gated on legacy agent ids). */
+export const CONTENT_STUDIO_ENTRY_ID = 'content-studio';
 
 export function isContentProductionAgent(agent: AgentSummary | undefined): boolean {
   if (!agent) return false;
@@ -16,7 +16,7 @@ export function isContentProductionAgent(agent: AgentSummary | undefined): boole
 }
 
 export function usesContentStudio(agent: AgentSummary | undefined): boolean {
-  return Boolean(agent && contentStudioAgentIds.has(agent.id));
+  return Boolean(agent && agent.id === CONTENT_STUDIO_ENTRY_ID);
 }
 
 function agentGroup(agent: AgentSummary): 'Core' | 'Content' | 'Specialists' {
@@ -87,13 +87,28 @@ function AgentDirectory() {
       </div>
 
       {!agentDirectoryCollapsed && (
-        <div className="p-3">
+        <div className="space-y-2 p-3">
           <input
             value={query}
             onChange={event => setQuery(event.target.value)}
             placeholder="Search Agent or capability"
             className="w-full rounded-lg border border-border bg-background px-3 py-2 text-xs outline-none focus:border-accent"
           />
+          <button
+            type="button"
+            onClick={() => setSelectedAgentId(CONTENT_STUDIO_ENTRY_ID)}
+            className={cn(
+              'flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-xs font-medium transition',
+              selectedAgentId === CONTENT_STUDIO_ENTRY_ID
+                ? 'border-accent/50 bg-accent/15 text-accent-light'
+                : 'border-border bg-background text-gray-400 hover:border-accent/40 hover:text-gray-200',
+            )}
+            title="Open the Team-driven content production studio"
+          >
+            <span className="text-base">🎬</span>
+            <span className="min-w-0 flex-1 truncate">Content Studio</span>
+            <span className="rounded-full bg-accent/10 px-1.5 py-0.5 text-[9px] text-accent-light">Teams</span>
+          </button>
         </div>
       )}
 
@@ -343,9 +358,8 @@ function AgentInspector() {
 }
 
 export function AgentWorkspace() {
-  const { agentInspectorOpen, selectedAgentId, agents } = useStore();
-  const selectedAgent = agents.find(agent => agent.id === selectedAgentId);
-  const showContentStudio = usesContentStudio(selectedAgent);
+  const { agentInspectorOpen, selectedAgentId } = useStore();
+  const showContentStudio = selectedAgentId === CONTENT_STUDIO_ENTRY_ID;
 
   return (
     <div className="relative flex h-full min-h-0 overflow-hidden bg-background">

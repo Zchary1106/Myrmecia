@@ -17,8 +17,8 @@ import {
 import { createSavedView, savedViewScope } from '../src/lib/savedViews';
 import { buildActivitySummary, handoffTotal } from '../src/lib/activitySummary';
 import { useStore } from '../src/stores/store';
-import { isContentProductionAgent, usesContentStudio } from '../src/components/agents/AgentWorkspace';
-import { CONTENT_STUDIO_PROFILES, legacyAgentToTeam, pipelineMatchesProfile, studioProfileForTeam } from '../src/components/agents/contentStudioProfiles';
+import { CONTENT_STUDIO_ENTRY_ID, isContentProductionAgent, usesContentStudio } from '../src/components/agents/AgentWorkspace';
+import { CONTENT_STUDIO_PROFILES, pipelineMatchesProfile, studioProfileForTeam } from '../src/components/agents/contentStudioProfiles';
 import { hasPublishStageAhead } from '../src/pages/Pipelines';
 import { canControlWorkflowNode } from '../src/pages/Orchestrate';
 
@@ -213,26 +213,23 @@ describe('Agent Workbench navigation state', () => {
     } as any)).toBe(false);
   });
 
-  it('opens Content Studio only for agents with a dedicated platform workflow', () => {
-    expect(usesContentStudio({ id: 'xiaohongshu-writer' } as any)).toBe(true);
-    expect(usesContentStudio({ id: 'wechat-writer' } as any)).toBe(true);
+  it('opens Content Studio only via the dedicated Team-driven entry', () => {
+    expect(usesContentStudio({ id: CONTENT_STUDIO_ENTRY_ID } as any)).toBe(true);
 
-    // Supporting specialists keep their own Agent chat/history/inspector.
-    expect(usesContentStudio({ id: 'douyin-writer' } as any)).toBe(true);
+    // Legacy task agents are hidden from the directory; they keep their own Agent chat/history/inspector.
+    expect(usesContentStudio({ id: 'xiaohongshu-writer' } as any)).toBe(false);
+    expect(usesContentStudio({ id: 'wechat-writer' } as any)).toBe(false);
     expect(usesContentStudio({ id: 'trend-scout' } as any)).toBe(false);
     expect(usesContentStudio({ id: 'social-publisher' } as any)).toBe(false);
     expect(usesContentStudio({ id: 'xiaohongshu-visual-designer' } as any)).toBe(false);
   });
 
-  it('maps legacy content agents to their Team-driven studio profiles', () => {
-    expect(legacyAgentToTeam['wechat-writer']).toBe('content');
-    expect(legacyAgentToTeam['xiaohongshu-writer']).toBe('xiaohongshu');
-    expect(legacyAgentToTeam['douyin-writer']).toBe('douyin');
+  it('falls back to the crosspost profile for unknown teams', () => {
     expect(studioProfileForTeam('unknown-team').teamId).toBe('social-three-lanes');
   });
 
-  it('uses the governed WeChat article workflow for the WeChat writer', () => {
-    const workflow = studioProfileForTeam(legacyAgentToTeam['wechat-writer']);
+  it('uses the governed WeChat article workflow for the content team', () => {
+    const workflow = studioProfileForTeam('content');
     expect(workflow.templateName).toBe('WeChat Article');
     expect(workflow.stages.map(stage => stage.name)).toEqual([
       '选题分析',
@@ -246,8 +243,8 @@ describe('Agent Workbench navigation state', () => {
     expect(workflow.stages.some(stage => stage.agentRole === 'ops')).toBe(true);
   });
 
-  it('uses a standalone publishing workflow for the Xiaohongshu writer', () => {
-    const workflow = studioProfileForTeam(legacyAgentToTeam['xiaohongshu-writer']);
+  it('uses a standalone publishing workflow for the Xiaohongshu team', () => {
+    const workflow = studioProfileForTeam('xiaohongshu');
     expect(workflow.templateName).toBe('Xiaohongshu Publish');
     expect(workflow.stages.map(stage => stage.name)).toEqual([
       '小红书选题调研',
@@ -263,8 +260,8 @@ describe('Agent Workbench navigation state', () => {
     expect(workflow.stages.some(stage => stage.agentRole === 'content-creator')).toBe(true);
   });
 
-  it('uses a standalone video publishing workflow for the Douyin writer', () => {
-    const workflow = studioProfileForTeam(legacyAgentToTeam['douyin-writer']);
+  it('uses a standalone video publishing workflow for the Douyin team', () => {
+    const workflow = studioProfileForTeam('douyin');
     expect(workflow.templateName).toBe('Douyin Video Publish');
     expect(workflow.stages.map(stage => stage.name)).toEqual([
       '抖音选题调研',

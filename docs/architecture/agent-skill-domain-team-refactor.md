@@ -1,6 +1,6 @@
 # Myrmecia Agent / Skill / Domain / Team 重构方案
 
-> 状态：Phase 0–5 完成（T1～T24）  
+> 状态：Phase 0–5 完成（T1～T24）+ T24 延续收尾完成（legacy 默认隐藏、Studio 入口 Team 化）  
 > 更新日期：2026-08-16  
 > 目标读者：接手实现的开发 Agent、架构负责人、QA  
 > 范围：Agent Directory、Skill、Tool、Domain Pack、Team、Canvas、Pipeline Runtime 及现有内容工作流迁移
@@ -488,17 +488,17 @@ Canvas 节点至少支持：
 - T5 的“旧 ID 可运行”通过 Resolver 层实现（旧 ID → 稳定角色 + Skills），运行时执行路径由 T6 的解析结果承载；未直接改写 pipeline-engine 的调度入口，避免破坏历史数据。
 - T7 快照写入 Execution Ledger（append-only）作为审计载体；未新建独立数据表。
 - T8 目前是纯函数模块（`runTeamPreflight`），由调用方决定在启动前执行并阻断；`MYRMECIA_PREFLIGHT_ENFORCE` 标志尚未接入启动流程，属 T24 的 Feature Flag 范围。
-- T12 的隐藏机制默认关闭（`MYRMECIA_HIDE_LEGACY_AGENTS` 未设置时仍展示 legacy Agent），因为 Content Studio 尚未解耦（T18）；按方案 §10 的“先隐藏、再观测期”节奏，默认开启随 T18 一起切换。
+- T12 的隐藏机制已默认开启（`MYRMECIA_HIDE_LEGACY_AGENTS` 未设置即隐藏；逃生阀 `MYRMECIA_SHOW_LEGACY_AGENTS=true` / `MYRMECIA_HIDE_LEGACY_AGENTS=false`，单次请求 `?includeLegacy=true`）。T24 延续收尾 PR 完成切换：Content Studio 解耦（T18）后，legacy Agent 不再出现在 `/api/agents` 默认列表。
 - 文档中方案 §5.3 第 6～7 步（Domain 注入、模型策略/上下文预算计算）在 Snapshot 中预留字段（`modelPolicy`、`contextBudget`），实际注入逻辑待 Phase 4 完成。
 - T13 的检索预览（`/domains/:id/test`）在没有绑定知识时返回 `retrievalEnabled: false` 提示，不报错；绑定文档后走 `searchKnowledge` 真实检索。
 - T14 的 v2 校验允许“`members` 或 `roles` 至少其一”，未指定 `lead` 时默认取首个 role slot，保持旧 `members` 团队不受影响。
 - T15 的平台 MCP 工具（如 `mcp__douyin-search__*`）通过 `PLATFORM_MCP_SERVERS` 白名单判定为已知工具；在线/离线状态属 Preflight 运行时检查（`deps.toolStatus`），与 schema 校验分离。
 - 新增 DB 迁移同时以“建表（迁移前状态）+ ALTER 增量”形式书写，保证老库、新库和测试工具 `createTestDb`（原样执行 schema.sql）三条路径一致。
-- T16 的 Agent Directory 采用“默认只展示稳定角色 + Legacy aliases 折叠区”策略：`MYRMECIA_HIDE_LEGACY_AGENTS` 默认关闭时，legacy Agent 从 Server 返回的 `legacy.deprecated` 标注中识别，前端统一折叠展示，不依赖 Server 过滤开关。
+- T16 的 Agent Directory 采用“默认只展示稳定角色 + Legacy aliases 折叠区”策略：隐藏默认开启后，折叠区改由 `/api/agents/legacy` 数据驱动（不再依赖 `/api/agents` 列表），观测期仍可核对 legacy 别名与替换角色。
 - T17 的“复制并定制”为客户端预填（复制 v2 roles/policy/domainIds 后以 `create` 保存为“xxx Copy”），未新增 Server 复制端点；Preflight 面板复用 `GET /teams/:id/preflight`。
-- T18 的 Studio 配置是纯前端配置模块（`contentStudioProfiles.ts`）：新增平台只需新增一条 profile + Team 角色/Skills 配置，主页面不再出现 `agentId === 'wechat-writer'` 这类条件分支；旧入口（点击 legacy 内容 Agent）通过 `legacyAgentToTeam` 映射兼容。
+- T18 的 Studio 配置是纯前端配置模块（`contentStudioProfiles.ts`）：新增平台只需新增一条 profile + Team 角色/Skills 配置，主页面不再出现 `agentId === 'wechat-writer'` 这类条件分支；旧入口（点击 legacy 内容 Agent）已在 T24 延续收尾中移除，改为 Agent Directory 顶部独立 “Content Studio” 入口 + Team 选择器驱动，`legacyAgentToTeam` 前端映射已删除。
 - T22 的“真实 E2E”范围：UI 主路径由 Playwright e2e（12 个）在 CI 与本地覆盖；“创建 Team → 运行 → 审批 → Artifact”中涉及真实模型执行的环节需要 Provider 凭据，归入观测期人工验收（`desktop-stage` CI 已保证安装包构建通过）。
-- T24 采用“先接 Flag、默认关闭、观测期后再删旧代码”的节奏：`MYRMECIA_PREFLIGHT_ENFORCE` 已接入启动流程；`MYRMECIA_HIDE_LEGACY_AGENTS` 保持默认关闭（Content Studio 旧入口仍依赖 legacy Agent 列表）；legacy alias 至少保留两个小版本，不在本轮删除。
+- T24 采用“先接 Flag、默认关闭、观测期后再删旧代码”的节奏：`MYRMECIA_PREFLIGHT_ENFORCE` 已接入启动流程；延续收尾 PR 将 `MYRMECIA_HIDE_LEGACY_AGENTS` 默认值切换为隐藏，并删除前端 legacy 入口（`legacyAgentToTeam` / legacy-gated Studio）；`agents/legacy-agent-aliases.yaml` 与 Resolver 按“至少保留两个小版本”保留，历史 Pipeline/执行记录仍可解析，待观测期结束且无活跃运行后再进入 delete 阶段。
 
 ---
 
