@@ -489,7 +489,7 @@ Canvas 节点至少支持：
 - T7 快照写入 Execution Ledger（append-only）作为审计载体；未新建独立数据表。
 - T8 目前是纯函数模块（`runTeamPreflight`），由调用方决定在启动前执行并阻断；`MYRMECIA_PREFLIGHT_ENFORCE` 标志尚未接入启动流程，属 T24 的 Feature Flag 范围。
 - T12 的隐藏机制已默认开启（`MYRMECIA_HIDE_LEGACY_AGENTS` 未设置即隐藏；逃生阀 `MYRMECIA_SHOW_LEGACY_AGENTS=true` / `MYRMECIA_HIDE_LEGACY_AGENTS=false`，单次请求 `?includeLegacy=true`）。T24 延续收尾 PR 完成切换：Content Studio 解耦（T18）后，legacy Agent 不再出现在 `/api/agents` 默认列表。
-- 文档中方案 §5.3 第 6～7 步（Domain 注入、模型策略/上下文预算计算）在 Snapshot 中预留字段（`modelPolicy`、`contextBudget`），实际注入逻辑待 Phase 4 完成。
+- 文档中方案 §5.3 第 6～7 步（Domain 注入、模型策略/上下文预算计算）已实现：Domain 经 `packages/server/src/agents/domain-context.ts`（`resolveDomainForTask` / `applyDomainOverlay` / `applyDomainKnowledge`）注入 system prompt 与检索知识块，TS loop 与 Python runtime 共用（`agent-runtime.ts`、`ts-agent-loop.ts`）；模型策略由 `model-registry.ts` 的 `modelPolicy` 选择，`runtime-limits.ts` 的 `resolveAgentRuntimeLimits` 按 `modelPolicy` 计算 token/调用/耗时预算，最终 `modelPolicy`/`contextBudget` 由 `capability-resolver.ts` 写入 Execution Snapshot。
 - T13 的检索预览（`/domains/:id/test`）在没有绑定知识时返回 `retrievalEnabled: false` 提示，不报错；绑定文档后走 `searchKnowledge` 真实检索。
 - T14 的 v2 校验允许“`members` 或 `roles` 至少其一”，未指定 `lead` 时默认取首个 role slot，保持旧 `members` 团队不受影响。
 - T15 的平台 MCP 工具（如 `mcp__douyin-search__*`）通过 `PLATFORM_MCP_SERVERS` 白名单判定为已知工具；在线/离线状态属 Preflight 运行时检查（`deps.toolStatus`），与 schema 校验分离。
