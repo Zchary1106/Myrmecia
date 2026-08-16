@@ -18,7 +18,7 @@ import { createSavedView, savedViewScope } from '../src/lib/savedViews';
 import { buildActivitySummary, handoffTotal } from '../src/lib/activitySummary';
 import { useStore } from '../src/stores/store';
 import { isContentProductionAgent, usesContentStudio } from '../src/components/agents/AgentWorkspace';
-import { contentStudioWorkflow } from '../src/components/agents/ContentStudio';
+import { legacyAgentToTeam, studioProfileForTeam } from '../src/components/agents/contentStudioProfiles';
 import { hasPublishStageAhead } from '../src/pages/Pipelines';
 import { canControlWorkflowNode } from '../src/pages/Orchestrate';
 
@@ -224,8 +224,15 @@ describe('Agent Workbench navigation state', () => {
     expect(usesContentStudio({ id: 'xiaohongshu-visual-designer' } as any)).toBe(false);
   });
 
+  it('maps legacy content agents to their Team-driven studio profiles', () => {
+    expect(legacyAgentToTeam['wechat-writer']).toBe('content');
+    expect(legacyAgentToTeam['xiaohongshu-writer']).toBe('xiaohongshu');
+    expect(legacyAgentToTeam['douyin-writer']).toBe('douyin');
+    expect(studioProfileForTeam('unknown-team').teamId).toBe('social-three-lanes');
+  });
+
   it('uses the governed WeChat article workflow for the WeChat writer', () => {
-    const workflow = contentStudioWorkflow('wechat-writer');
+    const workflow = studioProfileForTeam(legacyAgentToTeam['wechat-writer']);
     expect(workflow.templateName).toBe('WeChat Article');
     expect(workflow.stages.map(stage => stage.name)).toEqual([
       '选题分析',
@@ -235,12 +242,12 @@ describe('Agent Workbench navigation state', () => {
       '草稿箱同步',
       '发布执行',
     ]);
-    expect(workflow.stages[4].agentRole).toBe('wechat-writer');
-    expect(workflow.stages[5].agentRole).toBe('social-publisher');
+    expect(workflow.stages.some(stage => stage.agentRole === 'content-creator')).toBe(true);
+    expect(workflow.stages.some(stage => stage.agentRole === 'ops')).toBe(true);
   });
 
   it('uses a standalone publishing workflow for the Xiaohongshu writer', () => {
-    const workflow = contentStudioWorkflow('xiaohongshu-writer');
+    const workflow = studioProfileForTeam(legacyAgentToTeam['xiaohongshu-writer']);
     expect(workflow.templateName).toBe('Xiaohongshu Publish');
     expect(workflow.stages.map(stage => stage.name)).toEqual([
       '小红书选题调研',
@@ -253,10 +260,11 @@ describe('Agent Workbench navigation state', () => {
       '小红书发布',
     ]);
     expect(workflow.stages.some(stage => stage.agentRole === 'douyin-writer')).toBe(false);
+    expect(workflow.stages.some(stage => stage.agentRole === 'content-creator')).toBe(true);
   });
 
   it('uses a standalone video publishing workflow for the Douyin writer', () => {
-    const workflow = contentStudioWorkflow('douyin-writer');
+    const workflow = studioProfileForTeam(legacyAgentToTeam['douyin-writer']);
     expect(workflow.templateName).toBe('Douyin Video Publish');
     expect(workflow.stages.map(stage => stage.name)).toEqual([
       '抖音选题调研',
@@ -270,6 +278,7 @@ describe('Agent Workbench navigation state', () => {
       '发布后监控计划',
     ]);
     expect(workflow.stages.some(stage => stage.agentRole === 'xiaohongshu-writer')).toBe(false);
+    expect(workflow.stages.some(stage => stage.agentRole === 'content-creator')).toBe(true);
   });
 
   it('detects a generic pipeline publish gate before approval', () => {
