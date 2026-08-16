@@ -108,7 +108,7 @@ describe('Agent routes legacy annotation', () => {
     app.use('/agents', createAgentRoutes());
 
     await withApp(app, async baseUrl => {
-      const list = await jsonFetch(baseUrl, '/agents');
+      const list = await jsonFetch(baseUrl, '/agents?includeLegacy=true');
       const legacyAgent = list.body.find((a: any) => a.id === 'xiaohongshu-writer');
       expect(legacyAgent.legacy).toEqual({
         deprecated: true,
@@ -140,8 +140,25 @@ describe('Agent routes legacy annotation', () => {
     });
   });
 
-  it('hides legacy agents when the flag is on, with includeLegacy override', async () => {
-    process.env.MYRMECIA_HIDE_LEGACY_AGENTS = 'true';
+  it('hides legacy agents by default, with includeLegacy override', async () => {
+    createAgent({ id: 'xiaohongshu-writer', name: '小红书写手', role: 'content-writer', capabilities: ['copywriting'] });
+    createAgent({ id: 'dev', name: 'Dev', role: 'developer', capabilities: ['typescript'] });
+
+    const app = express();
+    app.use('/agents', createAgentRoutes());
+
+    await withApp(app, async baseUrl => {
+      const list = await jsonFetch(baseUrl, '/agents');
+      expect(list.body.some((a: any) => a.id === 'xiaohongshu-writer')).toBe(false);
+      expect(list.body.some((a: any) => a.id === 'dev')).toBe(true);
+
+      const withLegacy = await jsonFetch(baseUrl, '/agents?includeLegacy=true');
+      expect(withLegacy.body.some((a: any) => a.id === 'xiaohongshu-writer')).toBe(true);
+    });
+  });
+
+  it('shows legacy agents when MYRMECIA_SHOW_LEGACY_AGENTS is true', async () => {
+    process.env.MYRMECIA_SHOW_LEGACY_AGENTS = 'true';
     try {
       createAgent({ id: 'xiaohongshu-writer', name: '小红书写手', role: 'content-writer', capabilities: ['copywriting'] });
       createAgent({ id: 'dev', name: 'Dev', role: 'developer', capabilities: ['typescript'] });
@@ -151,14 +168,11 @@ describe('Agent routes legacy annotation', () => {
 
       await withApp(app, async baseUrl => {
         const list = await jsonFetch(baseUrl, '/agents');
-        expect(list.body.some((a: any) => a.id === 'xiaohongshu-writer')).toBe(false);
+        expect(list.body.some((a: any) => a.id === 'xiaohongshu-writer')).toBe(true);
         expect(list.body.some((a: any) => a.id === 'dev')).toBe(true);
-
-        const withLegacy = await jsonFetch(baseUrl, '/agents?includeLegacy=true');
-        expect(withLegacy.body.some((a: any) => a.id === 'xiaohongshu-writer')).toBe(true);
       });
     } finally {
-      delete process.env.MYRMECIA_HIDE_LEGACY_AGENTS;
+      delete process.env.MYRMECIA_SHOW_LEGACY_AGENTS;
     }
   });
 });

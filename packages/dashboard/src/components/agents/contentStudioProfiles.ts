@@ -24,13 +24,6 @@ export interface ContentStudioProfile {
   emptyHint: string;
 }
 
-/** Legacy agent ids → Team id, so old entry points keep working during the migration. */
-export const legacyAgentToTeam: Record<string, string> = {
-  'wechat-writer': 'content',
-  'xiaohongshu-writer': 'xiaohongshu',
-  'douyin-writer': 'douyin',
-};
-
 export const CONTENT_TEAM_IDS = ['xiaohongshu', 'douyin', 'content', 'social-three-lanes'] as const;
 
 export const CONTENT_STUDIO_PROFILES: Record<string, ContentStudioProfile> = {

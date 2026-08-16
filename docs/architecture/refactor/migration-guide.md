@@ -1,6 +1,6 @@
 # Myrmecia Agent / Skill / Domain / Team 重构 — 用户升级指南
 
-> 适用版本：重构 Phase 0–4（T1～T18）合入后的 `main`。
+> 适用版本：重构 Phase 0–5（T1～T24）合入后的 `main`（含 T24 延续收尾）。
 > 对应方案：`docs/architecture/agent-skill-domain-team-refactor.md`。
 
 ## 1. 这次改了什么
@@ -16,7 +16,7 @@
 - **旧 Agent ID 仍然可运行**：`agents/legacy-agent-aliases.yaml`（18 条）把旧 ID 映射到“稳定角色 + Skills + Tools”，API 返回 `legacy: { deprecated, replacement }`。
 - **旧 Team（仅 members）仍然可用**：Team v2 校验允许 `members` 或 `roles` 至少其一；未指定 `lead` 时默认取首个 role slot。
 - **旧 Pipeline / 历史执行记录不会被修改**：迁移只做 alias 解析和快照记录，不改写历史数据。
-- **默认不隐藏 legacy Agent**：`MYRMECIA_HIDE_LEGACY_AGENTS=true` 开启后 `/api/agents` 默认过滤 legacy，前端 Agent 页面仍通过 “Legacy aliases” 折叠区展示。
+- **默认隐藏 legacy Agent**：`/api/agents` 默认过滤 legacy，Agent 页面通过 “Legacy aliases” 折叠区（数据来自 `/api/agents/legacy`）保留可见，方便观测期核对；需要恢复旧列表可设置 `MYRMECIA_SHOW_LEGACY_AGENTS=true`（或 `MYRMECIA_HIDE_LEGACY_AGENTS=false`），单次请求可用 `?includeLegacy=true`。
 
 ## 3. 升级步骤
 
@@ -35,7 +35,7 @@
    报告包含：legacy Agent 在 tasks / pipelines 中的引用、Team v1 待迁移清单、built-in Team v2 覆盖、Domain 版本化状态、Execution Ledger 快照数量。
 
 4. 按报告决定是否需要把 v1 Team 升级为 v2（Dashboard Teams → 编辑 → 添加 role slots，或直接改 `agents/teams.yaml`）。
-5. 无回归后再开启隐藏：设置 `MYRMECIA_HIDE_LEGACY_AGENTS=true`。
+5. 默认已隐藏 legacy Agent；如需在观测期临时恢复旧列表：设置 `MYRMECIA_SHOW_LEGACY_AGENTS=true`（或 `MYRMECIA_HIDE_LEGACY_AGENTS=false`）。
 
 ## 4. 回滚
 
@@ -47,7 +47,8 @@
 
 | Flag | 作用 | 默认 |
 |---|---|---|
-| `MYRMECIA_HIDE_LEGACY_AGENTS` | `/api/agents` 默认隐藏 legacy Agent | 关（false） |
+| `MYRMECIA_HIDE_LEGACY_AGENTS` | `/api/agents` 默认隐藏 legacy Agent（默认即隐藏，设为 `false` 恢复） | 开（默认隐藏） |
+| `MYRMECIA_SHOW_LEGACY_AGENTS` | 显式恢复展示 legacy Agent（观测期逃生阀） | 关（false） |
 | `MYRMECIA_PREFLIGHT_ENFORCE` | 启动时对所有 v2 Team 执行 Preflight，发现 error 即拒绝启动 | 关（false） |
 | `MCP_SERVERS` | 接入平台 MCP 服务器（xiaohongshu / douyin-upload / douyin-search 等） | 空 |
 

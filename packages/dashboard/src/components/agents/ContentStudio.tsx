@@ -6,7 +6,6 @@ import { useStore } from '../../stores/store';
 import { StageOutputPreview } from './StageOutputPreview';
 import {
   CONTENT_TEAM_IDS,
-  legacyAgentToTeam,
   pipelineMatchesProfile,
   studioProfileForTeam,
   type ContentStudioProfile,
@@ -119,7 +118,6 @@ export function ContentStudio() {
     loadPipelines,
     loadTemplates,
     loadTasks,
-    selectedAgentId,
   } = useStore();
   const [initialLoading, setInitialLoading] = useState(true);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
@@ -152,8 +150,7 @@ export function ContentStudio() {
     return () => { mounted = false; };
   }, [loadPipelines, loadTemplates]);
 
-  const resolvedTeamId = (selectedAgentId && legacyAgentToTeam[selectedAgentId]) || null;
-  const teamId = manualTeamId || resolvedTeamId || 'social-three-lanes';
+  const teamId = manualTeamId || 'social-three-lanes';
   const workflow: ContentStudioProfile = studioProfileForTeam(teamId);
   const isDouyinStudio = workflow.teamId === 'douyin';
   const isWeChatStudio = workflow.teamId === 'content';

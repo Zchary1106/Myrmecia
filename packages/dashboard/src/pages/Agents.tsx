@@ -161,7 +161,6 @@ export function AgentsPage() {
 
   const enriched = useMemo(() => agents as EnrichedAgent[], [agents]);
   const stableAgents = useMemo(() => enriched.filter(agent => !agent.legacy?.deprecated), [enriched]);
-  const legacyAgents = useMemo(() => enriched.filter(agent => agent.legacy?.deprecated), [enriched]);
   const teamNamesByAgent = useMemo(() => {
     const byAgent = new Map<string, string[]>();
     for (const team of teams) {
@@ -176,11 +175,6 @@ export function AgentsPage() {
     }
     return byAgent;
   }, [teams]);
-  const aliasByLegacyId = useMemo(() => {
-    const map = new Map<string, LegacyReplacement>();
-    for (const alias of legacyAliases) map.set(alias.legacyAgentId, alias);
-    return map;
-  }, [legacyAliases]);
 
   const roles = useMemo(() => uniqueRoles(stableAgents), [stableAgents]);
   const modelOptions = useMemo(() => {
@@ -206,8 +200,13 @@ export function AgentsPage() {
   }, [stableAgents, query, roleFilter]);
   const filteredLegacy = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return legacyAgents.filter(agent => !q || [agent.name, agent.role, agent.description].join(' ').toLowerCase().includes(q));
-  }, [legacyAgents, query]);
+    return legacyAliases.filter(alias => !q || [
+      alias.legacyAgentId,
+      alias.agentId,
+      ...alias.skills,
+      ...alias.tools,
+    ].join(' ').toLowerCase().includes(q));
+  }, [legacyAliases, query]);
 
   const runningCount = agents.filter(a => (a.activeExecutions || 0) > 0).length;
   const toolEnabledCount = agents.filter(a => (a.allowedTools || a.config?.allowedTools || []).length > 0).length;
@@ -339,7 +338,7 @@ export function AgentsPage() {
           <Metric label="Stable Roles" value={stableAgents.length} />
           <Metric label="Running" value={runningCount} tone="blue" />
           <Metric label="Tool Enabled" value={toolEnabledCount} tone="purple" />
-          <Metric label="Legacy Aliases" value={legacyAgents.length} tone="yellow" />
+          <Metric label="Legacy Aliases" value={legacyAliases.length} tone="yellow" />
         </div>
       </div>
 
@@ -391,7 +390,7 @@ export function AgentsPage() {
             </div>
           )}
 
-          {legacyAgents.length > 0 && (
+          {legacyAliases.length > 0 && (
             <div data-testid="legacy-aliases" className="rounded-xl border border-border bg-surface/40">
               <button
                 type="button"
@@ -408,44 +407,44 @@ export function AgentsPage() {
               </button>
               {showLegacy && (
                 <div className="grid grid-cols-1 gap-3 border-t border-border p-4 lg:grid-cols-2 2xl:grid-cols-3">
-                  {filteredLegacy.map(agent => {
-                    const alias = aliasByLegacyId.get(agent.id) || agent.legacy?.replacement;
+                  {filteredLegacy.map(alias => {
+                    const agent = agents.find(item => item.id === alias.legacyAgentId);
                     return (
-                      <div key={agent.id} className="rounded-xl border border-amber-500/15 bg-background p-4">
+                      <div key={alias.legacyAgentId} className="rounded-xl border border-amber-500/15 bg-background p-4">
                         <div className="flex items-center gap-2">
-                          <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-background text-xl">{agent.emoji || '🤖'}</span>
+                          <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-background text-xl">{agent?.emoji || '🤖'}</span>
                           <div className="min-w-0 flex-1">
-                            <div className="truncate text-xs font-semibold text-gray-200">{agent.name}</div>
-                            <div className="font-mono text-[10px] text-gray-500">@{agent.id}</div>
+                            <div className="truncate text-xs font-semibold text-gray-200">{agent?.name || alias.legacyAgentId}</div>
+                            <div className="font-mono text-[10px] text-gray-500">@{alias.legacyAgentId}</div>
                           </div>
                           <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-amber-300">deprecated</span>
                         </div>
-                        {alias && (
-                          <div className="mt-3 rounded-lg bg-surface-hover/50 p-2.5">
-                            <div className="text-[10px] text-gray-500">→ 由 <span className="font-semibold text-cyan-300">{alias.agentId}</span> 接管</div>
-                            {alias.skills.length > 0 && (
-                              <div className="mt-1.5 flex flex-wrap gap-1">
-                                {alias.skills.slice(0, 6).map(skill => (
-                                  <span key={skill} className="rounded bg-accent/10 px-1.5 py-0.5 text-[9px] text-accent-light">{skill}</span>
-                                ))}
-                              </div>
-                            )}
-                            {alias.tools.length > 0 && (
-                              <div className="mt-1.5 flex flex-wrap gap-1">
-                                {alias.tools.slice(0, 6).map(tool => (
-                                  <span key={tool} className="rounded bg-purple-500/10 px-1.5 py-0.5 font-mono text-[9px] text-purple-300">{tool}</span>
-                                ))}
-                              </div>
-                            )}
-                          </div>
+                        <div className="mt-3 rounded-lg bg-surface-hover/50 p-2.5">
+                          <div className="text-[10px] text-gray-500">→ 由 <span className="font-semibold text-cyan-300">{alias.agentId}</span> 接管</div>
+                          {alias.skills.length > 0 && (
+                            <div className="mt-1.5 flex flex-wrap gap-1">
+                              {alias.skills.slice(0, 6).map(skill => (
+                                <span key={skill} className="rounded bg-accent/10 px-1.5 py-0.5 text-[9px] text-accent-light">{skill}</span>
+                              ))}
+                            </div>
+                          )}
+                          {alias.tools.length > 0 && (
+                            <div className="mt-1.5 flex flex-wrap gap-1">
+                              {alias.tools.slice(0, 6).map(tool => (
+                                <span key={tool} className="rounded bg-purple-500/10 px-1.5 py-0.5 font-mono text-[9px] text-purple-300">{tool}</span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                        {agent && (
+                          <button
+                            type="button"
+                            onClick={() => { setWorkbenchAgentId(alias.legacyAgentId); }}
+                            className="mt-3 rounded-lg bg-surface-hover px-3 py-1.5 text-[11px] text-gray-300 hover:text-white"
+                          >
+                            Inspect
+                          </button>
                         )}
-                        <button
-                          type="button"
-                          onClick={() => { setWorkbenchAgentId(agent.id); }}
-                          className="mt-3 rounded-lg bg-surface-hover px-3 py-1.5 text-[11px] text-gray-300 hover:text-white"
-                        >
-                          Inspect
-                        </button>
                       </div>
                     );
                   })}

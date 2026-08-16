@@ -47,12 +47,13 @@ test('team composer remains usable when the window is resized', async ({ page })
   await expect(page.getByText('Inspector', { exact: true })).toBeVisible();
 });
 
-test('WeChat writer opens the governed article studio', async ({ page }) => {
+test('Content Studio opens the governed WeChat article workflow', async ({ page }) => {
   await page.goto('/');
   await page.getByTitle('Agents').click();
-  await page.getByText('公众号写手', { exact: true }).click();
+  await page.getByRole('button', { name: /Content Studio/i }).click();
 
   await expect(page.getByTestId('content-studio')).toBeVisible();
+  await page.getByTestId('content-studio-team').selectOption('content');
   await expect(page.getByRole('heading', { name: 'WeChat Official Account Studio' })).toBeVisible();
   await expect(page.getByText('选题 · 写作 · 审核 · 排版 · 草稿箱 · 人工发布', { exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Create WeChat article run' })).toBeVisible();
