@@ -407,6 +407,7 @@ export function ContentStudio() {
         </div>
         <div className="flex items-center gap-2">
           <select
+            data-testid="content-studio-team"
             value={teamId}
             onChange={event => setManualTeamId(event.target.value)}
             aria-label="Content studio team"

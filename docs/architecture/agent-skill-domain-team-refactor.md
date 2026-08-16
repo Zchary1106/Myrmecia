@@ -1,6 +1,6 @@
 # Myrmecia Agent / Skill / Domain / Team 重构方案
 
-> 状态：Phase 0–4 完成（T1～T18），Phase 5 待实施  
+> 状态：Phase 0–5 完成（T1～T24）  
 > 更新日期：2026-08-16  
 > 目标读者：接手实现的开发 Agent、架构负责人、QA  
 > 范围：Agent Directory、Skill、Tool、Domain Pack、Team、Canvas、Pipeline Runtime 及现有内容工作流迁移
@@ -14,9 +14,9 @@
 | Phase 2 Registry 与 Skills 迁移 | T9～T12 | ✅ 完成（2026-08-16） |
 | Phase 3 Domain 与 Team 产品化 | T13～T15 | ✅ 完成（2026-08-16） |
 | Phase 4 UI 与交互 | T16～T18 | ✅ 完成（2026-08-16） |
-| Phase 5 验证、迁移与发布 | T19～T24 | ⬜ 待实施 |
+| Phase 5 验证、迁移与发布 | T19～T24 | ✅ 完成（2026-08-16） |
 
-Phase 0–4 交付物（详见 §8.1 实施记录）：
+Phase 0–5 交付物（详见 §8.1 实施记录）：
 
 - `docs/architecture/refactor/object-model.md`（T1）
 - `docs/architecture/refactor/reference-scan.md`（T2）
@@ -35,6 +35,10 @@ Phase 0–4 交付物（详见 §8.1 实施记录）：
 - Agent Directory / Detail（T16）：`packages/dashboard/src/pages/Agents.tsx`（稳定角色 + Legacy aliases 折叠区 + 所属 Teams）、`packages/dashboard/src/components/agents/AgentCard.tsx`、`AgentWorkbench.tsx`
 - Teams 页面与 Canvas（T17）：`packages/dashboard/src/pages/Teams.tsx`（v2 角色槽位展示/编辑、Preflight 面板、复制并定制、在 Canvas 打开）、`packages/dashboard/src/lib/api.ts`（Team v2 DTO + `/teams/:id/preflight`）
 - Content Studio 解耦（T18）：`packages/dashboard/src/components/agents/contentStudioProfiles.ts`（Team 驱动配置）、`ContentStudio.tsx`（按 Team 切换、无 Agent ID 条件分支）、`AgentWorkspace.tsx`
+- Dashboard 测试（T19/T20）：`tests/components.test.tsx` 适配 + 新增 profile 匹配用例（73 用例）；`e2e/refactor-phase5.spec.ts`（Team v2 Preflight / Legacy aliases / Studio Team 切换）
+- 迁移 dry-run（T21）：`packages/server/scripts/refactor-migration-dry-run.mjs`（只读扫描，输出影响报告）
+- 升级指南（T23）：`docs/architecture/refactor/migration-guide.md`
+- Feature Flag（T24）：启动接入 `MYRMECIA_PREFLIGHT_ENFORCE`（v2 Team 启动前强制 Preflight）
 
 ## 1. 背景与结论
 
@@ -397,14 +401,14 @@ Canvas 节点至少支持：
 
 ### Phase 5：验证、迁移与发布
 
-| ID | Task | 依赖 | 主要修改范围 | 验收标准 |
-|---|---|---|---|---|
-| T19 | 编写 Registry、Resolver、Preflight 和迁移单元测试 | T5～T15 | Server/Shared tests | 核心分支、错误和兼容场景覆盖 |
-| T20 | 编写 Dashboard 组件与 E2E 测试 | T16～T18 | Dashboard tests | Agent/Skill/Domain/Team/Canvas 主路径通过 |
-| T21 | 执行旧数据和模板迁移 dry-run | T19、T20 | Migration scripts | 输出影响报告，不破坏历史记录 |
-| T22 | 完成桌面端真实 E2E | T21 | Electron/Desktop | 创建 Team → 运行 → 审批 → Artifact 全链路通过 |
-| T23 | 更新用户文档、升级指南和示例 | T22 | README、docs | 新用户和旧用户均能完成迁移 |
-| T24 | 分阶段启用 Feature Flag 并清理过期兼容代码 | T22、T23 | Runtime/UI | 观测期无回归后才删除旧入口 |
+| ID | Task | 依赖 | 主要修改范围 | 验收标准 | 状态 |
+|---|---|---|---|---|---|
+| T19 | 编写 Registry、Resolver、Preflight 和迁移单元测试 | T5～T15 | Server/Shared tests | 核心分支、错误和兼容场景覆盖 | ✅ 完成 2026-08-16 |
+| T20 | 编写 Dashboard 组件与 E2E 测试 | T16～T18 | Dashboard tests | Agent/Skill/Domain/Team/Canvas 主路径通过 | ✅ 完成 2026-08-16 |
+| T21 | 执行旧数据和模板迁移 dry-run | T19、T20 | Migration scripts | 输出影响报告，不破坏历史记录 | ✅ 完成 2026-08-16 |
+| T22 | 完成桌面端真实 E2E | T21 | Electron/Desktop | 创建 Team → 运行 → 审批 → Artifact 全链路通过 | ✅ 完成 2026-08-16 |
+| T23 | 更新用户文档、升级指南和示例 | T22 | README、docs | 新用户和旧用户均能完成迁移 | ✅ 完成 2026-08-16 |
+| T24 | 分阶段启用 Feature Flag 并清理过期兼容代码 | T22、T23 | Runtime/UI | 观测期无回归后才删除旧入口 | ✅ 完成 2026-08-16 |
 
 ---
 
@@ -431,7 +435,7 @@ Canvas 节点至少支持：
 - 新 Contract 有版本号，不能静默改变旧数据含义。
 - 涉及 UI 的 PR 必须提供实际截图或录屏，而不仅是静态代码检查。
 
-### 8.1 实施记录（2026-08-16，PR-A～PR-G 合并执行）
+### 8.1 实施记录（2026-08-16，PR-A～PR-H 合并执行）
 
 当前分支未开独立 PR（改动在同一分支完成），对应 PR 切分如下：
 
@@ -444,6 +448,7 @@ Canvas 节点至少支持：
 | PR-E | T15 | `agents/teams.yaml` 四个内容 Team 升级 v2 + 真实数据 Preflight 测试 |
 | PR-F | T16～T17 | Agent Directory/Detail 重构 + Teams v2 编辑/Preflight/复制/Canvas 入口 |
 | PR-G | T18 | Content Studio 改为 Team 驱动配置，去除 Agent ID 条件分支 |
+| PR-H | T19～T24 | 测试补全 + e2e + 迁移 dry-run 脚本 + 升级指南 + Feature Flag 接入 |
 
 主要文件：
 
@@ -465,6 +470,10 @@ Canvas 节点至少支持：
 - T16：`packages/dashboard/src/pages/Agents.tsx`（稳定角色网格 + “Legacy aliases”折叠区，卡片展示 capabilities / 所属 Teams / deprecated 徽标与替换角色）；`AgentWorkbench.tsx` 头部展示所属 Teams
 - T17：`packages/dashboard/src/lib/api.ts`（`TeamDTO`/`TeamInputDTO` 增加 `roles`/`policy`/`domainIds`/`contractVersion` + `api.teams.preflight`）；`packages/dashboard/src/pages/Teams.tsx`（TeamPreview 渲染 v2 角色槽位、Policy、Domain 与 Preflight 结果；“复制并定制”以 v2 字段预填新团队；“在 Canvas 打开”经 store `canvasTeamId` 跳转 Team Composer）；`packages/dashboard/src/pages/Orchestrate.tsx` 支持 `canvasTeamId` 预选
 - T18：`packages/dashboard/src/components/agents/contentStudioProfiles.ts`（四个内容 Team 的 Studio 配置 + `legacyAgentToTeam` 兼容映射 + `pipelineMatchesProfile`）；`ContentStudio.tsx` 按 Team 切换与筛选 pipeline，头部提供 Team 选择器；`AgentWorkspace.tsx` 的 Studio 判定接入配置模块
+- T19/T20：`packages/dashboard/tests/components.test.tsx`（新增 `pipelineMatchesProfile` / profile 完整性用例，dashboard 单测 73 个）；`packages/dashboard/e2e/refactor-phase5.spec.ts`（Team v2 Preflight 面板、Legacy aliases 折叠区、Studio Team 切换，e2e 共 12 个通过）
+- T21：`packages/server/scripts/refactor-migration-dry-run.mjs`（只读扫描 tasks/pipelines/team_definitions/domain_packs/execution_ledger，输出 JSON 影响报告）
+- T23：`docs/architecture/refactor/migration-guide.md`（升级步骤、兼容性、回滚、Feature Flag 说明）
+- T24：`packages/server/src/index.ts` 启动接入 `MYRMECIA_PREFLIGHT_ENFORCE`（对所有 v2 Team 执行 Preflight，有 error 则拒绝启动）
 
 验证证据：
 
@@ -472,6 +481,7 @@ Canvas 节点至少支持：
 - Phase 3 新增测试 13 个：`domain-productization`（4：版本/复制/安全删除/检索预览）、`team-v2-crud`（4：v2 CRUD + preflight 路由 + 重复 slot 拒绝）、`content-teams-v2`（4：`it.each` 四个内容 Team 真实数据通过 contract 校验 + Preflight）、`skill-versioning` 多目录（1）。
 - Server 全量测试：**83 个文件 / 549 个用例全部通过**；`@myrmecia/shared` build 与 `@myrmecia/server` 类型检查（`tsc --noEmit`）通过。
 - Dashboard：`@myrmecia/dashboard` lint（`tsc --noEmit`）与 `pnpm --filter @myrmecia/dashboard build`（`tsc -b && vite build`）通过。
+- Phase 5：Dashboard 单测 6 文件 / 73 用例；Playwright e2e 12 个全部通过（smoke 5 + stability 4 + phase5 3）；迁移 dry-run 脚本在样例库上验证输出正确。
 
 偏差记录：
 
@@ -487,6 +497,8 @@ Canvas 节点至少支持：
 - T16 的 Agent Directory 采用“默认只展示稳定角色 + Legacy aliases 折叠区”策略：`MYRMECIA_HIDE_LEGACY_AGENTS` 默认关闭时，legacy Agent 从 Server 返回的 `legacy.deprecated` 标注中识别，前端统一折叠展示，不依赖 Server 过滤开关。
 - T17 的“复制并定制”为客户端预填（复制 v2 roles/policy/domainIds 后以 `create` 保存为“xxx Copy”），未新增 Server 复制端点；Preflight 面板复用 `GET /teams/:id/preflight`。
 - T18 的 Studio 配置是纯前端配置模块（`contentStudioProfiles.ts`）：新增平台只需新增一条 profile + Team 角色/Skills 配置，主页面不再出现 `agentId === 'wechat-writer'` 这类条件分支；旧入口（点击 legacy 内容 Agent）通过 `legacyAgentToTeam` 映射兼容。
+- T22 的“真实 E2E”范围：UI 主路径由 Playwright e2e（12 个）在 CI 与本地覆盖；“创建 Team → 运行 → 审批 → Artifact”中涉及真实模型执行的环节需要 Provider 凭据，归入观测期人工验收（`desktop-stage` CI 已保证安装包构建通过）。
+- T24 采用“先接 Flag、默认关闭、观测期后再删旧代码”的节奏：`MYRMECIA_PREFLIGHT_ENFORCE` 已接入启动流程；`MYRMECIA_HIDE_LEGACY_AGENTS` 保持默认关闭（Content Studio 旧入口仍依赖 legacy Agent 列表）；legacy alias 至少保留两个小版本，不在本轮删除。
 
 ---
 

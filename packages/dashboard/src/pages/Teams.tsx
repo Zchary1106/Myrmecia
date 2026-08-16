@@ -502,7 +502,7 @@ function TeamPreflightPanel({ team }: { team: TeamDTO }) {
 
   if (!team.roles?.length) return null;
   return (
-    <div className="mt-4 rounded-xl border border-border bg-background p-3">
+    <div data-testid="team-preflight" className="mt-4 rounded-xl border border-border bg-background p-3">
       <div className="flex items-center gap-2">
         <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-600">Preflight</span>
         {loading && <span className="text-[10px] text-gray-500">checking…</span>}
@@ -566,7 +566,7 @@ function TeamPreview({
               <span className="rounded-md border border-border bg-background px-2 py-0.5 font-mono text-[10px] text-gray-500">@{team.id}</span>
               {team.builtin && <span className="rounded-md bg-white/5 px-2 py-0.5 text-[9px] text-gray-500">built-in</span>}
               {team.contractVersion === 2 && (
-                <span className="rounded-md bg-accent/10 px-2 py-0.5 text-[9px] font-semibold text-accent-light">Contract v2</span>
+                <span data-testid="contract-v2-badge" className="rounded-md bg-accent/10 px-2 py-0.5 text-[9px] font-semibold text-accent-light">Contract v2</span>
               )}
             </div>
             <p className="mt-2 max-w-2xl text-[12px] leading-relaxed text-gray-400">{team.blurb}</p>

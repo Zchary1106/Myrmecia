@@ -1,4 +1,5 @@
 import './load-env.js';
+
 import express from 'express';
 import cors from 'cors';
 import { createServer } from 'http';
@@ -10,7 +11,9 @@ import { getDb } from './db/database.js';
 import { AgentManager } from './agents/agent-manager.js';
 import { TaskQueue } from './queue/task-queue.js';
 import { PipelineEngine } from './pipelines/pipeline-engine.js';
-import { loadTeams, listTeams } from './agents/team-registry.js';
+import { loadTeams, listTeams, type Team } from './agents/team-registry.js';
+import { runTeamPreflight } from './agents/team-preflight.js';
+import type { TeamContractV2 } from './types.js';
 import { TeamCoordinator } from './agents/team-coordinator.js';
 import { createTeamRoutes } from './routes/teams.js';
 import { listLegacyAliases, loadLegacyAgentAliases } from './agents/legacy-agent-alias-resolver.js';
@@ -56,6 +59,23 @@ import { createMemoryRoutes } from './routes/memory.js';
 import { GraphWorkflowEngine } from './agents/graph-workflow.js';
 import { createGraphWorkflowRoutes } from './routes/graph-workflows.js';
 import { getMcpManager } from './tools/mcp-manager.js';
+
+function teamToContractV2(team: Team): TeamContractV2 | undefined {
+  if (!team.roles?.length) return undefined;
+  return {
+    schemaVersion: '2.0',
+    id: team.id,
+    name: team.name,
+    version: 2,
+    lead: team.lead,
+    domainIds: team.domainIds,
+    roles: team.roles,
+    policy: team.policy,
+    pipelineTemplate: team.template,
+    members: team.members,
+  };
+}
+
 import { createMcpRoutes } from './routes/mcp.js';
 import { createAuditRoutes } from './security/dlp.js';
 import { createUsageRoutes } from './billing/usage.js';
@@ -229,6 +249,26 @@ async function main() {
 
   // Connect configured MCP servers (best-effort; from MCP_SERVERS env)
   await getMcpManager().init().catch(() => undefined);
+
+  // T24: optional startup enforcement — fail fast when a v2 team cannot pass preflight.
+  if (process.env.MYRMECIA_PREFLIGHT_ENFORCE === 'true') {
+    const blocked: string[] = [];
+    for (const team of listTeams()) {
+      const contract = teamToContractV2(team);
+      if (!contract) continue;
+      const result = runTeamPreflight(contract);
+      if (!result.pass) {
+        const errors = result.issues.filter(issue => issue.severity === 'error').map(issue => issue.message);
+        blocked.push(`${team.id}: ${errors.join('; ')}`);
+      }
+    }
+    if (blocked.length > 0) {
+      logger.error({ teams: blocked }, 'MYRMECIA_PREFLIGHT_ENFORCE: v2 teams failed preflight, refusing to start');
+      throw new Error(`preflight enforcement blocked teams: ${blocked.join(' | ')}`);
+    }
+    logger.info({ checked: listTeams().filter(team => team.roles?.length).length }, 'Preflight enforcement passed for all v2 teams');
+  }
+
   socialMonitorWorker.start();
 
   // Initialize notification service
