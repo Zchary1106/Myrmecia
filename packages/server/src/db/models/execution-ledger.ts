@@ -14,6 +14,7 @@ import { logger } from '../../lib/logger.js';
 export type LedgerEntryType =
   | 'runtime.selected'
   | 'model.selected'
+  | 'plan.snapshot'
   | 'tool.policy'
   | 'tool.allowed'
   | 'tool.blocked'

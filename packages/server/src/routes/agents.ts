@@ -13,6 +13,12 @@ import { logger } from '../lib/logger.js';
 import { HttpError, notFound, parseBody, requireOperatorRole, sendError } from './http.js';
 import { workspaceIdFromRequest } from '../auth/tenant.js';
 import { agentContractSchema } from '../contracts/team-composer-contracts.js';
+import {
+  isLegacyAgent,
+  listLegacyAliases,
+  loadLegacyAgentAliases,
+  resolveLegacyAgentId,
+} from '../agents/legacy-agent-alias-resolver.js';
 
 const prioritySchema = z.enum(['low', 'normal', 'high', 'urgent']);
 const stringListSchema = z.array(z.string().trim().min(1));
@@ -73,19 +79,44 @@ function agentAuditSnapshot(agent: AgentDefinition) {
 
 export function createAgentRoutes(taskQueue?: TaskQueue): Router {
   const router = Router();
+  loadLegacyAgentAliases();
+  const hideLegacyByDefault = process.env.MYRMECIA_HIDE_LEGACY_AGENTS === 'true';
+
+  function legacyAnnotation(agentId: string) {
+    const alias = resolveLegacyAgentId(agentId);
+    if (!alias) return undefined;
+    return {
+      deprecated: true,
+      replacement: {
+        agentId: alias.agentId,
+        skills: alias.skills,
+        tools: alias.tools,
+      },
+    };
+  }
 
   // GET /api/agents — list agent definitions (capability templates)
   router.get('/', (req, res) => {
     const { role } = req.query;
-    const agents = listAgents({ role: role as string });
+    const includeLegacy = req.query.includeLegacy === 'true';
+    let agents = listAgents({ role: role as string });
+    if (hideLegacyByDefault && !includeLegacy) {
+      agents = agents.filter(agent => !isLegacyAgent(agent.id));
+    }
 
     // Enrich with runtime info (active execution count)
     const enriched = agents.map(agent => ({
       ...agent,
       activeExecutions: getActiveExecutionCount(agent.id),
+      legacy: legacyAnnotation(agent.id),
     }));
 
     res.json(enriched);
+  });
+
+  // GET /api/agents/legacy — list all legacy aliases and their replacements
+  router.get('/legacy', (_req, res) => {
+    res.json({ aliases: listLegacyAliases() });
   });
 
   // GET /api/agents/:id — single agent definition
@@ -95,7 +126,16 @@ export function createAgentRoutes(taskQueue?: TaskQueue): Router {
     res.json({
       ...agent,
       activeExecutions: getActiveExecutionCount(agent.id),
+      legacy: legacyAnnotation(agent.id),
     });
+  });
+
+  // GET /api/agents/:id/deprecation — deprecation status for a single id
+  router.get('/:id/deprecation', (req, res) => {
+    if (!isLegacyAgent(req.params.id)) {
+      return res.json({ deprecated: false });
+    }
+    res.json({ deprecated: true, legacy: legacyAnnotation(req.params.id) });
   });
 
   // POST /api/agents — register a new agent definition

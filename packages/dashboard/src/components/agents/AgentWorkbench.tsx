@@ -109,7 +109,11 @@ function DiagnosticCard({
   );
 }
 
-export function AgentWorkbench({ agent, onEdit }: { agent: AgentSummary; onEdit: (agent: AgentSummary) => void }) {
+export function AgentWorkbench({
+  agent,
+  onEdit,
+  teams = [],
+}: { agent: AgentSummary; onEdit: (agent: AgentSummary) => void; teams?: string[] }) {
   const {
     tasks,
     tools,
@@ -196,6 +200,16 @@ export function AgentWorkbench({ agent, onEdit }: { agent: AgentSummary; onEdit:
               <span>{agent.model || agent.config?.model || 'routed model'}</span>
               <span>·</span>
               <span>{agentTools.length} tools</span>
+              {teams.length > 0 && (
+                <span className="flex flex-wrap items-center gap-1">
+                  <span>·</span>
+                  <span className="text-gray-500">Teams:</span>
+                  {teams.slice(0, 4).map(teamName => (
+                    <span key={teamName} className="rounded bg-cyan-500/10 px-1.5 py-0.5 text-[10px] text-cyan-300">{teamName}</span>
+                  ))}
+                  {teams.length > 4 && <span className="text-[10px] text-gray-500">+{teams.length - 4}</span>}
+                </span>
+              )}
             </div>
           </div>
         </div>

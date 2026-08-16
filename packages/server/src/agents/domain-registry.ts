@@ -4,9 +4,11 @@ import { fileURLToPath } from 'url';
 import { parse as parseYaml } from 'yaml';
 import { logger } from '../lib/logger.js';
 import { listAgents } from '../db/models/agent.js';
+import { listTeams } from './team-registry.js';
 import {
   listDomainRows, getDomainRow, insertDomainRow, updateDomainRow, deleteDomainRow,
 } from '../db/models/domain.js';
+import { getDb } from '../db/database.js';
 import type { DomainPack, DomainPackInput } from '../types.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -41,6 +43,8 @@ function normalize(d: any, builtin: boolean): DomainPack {
     id: String(d.id),
     name: d.name || d.id,
     emoji: d.emoji || '📘',
+    version: Number(d.version ?? 1),
+    versionNote: d.versionNote || d.version_note || undefined,
     persona: d.persona || '',
     guidelines: Array.isArray(d.guidelines) ? d.guidelines.map(String) : [],
     terminology: d.terminology && typeof d.terminology === 'object' ? d.terminology : {},
@@ -104,6 +108,8 @@ function applyInput(base: DomainPack, input: Partial<DomainPackInput>): DomainPa
     ...base,
     name: input.name ?? base.name,
     emoji: input.emoji ?? base.emoji,
+    version: input.version ?? base.version ?? 1,
+    versionNote: input.versionNote ?? base.versionNote,
     persona: input.persona ?? base.persona,
     guidelines: input.guidelines ?? base.guidelines,
     terminology: input.terminology ?? base.terminology,
@@ -116,7 +122,7 @@ function applyInput(base: DomainPack, input: Partial<DomainPackInput>): DomainPa
 }
 
 const emptyPack = (workspaceId: string): DomainPack => ({
-  id: '', name: '', emoji: '📘', persona: '', guidelines: [], terminology: {},
+  id: '', name: '', emoji: '📘', version: 1, persona: '', guidelines: [], terminology: {},
   retrieval: { ...DEFAULT_RETRIEVAL }, knowledgeIds: [], agentIds: [],
   workspaceId, builtin: false,
 });
@@ -146,9 +152,106 @@ export function updateDomain(id: string, patch: Partial<DomainPackInput>, worksp
 export function deleteDomain(id: string): { reverted: boolean } {
   const custom = listCustom().find(d => d.id === id);
   if (!custom) throw new Error(`domain "${id}" is not a custom domain`);
+  const references = findDomainReferences(id);
+  if (references.length) {
+    throw new DomainInUseError(id, references);
+  }
   deleteDomainRow(id);
   // If a built-in with this id exists, deletion just reverts to the built-in.
   return { reverted: BUILTIN.some(d => d.id === id) };
+}
+
+export interface DomainReference {
+  type: 'task' | 'team' | 'pipeline';
+  id: string;
+  name: string;
+}
+
+export class DomainInUseError extends Error {
+  constructor(
+    public readonly domainId: string,
+    public readonly references: DomainReference[],
+  ) {
+    super(`domain "${domainId}" is referenced by ${references.length} resources`);
+    this.name = 'DomainInUseError';
+  }
+}
+
+/** Find tasks, teams, and pipeline templates that reference a domain pack. */
+export function findDomainReferences(id: string, workspaceId = 'default'): DomainReference[] {
+  const references: DomainReference[] = [];
+  try {
+    const db = getDb();
+    const tasks = db.all(
+      `SELECT id, title FROM tasks WHERE domain_id = ? LIMIT 50`,
+      id,
+    ) as any[];
+    for (const task of tasks) {
+      references.push({ type: 'task', id: task.id, name: task.title || task.id });
+    }
+  } catch { /* tasks table may not expose domain_id in all schemas */ }
+
+  for (const team of listTeams(workspaceId)) {
+    const roleDomains = (team.roles as Array<{ domainIds?: string[] }>)
+      .flatMap(role => role.domainIds || []);
+    if (team.domainIds?.includes(id) || roleDomains.includes(id)) {
+      references.push({ type: 'team', id: team.id, name: team.name });
+    }
+  }
+
+  try {
+    const db = getDb();
+    const versions = db.all(
+      `SELECT id, team_id, graph FROM team_template_versions WHERE workspace_id = ?`,
+      workspaceId,
+    ) as any[];
+    for (const version of versions) {
+      try {
+        const graph = JSON.parse(version.graph);
+        const mentions = JSON.stringify(graph.nodes || []).includes(`"domainIds"`);
+        const uses = JSON.stringify(graph.nodes || []).includes(`"${id}"`);
+        if (mentions && uses) {
+          references.push({ type: 'pipeline', id: version.team_id, name: version.team_id });
+        }
+      } catch { /* ignore unparseable graphs */ }
+    }
+  } catch { /* table may not exist yet */ }
+
+  return references;
+}
+
+/** Duplicate a domain pack to a new id (name + "（副本）"). */
+export function copyDomain(id: string, workspaceId = 'default'): DomainPack {
+  const source = getDomain(id, workspaceId);
+  if (!source) throw new Error(`domain "${id}" not found`);
+  const copySlug = slug(`${source.name}-copy`) || 'domain-copy';
+  let copyId = copySlug;
+  let attempt = 1;
+  while (BUILTIN.some(d => d.id === copyId) || listCustom().some(d => d.id === copyId)) {
+    attempt += 1;
+    copyId = `${copySlug}-${attempt}`;
+  }
+  const pack = applyInput({ ...emptyPack(workspaceId), id: copyId, version: 1 }, {
+    name: `${source.name}（副本）`,
+    emoji: source.emoji,
+    persona: source.persona,
+    guidelines: source.guidelines,
+    terminology: source.terminology,
+    disclaimer: source.disclaimer,
+    tone: source.tone,
+    retrieval: source.retrieval,
+    knowledgeIds: source.knowledgeIds,
+    agentIds: source.agentIds,
+  });
+  return insertDomainRow(pack);
+}
+
+/** Bump a domain version (version lock). Returns the updated pack. */
+export function bumpDomainVersion(id: string, note: string | undefined, workspaceId = 'default'): DomainPack {
+  const domain = getDomain(id, workspaceId);
+  if (!domain) throw new Error(`domain "${id}" not found`);
+  const nextVersion = (domain.version ?? 1) + 1;
+  return updateDomain(id, { version: nextVersion, versionNote: note || `v${nextVersion}` }, workspaceId);
 }
 
 /** Bind / unbind knowledge document ids to a domain (idempotent union). */

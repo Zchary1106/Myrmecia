@@ -30,6 +30,15 @@ export const GOVERNED_PUBLISH_MCP_TOOLS = [
   'mcp__douyin-upload__douyin_upload_video',
   'mcp__wechat-official-account__wechat_publish',
 ] as const;
+/** MCP servers that ship with the product (platform integrations). Tools from
+ *  these servers are considered known even before a server connects; their
+ *  online/offline state is a preflight (runtime) concern, not a schema concern. */
+export const PLATFORM_MCP_SERVERS = [
+  'xiaohongshu',
+  'douyin-upload',
+  'douyin-search',
+  WECHAT_OFFICIAL_ACCOUNT_MCP,
+] as const;
 const GOVERNED_PUBLISH_MCP_TOOL_SET = new Set<string>(GOVERNED_PUBLISH_MCP_TOOLS);
 const WECHAT_DUMMY_APP_ID = 'wx0000000000000000';
 const WECHAT_DUMMY_APP_SECRET = '00000000000000000000000000000000';

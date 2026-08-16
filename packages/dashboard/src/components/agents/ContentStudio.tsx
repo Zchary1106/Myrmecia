@@ -4,97 +4,13 @@ import { api } from '../../lib/api';
 import { cn } from '../../lib/utils';
 import { useStore } from '../../stores/store';
 import { StageOutputPreview } from './StageOutputPreview';
-
-const CROSSPOST_TEMPLATE_NAME = 'Social Content Three Lanes';
-const XIAOHONGSHU_TEMPLATE_NAME = 'Xiaohongshu Publish';
-const DOUYIN_TEMPLATE_NAME = 'Douyin Video Publish';
-const WECHAT_TEMPLATE_NAME = 'WeChat Article';
-
-const xiaohongshuStages: Array<Pick<PipelineStage, 'name' | 'agentRole'>> = [
-  { name: '小红书选题调研', agentRole: 'trend-scout' },
-  { name: '小红书笔记创作', agentRole: 'xiaohongshu-writer' },
-  { name: '自动合规初筛', agentRole: 'social-compliance-reviewer' },
-  { name: '人工审核材料', agentRole: 'social-review-coordinator' },
-  { name: '配图生成', agentRole: 'xiaohongshu-visual-designer' },
-  { name: '媒体 QA', agentRole: 'media-qa' },
-  { name: '发布预检', agentRole: 'social-preflight' },
-  { name: '小红书发布', agentRole: 'social-publisher' },
-];
-
-const crosspostStages: Array<Pick<PipelineStage, 'name' | 'agentRole'>> = [
-  { name: '选题证据包', agentRole: 'trend-scout' },
-  { name: '内容核心包', agentRole: 'content-strategist' },
-  { name: '抖音视频生产线', agentRole: 'douyin-writer' },
-  { name: '小红书生产线', agentRole: 'xiaohongshu-writer' },
-  { name: '公众号生产线', agentRole: 'wechat-writer' },
-  { name: '自动合规初筛', agentRole: 'social-compliance-reviewer' },
-  { name: '人工审核材料', agentRole: 'social-review-coordinator' },
-  { name: '小红书卡片生成', agentRole: 'xiaohongshu-visual-designer' },
-  { name: '公众号草稿箱同步', agentRole: 'wechat-writer' },
-  { name: '媒体 QA', agentRole: 'media-qa' },
-  { name: '发布预检', agentRole: 'social-preflight' },
-  { name: '发布执行', agentRole: 'social-publisher' },
-  { name: '发布补偿计划', agentRole: 'social-ops' },
-  { name: '发布后监控计划', agentRole: 'social-analytics' },
-];
-
-const douyinStages: Array<Pick<PipelineStage, 'name' | 'agentRole'>> = [
-  { name: '抖音选题调研', agentRole: 'trend-scout' },
-  { name: '抖音视频脚本', agentRole: 'douyin-writer' },
-  { name: '自动合规初筛', agentRole: 'social-compliance-reviewer' },
-  { name: '人工审核材料', agentRole: 'social-review-coordinator' },
-  { name: '视频媒体 QA', agentRole: 'media-qa' },
-  { name: '发布预检', agentRole: 'social-preflight' },
-  { name: '抖音视频发布', agentRole: 'social-publisher' },
-  { name: '发布补偿计划', agentRole: 'social-ops' },
-  { name: '发布后监控计划', agentRole: 'social-analytics' },
-];
-
-const wechatStages: Array<Pick<PipelineStage, 'name' | 'agentRole'>> = [
-  { name: '选题分析', agentRole: 'product-manager' },
-  { name: '内容创作', agentRole: 'wechat-writer' },
-  { name: '内容审核', agentRole: 'reviewer' },
-  { name: '排版优化', agentRole: 'wechat-writer' },
-  { name: '草稿箱同步', agentRole: 'wechat-writer' },
-  { name: '发布执行', agentRole: 'social-publisher' },
-];
-
-export function contentStudioWorkflow(selectedAgentId: string | null) {
-  if (selectedAgentId === 'wechat-writer') {
-    return {
-      templateName: WECHAT_TEMPLATE_NAME,
-      title: 'WeChat Official Account Studio',
-      subtitle: '选题 · 写作 · 审核 · 排版 · 草稿箱 · 人工发布',
-      stages: wechatStages,
-      createLabel: 'Create WeChat article run',
-    };
-  }
-  if (selectedAgentId === 'xiaohongshu-writer') {
-    return {
-      templateName: XIAOHONGSHU_TEMPLATE_NAME,
-      title: 'Xiaohongshu Content Studio',
-      subtitle: '小红书独立生产线 · 图文预览 · 人工审核发布',
-      stages: xiaohongshuStages,
-      createLabel: 'Create Xiaohongshu run',
-    };
-  }
-  if (selectedAgentId === 'douyin-writer') {
-    return {
-      templateName: DOUYIN_TEMPLATE_NAME,
-      title: 'Douyin Script & Publish Studio',
-      subtitle: '脚本与发布工作台 · 需要用户提供真实本地视频 · 人工确认上传',
-      stages: douyinStages,
-      createLabel: 'Create Douyin video run',
-    };
-  }
-  return {
-      templateName: CROSSPOST_TEMPLATE_NAME,
-    title: 'Social Three-Lane Studio',
-    subtitle: 'Douyin + Xiaohongshu + WeChat · shared research · independent production lanes',
-      stages: crosspostStages,
-      createLabel: 'Create crosspost run',
-  };
-}
+import {
+  CONTENT_TEAM_IDS,
+  legacyAgentToTeam,
+  pipelineMatchesProfile,
+  studioProfileForTeam,
+  type ContentStudioProfile,
+} from './contentStudioProfiles';
 
 const stageStyle: Record<string, { dot: string; badge: string; label: string }> = {
   pending: { dot: 'bg-gray-600', badge: 'bg-gray-500/10 text-gray-500', label: 'Pending' },
@@ -114,33 +30,9 @@ function isActivePipeline(pipeline: Pipeline) {
   return ['running', 'paused', 'blocked', 'awaiting_retry'].includes(pipeline.status);
 }
 
-function isCrosspostPipeline(pipeline: Pipeline, templateId?: string) {
-  if (templateId && pipeline.templateId === templateId) return true;
-  const roles = pipeline.stages.map(stage => String(stage.agentRole));
-  return roles.includes('xiaohongshu-writer') && roles.includes('douyin-writer') && roles.includes('social-publisher');
-}
 
-function isXiaohongshuPipeline(pipeline: Pipeline, templateId?: string) {
-  if (templateId && pipeline.templateId === templateId) return true;
-  const roles = pipeline.stages.map(stage => String(stage.agentRole));
-  // Keep legacy crosspost runs visible so their copy/images can still be
-  // inspected or regenerated. New runs use the standalone template above.
-  return roles.includes('xiaohongshu-writer') && roles.includes('social-publisher');
-}
 
-function isDouyinPipeline(pipeline: Pipeline, templateId?: string) {
-  if (templateId && pipeline.templateId === templateId) return true;
-  const roles = pipeline.stages.map(stage => String(stage.agentRole));
-  return roles.includes('douyin-writer')
-    && roles.includes('social-publisher')
-    && !roles.includes('xiaohongshu-writer');
-}
 
-function isWeChatPipeline(pipeline: Pipeline, templateId?: string) {
-  if (templateId && pipeline.templateId === templateId) return true;
-  const names = pipeline.stages.map(stage => stage.name);
-  return names.includes('草稿箱同步') && names.includes('发布执行');
-}
 
 function StageStepper({
   pipeline,
@@ -250,6 +142,7 @@ export function ContentStudio() {
   const [revisionMessage, setRevisionMessage] = useState('');
   const [artifactView, setArtifactView] = useState<'preview' | 'raw'>('preview');
   const [previewArtifact, setPreviewArtifact] = useState<PipelineArtifact | null>(null);
+  const [manualTeamId, setManualTeamId] = useState<string | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -259,25 +152,20 @@ export function ContentStudio() {
     return () => { mounted = false; };
   }, [loadPipelines, loadTemplates]);
 
-  const isWeChatMode = selectedAgentId === 'wechat-writer';
-  const isXiaohongshuMode = selectedAgentId === 'xiaohongshu-writer';
-  const isDouyinMode = selectedAgentId === 'douyin-writer';
-  const workflow = contentStudioWorkflow(selectedAgentId);
+  const resolvedTeamId = (selectedAgentId && legacyAgentToTeam[selectedAgentId]) || null;
+  const teamId = manualTeamId || resolvedTeamId || 'social-three-lanes';
+  const workflow: ContentStudioProfile = studioProfileForTeam(teamId);
+  const isDouyinStudio = workflow.teamId === 'douyin';
+  const isWeChatStudio = workflow.teamId === 'content';
   const workflowTemplate = useMemo(
     () => templates.find(template => template.name === workflow.templateName),
     [templates, workflow.templateName],
   );
   const contentPipelines = useMemo(
     () => pipelines
-      .filter(pipeline => isWeChatMode
-        ? isWeChatPipeline(pipeline, workflowTemplate?.id)
-        : isXiaohongshuMode
-          ? isXiaohongshuPipeline(pipeline, workflowTemplate?.id)
-          : isDouyinMode
-            ? isDouyinPipeline(pipeline, workflowTemplate?.id)
-            : isCrosspostPipeline(pipeline, workflowTemplate?.id))
+      .filter(pipeline => pipelineMatchesProfile(pipeline, workflow, workflowTemplate?.id))
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()),
-    [pipelines, isWeChatMode, isXiaohongshuMode, isDouyinMode, workflowTemplate?.id],
+    [pipelines, workflow, workflowTemplate?.id],
   );
   const pipeline = contentPipelines.find(item => item.id === selectedRunId) || null;
   const currentTask = pipeline?.stages[pipeline.currentStageIndex]?.taskId
@@ -391,7 +279,7 @@ export function ContentStudio() {
     setActionError(null);
     try {
       const created = await api.pipelines.create({
-        name: runName.trim() || `${isWeChatMode ? 'WeChat' : isXiaohongshuMode ? 'Xiaohongshu' : isDouyinMode ? 'Douyin' : 'Crosspost'} · ${runInput.trim().slice(0, 42)}`,
+        name: runName.trim() || `${workflow.shortLabel} · ${runInput.trim().slice(0, 42)}`,
         templateId: workflowTemplate.id,
         input: runInput.trim(),
         gateMode,
@@ -518,6 +406,17 @@ export function ContentStudio() {
           <p className="mt-0.5 truncate text-[10px] text-gray-500">{workflow.subtitle}</p>
         </div>
         <div className="flex items-center gap-2">
+          <select
+            value={teamId}
+            onChange={event => setManualTeamId(event.target.value)}
+            aria-label="Content studio team"
+            title="Select the content team driving this studio"
+            className="max-w-44 rounded-lg border border-border bg-background px-2.5 py-2 text-[11px] text-gray-300 outline-none focus:border-accent"
+          >
+            {CONTENT_TEAM_IDS.map(id => (
+              <option key={id} value={id}>{studioProfileForTeam(id).shortLabel}</option>
+            ))}
+          </select>
           {contentPipelines.length > 0 && (
             <select
               value={selectedRunId || ''}
@@ -549,11 +448,7 @@ export function ContentStudio() {
           <div className="max-w-md rounded-2xl border border-border bg-surface p-7 text-center">
             <div className="text-3xl">🧩</div>
             <h3 className="mt-3 text-base font-bold">{workflow.createLabel}</h3>
-            <p className="mt-2 text-xs leading-relaxed text-gray-500">
-              {isDouyinMode
-                ? 'Research, write the video script, validate a real local video file, then explicitly approve the Douyin upload.'
-                : 'Research, write, review, generate images, and explicitly approve publication from one artifact-first workspace.'}
-            </p>
+            <p className="mt-2 text-xs leading-relaxed text-gray-500">{workflow.emptyHint}</p>
             {!workflowTemplate && <p className="mt-3 text-xs text-amber-300">The “{workflow.templateName}” template is not available yet.</p>}
             <button
               type="button"
@@ -630,12 +525,12 @@ export function ContentStudio() {
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-accent-light">
-                      {isDouyinMode ? 'Local video files' : 'Generated PNGs'}
+                      {isDouyinStudio ? 'Local video files' : 'Generated PNGs'}
                     </div>
-                    <h3 className="mt-1 text-sm font-bold">{isDouyinMode ? 'Video artifact gallery' : 'Image artifact gallery'}</h3>
+                    <h3 className="mt-1 text-sm font-bold">{isDouyinStudio ? 'Video artifact gallery' : 'Image artifact gallery'}</h3>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className="text-[10px] text-gray-600">{isDouyinMode ? videoArtifacts.length : imageArtifacts.length} files</span>
+                    <span className="text-[10px] text-gray-600">{isDouyinStudio ? videoArtifacts.length : imageArtifacts.length} files</span>
                     <button
                       type="button"
                       onClick={() => void refreshArtifacts()}
@@ -648,24 +543,24 @@ export function ContentStudio() {
                 </div>
                 {artifactLoading && <div className="py-8 text-center text-xs text-gray-500">Loading generated artifacts…</div>}
                 {artifactError && <div role="alert" className="mt-3 rounded-lg bg-red-500/10 px-3 py-2 text-xs text-red-300">{artifactError}</div>}
-                {!artifactLoading && !artifactError && (isDouyinMode ? videoArtifacts.length === 0 : imageArtifacts.length === 0) && (
+                {!artifactLoading && !artifactError && (isDouyinStudio ? videoArtifacts.length === 0 : imageArtifacts.length === 0) && (
                   <div className="mt-3 rounded-xl border border-dashed border-border bg-background/60 px-4 py-8 text-center text-xs text-gray-600">
-                    {isDouyinMode
+                    {isDouyinStudio
                       ? 'Add a real local MP4/MOV/WebM path to the production brief. Video files copied into this run workspace will appear here.'
                       : 'PNG cards generated by the image stage will appear here.'}
                   </div>
                 )}
-                {!isDouyinMode && imageArtifacts.length > 0 && (
+                {!isDouyinStudio && imageArtifacts.length > 0 && (
                   <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
                     {imageArtifacts.map(artifact => (
-                      <button key={artifact.id} type="button" onClick={() => setPreviewArtifact(artifact)} className={cn('group overflow-hidden rounded-xl border border-border bg-background text-left hover:border-accent/50', isWeChatMode && 'col-span-2')}>
-                        <img src={artifact.url} alt={artifact.name} className={cn('w-full object-cover transition duration-200 group-hover:scale-[1.02]', isWeChatMode ? 'aspect-[900/383]' : 'aspect-[3/4]')} />
+                      <button key={artifact.id} type="button" onClick={() => setPreviewArtifact(artifact)} className={cn('group overflow-hidden rounded-xl border border-border bg-background text-left hover:border-accent/50', isWeChatStudio && 'col-span-2')}>
+                        <img src={artifact.url} alt={artifact.name} className={cn('w-full object-cover transition duration-200 group-hover:scale-[1.02]', isWeChatStudio ? 'aspect-[900/383]' : 'aspect-[3/4]')} />
                         <span className="block truncate px-2 py-1.5 text-[10px] text-gray-500">{artifact.name}</span>
                       </button>
                     ))}
                   </div>
                 )}
-                {isDouyinMode && videoArtifacts.length > 0 && (
+                {isDouyinStudio && videoArtifacts.length > 0 && (
                   <div className="mt-4 grid gap-3 xl:grid-cols-2">
                     {videoArtifacts.map(artifact => (
                       <div key={artifact.id} className="overflow-hidden rounded-xl border border-border bg-background">
@@ -829,13 +724,13 @@ export function ContentStudio() {
                 </label>
                 <label className="block">
                   <span className="text-[11px] font-medium text-gray-300">
-                    {isDouyinMode ? 'Video production brief and local video path' : 'Production brief'}
+                    {isDouyinStudio ? 'Video production brief and local video path' : 'Production brief'}
                   </span>
                   <textarea
                     value={runInput}
                     onChange={event => setRunInput(event.target.value)}
-                    rows={isDouyinMode ? 7 : 5}
-                    placeholder={isDouyinMode
+                    rows={isDouyinStudio ? 7 : 5}
+                    placeholder={isDouyinStudio
                       ? 'Describe the topic and audience, then provide the real absolute video path, for example:\nvideo_path: /Users/me/Videos/final.mp4\nThe path must exist before media QA and publishing.'
                       : 'Describe the audience, topic, evidence to cover, and desired outcome…'}
                     className="mt-1.5 w-full resize-y rounded-lg border border-border bg-background px-3 py-2 text-sm leading-relaxed outline-none placeholder:text-gray-700 focus:border-accent"
@@ -870,7 +765,7 @@ export function ContentStudio() {
             <p className="mt-2 text-xs leading-relaxed text-gray-400">
               {publishConfirmAction === 'retry'
                 ? `This creates a new publisher task for “${pipeline.name}”. Check the platform first because the interrupted attempt may have reached it.`
-                : `This advances “${pipeline.name}” to the social publisher. Verify the final copy and ${isDouyinMode ? 'local video file' : 'generated PNGs'} before allowing platform publishing tools to run.`}
+                : `This advances “${pipeline.name}” to the social publisher. Verify the final copy and ${isDouyinStudio ? 'local video file' : 'generated PNGs'} before allowing platform publishing tools to run.`}
             </p>
             <label className="mt-4 block text-[11px] font-medium text-gray-300">
               Type <span className="rounded bg-background px-1.5 py-0.5 font-mono text-amber-200">PUBLISH</span> to continue

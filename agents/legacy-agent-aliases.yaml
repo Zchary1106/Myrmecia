@@ -1,0 +1,65 @@
+# Legacy Agent Aliases — 旧 Agent ID 兼容层
+#
+# 目标模型：Agent 是稳定执行角色，业务能力由 Skill 提供。
+# 迁移期间，旧 ID（任务型 Agent）映射到「稳定角色 + Skills」，
+# 新运行通过 Capability Resolver 解析，历史记录保留原始 ID。
+#
+# 生命周期：add → deprecate（API 返回 deprecated/replacement）→ hidden → delete。
+# 至少保留两个小版本，不立即删除旧配置。详见 docs/architecture/refactor/compatibility-and-rollback.md
+
+legacyAgentAliases:
+  wechat-writer:
+    agentId: content-creator
+    skills: [wechat-longform-writing, wechat-html-layout]
+  xiaohongshu-writer:
+    agentId: content-creator
+    skills: [xiaohongshu-copywriting, hashtag-planning]
+  xiaohongshu-visual-designer:
+    agentId: ui
+    skills: [xiaohongshu-card-design, social-image-generation]
+  douyin-writer:
+    agentId: content-creator
+    skills: [douyin-hook-script, shot-list-design]
+  trend-scout:
+    agentId: researcher
+    skills: [social-trend-evidence, competitive-research]
+  content-strategist:
+    agentId: pm
+    skills: [content-core-planning, cross-platform-adaptation]
+  i18n:
+    agentId: dev
+    skills: [localization-engineering]
+  db-migration:
+    agentId: dev
+    skills: [database-migration]
+  api-design:
+    agentId: architecture-planner
+    skills: [api-contract-design]
+  doc-writer:
+    agentId: content-creator
+    skills: [technical-documentation]
+  release-notes-writer:
+    agentId: content-creator
+    skills: [release-notes]
+  social-compliance-reviewer:
+    agentId: review
+    skills: [social-compliance]
+  social-review-coordinator:
+    agentId: review
+    skills: [review-package-preparation]
+  media-qa:
+    agentId: qa
+    skills: [media-quality-check]
+  social-preflight:
+    agentId: ops
+    skills: [social-publish-preflight]
+  social-publisher:
+    agentId: ops
+    skills: [social-publishing]
+    tools: [mcp__xiaohongshu__publish_content, mcp__xiaohongshu__publish_with_video, mcp__douyin-upload__douyin_upload_video, mcp__wechat-official-account__wechat_publish]
+  social-ops:
+    agentId: ops
+    skills: [publish-recovery]
+  social-analytics:
+    agentId: researcher
+    skills: [social-performance-analysis]

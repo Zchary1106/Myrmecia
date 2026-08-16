@@ -60,8 +60,24 @@ teams:
   - id: content
     name: WeChat Content Team
     emoji: "✍️"
-    lead: master
+    contractVersion: 2
+    lead: coordinator
     members: [product-manager, wechat-writer, reviewer]
+    roles:
+      - slot: coordinator
+        agentId: master
+      - slot: creator
+        agentId: content-creator
+        skills: [wechat-longform-writing, wechat-html-layout]
+      - slot: reviewer
+        agentId: review
+        skills: [social-compliance, review-package-preparation]
+      - slot: operator
+        agentId: ops
+        skills: [social-publish-preflight, social-publishing]
+        tools: [mcp__wechat-official-account__wechat_publish]
+    policy:
+      requireHumanApprovalBefore: [publish]
     template: WeChat Article
     triggers: [article, post, blog, write, 公众号, 文章, content]
     blurb: Plan, write, lay out, and review long-form WeChat content.
@@ -69,8 +85,34 @@ teams:
   - id: xiaohongshu
     name: Xiaohongshu Team
     emoji: "📕"
-    lead: master
+    contractVersion: 2
+    lead: coordinator
     members: [trend-scout, xiaohongshu-writer, social-compliance-reviewer, social-review-coordinator, xiaohongshu-visual-designer, media-qa, social-preflight, social-publisher]
+    roles:
+      - slot: coordinator
+        agentId: master
+      - slot: researcher
+        agentId: researcher
+        skills: [social-trend-evidence, competitive-research]
+        tools: [web.search, web.fetch, mcp__douyin-search__search_videos]
+      - slot: creator
+        agentId: content-creator
+        skills: [xiaohongshu-copywriting, hashtag-planning]
+      - slot: designer
+        agentId: ui
+        skills: [xiaohongshu-card-design, social-image-generation]
+      - slot: reviewer
+        agentId: review
+        skills: [social-compliance, review-package-preparation]
+      - slot: media-qa
+        agentId: qa
+        skills: [media-quality-check]
+      - slot: operator
+        agentId: ops
+        skills: [social-publish-preflight, social-publishing]
+        tools: [mcp__xiaohongshu__publish_content, mcp__xiaohongshu__publish_with_video]
+    policy:
+      requireHumanApprovalBefore: [publish]
     template: Xiaohongshu Publish
     triggers: [小红书, rednote, 笔记, 图文, 卡片, 种草]
     blurb: Research, write, illustrate, review, and publish a human-approved Xiaohongshu note.
@@ -78,8 +120,31 @@ teams:
   - id: douyin
     name: Douyin Video Team
     emoji: "🎬"
-    lead: master
+    contractVersion: 2
+    lead: coordinator
     members: [trend-scout, douyin-writer, social-compliance-reviewer, social-review-coordinator, media-qa, social-preflight, social-publisher, social-ops, social-analytics]
+    roles:
+      - slot: coordinator
+        agentId: master
+      - slot: researcher
+        agentId: researcher
+        skills: [social-trend-evidence, competitive-research]
+        tools: [web.search, web.fetch, mcp__douyin-search__search_videos]
+      - slot: creator
+        agentId: content-creator
+        skills: [douyin-hook-script, shot-list-design]
+      - slot: reviewer
+        agentId: review
+        skills: [social-compliance, review-package-preparation]
+      - slot: media-qa
+        agentId: qa
+        skills: [media-quality-check]
+      - slot: operator
+        agentId: ops
+        skills: [social-publish-preflight, social-publishing]
+        tools: [mcp__douyin-upload__douyin_upload_video]
+    policy:
+      requireHumanApprovalBefore: [publish]
     template: Douyin Video Publish
     triggers: [抖音, douyin, 视频, 分镜, 口播, 短视频]
     blurb: Research and script a Douyin video, validate the supplied media, and publish only after approval.
@@ -87,8 +152,43 @@ teams:
   - id: social-three-lanes
     name: Social Three-Lane Team
     emoji: "📣"
-    lead: master
+    contractVersion: 2
+    lead: coordinator
     members: [trend-scout, content-strategist, douyin-writer, xiaohongshu-writer, wechat-writer, social-compliance-reviewer, social-review-coordinator, media-qa, social-preflight, social-publisher, social-ops, social-analytics]
+    roles:
+      - slot: coordinator
+        agentId: master
+      - slot: researcher
+        agentId: researcher
+        skills: [social-trend-evidence, competitive-research]
+        tools: [web.search, web.fetch, mcp__douyin-search__search_videos]
+      - slot: strategist
+        agentId: pm
+        skills: [content-core-planning, cross-platform-adaptation]
+      - slot: douyin-creator
+        agentId: content-creator
+        skills: [douyin-hook-script, shot-list-design]
+      - slot: xiaohongshu-creator
+        agentId: content-creator
+        skills: [xiaohongshu-copywriting, hashtag-planning]
+      - slot: wechat-creator
+        agentId: content-creator
+        skills: [wechat-longform-writing, wechat-html-layout]
+      - slot: designer
+        agentId: ui
+        skills: [xiaohongshu-card-design, social-image-generation]
+      - slot: reviewer
+        agentId: review
+        skills: [social-compliance, review-package-preparation]
+      - slot: media-qa
+        agentId: qa
+        skills: [media-quality-check]
+      - slot: operator
+        agentId: ops
+        skills: [social-publish-preflight, social-publishing]
+        tools: [mcp__xiaohongshu__publish_content, mcp__xiaohongshu__publish_with_video, mcp__douyin-upload__douyin_upload_video, mcp__wechat-official-account__wechat_publish]
+    policy:
+      requireHumanApprovalBefore: [publish]
     template: Social Content Three Lanes
     triggers: [三平台, 全平台, 小红书抖音公众号, 社媒矩阵, 内容矩阵]
     blurb: Share research and a content core, then run independent Douyin, Xiaohongshu, and WeChat production lanes.

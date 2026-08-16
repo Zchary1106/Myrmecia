@@ -197,3 +197,121 @@ export interface TeamTemplateVersion {
   publishedAt?: string;
   archivedAt?: string;
 }
+
+// ---------- Contract v2 (Agent / Skill / Domain / Team refactor) ----------
+
+/**
+ * Contract v2 formalizes the target object model: Team declares role slots
+ * and capability needs; Pipeline nodes declare role slots + required
+ * capabilities; the runtime resolves them into an immutable
+ * ExecutionPlanSnapshot. v1 contracts remain supported for legacy data.
+ */
+
+export type ContractSchemaVersionV2 = '2.0';
+
+export interface TeamRoleSlotV2 {
+  /** Stable slot id within the team, e.g. `creator`. */
+  slot: string;
+  /** Stable agent role id the slot binds to, e.g. `content-creator`. */
+  agentId: string;
+  /** Skill ids mounted on the slot (merged with the agent's defaults). */
+  skills?: string[];
+  /** Tool ids the slot may use. */
+  tools?: string[];
+  /** Domain pack ids scoped to the slot. */
+  domainIds?: string[];
+}
+
+export interface TeamPolicyV2 {
+  /** Actions that always require a human approval gate, e.g. `publish`. */
+  requireHumanApprovalBefore?: string[];
+  allowedTools?: string[];
+  disallowedTools?: string[];
+  maxCostUsd?: number;
+}
+
+export interface TeamContractV2 {
+  schemaVersion: ContractSchemaVersionV2;
+  id: string;
+  name: string;
+  version: 2;
+  lead: string;
+  domainIds?: string[];
+  roles: TeamRoleSlotV2[];
+  policy?: TeamPolicyV2;
+  pipelineTemplate?: string;
+  /** Legacy v1 member roles kept for compatibility. */
+  members?: string[];
+}
+
+export type GateKindV2 = 'auto' | 'human-approval';
+
+export interface GateContractV2 {
+  kind: GateKindV2;
+  reason?: string;
+  /** When true, a failed gate blocks the pipeline instead of warning. */
+  blocking?: boolean;
+  /** Tool ids / actions that trigger this gate. */
+  requiresApprovalFor?: string[];
+}
+
+export interface RetryPolicyV2 {
+  maxAttempts: number;
+  backoffMs?: number;
+  onExhausted?: 'fail' | 'human';
+}
+
+export interface FallbackPolicyV2 {
+  onFailure?: 'skip' | 'human' | 'fallback-agent';
+  fallbackAgentId?: string;
+}
+
+/** Pipeline Node Contract v2 — declares needs, never concrete agent ids. */
+export interface WorkflowNodeV2 {
+  id: string;
+  roleSlot: string;
+  requiredCapabilities: string[];
+  skillIds: string[];
+  toolIds?: string[];
+  domainIds?: string[];
+  inputs: ArtifactRequirement[];
+  outputs: ArtifactDeclaration[];
+  gate?: GateContractV2;
+  retry?: RetryPolicyV2;
+  fallback?: FallbackPolicyV2;
+}
+
+/** Result of binding a role slot during capability resolution. */
+export interface ResolvedRoleCapability {
+  slot: string;
+  agentId: string;
+  /** Set when the slot resolved through a legacy agent alias. */
+  legacyAgentId?: string;
+  skills: string[];
+  tools: string[];
+  domainIds: string[];
+  /** Resolved domain packs with their locked versions (from the snapshot). */
+  domains?: Array<{ id: string; version: number }>;
+  capabilities: string[];
+}
+
+/** Immutable plan snapshot captured before each run, for audit and replay. */
+export interface ExecutionPlanSnapshot {
+  schemaVersion: ContractSchemaVersionV2;
+  snapshotId: string;
+  teamId: string;
+  teamVersion: number;
+  pipelineTemplate?: string;
+  pipelineVersion?: string;
+  roles: ResolvedRoleCapability[];
+  policy: TeamPolicyV2;
+  gates: Array<{
+    nodeId: string;
+    gate: GateContractV2;
+  }>;
+  modelPolicy?: Record<string, unknown>;
+  contextBudget?: Record<string, unknown>;
+  createdAt: string;
+  /** sha256 over the canonical JSON of the snapshot (excluding checksum). */
+  checksum: string;
+}

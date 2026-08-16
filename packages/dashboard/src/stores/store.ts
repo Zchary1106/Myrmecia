@@ -44,6 +44,9 @@ interface AppStore {
   // View state
   activeView: DashboardView;
   setActiveView: (view: DashboardView) => void;
+  /** Team preselected for the Team Composer canvas ("Open in Canvas"). */
+  canvasTeamId: string | null;
+  setCanvasTeamId: (id: string | null) => void;
 
   // Agent selection & chat
   selectedAgentId: string | null;
@@ -152,6 +155,8 @@ export const useStore = create<AppStore>((set, get) => ({
   // View state
   activeView: 'command',
   setActiveView: (view) => set({ activeView: view }),
+  canvasTeamId: null,
+  setCanvasTeamId: (id) => set({ canvasTeamId: id }),
 
   // Agent selection & chat
   selectedAgentId: null,

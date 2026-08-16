@@ -84,7 +84,7 @@ function emptyNode(kind: WorkflowNodeKind, position: { x: number; y: number }): 
 }
 
 export function OrchestratePage() {
-  const { agents, loadAgents } = useStore();
+  const { agents, loadAgents, canvasTeamId } = useStore();
   const [workflows, setWorkflows] = useState<GraphWorkflowDTO[]>([]);
   const [teams, setTeams] = useState<TeamDTO[]>([]);
   const [teamId, setTeamId] = useState('');
@@ -135,6 +135,11 @@ export function OrchestratePage() {
       setError(err instanceof Error ? err.message : String(err));
     }
   }, []);
+
+  // Preselect a team when arriving from the Teams page ("Open in Canvas").
+  useEffect(() => {
+    if (canvasTeamId) setTeamId(canvasTeamId);
+  }, [canvasTeamId]);
 
   const loadVersions = useCallback(async (id: string) => {
     if (!id) { setVersions([]); setPublishedVersion(null); return; }

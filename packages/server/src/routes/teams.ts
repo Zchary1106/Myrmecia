@@ -4,9 +4,11 @@ import { existsSync, statSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
 import { listTeams, getTeam, resolveTeamAgents, suggestTeam, createTeam, updateTeam, deleteTeam } from '../agents/team-registry.js';
 import type { TeamCoordinator } from '../agents/team-coordinator.js';
+import type { TeamContractV2 } from '../types.js';
 import { HttpError, notFound, parseBody, sendError } from './http.js';
 import { requestCanAccessWorkspace, workspaceIdFromRequest } from '../auth/tenant.js';
-import { workflowGraphContractSchema } from '../contracts/team-composer-contracts.js';
+import { validateTeamContractV2, workflowGraphContractSchema } from '../contracts/team-composer-contracts.js';
+import { runTeamPreflight } from '../agents/team-preflight.js';
 import {
   archiveTeamTemplateVersion,
   createTeamTemplateVersion,
@@ -39,15 +41,58 @@ const messageSchema = z.object({
   redirect: z.boolean().optional(),
 });
 
+const teamRoleSlotSchema = z.object({
+  slot: z.string().trim().min(1),
+  agentId: z.string().trim().min(1),
+  skills: z.array(z.string().trim().min(1)).optional(),
+  tools: z.array(z.string().trim().min(1)).optional(),
+  domainIds: z.array(z.string().trim().min(1)).optional(),
+});
+const teamPolicySchema = z.object({
+  requireHumanApprovalBefore: z.array(z.string().trim().min(1)).optional(),
+  allowedTools: z.array(z.string().trim().min(1)).optional(),
+  disallowedTools: z.array(z.string().trim().min(1)).optional(),
+  maxCostUsd: z.number().nonnegative().optional(),
+});
+
 const teamSchema = z.object({
   id: z.string().trim().optional(),
   name: z.string().trim().min(1, 'name is required'),
   emoji: z.string().trim().optional(),
   lead: z.string().trim().optional(),
-  members: z.array(z.string().trim().min(1)).min(1, 'at least one member role'),
+  members: z.array(z.string().trim().min(1)).optional(),
+  roles: z.array(teamRoleSlotSchema).optional(),
+  policy: teamPolicySchema.optional(),
+  domainIds: z.array(z.string().trim().min(1)).optional(),
   template: z.string().trim().optional(),
   triggers: z.array(z.string().trim()).optional(),
   blurb: z.string().trim().optional(),
+});
+const teamCreateSchema = teamSchema.superRefine((team, ctx) => {
+  if (!team.members?.length && !team.roles?.length) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['members'],
+      message: 'a team needs at least one member role or v2 role slot',
+    });
+  }
+  if (team.roles?.length) {
+    const validation = validateTeamContractV2({
+      schemaVersion: '2.0',
+      id: team.id || 'pending',
+      name: team.name,
+      version: 2,
+      lead: team.lead || team.roles?.[0]?.slot || 'master',
+      roles: team.roles,
+      policy: team.policy,
+      domainIds: team.domainIds,
+    });
+    if (!validation.valid) {
+      for (const issue of validation.errors) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: [...issue.path.split('.').filter(Boolean)], message: issue.message });
+      }
+    }
+  }
 });
 const teamPatchSchema = teamSchema.partial().refine(d => Object.keys(d).length > 0, { message: 'no fields to update' });
 const teamTemplateVersionSchema = z.object({
@@ -64,6 +109,39 @@ export function createTeamRoutes(coordinator: TeamCoordinator): Router {
   const router = Router();
   const ws = (req: any): string => workspaceIdFromRequest(req) || 'default';
 
+  function toTeamContractV2(team: ReturnType<typeof getTeam>): TeamContractV2 | undefined {
+    if (!team?.roles?.length) return undefined;
+    return {
+      schemaVersion: '2.0',
+      id: team.id,
+      name: team.name,
+      version: 2,
+      lead: team.lead,
+      domainIds: team.domainIds,
+      roles: team.roles,
+      policy: team.policy,
+      pipelineTemplate: team.template,
+      members: team.members,
+    };
+  }
+
+  // GET /teams/:id/preflight — run Team v2 preflight before launching
+  router.get('/:id/preflight', (req, res) => {
+    try {
+      const team = getTeam(req.params.id, ws(req));
+      if (!team) notFound('TEAM_NOT_FOUND', 'Team not found');
+      const v2 = toTeamContractV2(team);
+      if (!v2) {
+        res.json({ pass: false, issues: [{ code: 'not_v2_team', message: 'Team has no v2 role slots; migrate to Team Contract v2 first', severity: 'error' }] });
+        return;
+      }
+      const result = runTeamPreflight(v2);
+      res.json({ pass: result.pass, issues: result.issues });
+    } catch (err) {
+      sendError(res, err);
+    }
+  });
+
   // GET /teams — list all teams with their resolved roster
   router.get('/', (req, res) => {
     res.json({ teams: listTeams(ws(req)).map(t => ({ ...t, roster: resolveTeamAgents(t) })) });
@@ -72,8 +150,8 @@ export function createTeamRoutes(coordinator: TeamCoordinator): Router {
   // POST /teams — create a custom team
   router.post('/', (req, res) => {
     try {
-      const body = parseBody(teamSchema, req);
-      const team = createTeam(body, ws(req));
+      const body = parseBody(teamCreateSchema, req);
+      const team = createTeam({ ...body, members: body.members ?? [] }, ws(req));
       res.status(201).json({ ...team, roster: resolveTeamAgents(team) });
     } catch (err) {
       sendError(res, err);

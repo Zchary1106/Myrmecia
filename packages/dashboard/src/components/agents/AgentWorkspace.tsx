@@ -4,9 +4,10 @@ import { cn } from '../../lib/utils';
 import { useStore } from '../../stores/store';
 import { AgentChatPanel } from './AgentChatPanel';
 import { ContentStudio } from './ContentStudio';
+import { legacyAgentToTeam } from './contentStudioProfiles';
 
 const contentAgentIds = new Set(['trend-scout', 'xiaohongshu-writer', 'douyin-writer', 'wechat-writer', 'social-publisher']);
-const contentStudioAgentIds = new Set(['xiaohongshu-writer', 'douyin-writer', 'wechat-writer']);
+const contentStudioAgentIds = new Set(Object.keys(legacyAgentToTeam));
 
 export function isContentProductionAgent(agent: AgentSummary | undefined): boolean {
   if (!agent) return false;

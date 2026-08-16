@@ -785,3 +785,29 @@ CREATE INDEX IF NOT EXISTS idx_github_fix_runs_workspace
   ON github_fix_runs(workspace_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_github_fix_runs_task
   ON github_fix_runs(task_id);
+
+-- Migration: 202608160001_domain_pack_versioning
+CREATE TABLE IF NOT EXISTS domain_packs (
+  id TEXT PRIMARY KEY, name TEXT NOT NULL, emoji TEXT NOT NULL DEFAULT '📘',
+  persona TEXT NOT NULL DEFAULT '', guidelines JSON NOT NULL DEFAULT '[]',
+  terminology JSON NOT NULL DEFAULT '{}', disclaimer TEXT, tone TEXT,
+  retrieval JSON NOT NULL DEFAULT '{}', knowledge_ids JSON NOT NULL DEFAULT '[]',
+  agent_ids JSON NOT NULL DEFAULT '[]', workspace_id TEXT NOT NULL DEFAULT 'default',
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_domain_packs_workspace ON domain_packs(workspace_id);
+ALTER TABLE domain_packs ADD COLUMN version INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE domain_packs ADD COLUMN version_note TEXT;
+
+-- Migration: 202608160002_team_definitions_v2
+CREATE TABLE IF NOT EXISTS team_definitions (
+  id TEXT PRIMARY KEY, name TEXT NOT NULL, emoji TEXT NOT NULL DEFAULT '•',
+  lead TEXT NOT NULL DEFAULT 'master', members JSON NOT NULL DEFAULT '[]',
+  template TEXT, triggers JSON NOT NULL DEFAULT '[]', blurb TEXT NOT NULL DEFAULT '',
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+ALTER TABLE team_definitions ADD COLUMN roles JSON NOT NULL DEFAULT '[]';
+ALTER TABLE team_definitions ADD COLUMN policy JSON NOT NULL DEFAULT '{}';
+ALTER TABLE team_definitions ADD COLUMN domain_ids JSON NOT NULL DEFAULT '[]';
+ALTER TABLE team_definitions ADD COLUMN contract_version INTEGER NOT NULL DEFAULT 1;
