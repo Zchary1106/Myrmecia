@@ -18,7 +18,7 @@ import { createSavedView, savedViewScope } from '../src/lib/savedViews';
 import { buildActivitySummary, handoffTotal } from '../src/lib/activitySummary';
 import { useStore } from '../src/stores/store';
 import { isContentProductionAgent, usesContentStudio } from '../src/components/agents/AgentWorkspace';
-import { legacyAgentToTeam, studioProfileForTeam } from '../src/components/agents/contentStudioProfiles';
+import { CONTENT_STUDIO_PROFILES, legacyAgentToTeam, pipelineMatchesProfile, studioProfileForTeam } from '../src/components/agents/contentStudioProfiles';
 import { hasPublishStageAhead } from '../src/pages/Pipelines';
 import { canControlWorkflowNode } from '../src/pages/Orchestrate';
 
@@ -279,6 +279,41 @@ describe('Agent Workbench navigation state', () => {
     ]);
     expect(workflow.stages.some(stage => stage.agentRole === 'xiaohongshu-writer')).toBe(false);
     expect(workflow.stages.some(stage => stage.agentRole === 'content-creator')).toBe(true);
+  });
+
+  it('matches pipelines to profiles by template id and stage signature', () => {
+    const xiaohongshu = studioProfileForTeam('xiaohongshu');
+    const wechat = studioProfileForTeam('content');
+
+    expect(pipelineMatchesProfile(
+      { templateId: 'tpl-xhs', stages: [{ name: 'x' }] },
+      xiaohongshu,
+      'tpl-xhs',
+    )).toBe(true);
+
+    // Legacy pipeline whose stage names still match the profile stays visible.
+    expect(pipelineMatchesProfile(
+      { stages: [{ name: '小红书选题调研' }, { name: '小红书笔记创作' }, { name: '发布预检' }] },
+      xiaohongshu,
+    )).toBe(true);
+
+    expect(pipelineMatchesProfile(
+      { stages: [{ name: '选题分析' }, { name: '完全不相关的阶段' }] },
+      wechat,
+    )).toBe(false);
+    expect(pipelineMatchesProfile(
+      { stages: [{ name: '选题分析' }, { name: '内容创作' }, { name: '草稿箱同步' }] },
+      wechat,
+    )).toBe(true);
+  });
+
+  it('keeps one profile per content team with publish approval policy', () => {
+    for (const teamId of ['xiaohongshu', 'douyin', 'content', 'social-three-lanes']) {
+      const profile = CONTENT_STUDIO_PROFILES[teamId];
+      expect(profile.templateName.length).toBeGreaterThan(0);
+      expect(profile.stages.length).toBeGreaterThanOrEqual(6);
+      expect(profile.stages.some(stage => stage.agentRole === 'ops')).toBe(true);
+    }
   });
 
   it('detects a generic pipeline publish gate before approval', () => {

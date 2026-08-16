@@ -392,7 +392,7 @@ export function AgentsPage() {
           )}
 
           {legacyAgents.length > 0 && (
-            <div className="rounded-xl border border-border bg-surface/40">
+            <div data-testid="legacy-aliases" className="rounded-xl border border-border bg-surface/40">
               <button
                 type="button"
                 onClick={() => setShowLegacy(v => !v)}
