@@ -4,7 +4,12 @@ import type {
   ArtifactContract,
   ContractValidationIssue,
   ContractValidationResult,
+  ExecutionPlanSnapshot,
+  GateContractV2,
+  ResolvedRoleCapability,
+  TeamContractV2,
   WorkflowGraphContract,
+  WorkflowNodeV2,
 } from '../types.js';
 
 const artifactKindSchema = z.enum([
@@ -371,4 +376,163 @@ export function validateIndexedWorkflowDependencies(
     });
   }
   return { valid: errors.length === 0, value: stages, errors, warnings: [] };
+}
+
+// ---------- Contract v2 (Agent / Skill / Domain / Team refactor) ----------
+
+export const teamRoleSlotV2Schema = z.object({
+  slot: z.string().trim().min(1),
+  agentId: z.string().trim().min(1),
+  skills: z.array(z.string().trim().min(1)).optional(),
+  tools: z.array(z.string().trim().min(1)).optional(),
+  domainIds: z.array(z.string().trim().min(1)).optional(),
+});
+
+export const teamPolicyV2Schema = z.object({
+  requireHumanApprovalBefore: z.array(z.string().trim().min(1)).optional(),
+  allowedTools: z.array(z.string().trim().min(1)).optional(),
+  disallowedTools: z.array(z.string().trim().min(1)).optional(),
+  maxCostUsd: z.number().nonnegative().optional(),
+});
+
+export const teamContractV2Schema = z.object({
+  schemaVersion: z.literal('2.0'),
+  id: z.string().trim().min(1),
+  name: z.string().trim().min(1),
+  version: z.literal(2),
+  lead: z.string().trim().min(1),
+  domainIds: z.array(z.string().trim().min(1)).optional(),
+  roles: z.array(teamRoleSlotV2Schema).min(1, 'Team must declare at least one role slot'),
+  policy: teamPolicyV2Schema.optional(),
+  pipelineTemplate: z.string().trim().min(1).optional(),
+  members: z.array(z.string().trim().min(1)).optional(),
+}).superRefine((team, ctx) => {
+  const duplicates = duplicateValues(team.roles.map(role => role.slot));
+  if (duplicates.length) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['roles'],
+      message: `Duplicate role slots: ${duplicates.join(', ')}`,
+    });
+  }
+  if (!team.roles.some(role => role.slot === team.lead)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['lead'],
+      message: `Team lead "${team.lead}" must match a declared role slot`,
+    });
+  }
+});
+
+export const gateContractV2Schema = z.object({
+  kind: z.enum(['auto', 'human-approval']),
+  reason: z.string().trim().min(1).optional(),
+  blocking: z.boolean().optional(),
+  requiresApprovalFor: z.array(z.string().trim().min(1)).optional(),
+});
+
+export const retryPolicyV2Schema = z.object({
+  maxAttempts: z.number().int().min(1).max(10),
+  backoffMs: z.number().int().nonnegative().optional(),
+  onExhausted: z.enum(['fail', 'human']).optional(),
+});
+
+export const fallbackPolicyV2Schema = z.object({
+  onFailure: z.enum(['skip', 'human', 'fallback-agent']).optional(),
+  fallbackAgentId: z.string().trim().min(1).optional(),
+});
+
+export const workflowNodeV2Schema = z.object({
+  id: z.string().trim().min(1),
+  roleSlot: z.string().trim().min(1),
+  requiredCapabilities: z.array(z.string().trim().min(1)),
+  skillIds: z.array(z.string().trim().min(1)),
+  toolIds: z.array(z.string().trim().min(1)).optional(),
+  domainIds: z.array(z.string().trim().min(1)).optional(),
+  inputs: z.array(artifactRequirementSchema),
+  outputs: z.array(artifactDeclarationSchema).min(1, 'A pipeline node must declare outputs'),
+  gate: gateContractV2Schema.optional(),
+  retry: retryPolicyV2Schema.optional(),
+  fallback: fallbackPolicyV2Schema.optional(),
+}).superRefine((node, ctx) => {
+  const duplicates = duplicateValues(node.outputs.map(output => output.name));
+  if (duplicates.length) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['outputs'],
+      message: `Duplicate output artifact names: ${duplicates.join(', ')}`,
+    });
+  }
+});
+
+export const resolvedRoleCapabilityV2Schema = z.object({
+  slot: z.string().trim().min(1),
+  agentId: z.string().trim().min(1),
+  legacyAgentId: z.string().trim().min(1).optional(),
+  skills: z.array(z.string().trim().min(1)),
+  tools: z.array(z.string().trim().min(1)),
+  domainIds: z.array(z.string().trim().min(1)),
+  domains: z.array(z.object({
+    id: z.string().trim().min(1),
+    version: z.number().int().positive(),
+  })).optional(),
+  capabilities: z.array(z.string().trim().min(1)),
+});
+
+export const executionPlanSnapshotSchema = z.object({
+  schemaVersion: z.literal('2.0'),
+  snapshotId: z.string().trim().min(1),
+  teamId: z.string().trim().min(1),
+  teamVersion: z.number().int().positive(),
+  pipelineTemplate: z.string().trim().min(1).optional(),
+  pipelineVersion: z.string().trim().min(1).optional(),
+  roles: z.array(resolvedRoleCapabilityV2Schema).min(1),
+  policy: teamPolicyV2Schema,
+  gates: z.array(z.object({
+    nodeId: z.string().trim().min(1),
+    gate: gateContractV2Schema,
+  })),
+  modelPolicy: z.record(z.unknown()).optional(),
+  contextBudget: z.record(z.unknown()).optional(),
+  createdAt: z.string().datetime(),
+  checksum: z.string().regex(/^[a-f0-9]{64}$/i, 'checksum must be a sha256 hex digest'),
+});
+
+function v2Result<T>(valid: true, value: T, errors: ContractValidationIssue[], warnings?: ContractValidationIssue[]): ContractValidationResult<T>;
+function v2Result<T>(valid: false, value: undefined, errors: ContractValidationIssue[], warnings?: ContractValidationIssue[]): ContractValidationResult<T>;
+function v2Result<T>(
+  valid: boolean,
+  value: T | undefined,
+  errors: ContractValidationIssue[],
+  warnings: ContractValidationIssue[] = [],
+): ContractValidationResult<T> {
+  return { valid, value, errors, warnings };
+}
+
+export function validateTeamContractV2(value: unknown): ContractValidationResult<TeamContractV2> {
+  const parsed = teamContractV2Schema.safeParse(value);
+  return parsed.success
+    ? v2Result(true, parsed.data as TeamContractV2, [])
+    : v2Result(false, undefined, zodIssues(parsed.error));
+}
+
+export function validateWorkflowNodeV2(value: unknown): ContractValidationResult<WorkflowNodeV2> {
+  const parsed = workflowNodeV2Schema.safeParse(value);
+  return parsed.success
+    ? v2Result(true, parsed.data as WorkflowNodeV2, [])
+    : v2Result(false, undefined, zodIssues(parsed.error));
+}
+
+export function validateResolvedRoleCapability(value: unknown): ContractValidationResult<ResolvedRoleCapability> {
+  const parsed = resolvedRoleCapabilityV2Schema.safeParse(value);
+  return parsed.success
+    ? v2Result(true, parsed.data as ResolvedRoleCapability, [])
+    : v2Result(false, undefined, zodIssues(parsed.error));
+}
+
+export function validateExecutionPlanSnapshot(value: unknown): ContractValidationResult<ExecutionPlanSnapshot> {
+  const parsed = executionPlanSnapshotSchema.safeParse(value);
+  return parsed.success
+    ? v2Result(true, parsed.data as ExecutionPlanSnapshot, [])
+    : v2Result(false, undefined, zodIssues(parsed.error));
 }

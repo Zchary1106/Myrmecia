@@ -381,7 +381,7 @@ function applyModuleSchemas(db: DbDriver) {
      CREATE INDEX IF NOT EXISTS idx_team_runs_team ON team_runs(team_id);
      CREATE INDEX IF NOT EXISTS idx_team_runs_status ON team_runs(status);`,
     // Custom (user-defined) team definitions — merged over the teams.yaml built-ins
-    `CREATE TABLE IF NOT EXISTS team_definitions (id TEXT PRIMARY KEY, name TEXT NOT NULL, emoji TEXT NOT NULL DEFAULT '•', lead TEXT NOT NULL DEFAULT 'master', members JSON NOT NULL DEFAULT '[]', template TEXT, triggers JSON NOT NULL DEFAULT '[]', blurb TEXT NOT NULL DEFAULT '', workspace_id TEXT NOT NULL DEFAULT 'default', created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP);`,
+    `CREATE TABLE IF NOT EXISTS team_definitions (id TEXT PRIMARY KEY, name TEXT NOT NULL, emoji TEXT NOT NULL DEFAULT '•', lead TEXT NOT NULL DEFAULT 'master', members JSON NOT NULL DEFAULT '[]', template TEXT, triggers JSON NOT NULL DEFAULT '[]', blurb TEXT NOT NULL DEFAULT '', workspace_id TEXT NOT NULL DEFAULT 'default', roles JSON NOT NULL DEFAULT '[]', policy JSON NOT NULL DEFAULT '{}', domain_ids JSON NOT NULL DEFAULT '[]', contract_version INTEGER NOT NULL DEFAULT 1, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP);`,
     // Immutable, versioned workflow graphs attached to an Agent Team
     `CREATE TABLE IF NOT EXISTS team_template_versions (
        id TEXT PRIMARY KEY,
@@ -402,7 +402,7 @@ function applyModuleSchemas(db: DbDriver) {
      CREATE INDEX IF NOT EXISTS idx_team_template_versions_status
        ON team_template_versions(team_id, workspace_id, status);`,
     // Custom (user-defined) domain packs — merged over the domains.yaml built-ins
-    `CREATE TABLE IF NOT EXISTS domain_packs (id TEXT PRIMARY KEY, name TEXT NOT NULL, emoji TEXT NOT NULL DEFAULT '📘', persona TEXT NOT NULL DEFAULT '', guidelines JSON NOT NULL DEFAULT '[]', terminology JSON NOT NULL DEFAULT '{}', disclaimer TEXT, tone TEXT, retrieval JSON NOT NULL DEFAULT '{}', knowledge_ids JSON NOT NULL DEFAULT '[]', agent_ids JSON NOT NULL DEFAULT '[]', workspace_id TEXT NOT NULL DEFAULT 'default', created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP);
+    `CREATE TABLE IF NOT EXISTS domain_packs (id TEXT PRIMARY KEY, name TEXT NOT NULL, emoji TEXT NOT NULL DEFAULT '📘', persona TEXT NOT NULL DEFAULT '', guidelines JSON NOT NULL DEFAULT '[]', terminology JSON NOT NULL DEFAULT '{}', disclaimer TEXT, tone TEXT, retrieval JSON NOT NULL DEFAULT '{}', knowledge_ids JSON NOT NULL DEFAULT '[]', agent_ids JSON NOT NULL DEFAULT '[]', workspace_id TEXT NOT NULL DEFAULT 'default', version INTEGER NOT NULL DEFAULT 1, version_note TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP);
      CREATE INDEX IF NOT EXISTS idx_domain_packs_workspace ON domain_packs(workspace_id);`,
     // Coverage reports
     `CREATE TABLE IF NOT EXISTS coverage_reports (

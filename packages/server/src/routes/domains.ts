@@ -2,8 +2,9 @@ import { Router } from 'express';
 import { z } from 'zod';
 import {
   listDomains, getDomain, createDomain, updateDomain, deleteDomain, bindKnowledge,
+  copyDomain, bumpDomainVersion, DomainInUseError,
 } from '../agents/domain-registry.js';
-import { ingestDocument } from '../knowledge/rag.js';
+import { ingestDocument, searchKnowledge } from '../knowledge/rag.js';
 import { getDb } from '../db/database.js';
 import { notFound, parseBody, sendError } from './http.js';
 
@@ -17,6 +18,7 @@ const domainSchema = z.object({
   id: z.string().trim().optional(),
   name: z.string().trim().min(1, 'name is required'),
   emoji: z.string().trim().optional(),
+  versionNote: z.string().trim().optional(),
   persona: z.string().trim().min(1, 'persona is required'),
   guidelines: z.array(z.string().trim()).optional(),
   terminology: z.record(z.string()).optional(),
@@ -35,6 +37,15 @@ const uploadSchema = z.object({
   title: z.string().trim().min(1, 'title is required'),
   content: z.string().min(1, 'content is required'),
   metadata: z.record(z.unknown()).optional(),
+});
+
+const testQuerySchema = z.object({
+  query: z.string().trim().min(1, 'query is required'),
+  topK: z.number().int().min(1).max(20).optional(),
+});
+
+const versionSchema = z.object({
+  note: z.string().trim().optional(),
 });
 
 function workspaceOf(req: any): string {
@@ -143,6 +154,63 @@ export function createDomainRoutes(): Router {
     try {
       const result = deleteDomain(req.params.id);
       res.json({ ok: true, ...result });
+    } catch (err) {
+      if (err instanceof DomainInUseError) {
+        res.status(409).json({ error: { code: 'DOMAIN_IN_USE', message: err.message, references: err.references } });
+        return;
+      }
+      sendError(res, err);
+    }
+  });
+
+  // POST /domains/:id/copy — duplicate a domain pack under a new id
+  router.post('/:id/copy', (req, res) => {
+    try {
+      const domain = getDomain(req.params.id, workspaceOf(req));
+      if (!domain) notFound('DOMAIN_NOT_FOUND', 'Domain not found');
+      const copy = copyDomain(req.params.id, workspaceOf(req));
+      res.status(201).json(withDocs(copy));
+    } catch (err) {
+      sendError(res, err);
+    }
+  });
+
+  // POST /domains/:id/test — retrieval preview over bound knowledge
+  router.post('/:id/test', async (req, res) => {
+    try {
+      const domain = getDomain(req.params.id, workspaceOf(req));
+      if (!domain) notFound('DOMAIN_NOT_FOUND', 'Domain not found');
+      if (!domain.retrieval.enabled || domain.knowledgeIds.length === 0) {
+        res.json({ ok: true, retrievalEnabled: false, results: [], note: 'domain has no bound knowledge or retrieval is disabled' });
+        return;
+      }
+      const body = parseBody(testQuerySchema, req);
+      const topK = body.topK ?? domain.retrieval.topK;
+      const results = await searchKnowledge(workspaceOf(req), body.query, topK, { domainId: domain.id });
+      res.json({
+        ok: true,
+        retrievalEnabled: true,
+        minScore: domain.retrieval.minScore,
+        results: results.map(result => ({
+          documentId: result.documentId,
+          title: result.title,
+          score: result.score,
+          content: result.content,
+        })),
+      });
+    } catch (err) {
+      sendError(res, err);
+    }
+  });
+
+  // POST /domains/:id/version — bump the locked version
+  router.post('/:id/version', (req, res) => {
+    try {
+      const domain = getDomain(req.params.id, workspaceOf(req));
+      if (!domain) notFound('DOMAIN_NOT_FOUND', 'Domain not found');
+      const body = parseBody(versionSchema, req);
+      const updated = bumpDomainVersion(req.params.id, body.note, workspaceOf(req));
+      res.json(withDocs(updated));
     } catch (err) {
       sendError(res, err);
     }

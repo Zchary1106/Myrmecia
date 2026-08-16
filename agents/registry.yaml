@@ -776,3 +776,81 @@ agents:
       execution:
         maxRetries: 1
         requiresHumanApproval: true
+
+  # ===== 通用稳定角色（目标模型）=====
+  - id: researcher
+    name: Researcher
+    emoji: 🔍
+    role: researcher
+    description: 通用研究角色，承接趋势、资料与证据调研
+    skill: agents/researcher.md
+    model:
+      provider: openai
+      model: gpt-5.4-mini
+      tier: cheap
+      fallbackModel: claude-haiku-4.5
+      maxTokens: 120000
+      maxResponseTokens: 8192
+      maxToolCalls: 24
+      maxWallClockMs: 600000
+    capabilities: [research, web-research, trend-analysis, evidence, competitive-research]
+    allowed_tools: [web.search, web.fetch, mcp__douyin-search__search_videos, mcp__douyin-search__get_homefeed, mcp__douyin-search__get_video_comments]
+    triggers: [调研, 研究, 趋势, research, evidence, 资料]
+    contract:
+      schemaVersion: "1.0"
+      agentId: researcher
+      role: researcher
+      responsibility:
+        summary: 基于真实数据与公开来源完成可审计的调研，产出带证据的结论
+        owns: [选题调研, 趋势分析, 竞品研究, 证据收集]
+        doesNotOwn: [最终文案创作, 平台发布, 代表用户做业务决策]
+        escalatesTo: [master]
+      inputs:
+        - { name: research-goal, kind: text, required: true }
+      outputs:
+        - { name: evidence-report, kind: report, required: true }
+      skills: [agents/researcher.md]
+      tools: [web.search, web.fetch, mcp__douyin-search__search_videos, mcp__douyin-search__get_homefeed, mcp__douyin-search__get_video_comments]
+      quality:
+        definitionOfDone:
+          - 每条结论都有来源、采集时间与样本说明
+          - 区分原始数据、推断与未知项，不编造互动数字
+
+  - id: content-creator
+    name: Content Creator
+    emoji: ✍️
+    role: content-creator
+    description: 通用内容创作角色，承接多平台内容创作与改写
+    skill: agents/content-creator.md
+    model:
+      provider: openai
+      model: gpt-5.4-mini
+      tier: cheap
+      fallbackModel: claude-haiku-4.5
+      maxTokens: 120000
+      maxResponseTokens: 8192
+      maxToolCalls: 24
+      maxWallClockMs: 600000
+    capabilities: [copywriting, content-creation, storytelling, hashtag, cross-platform]
+    allowed_tools: [web.search, web.fetch, content.hashtag_plan, image.generate_cards, image.generate_svg]
+    triggers: [写文案, 内容创作, 笔记, 脚本, copywriting, 文章]
+    contract:
+      schemaVersion: "1.0"
+      agentId: content-creator
+      role: content-creator
+      responsibility:
+        summary: 基于已验证事实与证据包，产出符合平台规范与合规要求的唯一终稿
+        owns: [文案创作, 标题与结构, 标签策略, 配图 brief]
+        doesNotOwn: [调研证据捏造, 平台发布, 替代人工审核]
+        escalatesTo: [master]
+      inputs:
+        - { name: evidence-package, kind: report, required: true }
+        - { name: creative-brief, kind: text, required: false }
+      outputs:
+        - { name: final-copy, kind: markdown, required: true }
+      skills: [agents/content-creator.md]
+      tools: [web.search, web.fetch, content.hashtag_plan, image.generate_cards, image.generate_svg]
+      quality:
+        definitionOfDone:
+          - 内容只使用已验证事实，待验证项保留风险标记
+          - 标题、正文、媒体规格符合目标平台约束

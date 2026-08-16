@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { api, type TeamDTO, type TeamRunDTO, type TeamBoardItem, type TeamInputDTO } from '../lib/api';
+import { api, type TeamDTO, type TeamRunDTO, type TeamBoardItem, type TeamInputDTO, type TeamRoleSlotDTO, type TeamPreflightResultDTO } from '../lib/api';
 import { wsClient } from '../lib/ws';
 import { useStore } from '../stores/store';
 import { cn } from '../lib/utils';
@@ -23,7 +23,7 @@ const dot: Record<TeamRunDTO['status'], string> = {
 };
 
 export function TeamsPage() {
-  const { agents, loadAgents } = useStore();
+  const { agents, loadAgents, setCanvasTeamId, setActiveView } = useStore();
   const [source, setSource] = useState<'workspace' | 'github'>('workspace');
   const [teams, setTeams] = useState<TeamDTO[]>([]);
   const [picked, setPicked] = useState<string | null>(null);
@@ -50,6 +50,7 @@ export function TeamsPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [editing, setEditing] = useState<TeamDTO | 'new' | null>(null);
+  const [copying, setCopying] = useState<TeamDTO | null>(null);
   const activeRunRef = useRef<string | null>(null);
   activeRunRef.current = activeRunId;
 
@@ -304,6 +305,11 @@ export function TeamsPage() {
           {!activeRunId ? (
             <TeamPreview
               team={team}
+              onCopy={team ? () => { setCopying(team); setEditing('new'); } : undefined}
+              onOpenCanvas={team ? () => {
+                setCanvasTeamId(team.id);
+                setActiveView('orchestrate');
+              } : undefined}
               launchPanel={(
                 <TeamLaunchPanel
                   team={team}
@@ -468,9 +474,10 @@ export function TeamsPage() {
       {editing && (
         <TeamEditor
           team={editing === 'new' ? null : editing}
+          copySource={copying}
           roles={roles}
-          onClose={() => setEditing(null)}
-          onSaved={() => { setEditing(null); reloadTeams(); }}
+          onClose={() => { setCopying(null); setEditing(null); }}
+          onSaved={() => { setCopying(null); setEditing(null); reloadTeams(); }}
         />
       )}
       </div>
@@ -478,7 +485,61 @@ export function TeamsPage() {
   );
 }
 
-function TeamPreview({ team, launchPanel }: { team: TeamDTO | null; launchPanel?: ReactNode }) {
+function TeamPreflightPanel({ team }: { team: TeamDTO }) {
+  const [result, setResult] = useState<{ pass: boolean; issues: TeamPreflightResultDTO['issues'] } | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    let stopped = false;
+    if (!team.roles?.length) { setResult(null); return; }
+    setLoading(true);
+    setResult(null);
+    api.teams.preflight(team.id).then(data => { if (!stopped) setResult(data); })
+      .catch(() => { if (!stopped) setResult({ pass: false, issues: [{ code: 'preflight_error', message: 'Preflight check could not be run', severity: 'error' }] }); })
+      .finally(() => { if (!stopped) setLoading(false); });
+    return () => { stopped = true; };
+  }, [team.id, team.roles?.length]);
+
+  if (!team.roles?.length) return null;
+  return (
+    <div className="mt-4 rounded-xl border border-border bg-background p-3">
+      <div className="flex items-center gap-2">
+        <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-600">Preflight</span>
+        {loading && <span className="text-[10px] text-gray-500">checking…</span>}
+        {result && (
+          <span className={cn('ml-auto rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider',
+            result.pass ? 'bg-emerald-500/10 text-emerald-300' : 'bg-red-500/10 text-red-300')}>
+            {result.pass ? 'Pass' : 'Blocked'}
+          </span>
+        )}
+      </div>
+      {result && !result.pass && (
+        <ul className="mt-2 space-y-1">
+          {result.issues.map((issue, index) => (
+            <li key={`${issue.code}-${index}`} className="text-[10px] leading-relaxed text-red-300">
+              {issue.severity === 'error' ? '✗' : '△'} {issue.message}
+            </li>
+          ))}
+        </ul>
+      )}
+      {result?.pass && (
+        <p className="mt-1.5 text-[10px] text-emerald-300/80">All role slots, skills, tools, and domains resolve before dispatch.</p>
+      )}
+    </div>
+  );
+}
+
+function TeamPreview({
+  team,
+  launchPanel,
+  onCopy,
+  onOpenCanvas,
+}: {
+  team: TeamDTO | null;
+  launchPanel?: ReactNode;
+  onCopy?: () => void;
+  onOpenCanvas?: () => void;
+}) {
   if (!team) {
     return (
       <div className="flex flex-1 items-center justify-center p-8 text-center text-[13px] text-gray-600">
@@ -490,6 +551,9 @@ function TeamPreview({ team, launchPanel }: { team: TeamDTO | null; launchPanel?
   const roster = team.roster?.length
     ? team.roster
     : team.members.map(role => ({ role, agentId: role, name: role }));
+  const roleSlots = team.roles || [];
+  const policyApprovals = team.policy?.requireHumanApprovalBefore || [];
+  const teamDomains = team.domainIds || [];
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
@@ -501,40 +565,95 @@ function TeamPreview({ team, launchPanel }: { team: TeamDTO | null; launchPanel?
               <h2 className="text-lg font-semibold tracking-tight text-gray-100">{team.name}</h2>
               <span className="rounded-md border border-border bg-background px-2 py-0.5 font-mono text-[10px] text-gray-500">@{team.id}</span>
               {team.builtin && <span className="rounded-md bg-white/5 px-2 py-0.5 text-[9px] text-gray-500">built-in</span>}
+              {team.contractVersion === 2 && (
+                <span className="rounded-md bg-accent/10 px-2 py-0.5 text-[9px] font-semibold text-accent-light">Contract v2</span>
+              )}
             </div>
             <p className="mt-2 max-w-2xl text-[12px] leading-relaxed text-gray-400">{team.blurb}</p>
           </div>
-          <div className="grid shrink-0 grid-cols-2 gap-2 text-[10px] sm:min-w-[220px]">
-            <div className="rounded-lg border border-border bg-background p-2.5">
-              <div className="text-gray-600">Lead</div>
-              <div className="mt-1 font-medium text-gray-300">{team.lead}</div>
+          <div className="flex shrink-0 flex-col gap-2">
+            <div className="grid grid-cols-2 gap-2 text-[10px] sm:min-w-[220px]">
+              <div className="rounded-lg border border-border bg-background p-2.5">
+                <div className="text-gray-600">Lead</div>
+                <div className="mt-1 font-medium text-gray-300">{team.lead}</div>
+              </div>
+              <div className="rounded-lg border border-border bg-background p-2.5">
+                <div className="text-gray-600">Template</div>
+                <div className="mt-1 truncate font-medium text-gray-300">{team.template || 'Dynamic'}</div>
+              </div>
             </div>
-            <div className="rounded-lg border border-border bg-background p-2.5">
-              <div className="text-gray-600">Template</div>
-              <div className="mt-1 truncate font-medium text-gray-300">{team.template || 'Dynamic'}</div>
-            </div>
+            {(onCopy || onOpenCanvas) && (
+              <div className="flex gap-2">
+                {onCopy && (
+                  <button onClick={onCopy}
+                    className="flex-1 rounded-lg border border-border bg-background px-2 py-1.5 text-[10px] text-gray-300 hover:border-accent/40 hover:text-accent-light">
+                    ⧉ 复制并定制
+                  </button>
+                )}
+                {onOpenCanvas && (
+                  <button onClick={onOpenCanvas}
+                    className="flex-1 rounded-lg bg-accent/10 px-2 py-1.5 text-[10px] font-semibold text-accent-light hover:bg-accent/20">
+                    ◇ 在 Canvas 打开
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </div>
 
       <div className="grid gap-5 p-4 sm:p-5 lg:grid-cols-[minmax(0,1fr)_minmax(240px,0.42fr)]">
         <section className="min-w-0">
-          <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-600">Team workflow</div>
+          <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-600">
+            {roleSlots.length ? 'Team workflow · v2 role slots' : 'Team workflow'}
+          </div>
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            {roster.map((member, index) => (
-              <div key={`${member.role}-${member.agentId}`} className="contents">
-                <div className="min-w-[150px] flex-1 rounded-xl border border-border bg-background p-3 sm:max-w-[220px]">
-                  <div className="text-[11px] font-semibold text-cyan-300">{member.name}</div>
-                  <div className="mt-1 font-mono text-[9px] text-gray-600">{member.role}</div>
-                  <div className="mt-2 text-[10px] text-gray-500">Agent: {member.agentId}</div>
+            {roleSlots.length ? (
+              roleSlots.map((slot, index) => (
+                <div key={`${slot.slot}-${index}`} className="contents">
+                  <div className="min-w-[190px] flex-1 rounded-xl border border-border bg-background p-3 sm:max-w-[250px]">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] font-semibold text-cyan-300">{slot.slot}</span>
+                      <span className="ml-auto rounded bg-white/5 px-1.5 py-0.5 font-mono text-[9px] text-gray-500">{slot.agentId}</span>
+                    </div>
+                    {slot.skills && slot.skills.length > 0 && (
+                      <div className="mt-2 flex flex-wrap gap-1">
+                        {slot.skills.map(skill => <span key={skill} className="rounded bg-accent/10 px-1.5 py-0.5 text-[9px] text-accent-light">{skill}</span>)}
+                      </div>
+                    )}
+                    {slot.tools && slot.tools.length > 0 && (
+                      <div className="mt-1.5 flex flex-wrap gap-1">
+                        {slot.tools.map(tool => <span key={tool} className="rounded bg-purple-500/10 px-1.5 py-0.5 font-mono text-[9px] text-purple-300">{tool}</span>)}
+                      </div>
+                    )}
+                    {slot.domainIds && slot.domainIds.length > 0 && (
+                      <div className="mt-1.5 flex flex-wrap gap-1">
+                        {slot.domainIds.map(domain => <span key={domain} className="rounded bg-emerald-500/10 px-1.5 py-0.5 text-[9px] text-emerald-300">{domain}</span>)}
+                      </div>
+                    )}
+                  </div>
+                  {index < roleSlots.length - 1 && <span className="text-[12px] text-gray-700">→</span>}
                 </div>
-                {index < roster.length - 1 && <span className="text-[12px] text-gray-700">→</span>}
-              </div>
-            ))}
+              ))
+            ) : (
+              roster.map((member, index) => (
+                <div key={`${member.role}-${member.agentId}`} className="contents">
+                  <div className="min-w-[150px] flex-1 rounded-xl border border-border bg-background p-3 sm:max-w-[220px]">
+                    <div className="text-[11px] font-semibold text-cyan-300">{member.name}</div>
+                    <div className="mt-1 font-mono text-[9px] text-gray-600">{member.role}</div>
+                    <div className="mt-2 text-[10px] text-gray-500">Agent: {member.agentId}</div>
+                  </div>
+                  {index < roster.length - 1 && <span className="text-[12px] text-gray-700">→</span>}
+                </div>
+              ))
+            )}
           </div>
           <p className="mt-3 max-w-3xl text-[11px] leading-relaxed text-gray-600">
-            The master agent dynamically decomposes the goal across this roster. Independent work runs in parallel; dependencies are added only when a teammate needs another result.
+            {roleSlots.length
+              ? 'Each role slot binds a stable agent to its skills, tools, and domain packs. The lead coordinates the roster; publish-grade actions require human approval.'
+              : 'The master agent dynamically decomposes the goal across this roster. Independent work runs in parallel; dependencies are added only when a teammate needs another result.'}
           </p>
+          <TeamPreflightPanel team={team} />
         </section>
 
         <section className="rounded-xl border border-border bg-background p-4">
@@ -544,6 +663,26 @@ function TeamPreview({ team, launchPanel }: { team: TeamDTO | null; launchPanel?
               <span key={trigger} className="rounded-md bg-accent/10 px-2 py-1 text-[10px] text-accent-light">{trigger}</span>
             ))}
           </div>
+          {policyApprovals.length > 0 && (
+            <div className="mt-4 border-t border-border pt-3">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-600">Human approval</div>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {policyApprovals.map(action => (
+                  <span key={action} className="rounded-md bg-amber-500/10 px-2 py-1 text-[10px] text-amber-300">👤 {action}</span>
+                ))}
+              </div>
+            </div>
+          )}
+          {teamDomains.length > 0 && (
+            <div className="mt-4 border-t border-border pt-3">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-600">Domain packs</div>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {teamDomains.map(domain => (
+                  <span key={domain} className="rounded-md bg-emerald-500/10 px-2 py-1 text-[10px] text-emerald-300">📘 {domain}</span>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="mt-4 border-t border-border pt-4">
             <div className="text-[11px] font-medium text-gray-300">Start a run</div>
             <p className="mt-1 text-[10px] leading-relaxed text-gray-600">
@@ -713,44 +852,95 @@ function TeamLaunchPanel({
   );
 }
 
-function TeamEditor({ team, roles, onClose, onSaved }: {
+function TeamEditor({
+  team,
+  copySource,
+  roles,
+  onClose,
+  onSaved,
+}: {
   team: TeamDTO | null;
+  copySource?: TeamDTO | null;
   roles: string[];
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const editingBuiltin = !!team?.builtin;
-  const [name, setName] = useState(team?.name || '');
+  const source = copySource || team;
+  const editingBuiltin = !!team?.builtin && !copySource;
+  const [name, setName] = useState(copySource ? `${source?.name || 'Team'} Copy` : team?.name || '');
   const [emoji, setEmoji] = useState(team?.emoji || '🐜');
   const [blurb, setBlurb] = useState(team?.blurb || '');
-  const [members, setMembers] = useState<string[]>(team?.members || []);
-  const [triggers, setTriggers] = useState((team?.triggers || []).join(', '));
+  const [lead, setLead] = useState(team?.lead || source?.roles?.[0]?.slot || 'master');
+  const [members, setMembers] = useState<string[]>(team?.members || source?.members || []);
+  const [triggers, setTriggers] = useState((team?.triggers || source?.triggers || []).join(', '));
+  const [roleSlots, setRoleSlots] = useState<TeamRoleSlotDTO[]>(
+    team?.roles || source?.roles || [],
+  );
+  const [approvals, setApprovals] = useState<string[]>(
+    team?.policy?.requireHumanApprovalBefore || source?.policy?.requireHumanApprovalBefore || [],
+  );
+  const [domainIds, setDomainIds] = useState<string[]>(
+    team?.domainIds || source?.domainIds || [],
+  );
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
 
-  const toggle = (role: string) =>
+  const v2 = roleSlots.length > 0;
+
+  const toggleMember = (role: string) =>
     setMembers(m => m.includes(role) ? m.filter(r => r !== role) : [...m, role]);
 
+  const updateSlot = (index: number, patch: Partial<TeamRoleSlotDTO>) =>
+    setRoleSlots(slots => slots.map((slot, i) => i === index ? { ...slot, ...patch } : slot));
+
+  const addSlot = () =>
+    setRoleSlots(slots => [...slots, { slot: `slot-${slots.length + 1}`, agentId: roles[0] || 'master', skills: [], tools: [], domainIds: [] }]);
+
+  const removeSlot = (index: number) =>
+    setRoleSlots(slots => slots.filter((_, i) => i !== index));
+
+  const toggleApproval = (action: string) =>
+    setApprovals(list => list.includes(action) ? list.filter(a => a !== action) : [...list, action]);
+
+  const toggleDomain = (domain: string) =>
+    setDomainIds(list => list.includes(domain) ? list.filter(d => d !== domain) : [...list, domain]);
+
   const save = async () => {
-    if (!name.trim() || members.length === 0) { setErr('Name and at least one member are required.'); return; }
+    if (!name.trim() || (members.length === 0 && roleSlots.length === 0)) {
+      setErr('Name and at least one member role or v2 role slot are required.');
+      return;
+    }
     setSaving(true); setErr('');
-    const payload: Partial<TeamInputDTO> = {
+    const payload: TeamInputDTO = {
       name: name.trim(), emoji: emoji.trim() || '🐜', blurb: blurb.trim(),
       members, triggers: triggers.split(',').map(s => s.trim()).filter(Boolean),
+      ...(v2 ? {
+        lead: lead.trim() || roleSlots[0].slot,
+        roles: roleSlots.map(slot => ({
+          slot: slot.slot.trim(), agentId: slot.agentId.trim(),
+          skills: (slot.skills || []).map(s => s.trim()).filter(Boolean),
+          tools: (slot.tools || []).map(s => s.trim()).filter(Boolean),
+          domainIds: (slot.domainIds || []).map(s => s.trim()).filter(Boolean),
+        })),
+        policy: { requireHumanApprovalBefore: approvals },
+        domainIds,
+      } : {}),
     };
     try {
-      if (team) await api.teams.update(team.id, payload);
-      else await api.teams.create(payload as TeamInputDTO);
+      if (team && !copySource) await api.teams.update(team.id, payload);
+      else await api.teams.create(payload);
       onSaved();
     } catch (e: any) { setErr(e.message); setSaving(false); }
   };
 
+  const agentOptions = Array.from(new Set([...roles, ...roleSlots.map(slot => slot.agentId)]));
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
-      <div className="w-[520px] max-w-[calc(100vw-2rem)] max-h-[85dvh] overflow-y-auto rounded-2xl border border-border bg-surface p-4 sm:p-5 space-y-4" onClick={e => e.stopPropagation()}>
+      <div className="w-[720px] max-w-[calc(100vw-2rem)] max-h-[88dvh] overflow-y-auto rounded-2xl border border-border bg-surface p-4 sm:p-5 space-y-4" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between">
           <h2 className="text-[15px] font-semibold text-gray-100">
-            {team ? `Edit ${team.name}` : 'New team'}
+            {copySource ? `Copy ${source?.name} and customize` : team ? `Edit ${team.name}` : 'New team'}
             {editingBuiltin && <span className="ml-2 text-[10px] text-gray-500">(built-in — saves as an override)</span>}
           </h2>
           <button onClick={onClose} className="text-gray-500 hover:text-gray-200">✕</button>
@@ -777,11 +967,63 @@ function TeamEditor({ team, roles, onClose, onSaved }: {
             className="w-full text-[12px] bg-background border border-border rounded-lg px-2.5 py-2 mt-1 text-gray-200 focus:outline-none focus:border-accent" />
         </div>
 
+        {v2 && (
+          <div>
+            <div className="flex items-center justify-between">
+              <label className="text-[11px] text-gray-500">Lead</label>
+              <span className="text-[10px] text-accent-light">Contract v2</span>
+            </div>
+            <select value={lead} onChange={e => setLead(e.target.value)}
+              className="w-full text-[12px] bg-background border border-border rounded-lg px-2.5 py-2 mt-1 text-gray-200 focus:outline-none focus:border-accent">
+              {roleSlots.map(slot => <option key={slot.slot} value={slot.slot}>{slot.slot}</option>)}
+              <option value="master">master</option>
+            </select>
+          </div>
+        )}
+
+        <div>
+          <div className="flex items-center justify-between">
+            <label className="text-[11px] text-gray-500">v2 Role slots <span className="text-gray-600">({roleSlots.length})</span></label>
+            <button type="button" onClick={addSlot}
+              className="text-[11px] text-accent hover:text-accent-light">+ Add slot</button>
+          </div>
+          <div className="mt-2 space-y-2">
+            {roleSlots.map((slot, index) => (
+              <div key={`${slot.slot}-${index}`} className="rounded-xl border border-border bg-background p-2.5 space-y-2">
+                <div className="flex items-center gap-2">
+                  <input value={slot.slot} onChange={e => updateSlot(index, { slot: e.target.value })} placeholder="slot"
+                    className="w-28 text-[11px] font-semibold bg-background border border-border rounded-lg px-2 py-1.5 text-cyan-200 focus:outline-none focus:border-accent" />
+                  <select value={slot.agentId} onChange={e => updateSlot(index, { agentId: e.target.value })}
+                    className="flex-1 text-[11px] bg-background border border-border rounded-lg px-2 py-1.5 text-gray-200 focus:outline-none focus:border-accent">
+                    {agentOptions.map(agent => <option key={agent} value={agent}>{agent}</option>)}
+                  </select>
+                  <button type="button" onClick={() => removeSlot(index)}
+                    className="text-[11px] text-gray-500 hover:text-red-400 px-1.5">✕</button>
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  <input value={(slot.skills || []).join(', ')} onChange={e => updateSlot(index, { skills: e.target.value.split(',').map(s => s.trim()).filter(Boolean) })}
+                    placeholder="skills: xiaohongshu-copywriting"
+                    className="text-[10px] bg-background border border-border rounded-lg px-2 py-1.5 text-gray-300 focus:outline-none focus:border-accent" />
+                  <input value={(slot.tools || []).join(', ')} onChange={e => updateSlot(index, { tools: e.target.value.split(',').map(s => s.trim()).filter(Boolean) })}
+                    placeholder="tools: web.search"
+                    className="text-[10px] bg-background border border-border rounded-lg px-2 py-1.5 text-gray-300 focus:outline-none focus:border-accent" />
+                  <input value={(slot.domainIds || []).join(', ')} onChange={e => updateSlot(index, { domainIds: e.target.value.split(',').map(s => s.trim()).filter(Boolean) })}
+                    placeholder="domains: tech-product"
+                    className="text-[10px] bg-background border border-border rounded-lg px-2 py-1.5 text-gray-300 focus:outline-none focus:border-accent" />
+                </div>
+              </div>
+            ))}
+            {roleSlots.length === 0 && (
+              <p className="text-[10px] text-gray-600">No v2 role slots — this team uses the classic member list below.</p>
+            )}
+          </div>
+        </div>
+
         <div>
           <label className="text-[11px] text-gray-500">Members <span className="text-gray-600">({members.length} selected — order matters)</span></label>
-          <div className="flex flex-wrap gap-1.5 mt-1.5 max-h-44 overflow-y-auto">
+          <div className="flex flex-wrap gap-1.5 mt-1.5 max-h-40 overflow-y-auto">
             {roles.map(role => (
-              <button key={role} onClick={() => toggle(role)}
+              <button key={role} onClick={() => toggleMember(role)}
                 className={cn('text-[11px] rounded-lg px-2 py-1 border transition-colors',
                   members.includes(role)
                     ? 'border-accent bg-accent/15 text-accent-light'
@@ -791,6 +1033,35 @@ function TeamEditor({ team, roles, onClose, onSaved }: {
             ))}
           </div>
         </div>
+
+        {v2 && (
+          <div>
+            <label className="text-[11px] text-gray-500">Human approval required before</label>
+            <div className="flex flex-wrap gap-1.5 mt-1.5">
+              {['publish', 'deploy', 'invoice', 'external-send'].map(action => (
+                <button key={action} onClick={() => toggleApproval(action)}
+                  className={cn('text-[11px] rounded-lg px-2 py-1 border transition-colors',
+                    approvals.includes(action)
+                      ? 'border-amber-500/60 bg-amber-500/15 text-amber-300'
+                      : 'border-border text-gray-400 hover:border-gray-600')}>
+                  👤 {action}
+                </button>
+              ))}
+            </div>
+            <label className="mt-3 block text-[11px] text-gray-500">Domain packs</label>
+            <div className="flex flex-wrap gap-1.5 mt-1.5">
+              {['tech-product', 'content', 'marketing', 'compliance'].map(domain => (
+                <button key={domain} onClick={() => toggleDomain(domain)}
+                  className={cn('text-[11px] rounded-lg px-2 py-1 border transition-colors',
+                    domainIds.includes(domain)
+                      ? 'border-emerald-500/60 bg-emerald-500/15 text-emerald-300'
+                      : 'border-border text-gray-400 hover:border-gray-600')}>
+                  📘 {domain}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div>
           <label className="text-[11px] text-gray-500">Trigger keywords <span className="text-gray-600">(comma-separated)</span></label>
@@ -802,10 +1073,12 @@ function TeamEditor({ team, roles, onClose, onSaved }: {
           <button onClick={onClose} className="text-[12px] text-gray-400 px-3 py-2 rounded-lg hover:bg-surface-hover">Cancel</button>
           <button onClick={save} disabled={saving}
             className="text-[12px] bg-accent/90 hover:bg-accent text-white px-4 py-2 rounded-lg disabled:opacity-40">
-            {saving ? 'Saving…' : team ? 'Save changes' : 'Create team'}
+            {saving ? 'Saving…' : team && !copySource ? 'Save changes' : copySource ? 'Create copy' : 'Create team'}
           </button>
         </div>
       </div>
     </div>
   );
 }
+
+

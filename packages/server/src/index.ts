@@ -13,6 +13,7 @@ import { PipelineEngine } from './pipelines/pipeline-engine.js';
 import { loadTeams, listTeams } from './agents/team-registry.js';
 import { TeamCoordinator } from './agents/team-coordinator.js';
 import { createTeamRoutes } from './routes/teams.js';
+import { listLegacyAliases, loadLegacyAgentAliases } from './agents/legacy-agent-alias-resolver.js';
 import { loadDomains, listDomains } from './agents/domain-registry.js';
 import { createDomainRoutes } from './routes/domains.js';
 
@@ -182,7 +183,10 @@ async function main() {
   logger.info({ registryPath }, 'Loading agents from registry...');
   await agentManager.initializeFromRegistry();
   logger.info('Syncing skill registry...');
-  syncBuiltinSkills(agentsDirectory, runtimeAssetPath('skills'));
+  syncBuiltinSkills(agentsDirectory, [
+    runtimeAssetPath('skills'),
+    join(agentsDirectory, 'skills'),
+  ]);
   seedDefaultSources();
   startAutoSync();
   const skillWatcher = new SkillWatcher(agentsDirectory);
@@ -218,6 +222,10 @@ async function main() {
   // Domain packs (domain-specialized persona + knowledge overlay)
   loadDomains();
   logger.info({ domains: listDomains().length }, 'Domain packs ready');
+
+  // Legacy agent aliases (old task-agent ids → stable role + skills)
+  loadLegacyAgentAliases();
+  logger.info({ legacyAliases: listLegacyAliases().length }, 'Legacy agent aliases ready');
 
   // Connect configured MCP servers (best-effort; from MCP_SERVERS env)
   await getMcpManager().init().catch(() => undefined);

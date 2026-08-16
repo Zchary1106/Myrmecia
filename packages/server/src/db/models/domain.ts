@@ -20,6 +20,8 @@ export function rowToDomain(row: any): DomainPack {
     id: row.id,
     name: row.name,
     emoji: row.emoji || '📘',
+    version: row.version === null || row.version === undefined ? 1 : Number(row.version),
+    versionNote: row.version_note || undefined,
     persona: row.persona || '',
     guidelines: safeJson<string[]>(row.guidelines, []),
     terminology: safeJson<Record<string, string>>(row.terminology, {}),
@@ -57,9 +59,9 @@ export function insertDomainRow(pack: DomainPack): DomainPack {
   const db = getDb();
   db.run(
     `INSERT INTO domain_packs
-      (id, name, emoji, persona, guidelines, terminology, disclaimer, tone, retrieval, knowledge_ids, agent_ids, workspace_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    pack.id, pack.name, pack.emoji, pack.persona,
+      (id, name, emoji, version, version_note, persona, guidelines, terminology, disclaimer, tone, retrieval, knowledge_ids, agent_ids, workspace_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    pack.id, pack.name, pack.emoji, pack.version ?? 1, pack.versionNote || null, pack.persona,
     JSON.stringify(pack.guidelines), JSON.stringify(pack.terminology),
     pack.disclaimer || null, pack.tone || null,
     JSON.stringify(pack.retrieval), JSON.stringify(pack.knowledgeIds),
@@ -72,11 +74,11 @@ export function updateDomainRow(id: string, pack: DomainPack): DomainPack {
   const db = getDb();
   db.run(
     `UPDATE domain_packs SET
-      name = ?, emoji = ?, persona = ?, guidelines = ?, terminology = ?,
+      name = ?, emoji = ?, version = ?, version_note = ?, persona = ?, guidelines = ?, terminology = ?,
       disclaimer = ?, tone = ?, retrieval = ?, knowledge_ids = ?, agent_ids = ?,
       updated_at = CURRENT_TIMESTAMP
      WHERE id = ?`,
-    pack.name, pack.emoji, pack.persona,
+    pack.name, pack.emoji, pack.version ?? 1, pack.versionNote || null, pack.persona,
     JSON.stringify(pack.guidelines), JSON.stringify(pack.terminology),
     pack.disclaimer || null, pack.tone || null,
     JSON.stringify(pack.retrieval), JSON.stringify(pack.knowledgeIds),

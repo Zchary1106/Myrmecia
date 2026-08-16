@@ -39,7 +39,7 @@ function importSkillFile(id: string, sourcePath: string, fullPath: string): void
     }
 }
 
-export function syncBuiltinSkills(agentsDir: string, skillsDir?: string): void {
+export function syncBuiltinSkills(agentsDir: string, skillsDirs?: string | string[]): void {
   if (existsSync(agentsDir)) {
     const files = readdirSync(agentsDir).filter(file => file.endsWith('.md')).sort();
     for (const file of files) {
@@ -47,7 +47,9 @@ export function syncBuiltinSkills(agentsDir: string, skillsDir?: string): void {
     }
   }
 
-  if (skillsDir && existsSync(skillsDir)) {
+  const directories = Array.isArray(skillsDirs) ? skillsDirs : [skillsDirs].filter((dir): dir is string => Boolean(dir));
+  for (const skillsDir of directories) {
+    if (!existsSync(skillsDir)) continue;
     const entries = readdirSync(skillsDir, { withFileTypes: true })
       .filter(entry => entry.isDirectory())
       .sort((a, b) => a.name.localeCompare(b.name));

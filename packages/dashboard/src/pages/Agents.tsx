@@ -3,11 +3,16 @@ import type { FormEvent, ReactNode } from 'react';
 import type { AgentSummary, ModelDefinition } from '@myrmecia/shared';
 import { useStore } from '../stores/store';
 import { cn } from '../lib/utils';
-import { api } from '../lib/api';
+import { api, type TeamDTO } from '../lib/api';
 import { AgentPet } from '../components/agents/AgentPet';
 import { AgentWorkbench } from '../components/agents/AgentWorkbench';
 import { AgentSetupWizard } from '../components/agents/AgentSetupWizard';
 import { AuditDrawer } from '../components/audit/AuditDrawer';
+
+interface LegacyReplacement { agentId: string; skills: string[]; tools: string[] }
+interface LegacyAnnotation { deprecated: boolean; replacement?: LegacyReplacement }
+type EnrichedAgent = AgentSummary & { legacy?: LegacyAnnotation };
+interface LegacyAliasEntry extends LegacyReplacement { legacyAgentId: string }
 
 const statusColors: Record<string, string> = {
   idle: 'bg-emerald-500',
@@ -150,8 +155,34 @@ export function AgentsPage() {
   const [form, setForm] = useState<AgentFormState>(emptyForm);
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [legacyAliases, setLegacyAliases] = useState<LegacyAliasEntry[]>([]);
+  const [teams, setTeams] = useState<TeamDTO[]>([]);
+  const [showLegacy, setShowLegacy] = useState(false);
 
-  const roles = useMemo(() => uniqueRoles(agents), [agents]);
+  const enriched = useMemo(() => agents as EnrichedAgent[], [agents]);
+  const stableAgents = useMemo(() => enriched.filter(agent => !agent.legacy?.deprecated), [enriched]);
+  const legacyAgents = useMemo(() => enriched.filter(agent => agent.legacy?.deprecated), [enriched]);
+  const teamNamesByAgent = useMemo(() => {
+    const byAgent = new Map<string, string[]>();
+    for (const team of teams) {
+      const agentIds = team.roster?.length
+        ? team.roster.map(member => member.agentId)
+        : team.members;
+      for (const agentId of agentIds) {
+        const current = byAgent.get(agentId) || [];
+        if (!current.includes(team.name)) current.push(team.name);
+        byAgent.set(agentId, current);
+      }
+    }
+    return byAgent;
+  }, [teams]);
+  const aliasByLegacyId = useMemo(() => {
+    const map = new Map<string, LegacyReplacement>();
+    for (const alias of legacyAliases) map.set(alias.legacyAgentId, alias);
+    return map;
+  }, [legacyAliases]);
+
+  const roles = useMemo(() => uniqueRoles(stableAgents), [stableAgents]);
   const modelOptions = useMemo(() => {
     const dynamicOptions = models.filter(model => model.enabled).map(modelOptionFromDefinition);
     const options = dynamicOptions.length > 0 ? dynamicOptions : COPILOT_MODEL_OPTIONS;
@@ -161,7 +192,7 @@ export function AgentsPage() {
   }, [models, form.model]);
   const filteredAgents = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return agents.filter(agent => {
+    return stableAgents.filter(agent => {
       const matchesRole = roleFilter === 'all' || agent.role === roleFilter;
       const text = [
         agent.name,
@@ -172,15 +203,26 @@ export function AgentsPage() {
       ].join(' ').toLowerCase();
       return matchesRole && (!q || text.includes(q));
     });
-  }, [agents, query, roleFilter]);
+  }, [stableAgents, query, roleFilter]);
+  const filteredLegacy = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return legacyAgents.filter(agent => !q || [agent.name, agent.role, agent.description].join(' ').toLowerCase().includes(q));
+  }, [legacyAgents, query]);
 
   const runningCount = agents.filter(a => (a.activeExecutions || 0) > 0).length;
   const toolEnabledCount = agents.filter(a => (a.allowedTools || a.config?.allowedTools || []).length > 0).length;
-  const workbenchAgent = agents.find(agent => agent.id === workbenchAgentId) || filteredAgents[0] || agents[0];
+  const workbenchAgent = agents.find(agent => agent.id === workbenchAgentId) || filteredAgents[0] || stableAgents[0] || agents[0];
 
   useEffect(() => {
     if (models.length === 0) void loadModels();
   }, [models.length]);
+
+  useEffect(() => {
+    void api.get<{ aliases: LegacyAliasEntry[] }>('/agents/legacy')
+      .then(data => setLegacyAliases(data.aliases || []))
+      .catch(() => {});
+    void api.teams.list().then(setTeams).catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (!workbenchAgentId && agents.length > 0) setWorkbenchAgentId(agents[0].id);
@@ -294,17 +336,17 @@ export function AgentsPage() {
         </div>
 
         <div className="mt-6 grid grid-cols-2 gap-3 md:grid-cols-4">
-          <Metric label="Total Agents" value={agents.length} />
+          <Metric label="Stable Roles" value={stableAgents.length} />
           <Metric label="Running" value={runningCount} tone="blue" />
           <Metric label="Tool Enabled" value={toolEnabledCount} tone="purple" />
-          <Metric label="Roles" value={roles.length} tone="green" />
+          <Metric label="Legacy Aliases" value={legacyAgents.length} tone="yellow" />
         </div>
       </div>
 
       <div className={cn('grid gap-6', isBuilderOpen ? 'xl:grid-cols-[1fr_420px]' : 'grid-cols-1')}>
         <div className="space-y-4">
           {workbenchAgent && (
-            <AgentWorkbench agent={workbenchAgent} onEdit={startEditing} />
+            <AgentWorkbench agent={workbenchAgent} onEdit={startEditing} teams={teamNamesByAgent.get(workbenchAgent.id)} />
           )}
 
           <div className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-4 md:flex-row md:items-center">
@@ -338,9 +380,79 @@ export function AgentsPage() {
                 selected={workbenchAgent?.id === agent.id}
                 onInspect={setWorkbenchAgentId}
                 onEdit={startEditing}
+                teams={teamNamesByAgent.get(agent.id)}
               />
             ))}
           </div>
+
+          {filteredAgents.length === 0 && (
+            <div className="rounded-xl border border-dashed border-border bg-surface/40 p-8 text-center text-xs text-gray-600">
+              No stable agents match this filter.
+            </div>
+          )}
+
+          {legacyAgents.length > 0 && (
+            <div className="rounded-xl border border-border bg-surface/40">
+              <button
+                type="button"
+                onClick={() => setShowLegacy(v => !v)}
+                className="flex w-full items-center justify-between px-4 py-3 text-left"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-sm">{showLegacy ? '▾' : '▸'}</span>
+                  <span className="text-xs font-semibold text-gray-400">Legacy aliases</span>
+                  <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] text-amber-300">{filteredLegacy.length}</span>
+                  <span className="text-[10px] text-gray-600">任务型 Agent · 迁移期通过 stable role + Skills 运行</span>
+                </div>
+                <span className="text-[10px] text-gray-500">{showLegacy ? 'collapse' : 'expand'}</span>
+              </button>
+              {showLegacy && (
+                <div className="grid grid-cols-1 gap-3 border-t border-border p-4 lg:grid-cols-2 2xl:grid-cols-3">
+                  {filteredLegacy.map(agent => {
+                    const alias = aliasByLegacyId.get(agent.id) || agent.legacy?.replacement;
+                    return (
+                      <div key={agent.id} className="rounded-xl border border-amber-500/15 bg-background p-4">
+                        <div className="flex items-center gap-2">
+                          <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-background text-xl">{agent.emoji || '🤖'}</span>
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate text-xs font-semibold text-gray-200">{agent.name}</div>
+                            <div className="font-mono text-[10px] text-gray-500">@{agent.id}</div>
+                          </div>
+                          <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-amber-300">deprecated</span>
+                        </div>
+                        {alias && (
+                          <div className="mt-3 rounded-lg bg-surface-hover/50 p-2.5">
+                            <div className="text-[10px] text-gray-500">→ 由 <span className="font-semibold text-cyan-300">{alias.agentId}</span> 接管</div>
+                            {alias.skills.length > 0 && (
+                              <div className="mt-1.5 flex flex-wrap gap-1">
+                                {alias.skills.slice(0, 6).map(skill => (
+                                  <span key={skill} className="rounded bg-accent/10 px-1.5 py-0.5 text-[9px] text-accent-light">{skill}</span>
+                                ))}
+                              </div>
+                            )}
+                            {alias.tools.length > 0 && (
+                              <div className="mt-1.5 flex flex-wrap gap-1">
+                                {alias.tools.slice(0, 6).map(tool => (
+                                  <span key={tool} className="rounded bg-purple-500/10 px-1.5 py-0.5 font-mono text-[9px] text-purple-300">{tool}</span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => { setWorkbenchAgentId(agent.id); }}
+                          className="mt-3 rounded-lg bg-surface-hover px-3 py-1.5 text-[11px] text-gray-300 hover:text-white"
+                        >
+                          Inspect
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {isBuilderOpen && (
@@ -479,12 +591,13 @@ export function AgentsPage() {
   );
 }
 
-function Metric({ label, value, tone = 'default' }: { label: string; value: number; tone?: 'default' | 'blue' | 'purple' | 'green' }) {
+function Metric({ label, value, tone = 'default' }: { label: string; value: number; tone?: 'default' | 'blue' | 'purple' | 'green' | 'yellow' }) {
   const toneClass = {
     default: 'text-gray-100',
     blue: 'text-blue-300',
     purple: 'text-purple-300',
     green: 'text-emerald-300',
+    yellow: 'text-amber-300',
   }[tone];
   return (
     <div className="rounded-xl border border-border bg-background/70 p-4">
@@ -508,11 +621,13 @@ function AgentCard({
   selected,
   onInspect,
   onEdit,
+  teams,
 }: {
   agent: AgentSummary;
   selected: boolean;
   onInspect: (agentId: string) => void;
   onEdit: (agent: AgentSummary) => void;
+  teams?: string[];
 }) {
   const status = derivedStatus(agent);
   const tools = agent.allowedTools || agent.config?.allowedTools || [];
@@ -553,6 +668,16 @@ function AgentCard({
           {topCapabilities.map(capability => (
             <span key={capability} className="rounded-full bg-accent/10 px-2 py-1 text-[10px] text-accent-light">{capability}</span>
           ))}
+        </div>
+      )}
+
+      {teams && teams.length > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-1.5">
+          <span className="text-[10px] text-gray-500">所属 Teams:</span>
+          {teams.slice(0, 3).map(teamName => (
+            <span key={teamName} className="rounded bg-cyan-500/10 px-1.5 py-0.5 text-[10px] text-cyan-300">{teamName}</span>
+          ))}
+          {teams.length > 3 && <span className="text-[10px] text-gray-500">+{teams.length - 3}</span>}
         </div>
       )}
 

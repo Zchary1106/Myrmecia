@@ -66,6 +66,9 @@ export interface DomainPack {
   id: string;
   name: string;
   emoji: string;
+  /** Bumped on material content/persona changes; teams lock this version. */
+  version?: number;
+  versionNote?: string;
   persona: string;
   guidelines: string[];
   terminology: Record<string, string>;
@@ -87,6 +90,8 @@ export interface DomainPackInput {
   id?: string;
   name: string;
   emoji?: string;
+  version?: number;
+  versionNote?: string;
   persona: string;
   guidelines?: string[];
   terminology?: Record<string, string>;

@@ -66,6 +66,22 @@ describe('skill versioning', () => {
     expect(resolveSkillForAgent(agent)?.version.content).toContain('Render and inspect.');
   });
 
+  it('imports skills from multiple skills directories', () => {
+    const agentsDir = mkdtempSync(join(tmpdir(), 'agent-skills-multi-'));
+    const skillsA = mkdtempSync(join(tmpdir(), 'standard-skills-a-'));
+    const skillsB = mkdtempSync(join(tmpdir(), 'standard-skills-b-'));
+    for (const [dir, id] of [[skillsA, 'skill-a'], [skillsB, 'skill-b']] as const) {
+      const skillDir = join(dir, id);
+      mkdirSync(skillDir, { recursive: true });
+      writeFileSync(join(skillDir, 'SKILL.md'), `---\nname: ${id}\ndescription: ${id}.\n---\n\n# ${id}\n\nBody.`, 'utf8');
+    }
+
+    syncBuiltinSkills(agentsDir, [skillsA, skillsB]);
+
+    expect(getSkillDetail('skill-a')?.versions[0].status).toBe('published');
+    expect(getSkillDetail('skill-b')?.versions[0].status).toBe('published');
+  });
+
   it('moves auto-managed agents to a new builtin skill path while preserving custom assignments', () => {
     const agentsDir = mkdtempSync(join(tmpdir(), 'agent-skills-migrate-'));
     const skillsDir = mkdtempSync(join(tmpdir(), 'standard-skills-migrate-'));

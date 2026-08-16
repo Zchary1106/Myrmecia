@@ -493,6 +493,8 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ goal, workdir }),
       }),
+    preflight: (id: string) =>
+      request<TeamPreflightResultDTO>(`/teams/${id}/preflight`),
     runs: (teamId?: string) =>
       request<{ runs: TeamRunDTO[] }>(`/teams/runs${teamId ? `?teamId=${teamId}` : ''}`).then(r => r.runs),
     run: (runId: string) => request<{ run: TeamRunDTO; board: TeamBoardItem[] }>(`/teams/runs/${runId}`),
@@ -528,9 +530,26 @@ export const api = {
   },
 };
 
+export interface TeamRoleSlotDTO {
+  slot: string; agentId: string;
+  skills?: string[]; tools?: string[]; domainIds?: string[];
+}
+export interface TeamPolicyDTO {
+  requireHumanApprovalBefore?: string[];
+  allowedTools?: string[];
+  disallowedTools?: string[];
+  maxCostUsd?: number;
+}
 export interface TeamInputDTO {
   id?: string; name: string; emoji?: string; lead?: string;
   members: string[]; template?: string; triggers?: string[]; blurb?: string;
+  roles?: TeamRoleSlotDTO[]; policy?: TeamPolicyDTO; domainIds?: string[];
+}
+export interface TeamPreflightIssueDTO {
+  code: string; message: string; severity: 'error' | 'warning'; path?: string;
+}
+export interface TeamPreflightResultDTO {
+  pass: boolean; issues: TeamPreflightIssueDTO[];
 }
 
 export interface DomainRetrievalDTO { enabled: boolean; topK: number; minScore: number }
@@ -559,6 +578,8 @@ export interface TeamRosterMember { role: string; agentId: string; name: string 
 export interface TeamDTO {
   id: string; name: string; emoji: string; lead: string;
   members: string[]; template?: string; triggers: string[]; blurb: string;
+  roles?: TeamRoleSlotDTO[]; policy?: TeamPolicyDTO; domainIds?: string[];
+  contractVersion?: number;
   builtin?: boolean;
   roster?: TeamRosterMember[];
 }
