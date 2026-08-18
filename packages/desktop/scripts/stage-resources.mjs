@@ -9,7 +9,13 @@ const stageRoot = resolve(desktopRoot, '.stage');
 const pnpm = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
 
 function run(args) {
-  execFileSync(pnpm, args, { cwd: repositoryRoot, stdio: 'inherit' });
+  execFileSync(pnpm, args, {
+    cwd: repositoryRoot,
+    stdio: 'inherit',
+    // Windows command shims such as pnpm.cmd must be launched through the
+    // shell when invoked by Node's synchronous child-process API.
+    shell: process.platform === 'win32',
+  });
 }
 
 // This directory is generated exclusively for packaging. Source package folders
