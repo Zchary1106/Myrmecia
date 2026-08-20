@@ -8,6 +8,28 @@ test('dashboard loads and shows navigation', async ({ page }) => {
   await expect(page.getByText(/tasks|agents|overview/i).first()).toBeVisible();
 });
 
+test('home composer exposes Team, Workflow, history, and theme controls', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: 'What should your team work on?' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Use a Team' })).toBeVisible();
+  await expect(page.getByText('Recent work', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Switch to (light|dark) theme/ })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Use a Team' }).click();
+  await expect(page.getByText('Choose a Team', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Choose workflow', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Launch work' })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Pipeline.*Run a template/ })).toBeVisible();
+});
+
+test('home shell remains usable at a narrow viewport', async ({ page }) => {
+  await page.setViewportSize({ width: 760, height: 720 });
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: 'What should your team work on?' })).toBeVisible();
+  const hasHorizontalOverflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
+  expect(hasHorizontalOverflow).toBe(false);
+});
+
 test('tasks page is accessible', async ({ page }) => {
   await page.goto('/tasks');
   await expect(page.locator('body')).toBeVisible();

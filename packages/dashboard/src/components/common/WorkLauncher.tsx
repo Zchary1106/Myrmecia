@@ -5,14 +5,20 @@ import { cn } from '../../lib/utils';
 import { readOnlyControlMessage, runtimeControlsAllowed } from '../../lib/permissions';
 import type { Priority, TaskMode } from '@myrmecia/shared';
 
-type LaunchMode = Extract<TaskMode, 'direct' | 'master'> | 'team' | 'pipeline';
+export type LaunchMode = Extract<TaskMode, 'direct' | 'master'> | 'team' | 'pipeline';
 
 export function WorkLauncher({
   initialInput = '',
+  initialMode = 'direct',
+  initialTeamId = '',
+  initialTemplateId = '',
   onClose,
   onCreated,
 }: {
   initialInput?: string;
+  initialMode?: LaunchMode;
+  initialTeamId?: string;
+  initialTemplateId?: string;
   onClose: () => void;
   onCreated?: () => void | Promise<void>;
 }) {
@@ -20,13 +26,13 @@ export function WorkLauncher({
     agents, templates, diagnostics,
     loadTasks, loadPipelines, loadTemplates, setActiveView,
   } = useStore();
-  const [mode, setMode] = useState<LaunchMode>('direct');
+  const [mode, setMode] = useState<LaunchMode>(initialMode);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState(initialInput);
   const [assigneeId, setAssigneeId] = useState('');
-  const [templateId, setTemplateId] = useState('');
+  const [templateId, setTemplateId] = useState(initialTemplateId);
   const [teams, setTeams] = useState<TeamDTO[]>([]);
-  const [teamId, setTeamId] = useState('');
+  const [teamId, setTeamId] = useState(initialTeamId);
   const [workspacePath, setWorkspacePath] = useState('');
   const [gateMode, setGateMode] = useState<'auto' | 'manual'>('auto');
   const [confirmAutonomousPublish, setConfirmAutonomousPublish] = useState(false);
@@ -48,6 +54,12 @@ export function WorkLauncher({
       setWorkspacePath(workspace.path);
     }).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (initialTeamId) setTeamId(initialTeamId);
+    if (initialTemplateId) setTemplateId(initialTemplateId);
+    setMode(initialMode);
+  }, [initialMode, initialTeamId, initialTemplateId]);
 
   useEffect(() => {
     if (mode === 'pipeline' && !templateId && templates[0]) {
@@ -121,7 +133,7 @@ export function WorkLauncher({
               Start direct agent work, route through the master agent, or launch a template pipeline.
             </p>
           </div>
-          <button onClick={onClose} className="text-gray-500 hover:text-white transition">x</button>
+          <button type="button" onClick={onClose} aria-label="Close launch work" className="app-focus rounded-lg px-2 py-1 text-gray-500 transition hover:bg-surface-hover hover:text-white">×</button>
         </div>
 
         <div className="space-y-5">
