@@ -5,12 +5,12 @@ export default {
   theme: {
     extend: {
       colors: {
-        background: '#0f1117',
-        surface: '#1a1b23',
-        'surface-hover': '#22232d',
-        border: '#2a2b35',
-        accent: '#6366f1',
-        'accent-light': '#818cf8',
+        background: 'rgb(var(--color-background) / <alpha-value>)',
+        surface: 'rgb(var(--color-surface) / <alpha-value>)',
+        'surface-hover': 'rgb(var(--color-surface-hover) / <alpha-value>)',
+        border: 'rgb(var(--color-border) / <alpha-value>)',
+        accent: 'rgb(var(--color-accent) / <alpha-value>)',
+        'accent-light': 'rgb(var(--color-accent-light) / <alpha-value>)',
       },
       animation: {
         'wag': 'wag 0.4s ease-in-out infinite',

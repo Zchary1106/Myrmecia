@@ -2,18 +2,79 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  color-scheme: dark;
+  --color-background: 16 17 20;
+  --color-surface: 22 23 27;
+  --color-surface-hover: 30 32 38;
+  --color-border: 45 47 54;
+  --color-accent: 86 145 255;
+  --color-accent-light: 126 174 255;
+  --text-primary: 239 241 245;
+  --text-secondary: 154 160 172;
+  --text-muted: 103 110 124;
+  --app-shadow: 0 20px 60px rgb(0 0 0 / .22);
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+  --color-background: 246 247 249;
+  --color-surface: 255 255 255;
+  --color-surface-hover: 238 240 244;
+  --color-border: 220 223 230;
+  --color-accent: 48 105 206;
+  --color-accent-light: 32 83 174;
+  --text-primary: 24 27 34;
+  --text-secondary: 94 101 114;
+  --text-muted: 126 133 146;
+  --app-shadow: 0 20px 60px rgb(39 51 77 / .12);
+}
+
 body {
   margin: 0;
-  background: #0f1117;
-  color: #e5e7eb;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: rgb(var(--color-background));
+  color: rgb(var(--text-primary));
+  font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+button, input, textarea, select { font: inherit; }
+button { -webkit-tap-highlight-color: transparent; }
+
+::selection { background: rgb(var(--color-accent) / .24); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: .01ms !important;
+  }
 }
 
 /* Custom scrollbar */
 ::-webkit-scrollbar { width: 6px; }
-::-webkit-scrollbar-track { background: #1a1b23; }
-::-webkit-scrollbar-thumb { background: #3a3b45; border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: #4a4b55; }
+::-webkit-scrollbar-track { background: rgb(var(--color-background)); }
+::-webkit-scrollbar-thumb { background: rgb(var(--color-border)); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: rgb(var(--color-accent) / .5); }
+
+@layer utilities {
+  .text-app-primary { color: rgb(var(--text-primary)); }
+  .text-app-secondary { color: rgb(var(--text-secondary)); }
+  .text-app-muted { color: rgb(var(--text-muted)); }
+}
+
+@layer components {
+  .app-panel {
+    @apply rounded-2xl border border-border bg-surface;
+    box-shadow: var(--app-shadow);
+  }
+
+  .app-focus {
+    @apply outline-none focus-visible:ring-2 focus-visible:ring-accent/50 focus-visible:ring-offset-2 focus-visible:ring-offset-background;
+  }
+}
 
 @layer components {
   .field {
