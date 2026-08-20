@@ -25,7 +25,16 @@ mkdirSync(stageRoot, { recursive: true });
 run(['--filter', '@myrmecia/shared', 'build']);
 run(['--filter', '@myrmecia/server', 'build']);
 run(['--filter', '@myrmecia/dashboard', 'build']);
-run(['--filter', '@myrmecia/server', 'deploy', '--prod', resolve(stageRoot, 'server')]);
+// A hoisted deployment avoids pnpm's Windows .bin junction/symlink creation
+// path, which can fail on GitHub-hosted Windows runners without Developer
+// Mode. The staged server is copied into an isolated Electron Resources tree,
+// so hoisting does not leak dependencies back into the workspace.
+run([
+  '--filter', '@myrmecia/server',
+  'deploy', '--prod',
+  '--config.node-linker=hoisted',
+  resolve(stageRoot, 'server'),
+]);
 
 const stagedServer = resolve(stageRoot, 'server');
 writeFileSync(
