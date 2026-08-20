@@ -25,14 +25,15 @@ mkdirSync(stageRoot, { recursive: true });
 run(['--filter', '@myrmecia/shared', 'build']);
 run(['--filter', '@myrmecia/server', 'build']);
 run(['--filter', '@myrmecia/dashboard', 'build']);
-// A hoisted deployment avoids pnpm's Windows .bin junction/symlink creation
-// path, which can fail on GitHub-hosted Windows runners without Developer
-// Mode. The staged server is copied into an isolated Electron Resources tree,
-// so hoisting does not leak dependencies back into the workspace.
+// A hoisted deployment without .bin links avoids pnpm's Windows junction/
+// symlink creation path, which can fail on GitHub-hosted Windows runners
+// without Developer Mode. The staged server starts its entrypoint directly,
+// so CLI shims are not needed inside the Electron Resources tree.
 run([
   '--filter', '@myrmecia/server',
   'deploy', '--prod',
   '--config.node-linker=hoisted',
+  '--config.bin-links=false',
   resolve(stageRoot, 'server'),
 ]);
 
