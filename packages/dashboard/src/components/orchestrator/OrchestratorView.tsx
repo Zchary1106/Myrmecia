@@ -14,21 +14,21 @@ const stageStatusConfig: Record<string, { bg: string; text: string; icon: string
   skipped: { bg: 'bg-gray-500/10', text: 'text-gray-600', icon: '⏭' },
 };
 
-function StageCard({ stage, isActive }: { stage: any; isActive: boolean }) {
+function StageCard({ stage, isActive, selected, onSelect }: { stage: any; isActive: boolean; selected: boolean; onSelect: () => void }) {
   const config = stageStatusConfig[stage.status] || stageStatusConfig.pending;
 
   return (
     <div className={cn(
       'bg-surface border rounded-xl p-4 transition-all min-w-[180px]',
-      isActive ? 'border-accent ring-1 ring-accent/20' : 'border-border'
+      isActive || selected ? 'border-accent ring-1 ring-accent/20' : 'border-border'
     )}>
-      <div className="flex items-center gap-2 mb-2">
+      <button type="button" onClick={onSelect} className="app-focus flex w-full items-center gap-2 text-left">
         <span className="text-lg">{config.icon}</span>
         <div className="flex-1">
           <div className="font-medium text-sm">{stage.name}</div>
           <div className="text-[10px] text-gray-500">{stage.agentRole}</div>
         </div>
-      </div>
+      </button>
       <div className={cn('px-2 py-0.5 rounded text-[10px] font-medium w-fit', config.bg, config.text)}>
         {stage.status}
       </div>
@@ -50,6 +50,7 @@ function PipelineFlow({ pipeline }: { pipeline: Pipeline }) {
   const { diagnostics, loadPipelines, loadTasks } = useStore();
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [selectedStageIndex, setSelectedStageIndex] = useState<number | null>(null);
   const canControl = runtimeControlsAllowed(diagnostics);
 
   const runAction = async (action: 'approve' | 'skip' | 'cancel') => {
@@ -139,6 +140,8 @@ function PipelineFlow({ pipeline }: { pipeline: Pipeline }) {
             <StageCard
               stage={stage}
               isActive={i === pipeline.currentStageIndex && pipeline.status === 'running'}
+              selected={selectedStageIndex === i}
+              onSelect={() => setSelectedStageIndex(i)}
             />
             {i < (pipeline.stages?.length || 0) - 1 && (
               <div className={cn(
@@ -151,6 +154,24 @@ function PipelineFlow({ pipeline }: { pipeline: Pipeline }) {
           </div>
         ))}
       </div>
+
+      {selectedStageIndex != null && pipeline.stages?.[selectedStageIndex] && (
+        <aside className="mt-3 rounded-xl border border-accent/20 bg-background/60 p-4" aria-label="Workflow stage inspector">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-accent-light">Stage inspector</div>
+              <h4 className="mt-1 text-sm font-semibold">{pipeline.stages[selectedStageIndex].name}</h4>
+            </div>
+            <button type="button" onClick={() => setSelectedStageIndex(null)} className="app-focus rounded-lg px-2 py-1 text-xs text-gray-500 hover:bg-surface-hover hover:text-white" aria-label="Close stage inspector">×</button>
+          </div>
+          <div className="mt-3 grid gap-2 text-[11px] sm:grid-cols-3">
+            <div><span className="text-gray-600">Agent role</span><div className="mt-1 text-gray-300">{pipeline.stages[selectedStageIndex].agentRole || 'Not assigned'}</div></div>
+            <div><span className="text-gray-600">Status</span><div className="mt-1 capitalize text-gray-300">{pipeline.stages[selectedStageIndex].status}</div></div>
+            <div><span className="text-gray-600">Gate</span><div className="mt-1 text-gray-300">{pipeline.stages[selectedStageIndex].status === 'review' ? 'Manual approval required' : 'Inherited from pipeline'}</div></div>
+          </div>
+          {pipeline.stages[selectedStageIndex].output && <pre className="mt-3 max-h-40 overflow-auto whitespace-pre-wrap rounded-lg border border-border bg-surface p-3 text-[11px] leading-5 text-gray-400">{pipeline.stages[selectedStageIndex].output}</pre>}
+        </aside>
+      )}
 
       {/* Progress bar */}
       <div className="mt-4">
