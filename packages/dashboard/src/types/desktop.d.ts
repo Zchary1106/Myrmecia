@@ -7,6 +7,8 @@ interface MyrmeciaWeChatConfiguration {
 }
 
 interface MyrmeciaDesktopIntegrations {
+  getRuntimeConfig(): Promise<MyrmeciaRuntimeConfiguration>;
+  saveRuntimeConfig(input: { provider: 'openai-compatible' | 'deepseek' | 'copilot'; baseUrl?: string; model?: string; apiKey?: string }): Promise<MyrmeciaRuntimeConfiguration>;
   getWeChatConfig(): Promise<MyrmeciaWeChatConfiguration>;
   saveWeChatConfig(input: { appId: string; appSecret: string }): Promise<MyrmeciaWeChatConfiguration>;
   clearWeChatConfig(): Promise<MyrmeciaWeChatConfiguration>;
@@ -14,6 +16,15 @@ interface MyrmeciaDesktopIntegrations {
   selectWorkspace(): Promise<MyrmeciaWorkspaceConfiguration>;
   clearWorkspace(): Promise<MyrmeciaWorkspaceConfiguration>;
   restartLocalServer(): void;
+}
+
+interface MyrmeciaRuntimeConfiguration {
+  provider: 'openai-compatible' | 'deepseek' | 'copilot';
+  baseUrl: string;
+  model: string;
+  apiKeyConfigured: boolean;
+  secureStorageAvailable: boolean;
+  recoveryMessage?: string;
 }
 
 interface MyrmeciaWorkspaceConfiguration {

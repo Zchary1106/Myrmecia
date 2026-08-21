@@ -6,6 +6,8 @@ import {
   getModel,
   getModelRoute,
   COPILOT_COMPATIBILITY_MODEL_IDS,
+  createCustomModel,
+  deleteCustomModel,
   listModelRoutes,
   listModels,
   recordModelHealth,
@@ -30,6 +32,18 @@ const updateRouteSchema = z.object({
   routeKey: z.string().trim().min(1),
   defaultModelId: z.string().trim().min(1).optional(),
   fallbackGroup: z.string().trim().min(1).default('balanced'),
+});
+
+const createModelSchema = z.object({
+  id: z.string().trim().min(1).max(200).regex(/^[a-zA-Z0-9._:/-]+$/, 'Model ID contains unsupported characters'),
+  provider: z.string().trim().min(1).max(80),
+  displayName: z.string().trim().min(1).max(160),
+  description: z.string().trim().max(500).optional(),
+  capabilityTags: z.array(z.string().trim().min(1).max(40)).max(20).optional(),
+  priority: z.number().int().min(-1000).max(1000).optional(),
+  fallbackGroup: z.string().trim().min(1).max(80).optional(),
+  tier: z.enum(['strong', 'balanced', 'cheap', 'fallback']).optional(),
+  maxTokens: z.number().int().positive().max(10_000_000).optional(),
 });
 
 const providerModelSchema = z.object({
@@ -168,6 +182,27 @@ export function createModelRoutes(): Router {
     res.json(await providerSettings());
   });
 
+  router.post('/', (req, res) => {
+    try {
+      const actor = requireOperatorRole(req, 'model.create', ['admin', 'operator']);
+      const body = parseBody(createModelSchema, req);
+      if (getModel(body.id)) {
+        throw new HttpError(409, 'MODEL_EXISTS', 'A model with this ID already exists');
+      }
+      const model = createCustomModel(body);
+      createOperatorAction({
+        action: 'model.create',
+        actor,
+        targetType: 'model',
+        targetId: model.id,
+        metadata: { provider: model.provider, source: 'custom' },
+      });
+      res.status(201).json(model);
+    } catch (err) {
+      sendError(res, err);
+    }
+  });
+
   router.put('/provider-settings', async (req, res) => {
     try {
       const actor = requireOperatorRole(req, 'model.provider.update', ['admin', 'operator']);
@@ -260,6 +295,22 @@ export function createModelRoutes(): Router {
         },
       });
       res.json(model);
+    } catch (err) {
+      sendError(res, err);
+    }
+  });
+
+  router.delete('/:id', (req, res) => {
+    try {
+      const existing = getModel(req.params.id);
+      if (!existing) notFound('MODEL_NOT_FOUND', 'Model not found');
+      if (existing.costProfile.source !== 'custom') {
+        throw new HttpError(409, 'BUILTIN_MODEL', 'Built-in models cannot be deleted');
+      }
+      const actor = requireOperatorRole(req, 'model.delete', ['admin', 'operator']);
+      if (!deleteCustomModel(req.params.id)) notFound('MODEL_NOT_FOUND', 'Model not found');
+      createOperatorAction({ action: 'model.delete', actor, targetType: 'model', targetId: req.params.id });
+      res.json({ success: true });
     } catch (err) {
       sendError(res, err);
     }

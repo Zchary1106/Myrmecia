@@ -5,6 +5,7 @@ import { clearApiAuthToken, getApiAuthToken, setApiAuthToken } from '../../lib/a
 import { cn } from '../../lib/utils';
 import { operatorRoleLabel } from '../../lib/permissions';
 import type { WorkspacePreferenceRestoreResult, WorkspaceRestorePlan, WorkspaceSnapshotPreview } from '@myrmecia/shared';
+import { ModelSettings } from './ModelSettings';
 
 function CheckRow({ label, ok, detail }: { label: string; ok: boolean; detail: string }) {
   return (
@@ -351,6 +352,8 @@ export function SettingsView() {
           </div>
         )}
       </section>
+
+      <ModelSettings />
 
       <WeChatIntegrationSettings />
 

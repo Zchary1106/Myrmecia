@@ -422,6 +422,47 @@ export function updateModel(id: string, updates: Partial<Pick<ModelDefinition, '
   return getModel(id);
 }
 
+export function createCustomModel(data: {
+  id: string;
+  provider: string;
+  displayName: string;
+  description?: string;
+  capabilityTags?: string[];
+  priority?: number;
+  fallbackGroup?: string;
+  tier?: ModelTier;
+  maxTokens?: number;
+}): ModelDefinition {
+  const db = getDb();
+  db.run(`
+    INSERT INTO model_registry (
+      id, provider, display_name, description, capability_tags, cost_profile,
+      max_tokens, priority, fallback_group, model_tier
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `,
+    data.id,
+    data.provider,
+    data.displayName,
+    data.description || '',
+    JSON.stringify(data.capabilityTags || []),
+    JSON.stringify({ source: 'custom' }),
+    data.maxTokens ?? null,
+    data.priority ?? 50,
+    data.fallbackGroup || 'balanced',
+    data.tier || 'balanced',
+  );
+  const model = getModel(data.id);
+  if (!model) throw new Error('Custom model was not created.');
+  return model;
+}
+
+export function deleteCustomModel(id: string): boolean {
+  const model = getModel(id);
+  if (!model || model.costProfile.source !== 'custom') return false;
+  const result = getDb().run('DELETE FROM model_registry WHERE id = ?', id);
+  return result.changes > 0;
+}
+
 export function listModelRoutes(): ModelRoute[] {
   return (getDb().all('SELECT * FROM model_routes ORDER BY route_key ASC') as any[]).map(rowToRoute);
 }

@@ -18,15 +18,15 @@
 
 :root[data-theme='light'] {
   color-scheme: light;
-  --color-background: 246 247 249;
+  --color-background: 244 246 249;
   --color-surface: 255 255 255;
-  --color-surface-hover: 238 240 244;
-  --color-border: 220 223 230;
-  --color-accent: 48 105 206;
-  --color-accent-light: 32 83 174;
+  --color-surface-hover: 236 239 244;
+  --color-border: 207 213 223;
+  --color-accent: 37 99 235;
+  --color-accent-light: 29 78 216;
   --text-primary: 24 27 34;
-  --text-secondary: 94 101 114;
-  --text-muted: 126 133 146;
+  --text-secondary: 71 79 92;
+  --text-muted: 100 109 123;
   --app-shadow: 0 20px 60px rgb(39 51 77 / .12);
 }
 
@@ -79,5 +79,95 @@ button { -webkit-tap-highlight-color: transparent; }
 @layer components {
   .field {
     @apply w-full rounded-lg border border-border bg-background px-2.5 py-2 text-[11px] text-gray-200 outline-none transition focus:border-accent;
+  }
+}
+
+/*
+ * Most views predate the semantic app text utilities and use Tailwind's
+ * fixed gray palette directly. Keep those views readable when the light
+ * theme is selected without changing the intentionally dark theme.
+ */
+@layer utilities {
+  [data-theme='light'] .text-gray-100,
+  [data-theme='light'] .text-gray-200 {
+    color: rgb(var(--text-primary));
+  }
+
+  [data-theme='light'] .text-gray-300 {
+    color: rgb(51 65 85);
+  }
+
+  [data-theme='light'] .text-gray-400 {
+    color: rgb(var(--text-secondary));
+  }
+
+  [data-theme='light'] .text-gray-500,
+  [data-theme='light'] .text-gray-600 {
+    color: rgb(var(--text-muted));
+  }
+
+  [data-theme='light'] .text-gray-700 {
+    color: rgb(71 79 92);
+  }
+
+  [data-theme='light'] .hover\:text-gray-200:hover,
+  [data-theme='light'] .hover\:text-gray-300:hover {
+    color: rgb(var(--text-primary));
+  }
+
+  [data-theme='light'] .border-gray-500,
+  [data-theme='light'] .border-gray-500\/20,
+  [data-theme='light'] .border-gray-500\/30,
+  [data-theme='light'] .border-gray-500\/40,
+  [data-theme='light'] .border-gray-600,
+  [data-theme='light'] .border-gray-600\/30,
+  [data-theme='light'] .border-gray-600\/40 {
+    border-color: rgb(var(--color-border) / .9);
+  }
+
+  [data-theme='light'] .text-red-200,
+  [data-theme='light'] .text-red-300,
+  [data-theme='light'] .text-red-400,
+  [data-theme='light'] .hover\:text-red-200:hover,
+  [data-theme='light'] .hover\:text-red-300:hover,
+  [data-theme='light'] .hover\:text-red-400:hover {
+    color: rgb(185 28 28);
+  }
+
+  [data-theme='light'] .text-yellow-200,
+  [data-theme='light'] .text-yellow-300,
+  [data-theme='light'] .text-yellow-400,
+  [data-theme='light'] .text-amber-200,
+  [data-theme='light'] .text-amber-300,
+  [data-theme='light'] .text-amber-400 {
+    color: rgb(146 64 14);
+  }
+
+  [data-theme='light'] .text-blue-200,
+  [data-theme='light'] .text-blue-300,
+  [data-theme='light'] .text-blue-400,
+  [data-theme='light'] .text-cyan-200,
+  [data-theme='light'] .text-cyan-300 {
+    color: rgb(29 78 216);
+  }
+
+  [data-theme='light'] .text-green-300,
+  [data-theme='light'] .text-green-400,
+  [data-theme='light'] .text-emerald-200,
+  [data-theme='light'] .text-emerald-300,
+  [data-theme='light'] .text-emerald-400 {
+    color: rgb(4 120 87);
+  }
+
+  [data-theme='light'] .text-purple-200,
+  [data-theme='light'] .text-purple-300,
+  [data-theme='light'] .text-purple-400 {
+    color: rgb(109 40 217);
+  }
+
+  [data-theme='light'] .text-orange-200,
+  [data-theme='light'] .text-orange-300,
+  [data-theme='light'] .text-orange-400 {
+    color: rgb(194 65 12);
   }
 }
