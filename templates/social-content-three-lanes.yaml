@@ -172,6 +172,8 @@ stages:
   - name: 发布执行
     role: social-publisher
     depends_on: [10]
+    requires_approval: true
+    approval_kind: publish
     publish_tools:
       - mcp__xiaohongshu__publish_content
       - mcp__xiaohongshu__publish_with_video

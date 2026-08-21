@@ -18,6 +18,7 @@
     "cli": "pnpm --filter @myrmecia/cli start",
     "lint": "pnpm -r --if-present lint",
     "validate:contracts": "pnpm --filter @myrmecia/server validate:contracts",
+    "validate:pipelines": "node packages/server/scripts/validate-pipelines.mjs",
     "validate:social-workflow": "pnpm --filter @myrmecia/server validate:social-workflow",
     "health:social-workflow": "pnpm --filter @myrmecia/server health:social-workflow"
   },
