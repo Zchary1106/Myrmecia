@@ -248,6 +248,10 @@ export const api = {
     cancel: (id: string, confirmed = false) =>
       request<{ success: boolean }>(`/pipelines/${id}/cancel`, { method: 'POST', body: JSON.stringify({ confirm: confirmed }) }),
   },
+  socialWorkflow: {
+    researchGitHubRepository: (repository: string) =>
+      request<unknown>('/social-workflow/github-repo-research', { method: 'POST', body: JSON.stringify({ repository }) }),
+  },
   templates: {
     list: () => request<PipelineTemplate[]>('/templates'),
     gallery: () => request<PipelineTemplateGalleryItem[]>('/templates/gallery'),

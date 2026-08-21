@@ -90,6 +90,7 @@ export const CONTENT_STUDIO_PROFILES: Record<string, ContentStudioProfile> = {
     title: 'Social Three-Lane Studio',
     subtitle: 'Douyin + Xiaohongshu + WeChat · shared research · independent production lanes',
     stages: [
+      { name: 'GitHub 仓库事实包', agentRole: 'researcher' },
       { name: '选题证据包', agentRole: 'researcher' },
       { name: '内容核心包', agentRole: 'pm' },
       { name: '抖音视频生产线', agentRole: 'content-creator' },

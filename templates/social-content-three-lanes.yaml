@@ -3,8 +3,21 @@ description: >-
   三条独立的内容生产线：共享选题证据与内容核心包后，并行产出抖音视频、小红书图文/视频、公众号图文；
   自动合规初筛与人工 Gate 后才允许进入媒体和发布链路。创建该流水线时必须使用 gateMode="manual"。
 stages:
+  - name: GitHub 仓库事实包
+    role: trend-scout
+    prompt_template: |
+      检查输入中是否包含 `GitHub Public Repository Evidence Package`。
+      若存在，只能用其中的事实、README 摘录、Release 和 evidenceUrls，整理可审计的仓库事实包；
+      每个事实标注 source URL 和 fetchedAt。Star/Fork/Issue 仅作为抓取时快照，禁止将其表述为质量、销量或用户规模证明。
+      若不存在，输出“未提供 GitHub 仓库证据包”，并继续由下一阶段进行常规选题调研。
+      不得调用发布工具、不得编造安装步骤、性能数据或用户案例。
+
+      用户主题与输入：
+      {input}
+
   - name: 选题证据包
     role: trend-scout
+    depends_on: [0]
     prompt_template: |
       围绕以下主题制作可审计的选题证据包。
       固定规则：
@@ -21,6 +34,7 @@ stages:
 
   - name: 内容核心包
     role: content-strategist
+    depends_on: [0, 1]
     output_schema: docs/social-workflow/content-package.schema.json
     prompt_template: |
       根据以下选题证据包，生成符合 `docs/social-workflow/content-package.schema.json` 的内容核心包。
@@ -31,7 +45,7 @@ stages:
 
   - name: 抖音视频生产线
     role: douyin-writer
-    depends_on: [1]
+    depends_on: [2]
     prompt_template: |
       基于内容核心包，为抖音生成视频优先的最终脚本包。
       必须包含：唯一确定的标题、0-3 秒 Hook、逐镜头/时长/画面/口播/字幕、B-roll 清单、
@@ -43,7 +57,7 @@ stages:
 
   - name: 小红书生产线
     role: xiaohongshu-writer
-    depends_on: [1]
+    depends_on: [2]
     prompt_template: |
       基于内容核心包，生成小红书最终稿，并先选择一种明确形态：`图文` 或 `视频`，不得混淆。
       图文必须包含：唯一标题（≤20 字）、正文（≤1000 字）、6-8 张 1080x1440 卡片 brief、标签、CTA。
@@ -55,7 +69,7 @@ stages:
 
   - name: 公众号生产线
     role: wechat-writer
-    depends_on: [1]
+    depends_on: [2]
     prompt_template: |
       基于内容核心包，生成公众号最终稿包：唯一标题、120 字内摘要、Markdown 正文、
       HTML 排版结构、900x383 封面 brief、来源说明、标签和草稿箱所需字段清单。
@@ -66,7 +80,7 @@ stages:
 
   - name: 自动合规初筛
     role: social-compliance-reviewer
-    depends_on: [2, 3, 4]
+    depends_on: [3, 4, 5]
     output_schema: docs/social-workflow/compliance-report.schema.json
     prompt_template: |
       先调用 `content.compliance_check` 对以下三个独立生产线稿件执行确定性检查，
@@ -80,7 +94,7 @@ stages:
 
   - name: 人工审核材料
     role: social-review-coordinator
-    depends_on: [2, 3, 4, 5]
+    depends_on: [3, 4, 5, 6]
     requires_approval: true
     approval_kind: content
     output_schema: docs/social-workflow/review-package.schema.json
@@ -100,7 +114,7 @@ stages:
 
   - name: 小红书卡片生成
     role: xiaohongshu-visual-designer
-    depends_on: [3, 6]
+    depends_on: [4, 7]
     prompt_template: |
       必须从上下文读取系统生成的 Verified Human Approval Records。
       仅在存在有效人工审批且小红书内容形态为图文时，使用
@@ -114,7 +128,7 @@ stages:
 
   - name: 公众号草稿箱同步
     role: wechat-writer
-    depends_on: [4, 6]
+    depends_on: [5, 7]
     prompt_template: |
       必须从上下文读取系统生成的 Verified Human Approval Records。
       仅在存在有效人工审批时同步公众号草稿箱：
@@ -129,7 +143,7 @@ stages:
 
   - name: 媒体 QA
     role: media-qa
-    depends_on: [2, 3, 4, 6, 7, 8]
+    depends_on: [3, 4, 5, 7, 8, 9]
     output_schema: docs/social-workflow/media-qa-report.schema.json
     output_policy:
       field: status
@@ -150,7 +164,7 @@ stages:
 
   - name: 发布预检
     role: social-preflight
-    depends_on: [2, 3, 4, 6, 7, 8, 9]
+    depends_on: [3, 4, 5, 7, 8, 9, 10]
     output_schema: docs/social-workflow/preflight-result.schema.json
     output_policy:
       field: ok
@@ -171,7 +185,7 @@ stages:
 
   - name: 发布执行
     role: social-publisher
-    depends_on: [10]
+    depends_on: [11]
     requires_approval: true
     approval_kind: publish
     publish_tools:
@@ -191,7 +205,7 @@ stages:
 
   - name: 发布补偿计划
     role: social-ops
-    depends_on: [11]
+    depends_on: [12]
     prompt_template: |
       根据发布结果，按 `docs/social-workflow/compensation-plan.schema.json` 输出补偿计划。
       不自动撤回或重发；只有明确 transient 错误才能建议一次需要人工确认的重试。
@@ -201,7 +215,7 @@ stages:
 
   - name: 发布后监控计划
     role: social-analytics
-    depends_on: [11]
+    depends_on: [12]
     prompt_template: |
       为每个已发布平台调用 `social.monitor_plan`，持久化 48、72、168 小时的监控任务，
       然后生成当前空报告骨架。

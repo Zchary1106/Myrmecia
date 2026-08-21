@@ -866,13 +866,30 @@ function resolvePythonInvocation(): PythonInvocation | undefined {
 }
 
 async function isPortAvailable(port: number): Promise<boolean> {
-  return new Promise(resolveAvailable => {
+  // A wildcard listener (for example, a Next.js dev server) can occupy the
+  // same port while a probe bound only to 127.0.0.1 or ::1 still succeeds on
+  // macOS. The desktop server would then start on a colliding port and the
+  // health probe would keep talking to the other process. Probe wildcard
+  // addresses for both families before selecting a port.
+  const probeHost = (host: string): Promise<boolean> => new Promise(resolveAvailable => {
     const probe = createServer();
-    probe.once('error', () => resolveAvailable(false));
-    probe.listen({ host: '127.0.0.1', port, exclusive: true }, () => {
+    probe.once('error', (error: NodeJS.ErrnoException) => {
+      // Some machines have IPv6 disabled. In that case IPv4 remains a valid
+      // launch path; only treat an actual address-in-use error as occupied.
+      resolveAvailable(host === '::' && (error.code === 'EAFNOSUPPORT' || error.code === 'EADDRNOTAVAIL')
+        ? true
+        : false);
+    });
+    probe.listen({ host, port, exclusive: true }, () => {
       probe.close(error => resolveAvailable(!error));
     });
   });
+
+  const [ipv4Available, ipv6Available] = await Promise.all([
+    probeHost('0.0.0.0'),
+    probeHost('::'),
+  ]);
+  return ipv4Available && ipv6Available;
 }
 
 function healthCheck(origin: string, healthToken: string): Promise<boolean> {

@@ -4,6 +4,8 @@ stages:
   - name: 抖音选题调研
     role: trend-scout
     prompt_template: |
+      若输入包含 `GitHub Public Repository Evidence Package`，将其中 README、Release、事实快照和 evidenceUrls
+      作为项目功能的唯一事实来源；Star/Fork/Issue 只标为抓取时快照，不得当成口碑或效果证明。
       只围绕抖音平台调研以下主题，不生成小红书或公众号建议。
       使用 `mcp__douyin-search__search_videos` 或 `get_homefeed` 获取真实样本；
       最多调用 8 次，同一关键词不得重复检索。

@@ -5,6 +5,8 @@ stages:
     role: product-manager
     agent: pm
     prompt_template: |
+      若输入包含 `GitHub Public Repository Evidence Package`，将其中 README、Release、事实快照和 evidenceUrls
+      作为项目功能的唯一事实来源；Star/Fork/Issue 只标为抓取时快照，不得当成口碑或效果证明。
       分析以下主题的公众号文章选题价值。
       评估：目标读者、传播潜力、热度趋势、差异化角度。
       输出：推荐的切入角度和文章大纲。

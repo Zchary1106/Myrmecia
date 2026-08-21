@@ -5,6 +5,8 @@ stages:
     role: trend-scout
     prompt_template: |
       只围绕小红书平台调研以下主题，不生成抖音或公众号建议。
+      若输入包含 `GitHub Public Repository Evidence Package`，将其中 README、Release、事实快照和 evidenceUrls
+      作为项目功能的唯一事实来源；Star/Fork/Issue 只标为抓取时快照，不得当成口碑或效果证明。
       使用 `web.search` 查找公开可访问的小红书相关内容和搜索趋势。
       输出目标人群、关键词、竞品角度、差异化切入点和证据限制；
       无法取得的数据必须标记未知，不得编造互动数字。
