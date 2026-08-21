@@ -145,6 +145,18 @@ export const api = {
   models: {
     list: (params?: { enabled?: string }) =>
       request<ModelDefinition[]>(`/models${params ? '?' + new URLSearchParams(params) : ''}`),
+    create: (data: {
+      id: string;
+      provider: string;
+      displayName: string;
+      description?: string;
+      capabilityTags?: string[];
+      priority?: number;
+      fallbackGroup?: string;
+      tier?: 'strong' | 'balanced' | 'cheap' | 'fallback';
+      maxTokens?: number;
+    }) => request<ModelDefinition>('/models', { method: 'POST', body: JSON.stringify(data) }),
+    delete: (id: string) => request<{ success: boolean }>(`/models/${encodeURIComponent(id)}`, { method: 'DELETE' }),
     routes: () => request<ModelRoute[]>('/models/routes'),
     providerSettings: () => request<ModelProviderSettings>('/models/provider-settings'),
     selectProviderModel: (modelId: string) =>

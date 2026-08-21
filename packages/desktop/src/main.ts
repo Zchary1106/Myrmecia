@@ -1067,7 +1067,6 @@ function launchDashboard(): Promise<void> {
   launchPromise = (async () => {
     try {
       setStartupState('starting', '正在检查并启动本地服务…');
-      showSplashForFailure();
       await startServer();
       if (!serverOrigin) throw new Error('本地服务没有可用地址。');
       createDashboardWindow(serverOrigin);
@@ -1085,14 +1084,11 @@ function launchDashboard(): Promise<void> {
 
 async function beginStartup(): Promise<void> {
   try {
-    const configuration = await runtimeConfigurationSummary();
-    setStartupState(
-      'configuration',
-      configuration.recoveryMessage
-        ? `${configuration.recoveryMessage} 请重新选择模型 Provider。`
-        : '请选择模型 Provider 后启动本地服务。',
-    );
-    showSplashForFailure();
+    await runtimeConfigurationSummary();
+    // Provider configuration is not a startup gate. The dashboard is the
+    // home surface; users can configure models in Settings and restart the
+    // local server from there when they are ready.
+    void launchDashboard();
   } catch (error) {
     setStartupState('failed', error instanceof Error ? error.message : '无法读取桌面配置。');
     showSplashForFailure();
@@ -1172,7 +1168,6 @@ if (!hasSingleInstanceLock) {
         iconPath: layout.iconPath,
       });
     }
-    createSplashWindow();
     ipcMain.handle('desktop:get-startup-state', () => startupState);
     ipcMain.handle('desktop:run-doctor', () => runDoctor());
     ipcMain.handle('desktop:get-runtime-config', () => runtimeConfigurationSummary());
