@@ -15,6 +15,7 @@ import { workspaceIdFromRequest } from '../auth/tenant.js';
 import { createOperatorAction } from '../db/models/operator-action.js';
 import { parseBody, parseQuery, requireOperatorRole, sendError } from './http.js';
 import { parse as parseYaml } from 'yaml';
+import { researchPublicGitHubRepository } from '../github/github-repo-research.js';
 
 const platformSchema = z.enum(['douyin', 'xiaohongshu', 'wechat']);
 const scheduleStatusSchema = z.enum(['draft', 'scheduled', 'published', 'cancelled']);
@@ -54,8 +55,22 @@ const monitorQuerySchema = z.object({
   status: z.enum(['pending', 'running', 'completed', 'failed']).optional(),
 });
 
+const githubRepoResearchSchema = z.object({
+  repository: z.string().trim().min(3).max(500),
+});
+
 export function createSocialWorkflowRoutes(): Router {
   const router = Router();
+
+  router.post('/github-repo-research', async (req, res) => {
+    try {
+      requireOperatorRole(req, 'social.github-repo-research', ['admin', 'operator']);
+      const { repository } = parseBody(githubRepoResearchSchema, req);
+      res.json(await researchPublicGitHubRepository(repository));
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
 
   router.get('/schedules', (req, res) => {
     try {

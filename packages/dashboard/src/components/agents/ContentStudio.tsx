@@ -29,6 +29,11 @@ function isActivePipeline(pipeline: Pipeline) {
   return ['running', 'paused', 'blocked', 'awaiting_retry'].includes(pipeline.status);
 }
 
+function githubRepositoryFromBrief(value: string): string | null {
+  const match = value.match(/(?:https?:\/\/github\.com\/|\b)([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)(?:\.git)?(?:\b|\/)/i);
+  return match?.[1] || null;
+}
+
 
 
 
@@ -275,10 +280,17 @@ export function ContentStudio() {
     setBusyAction('create');
     setActionError(null);
     try {
+      const repository = githubRepositoryFromBrief(runInput);
+      const evidence = repository
+        ? await api.socialWorkflow.researchGitHubRepository(repository)
+        : null;
+      const pipelineInput = evidence
+        ? `${runInput.trim()}\n\n--- GitHub Public Repository Evidence Package (server-fetched; use as factual source) ---\n${JSON.stringify(evidence, null, 2)}`
+        : runInput.trim();
       const created = await api.pipelines.create({
         name: runName.trim() || `${workflow.shortLabel} · ${runInput.trim().slice(0, 42)}`,
         templateId: workflowTemplate.id,
-        input: runInput.trim(),
+        input: pipelineInput,
         gateMode,
       });
       upsertPipeline(created);
@@ -730,7 +742,7 @@ export function ContentStudio() {
                     rows={isDouyinStudio ? 7 : 5}
                     placeholder={isDouyinStudio
                       ? 'Describe the topic and audience, then provide the real absolute video path, for example:\nvideo_path: /Users/me/Videos/final.mp4\nThe path must exist before media QA and publishing.'
-                      : 'Describe the audience, topic, evidence to cover, and desired outcome…'}
+                      : 'Describe the audience, topic, evidence to cover, and desired outcome…\nPaste a public GitHub URL to automatically attach README, releases, and dated repository facts.'}
                     className="mt-1.5 w-full resize-y rounded-lg border border-border bg-background px-3 py-2 text-sm leading-relaxed outline-none placeholder:text-gray-700 focus:border-accent"
                   />
                 </label>
