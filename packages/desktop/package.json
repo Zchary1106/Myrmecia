@@ -86,6 +86,9 @@
         "nsis"
       ]
     },
+    "nsis": {
+      "runAfterFinish": false
+    },
     "linux": {
       "icon": "assets/icon.png",
       "target": [
