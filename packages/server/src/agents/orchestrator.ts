@@ -43,6 +43,10 @@ export interface OrchestrationResult {
   tier1Result?: Tier1Result;
 }
 
+export type OrchestrationOptions = Pick<Task, 'modelId' | 'reasoningEffort' | 'contextLength'> & {
+  workspacePath?: string;
+};
+
 // ---------- Schema ----------
 
 export const ORCHESTRATION_SCHEMA = `
@@ -127,7 +131,7 @@ export class Orchestrator {
   /**
    * Unified entry: evaluate intent → decide strategy → dispatch
    */
-  async plan(input: string, intent: TaskIntent): Promise<OrchestrationResult> {
+  async plan(input: string, intent: TaskIntent, options: OrchestrationOptions = {}): Promise<OrchestrationResult> {
     const db = getDb();
     const id = `orch_${uuid().slice(0, 8)}`;
 
@@ -159,13 +163,13 @@ export class Orchestrator {
 
       if (intent.complexity === 'trivial' || (intent.suggestedMode === 'direct' && directAgent)) {
         // Direct dispatch — no decomposition needed
-        tasks = await this.directDispatch(id, input, intent);
+        tasks = await this.directDispatch(id, input, intent, options);
       } else if (intent.suggestedMode === 'pipeline' && intent.suggestedTemplate) {
         // Pipeline mode
         tasks = await this.pipelineDispatch(id, input, intent);
       } else {
         // Complex task — decompose into sub-tasks
-        tasks = await this.decomposeAndDispatch(id, input, intent);
+        tasks = await this.decomposeAndDispatch(id, input, intent, options);
       }
 
       const taskIds = tasks.map(t => t.id);
@@ -181,7 +185,7 @@ export class Orchestrator {
   }
 
   /** Trivial task: dispatch to single agent directly */
-  private async directDispatch(orchestrationId: string, input: string, intent: TaskIntent): Promise<Task[]> {
+  private async directDispatch(orchestrationId: string, input: string, intent: TaskIntent, options: OrchestrationOptions): Promise<Task[]> {
     updateOrchestration(orchestrationId, { status: 'dispatching' });
 
     // Only assign an agent that actually exists, otherwise leave it unassigned
@@ -197,6 +201,10 @@ export class Orchestrator {
       assigneeId,
       input,
       priority: 'normal',
+      workspacePath: options.workspacePath,
+      modelId: options.modelId,
+      reasoningEffort: options.reasoningEffort,
+      contextLength: options.contextLength,
     });
 
     eventBus.emit('orchestration:task_dispatched', {
@@ -236,7 +244,7 @@ export class Orchestrator {
   }
 
   /** Complex task: decompose via MasterAgent then dispatch */
-  private async decomposeAndDispatch(orchestrationId: string, input: string, intent: TaskIntent): Promise<Task[]> {
+  private async decomposeAndDispatch(orchestrationId: string, input: string, intent: TaskIntent, options: OrchestrationOptions): Promise<Task[]> {
     updateOrchestration(orchestrationId, { status: 'dispatching' });
 
     // Create parent task
@@ -246,6 +254,10 @@ export class Orchestrator {
       mode: 'master',
       input,
       priority: intent.complexity === 'epic' ? 'high' : 'normal',
+      workspacePath: options.workspacePath,
+      modelId: options.modelId,
+      reasoningEffort: options.reasoningEffort,
+      contextLength: options.contextLength,
     });
 
     // Decompose using MasterAgent
