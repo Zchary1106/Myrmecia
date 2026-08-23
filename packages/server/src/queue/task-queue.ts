@@ -420,16 +420,17 @@ export class TaskQueue {
    */
   async recoverRunningTasks() {
     const runningTasks = listTasks({ status: 'running' });
+    const waitingForToolTasks = listTasks({ status: 'waiting_for_tool' });
     const assignedTasks = listTasks({ status: 'assigned' });
     const queuedTasks = listTasks({ status: 'queued' });
-    const toRecover = [...runningTasks, ...assignedTasks, ...queuedTasks];
+    const toRecover = [...runningTasks, ...waitingForToolTasks, ...assignedTasks, ...queuedTasks];
 
     if (toRecover.length === 0) return;
 
     logger.info({ count: toRecover.length }, 'Recovering interrupted tasks');
 
     for (const task of toRecover) {
-      const wasInFlight = task.status === 'running' || task.status === 'assigned';
+      const wasInFlight = task.status === 'running' || task.status === 'waiting_for_tool' || task.status === 'assigned';
       // A publish that was merely waiting in the durable task store can be
       // scheduled normally. Only an in-flight publish needs renewed user
       // confirmation, because its external side effect may be indeterminate.

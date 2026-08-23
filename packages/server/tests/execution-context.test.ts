@@ -69,4 +69,18 @@ describe('durable execution context', () => {
     expect(listTaskCheckpoints(stored.id)).toHaveLength(2);
     expect(getLatestTaskCheckpoint(stored.id)).toMatchObject({ id: latest.id, phase: 'testing', blocked: ['redis unavailable'], lastValidation: { exitCode: 1 }, resumeHint: 'Fix test failure' });
   });
+
+  it('persists context occupancy independently from the durable task contract', () => {
+    const stored = createTask({ title: 'Budgeted', description: 'Measure prompt use', mode: 'direct', input: 'Measure it' });
+    const context = persistExecutionContext(stored, {
+      contextUsage: {
+        estimatedInputTokens: 2_400,
+        maxInputTokens: 16_000,
+        reservedOutputTokens: 2_000,
+        occupancyPercent: 17,
+        updatedAt: '2026-08-23T00:00:00.000Z',
+      },
+    });
+    expect(getExecutionContext(stored.id)?.contextUsage).toEqual(context.contextUsage);
+  });
 });

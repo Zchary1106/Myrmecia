@@ -17,7 +17,7 @@ import { createApiAuthMiddleware } from '../src/auth/token-auth.js';
 import { createApiKey } from '../src/auth/api-keys.js';
 import { metricsHandler } from '../src/observability/telemetry.js';
 import { addWorkspaceMember, createOrganization, createUser, createWorkspace, tenantMiddleware } from '../src/auth/tenant.js';
-import { createTask, updateTask } from '../src/db/models/task.js';
+import { createTask, getTask, updateTask } from '../src/db/models/task.js';
 import { createInboxEntry } from '../src/db/models/inbox.js';
 import { createAgent } from '../src/db/models/agent.js';
 import { createTemplate } from '../src/db/models/pipeline.js';
@@ -281,6 +281,33 @@ describe('control routes', () => {
       expect(retryTask).toHaveBeenCalledWith(task.id);
       const allCheckpoints = await jsonFetch<any[]>(baseUrl, `/tasks/${task.id}/checkpoints`);
       expect(allCheckpoints.body[0]).toMatchObject({ phase: 'resuming' });
+    });
+  });
+
+  it('creates an independent planning task when an operator replans a task', async () => {
+    const task = createTask({ title: 'Needs replan', description: 'Repair the feature', input: 'repair', mode: 'direct' });
+    updateTask(task.id, { status: 'failed', error: 'tests are red', completedAt: new Date().toISOString() });
+    const enqueue = vi.fn(async (input: any) => createTask({
+      ...input,
+      input: input.input,
+      description: input.description,
+      title: input.title,
+      mode: input.mode,
+    }));
+    const app = express();
+    app.use(express.json());
+    app.use('/tasks', createTaskRoutes({ enqueue } as unknown as TaskQueue));
+
+    await withApp(app, async (baseUrl) => {
+      const response = await jsonFetch<any>(baseUrl, `/tasks/${task.id}/replan`, { method: 'POST' });
+      expect(response).toMatchObject({ status: 201, body: { mode: 'direct' } });
+      expect(response.body.title).toContain('Replan: Needs replan');
+      expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: task.workspaceId, workspacePath: task.workspacePath }));
+      // Source linkage is context-only: the original task remains a leaf task
+      // and cannot be accidentally treated as a Master parent during recovery.
+      expect(getTask(task.id)?.parentTaskId).toBeNull();
+      const context = await jsonFetch<any>(baseUrl, `/tasks/${response.body.id}/context`);
+      expect(context.body.parentTaskId).toBe(task.id);
     });
   });
 

@@ -11,9 +11,10 @@ import { requestCanAccessWorkspace, workspaceIdFromRequest } from '../auth/tenan
 import type { Task } from '../types.js';
 import { getModel } from '../models/model-registry.js';
 import { getLatestTaskCheckpoint, listTaskCheckpoints } from '../db/models/execution-context.js';
-import { checkpointExecutionContext, loadExecutionContext } from '../agents/execution-context.js';
+import { checkpointExecutionContext, loadExecutionContext, persistExecutionContext } from '../agents/execution-context.js';
+import { listAgents } from '../db/models/agent.js';
 
-const taskStatusSchema = z.enum(['pending', 'queued', 'assigned', 'running', 'review', 'done', 'failed', 'cancelled']);
+const taskStatusSchema = z.enum(['pending', 'queued', 'assigned', 'running', 'waiting_for_tool', 'review', 'done', 'failed', 'cancelled']);
 const taskModeSchema = z.enum(['master', 'direct', 'pipeline']);
 const prioritySchema = z.enum(['low', 'normal', 'high', 'urgent']);
 
@@ -291,6 +292,58 @@ export function createTaskRoutes(taskQueue: TaskQueue): Router {
       sendError(res, err?.message?.includes('not retryable')
         ? new HttpError(400, 'TASK_RESUME_FAILED', err.message)
         : err);
+    }
+  });
+
+  // Replanning is deliberately a new, independent planning task. It retains a
+  // durable source-task reference in ExecutionContext, rather than pretending
+  // that a failed process or its old plan can be resumed.
+  router.post('/:id/replan', async (req, res) => {
+    try {
+      const task = getAccessibleTask(req, req.params.id);
+      const actor = requireOperatorRole(req, 'task.replan', ['admin', 'operator']);
+      const planner = listAgents({ workspaceId: task.workspaceId }).find(agent => agent.role === 'orchestrator')
+        || listAgents({ workspaceId: task.workspaceId }).find(agent => agent.id === 'master');
+      const input = [
+        'Create a revised execution plan for the task below. Do not modify files.',
+        'Return a concise ordered plan, acceptance checks, risks, and the first executable next step.',
+        `Original task: ${task.description || task.title}`,
+        task.error ? `Previous failure: ${task.error}` : '',
+      ].filter(Boolean).join('\n\n');
+      const replanned = await taskQueue.enqueue({
+        title: `Replan: ${task.title}`.slice(0, 160),
+        description: input,
+        input,
+        mode: 'direct',
+        priority: task.priority,
+        assigneeId: planner?.id,
+        modelId: task.modelId,
+        reasoningEffort: task.reasoningEffort,
+        contextLength: task.contextLength,
+        workdir: task.workdir,
+        workspacePath: task.workspacePath,
+        workspaceId: task.workspaceId,
+        domainId: task.domainId,
+      });
+      const context = loadExecutionContext(replanned);
+      checkpointExecutionContext(context, {
+        phase: 'replanning', completed: [], pending: ['revised plan'], blocked: [],
+        resumeHint: `Created from task ${task.id}; review the plan before starting new implementation work.`,
+      });
+      // Preserve a reference without setting Task.parentTaskId: that field has
+      // scheduling semantics for Master and must not turn the old task into a parent.
+      persistExecutionContext(replanned, {
+        parentTaskId: task.id,
+        goal: `Replan the failed or completed work: ${task.description || task.title}`,
+        constraints: [`Source task: ${task.id}`, ...(task.error ? [`Previous failure: ${task.error}`] : [])],
+      });
+      createOperatorAction({
+        action: 'task.replan', actor, targetType: 'task', targetId: replanned.id, taskId: replanned.id,
+        metadata: { sourceTaskId: task.id },
+      });
+      res.status(201).json(replanned);
+    } catch (err) {
+      sendError(res, err);
     }
   });
 

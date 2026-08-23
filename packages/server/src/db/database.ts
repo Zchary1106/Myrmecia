@@ -509,6 +509,11 @@ function applyMigrations(db: DbDriver, migrations: Migration[]) {
       db.run('INSERT INTO schema_migrations (id) VALUES (?) ON CONFLICT DO NOTHING', migration.id);
       continue;
     }
+    if (migration.id === '202608230004_add_waiting_for_tool_task_status') {
+      applyTaskWaitingForToolMigration(db);
+      db.run('INSERT INTO schema_migrations (id) VALUES (?) ON CONFLICT DO NOTHING', migration.id);
+      continue;
+    }
 
     const sql = db.backend === 'postgres' ? convertToPostgres(migration.sql) : migration.sql;
 
@@ -570,6 +575,75 @@ function applyMigrations(db: DbDriver, migrations: Migration[]) {
           DROP TABLE pipelines;
           ALTER TABLE pipelines_migrated RENAME TO pipelines;
           CREATE INDEX IF NOT EXISTS idx_pipelines_workspace ON pipelines(workspace_id);
+        `);
+      });
+    } finally {
+      db.exec('PRAGMA foreign_keys = ON');
+    }
+  }
+
+  function applyTaskWaitingForToolMigration(db: DbDriver) {
+    const row = db.get<{ sql: string }>("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'tasks'");
+    if (!row || row.sql.includes("'waiting_for_tool'")) return;
+
+    if (db.backend === 'postgres') {
+      db.exec(`
+        ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_status_check;
+        ALTER TABLE tasks ADD CONSTRAINT tasks_status_check
+          CHECK(status IN ('pending','queued','assigned','running','waiting_for_tool','review','done','failed','cancelled'));
+      `);
+      return;
+    }
+
+    db.exec('PRAGMA foreign_keys = OFF');
+    try {
+      db.transaction(() => {
+        db.exec(`
+          CREATE TABLE tasks_migrated (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            description TEXT NOT NULL,
+            mode TEXT NOT NULL CHECK(mode IN ('master','direct','pipeline')),
+            status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','queued','assigned','running','waiting_for_tool','review','done','failed','cancelled')),
+            priority TEXT NOT NULL DEFAULT 'normal' CHECK(priority IN ('low','normal','high','urgent')),
+            assignee_id TEXT REFERENCES agents(id),
+            created_by TEXT NOT NULL DEFAULT 'user',
+            parent_task_id TEXT REFERENCES tasks(id),
+            pipeline_id TEXT REFERENCES pipelines(id),
+            stage_index INTEGER,
+            input TEXT NOT NULL,
+            output TEXT,
+            workdir TEXT,
+            error TEXT,
+            retry_count INTEGER DEFAULT 0,
+            max_retries INTEGER DEFAULT 2,
+            depends_on JSON DEFAULT '[]',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            started_at DATETIME,
+            completed_at DATETIME,
+            workspace_path TEXT,
+            workspace_id TEXT NOT NULL DEFAULT 'default',
+            domain_id TEXT,
+            model_id TEXT,
+            reasoning_effort TEXT CHECK(reasoning_effort IN ('low','medium','high')),
+            context_length INTEGER,
+            requested_reasoning_effort TEXT
+          );
+          INSERT INTO tasks_migrated (
+            id, title, description, mode, status, priority, assignee_id, created_by, parent_task_id,
+            pipeline_id, stage_index, input, output, workdir, error, retry_count, max_retries,
+            depends_on, created_at, started_at, completed_at, workspace_path, workspace_id, domain_id,
+            model_id, reasoning_effort, context_length, requested_reasoning_effort
+          ) SELECT
+            id, title, description, mode, status, priority, assignee_id, created_by, parent_task_id,
+            pipeline_id, stage_index, input, output, workdir, error, retry_count, max_retries,
+            depends_on, created_at, started_at, completed_at, workspace_path, workspace_id, domain_id,
+            model_id, reasoning_effort, context_length, requested_reasoning_effort
+          FROM tasks;
+          DROP TABLE tasks;
+          ALTER TABLE tasks_migrated RENAME TO tasks;
+          CREATE INDEX IF NOT EXISTS idx_tasks_workspace ON tasks(workspace_id);
+          CREATE INDEX IF NOT EXISTS idx_tasks_domain ON tasks(domain_id);
         `);
       });
     } finally {

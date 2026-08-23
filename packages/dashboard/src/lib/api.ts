@@ -132,6 +132,7 @@ export const api = {
     context: (id: string) => request<ExecutionContext>(`/tasks/${id}/context`),
     checkpoints: (id: string) => request<TaskCheckpoint[]>(`/tasks/${id}/checkpoints`),
     resume: (id: string) => request<Task>(`/tasks/${id}/resume`, { method: 'POST' }),
+    replan: (id: string) => request<Task>(`/tasks/${id}/replan`, { method: 'POST' }),
   },
   workspaces: {
     createLocal: (name?: string) => request<{ id: string; name: string }>('/workspaces/local', {

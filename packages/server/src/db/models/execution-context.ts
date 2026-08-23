@@ -7,6 +7,24 @@ function parseJson<T>(value: unknown, fallback: T): T {
   try { return JSON.parse(value) as T; } catch { return fallback; }
 }
 
+function parseContextUsage(value: unknown): ExecutionContext['contextUsage'] {
+  const parsed = parseJson<Record<string, unknown>>(value, {});
+  if (
+    typeof parsed.estimatedInputTokens !== 'number'
+    || typeof parsed.maxInputTokens !== 'number'
+    || typeof parsed.reservedOutputTokens !== 'number'
+    || typeof parsed.occupancyPercent !== 'number'
+    || typeof parsed.updatedAt !== 'string'
+  ) return undefined;
+  return {
+    estimatedInputTokens: parsed.estimatedInputTokens,
+    maxInputTokens: parsed.maxInputTokens,
+    reservedOutputTokens: parsed.reservedOutputTokens,
+    occupancyPercent: parsed.occupancyPercent,
+    updatedAt: parsed.updatedAt,
+  };
+}
+
 function rowToExecutionContext(row: any): ExecutionContext {
   return {
     id: row.id,
@@ -22,6 +40,7 @@ function rowToExecutionContext(row: any): ExecutionContext {
     constraints: parseJson<string[]>(row.constraints, []),
     parentTaskId: row.parent_task_id || undefined,
     codeBaseline: parseJson(row.code_baseline, {}),
+    contextUsage: parseContextUsage(row.context_usage),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -50,8 +69,8 @@ export function upsertExecutionContext(input: ExecutionContextInput): ExecutionC
   db.run(`
     INSERT INTO execution_contexts (
       id, task_id, workspace_id, workspace_path, workdir, provider, model_id,
-      reasoning_effort, context_length, goal, constraints, parent_task_id, code_baseline
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      reasoning_effort, context_length, goal, constraints, parent_task_id, code_baseline, context_usage
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(task_id) DO UPDATE SET
       workspace_id = excluded.workspace_id,
       workspace_path = excluded.workspace_path,
@@ -64,13 +83,14 @@ export function upsertExecutionContext(input: ExecutionContextInput): ExecutionC
       constraints = excluded.constraints,
       parent_task_id = excluded.parent_task_id,
       code_baseline = excluded.code_baseline,
+      context_usage = excluded.context_usage,
       updated_at = CURRENT_TIMESTAMP
   `,
     id, input.taskId, input.workspaceId || 'default', input.workspacePath || null,
     input.workdir || null, input.provider || null, input.modelId || null,
     input.reasoningEffort || null, input.contextLength ?? null, input.goal,
     JSON.stringify(input.constraints || []), input.parentTaskId || null,
-    JSON.stringify(input.codeBaseline || {}),
+    JSON.stringify(input.codeBaseline || {}), JSON.stringify(input.contextUsage || {}),
   );
   return getExecutionContext(input.taskId)!;
 }
