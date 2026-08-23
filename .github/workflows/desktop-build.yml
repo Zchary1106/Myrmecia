@@ -146,7 +146,12 @@ jobs:
           $installer = Get-ChildItem packages/desktop/release/*.exe | Select-Object -First 1
           if (-not $installer) { throw 'Windows NSIS installer was not generated' }
           $installDir = Join-Path $env:RUNNER_TEMP 'Myrmecia-install-smoke'
-          Start-Process -FilePath $installer.FullName -ArgumentList "/S /D=$installDir" -Wait -NoNewWindow
+          $process = Start-Process -FilePath $installer.FullName -ArgumentList "/S /D=$installDir" -PassThru -NoNewWindow
+          if (-not $process.WaitForExit(120000)) {
+            Stop-Process -Id $process.Id -Force
+            throw 'NSIS silent installation timed out after 120 seconds'
+          }
+          if ($process.ExitCode -ne 0) { throw "NSIS installer exited with code $($process.ExitCode)" }
           $app = Get-ChildItem $installDir -Filter 'Myrmecia.exe' -Recurse | Select-Object -First 1
           if (-not $app) { throw 'NSIS installer did not install Myrmecia.exe' }
           Get-FileHash $installer.FullName -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  $($installer.Name)" } | Set-Content packages/desktop/release/SHA256SUMS-windows.txt
