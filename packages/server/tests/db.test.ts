@@ -125,14 +125,19 @@ describe('Database Schema', () => {
       { index: 1, name: 'Code', agentRole: 'dev', status: 'pending' },
     ]);
     db.prepare(`
-      INSERT INTO pipelines (id, name, stages, gate_mode, input) VALUES (?, ?, ?, ?, ?)
-    `).run('pipe1', 'Test Pipeline', stages, 'auto', 'Build something');
+      INSERT INTO pipelines (
+        id, name, stages, gate_mode, input, model_id, reasoning_effort, context_length
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run('pipe1', 'Test Pipeline', stages, 'auto', 'Build something', 'gpt-5', 'high', 128000);
 
     const pipeline = db.prepare('SELECT * FROM pipelines WHERE id = ?').get('pipe1') as any;
     expect(pipeline).toBeDefined();
     const parsed = JSON.parse(pipeline.stages);
     expect(parsed).toHaveLength(2);
     expect(parsed[0].name).toBe('Spec');
+    expect(pipeline.model_id).toBe('gpt-5');
+    expect(pipeline.reasoning_effort).toBe('high');
+    expect(pipeline.context_length).toBe(128000);
   });
 
   it('should cascade delete task logs when task is deleted', () => {

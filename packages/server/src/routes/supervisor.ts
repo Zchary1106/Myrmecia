@@ -82,6 +82,7 @@ export function createSupervisorRoutes(taskQueue: TaskQueue, pipelineEngine: Pip
       // 3. Orchestrate (unified entry — handles trivial, pipeline, and complex)
       const result = await orchestrator.plan(input, intent, {
         workspacePath,
+        workspaceId: workspaceIdFromRequest(req),
         modelId,
         reasoningEffort: body.reasoningEffort,
         contextLength: body.contextLength,

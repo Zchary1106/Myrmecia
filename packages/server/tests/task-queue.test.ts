@@ -73,6 +73,23 @@ describe('TaskQueue failure state handling', () => {
     expect(stored.error).toBe('temporary capacity');
   });
 
+  it('records a terminal timeout as a failed task with an explicit timed_out reason', async () => {
+    const agent = createAgent({ id: 'timeout-agent', name: 'Timeout Agent', role: 'dev' });
+    const task = createTask({
+      title: 'timeout', description: 'timeout', input: 'run', mode: 'direct', assigneeId: agent.id, maxRetries: 0,
+    });
+    const queue = new TaskQueue({
+      executeTask: vi.fn(async () => { throw new Error('TIMED_OUT: wall-clock limit reached after 300s'); }),
+    } as unknown as AgentManager);
+
+    await expect((queue as any).processJob(task.id, { attemptsMade: 0, opts: { attempts: 1 } }))
+      .rejects.toThrow('TIMED_OUT');
+
+    expect(getTask(task.id)?.status).toBe('failed');
+    expect(getTask(task.id)?.error).toContain('TIMED_OUT:');
+    expect(getTaskLogs(task.id).some(log => log.message.includes('[timed_out]'))).toBe(true);
+  });
+
   it('skips decomposed parent tasks during recovery, leaving them for the master monitor', async () => {
     const agent = createAgent({ id: 'leaf-agent', name: 'Leaf Agent', role: 'dev' });
 
@@ -100,6 +117,40 @@ describe('TaskQueue failure state handling', () => {
     expect(executedTaskIds).not.toContain(parent.id);
     // The genuine leaf task was recovered and dispatched.
     expect(executedTaskIds).toContain(leaf.id);
+  });
+
+  it('recovers persisted queued work and documents the memory-queue process boundary', async () => {
+    const agent = createAgent({ id: 'queued-agent', name: 'Queued Agent', role: 'dev' });
+    const queued = createTask({ title: 'queued', description: 'q', input: 'q', mode: 'direct', assigneeId: agent.id });
+    const running = createTask({ title: 'running', description: 'r', input: 'r', mode: 'direct', assigneeId: agent.id });
+    updateTask(queued.id, { status: 'queued' });
+    updateTask(running.id, { status: 'running' });
+    const executed: string[] = [];
+    const queue = new TaskQueue({
+      executeTask: vi.fn(async (_agentId: string, task: any) => { executed.push(task.id); }),
+    } as unknown as AgentManager);
+
+    await queue.recoverRunningTasks();
+
+    expect(executed).toEqual(expect.arrayContaining([queued.id, running.id]));
+    expect(getTaskLogs(running.id).some(log => log.message.includes('cannot resume an in-flight process'))).toBe(true);
+  });
+
+  it('does not invalidate a publish task that was only queued at restart', async () => {
+    const publisher = createAgent({ id: 'social-publisher', name: 'Publisher', role: 'dev' });
+    const task = createTask({
+      title: 'queued publish', description: 'p', input: 'p', mode: 'pipeline', assigneeId: publisher.id,
+    });
+    updateTask(task.id, { status: 'queued' });
+    const executed: string[] = [];
+    const queue = new TaskQueue({
+      executeTask: vi.fn(async (_agentId: string, queuedTask: any) => { executed.push(queuedTask.id); }),
+    } as unknown as AgentManager);
+
+    await queue.recoverRunningTasks();
+
+    expect(executed).toContain(task.id);
+    expect(getTask(task.id)?.status).not.toBe('failed');
   });
 
   it('cascade-cancels unmet dependents when a subtask fails (no permanent queue hang)', async () => {

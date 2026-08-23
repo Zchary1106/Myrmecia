@@ -105,3 +105,96 @@ export class ContextManager {
 }
 
 export const contextManager = new ContextManager();
+
+
+/**
+ * Persistable context state for long-running work. Raw artifacts remain
+ * outside the prompt; only their references and the latest summary are
+ * carried to subsequent task phases.
+ */
+export interface ManagedContextArtifactReference {
+  id: string;
+  kind: 'tool_output' | 'test_output' | 'diff' | 'log';
+  artifactId: string;
+  label: string;
+  createdAt: string;
+}
+
+export interface ManagedContextSummary {
+  version: number;
+  content: string;
+  createdAt: string;
+}
+
+export interface ManagedContextState {
+  goals: string[];
+  constraints: string[];
+  openQuestions: string[];
+  failureEvidence: string[];
+  summaries: ManagedContextSummary[];
+  artifacts: ManagedContextArtifactReference[];
+  recentWindow: string[];
+}
+
+export function createManagedContextState(
+  initial: Pick<ManagedContextState, 'goals' | 'constraints'>,
+): ManagedContextState {
+  return {
+    goals: [...initial.goals],
+    constraints: [...initial.constraints],
+    openQuestions: [],
+    failureEvidence: [],
+    summaries: [],
+    artifacts: [],
+    recentWindow: [],
+  };
+}
+
+export function appendManagedContextSummary(
+  state: ManagedContextState,
+  content: string,
+  createdAt = new Date().toISOString(),
+): ManagedContextState {
+  const version = (state.summaries.at(-1)?.version ?? 0) + 1;
+  return { ...state, summaries: [...state.summaries, { version, content, createdAt }] };
+}
+
+export function appendManagedContextArtifact(
+  state: ManagedContextState,
+  artifact: ManagedContextArtifactReference,
+): ManagedContextState {
+  return { ...state, artifacts: [...state.artifacts, artifact] };
+}
+
+/**
+ * Returns prompt-safe material. Artifact labels are indexes for on-demand
+ * retrieval; artifact bodies must never be injected by this function.
+ */
+export function buildManagedContextPrompt(
+  state: ManagedContextState,
+  recentWindowLimit = 6,
+): {
+  goals: string[];
+  constraints: string[];
+  openQuestions: string[];
+  failureEvidence: string[];
+  latestSummary?: ManagedContextSummary;
+  artifactReferences: ManagedContextArtifactReference[];
+  recentWindow: string[];
+} {
+  return {
+    goals: [...state.goals],
+    constraints: [...state.constraints],
+    openQuestions: [...state.openQuestions],
+    failureEvidence: [...state.failureEvidence],
+    latestSummary: state.summaries.at(-1),
+    artifactReferences: state.artifacts.map(({ id, kind, artifactId, label, createdAt }) => ({
+      id,
+      kind,
+      artifactId,
+      label,
+      createdAt,
+    })),
+    recentWindow: state.recentWindow.slice(-recentWindowLimit),
+  };
+}
