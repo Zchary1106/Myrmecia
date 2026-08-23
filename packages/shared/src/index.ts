@@ -182,6 +182,7 @@ export interface SkillExecutorConfig {
 export type TaskMode = 'master' | 'direct' | 'pipeline';
 export type TaskStatus = 'pending' | 'queued' | 'assigned' | 'running' | 'review' | 'done' | 'failed' | 'cancelled';
 export type Priority = 'low' | 'normal' | 'high' | 'urgent';
+export type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
 export interface Task {
   id: string;
@@ -196,6 +197,9 @@ export interface Task {
   pipelineId?: string;
   stageIndex?: number;
   input: string;
+  modelId?: string;
+  reasoningEffort?: ReasoningEffort;
+  contextLength?: number;
   output?: string;
   workdir?: string;
   workspacePath?: string;
@@ -340,16 +344,34 @@ export interface ProviderModelOption {
   id: string;
   name: string;
   supportsReasoningEffort: boolean;
+  supportedReasoningEfforts?: ReasoningEffort[];
+  maxTokens?: number;
+  source?: 'provider' | 'registry';
   policyState?: 'enabled' | 'disabled' | 'unconfigured';
   policyTerms?: string;
   billingMultiplier?: number;
   selectable: boolean;
 }
 
+export interface ProviderAccount {
+  login: string;
+  host: string;
+  active: boolean;
+}
+
 export interface ModelProviderSettings {
   provider: string;
   selectedModelId?: string;
   models: ProviderModelOption[];
+  account?: {
+    authenticated: boolean;
+    login?: string;
+    host?: string;
+    authType?: string;
+    statusMessage?: string;
+  };
+  accounts?: ProviderAccount[];
+  source?: 'provider' | 'registry';
   error?: string;
 }
 
@@ -365,7 +387,7 @@ export interface ModelRoute {
 export interface ModelSelection {
   modelId: string;
   reason: string;
-  source: 'task.route' | 'agent.model' | 'agent.config.model' | 'agent.config.modelPolicy' | 'role.route' | 'global.route' | 'env.default' | 'runtime.default' | 'fallback';
+  source: 'task.requestedModel' | 'task.route' | 'agent.model' | 'agent.config.model' | 'agent.config.modelPolicy' | 'role.route' | 'global.route' | 'env.default' | 'runtime.default' | 'fallback';
   requestedModelId?: string;
   fallbackGroup?: string;
   fallbackModelId?: string;

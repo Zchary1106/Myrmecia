@@ -1,6 +1,6 @@
 import { getDb } from '../database.js';
 import { v4 as uuid } from 'uuid';
-import type { Task, TaskMode, TaskStatus, Priority, LogEntry } from '../../types.js';
+import type { ReasoningEffort, Task, TaskMode, TaskStatus, Priority, LogEntry } from '../../types.js';
 
 function rowToTask(row: any): Task {
   return {
@@ -11,6 +11,9 @@ function rowToTask(row: any): Task {
     parentTaskId: row.parent_task_id,
     pipelineId: row.pipeline_id,
     stageIndex: row.stage_index,
+    modelId: row.model_id || undefined,
+    reasoningEffort: row.requested_reasoning_effort || row.reasoning_effort || undefined,
+    contextLength: row.context_length || undefined,
     workspacePath: row.workspace_path,
     workspaceId: row.workspace_id || 'default',
     domainId: row.domain_id || undefined,
@@ -33,6 +36,9 @@ export function createTask(data: {
   pipelineId?: string;
   stageIndex?: number;
   input: string;
+  modelId?: string;
+  reasoningEffort?: ReasoningEffort;
+  contextLength?: number;
   workdir?: string;
   workspacePath?: string;
   workspaceId?: string;
@@ -45,13 +51,16 @@ export function createTask(data: {
 
   db.run(`
     INSERT INTO tasks (id, title, description, mode, priority, assignee_id, created_by,
-      parent_task_id, pipeline_id, stage_index, input, workdir, workspace_path, workspace_id, domain_id, depends_on, max_retries)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      parent_task_id, pipeline_id, stage_index, input, model_id, reasoning_effort, requested_reasoning_effort, context_length,
+      workdir, workspace_path, workspace_id, domain_id, depends_on, max_retries)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
     id, data.title, data.description, data.mode,
     data.priority || 'normal', data.assigneeId || null, data.createdBy || 'user',
     data.parentTaskId || null, data.pipelineId || null, data.stageIndex ?? null,
-    data.input, data.workdir || null, data.workspacePath || null,
+    data.input, data.modelId || null, data.reasoningEffort && ['low', 'medium', 'high'].includes(data.reasoningEffort) ? data.reasoningEffort : null,
+    data.reasoningEffort || null, data.contextLength || null,
+    data.workdir || null, data.workspacePath || null,
     data.workspaceId || 'default', data.domainId || null,
     JSON.stringify(data.dependsOn || []), data.maxRetries ?? 2
   );

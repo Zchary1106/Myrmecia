@@ -9,6 +9,7 @@ interface MyrmeciaWeChatConfiguration {
 interface MyrmeciaDesktopIntegrations {
   getRuntimeConfig(): Promise<MyrmeciaRuntimeConfiguration>;
   saveRuntimeConfig(input: { provider: 'openai-compatible' | 'deepseek' | 'copilot'; baseUrl?: string; model?: string; apiKey?: string }): Promise<MyrmeciaRuntimeConfiguration>;
+  loginCopilot(): Promise<{ ok: boolean; message: string }>;
   getWeChatConfig(): Promise<MyrmeciaWeChatConfiguration>;
   saveWeChatConfig(input: { appId: string; appSecret: string }): Promise<MyrmeciaWeChatConfiguration>;
   clearWeChatConfig(): Promise<MyrmeciaWeChatConfiguration>;

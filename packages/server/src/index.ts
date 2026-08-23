@@ -109,6 +109,7 @@ import { createSocialWorkflowRoutes } from './routes/social-workflow.js';
 import { SocialMonitorWorker } from './workers/social-monitor.js';
 import { GitHubFixService } from './github/github-fix-service.js';
 import { createGitHubFixRoutes } from './routes/github-fixes.js';
+import { createWorkspaceSourceRoutes } from './routes/workspace-sources.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3000;
@@ -356,6 +357,7 @@ async function main() {
   app.use('/api/v1/memory', createMemoryRoutes());
   app.use('/api/v1/graph-workflows', createGraphWorkflowRoutes(graphWorkflowEngine));
   app.use('/api/v1/teams', createTeamRoutes(teamCoordinator));
+  app.use('/api/v1/workspaces', createWorkspaceSourceRoutes());
   app.use('/api/v1/domains', createDomainRoutes());
   app.use('/api/v1/mcp', createMcpRoutes());
   app.use('/api/v1/audit', createAuditRoutes());

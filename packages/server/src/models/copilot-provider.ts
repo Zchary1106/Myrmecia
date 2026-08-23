@@ -45,6 +45,7 @@ export interface CopilotClientLike {
   start(): Promise<void>;
   stop(): Promise<Error[]>;
   listModels?(): Promise<ModelInfo[]>;
+  getAuthStatus?(): Promise<{ isAuthenticated: boolean; authType?: string; host?: string; login?: string; statusMessage?: string }>;
   createSession(config: {
     model: string;
     systemMessage: { mode: 'append'; content: string };
@@ -133,6 +134,12 @@ export class CopilotProvider {
       throw new Error('The installed GitHub Copilot SDK does not support model discovery.');
     }
     return client.listModels();
+  }
+
+  async getAuthStatus(): Promise<{ isAuthenticated: boolean; authType?: string; host?: string; login?: string; statusMessage?: string }> {
+    const client = await this.getClient();
+    if (!client.getAuthStatus) return { isAuthenticated: false, statusMessage: 'The installed Copilot SDK does not expose authentication status.' };
+    return client.getAuthStatus();
   }
 
   async complete(

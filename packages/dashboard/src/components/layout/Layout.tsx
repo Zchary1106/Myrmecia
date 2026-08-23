@@ -8,10 +8,8 @@ import { useStore } from '../../stores/store';
 import type { DashboardView } from '../../stores/store';
 import { useWebSocket } from '../../hooks/useWebSocket';
 import { AgentWorkspace } from '../agents/AgentWorkspace';
-import { CommandBar } from '../common/CommandBar';
 import { cn } from '../../lib/utils';
 import { operatorRoleLabel, runtimeControlsAllowed } from '../../lib/permissions';
-import { CopilotModelSwitcher } from '../models/CopilotModelSwitcher';
 import { HomeView } from '../home/HomeView';
 import { AppErrorBoundary } from '../common/AppErrorBoundary';
 
@@ -280,7 +278,6 @@ export function Layout() {
               <button type="button" onClick={() => setTheme(current => current === 'dark' ? 'light' : 'dark')} aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`} className="app-focus rounded-lg p-2 text-app-muted transition hover:bg-surface-hover hover:text-app-primary">
                 {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
               </button>
-              <CopilotModelSwitcher />
             </div>
           </header>
           <main className={cn('min-h-0 min-w-0 flex-1 bg-background', activeView === 'agents' ? 'overflow-hidden' : 'overflow-y-auto')}>
@@ -289,7 +286,6 @@ export function Layout() {
         </div>
       </div>
 
-      {activeView !== 'agents' && activeView !== 'command' && <CommandBar />}
     </div>
   );
 }

@@ -21,6 +21,8 @@ export interface TeamRun {
   completedAt?: string;
 }
 
+type TaskPreferences = Pick<Task, 'modelId' | 'reasoningEffort' | 'contextLength'>;
+
 function rowToRun(row: any): TeamRun {
   return {
     id: row.id,
@@ -113,6 +115,7 @@ export class TeamCoordinator {
     goal: string,
     workspaceId = 'default',
     workdir?: string,
+    taskPreferences?: TaskPreferences,
   ): Promise<{ run: TeamRun; team: Team; board: BoardItem[] }> {
     const team = getTeam(teamId);
     if (!team) throw new Error(`Unknown team: ${teamId}`);
@@ -139,6 +142,7 @@ export class TeamCoordinator {
       workspaceId,
       workdir,
       workspacePath: workdir,
+      ...taskPreferences,
     });
     db.run('UPDATE team_runs SET parent_task_id = ?, status = ? WHERE id = ?', parent.id, 'running', id);
 

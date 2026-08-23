@@ -1106,6 +1106,20 @@ async function runCommand(command: string, args: string[]): Promise<{ ok: boolea
   });
 }
 
+function resolveGithubCli(): string {
+  const configured = process.env.GH_CLI_PATH?.trim();
+  if (configured) return configured;
+  const discovered = spawnSync('which', ['gh'], { encoding: 'utf8' }).stdout.trim();
+  return discovered || 'gh';
+}
+
+async function loginCopilot(): Promise<{ ok: boolean; message: string }> {
+  const result = await runCommand(resolveGithubCli(), ['auth', 'login', '--hostname', 'github.com', '--web', '--git-protocol', 'https']);
+  return result.ok
+    ? { ok: true, message: 'GitHub 账号登录完成。' }
+    : { ok: false, message: 'GitHub 账号登录未完成，请重新点击并完成浏览器授权。' };
+}
+
 async function runDoctor(): Promise<DoctorCheck[]> {
   const checks: DoctorCheck[] = [];
   try {
@@ -1172,6 +1186,7 @@ if (!hasSingleInstanceLock) {
     ipcMain.handle('desktop:run-doctor', () => runDoctor());
     ipcMain.handle('desktop:get-runtime-config', () => runtimeConfigurationSummary());
     ipcMain.handle('desktop:save-runtime-config', (_event, configuration) => saveRuntimeConfiguration(configuration));
+    ipcMain.handle('desktop:login-copilot', () => loginCopilot());
     ipcMain.handle('desktop:get-wechat-config', () => weChatConfigurationSummary());
     ipcMain.handle('desktop:save-wechat-config', (_event, configuration) => saveWeChatConfiguration(configuration));
     ipcMain.handle('desktop:clear-wechat-config', () => clearWeChatConfiguration());

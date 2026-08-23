@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { execFile, spawnSync } from 'node:child_process';
 import { createOperatorAction } from '../db/models/operator-action.js';
 import { actorFromRequest, HttpError, notFound, parseBody, parseQuery, requireOperatorRole, sendError } from './http.js';
 import {
@@ -15,8 +16,10 @@ import {
   updateModel,
   upsertModelRoute,
 } from '../models/model-registry.js';
-import { getModelGateway } from '../models/gateway.js';
-import type { ModelProviderSettings, ProviderModelOption } from '../types.js';
+import { getModelGateway, readProviders, resetModelGateway, shutdownModelGateway } from '../models/gateway.js';
+import type { ModelProviderSettings, ProviderAccount, ProviderModelOption } from '../types.js';
+
+const COPILOT_COMPATIBILITY_MODEL_ID_SET = new Set<string>(COPILOT_COMPATIBILITY_MODEL_IDS);
 
 const listModelsQuerySchema = z.object({
   enabled: z.enum(['true', 'false']).optional(),
@@ -50,8 +53,40 @@ const providerModelSchema = z.object({
   modelId: z.string().trim().min(1).max(200),
 });
 
+const copilotAccountSchema = z.object({
+  login: z.string().trim().min(1).max(39).regex(/^[A-Za-z0-9-]+$/, 'GitHub login contains unsupported characters'),
+});
+
 function configuredProvider(): string {
   return process.env.MYRMECIA_MODEL_PROVIDER?.trim().toLowerCase() || 'openai-compatible';
+}
+
+function discoveryProviderName(): string {
+  const configured = configuredProvider();
+  if (configured === 'copilot') return 'copilot';
+  return readProviders()[configured] ? configured : 'default';
+}
+
+function registryFallbackModels(provider: string): ProviderModelOption[] {
+  return listModels({ enabled: true })
+    .filter(model => provider === 'deepseek'
+      ? model.provider === 'deepseek'
+      : provider === 'copilot'
+      ? model.provider === 'copilot' || COPILOT_COMPATIBILITY_MODEL_ID_SET.has(model.id)
+      : model.provider !== 'deepseek' && model.provider !== 'copilot')
+    .map(model => ({
+      id: model.id,
+      name: model.displayName,
+      supportsReasoningEffort: model.capabilityTags.includes('reasoning') || model.capabilityTags.includes('reasoning-effort'),
+      supportedReasoningEfforts: [],
+      maxTokens: model.maxTokens,
+      source: 'registry' as const,
+      selectable: true,
+    }));
+}
+
+function isChatModel(modelId: string): boolean {
+  return !/(embedding|embed|moderation|whisper|tts|dall[-.]e|rerank|speech|audio)/i.test(modelId);
 }
 
 async function discoverCopilotModels(): Promise<ProviderModelOption[]> {
@@ -60,6 +95,9 @@ async function discoverCopilotModels(): Promise<ProviderModelOption[]> {
     id: model.id,
     name: model.name,
     supportsReasoningEffort: Boolean(model.supportedReasoningEfforts?.length),
+    supportedReasoningEfforts: model.supportedReasoningEfforts as ProviderModelOption['supportedReasoningEfforts'],
+    maxTokens: model.maxTokens,
+    source: 'provider' as const,
     policyState: model.policy?.state,
     policyTerms: model.policy?.terms,
     billingMultiplier: model.billing?.multiplier,
@@ -79,6 +117,9 @@ function cachedCopilotModels(): ProviderModelOption[] {
       id: model.id,
       name: model.displayName,
       supportsReasoningEffort: model.capabilityTags.includes('reasoning-effort'),
+      supportedReasoningEfforts: [],
+      maxTokens: model.maxTokens,
+      source: 'registry' as const,
       policyState: (model.costProfile.policy as { state?: ProviderModelOption['policyState'] } | undefined)?.state,
       policyTerms: (model.costProfile.policy as { terms?: string } | undefined)?.terms,
       billingMultiplier: (model.costProfile.billing as { multiplier?: number } | undefined)?.multiplier,
@@ -94,6 +135,9 @@ function compatibilityCopilotModels(): ProviderModelOption[] {
       id: model.id,
       name: model.displayName,
       supportsReasoningEffort: model.capabilityTags.includes('reasoning') || model.capabilityTags.includes('reasoning-effort'),
+      supportedReasoningEfforts: [],
+      maxTokens: model.maxTokens,
+      source: 'registry' as const,
       policyState: 'unconfigured' as const,
       policyTerms: 'Compatibility model. GitHub Copilot may remap the request when the account model catalog is temporarily unavailable.',
       selectable: true,
@@ -129,37 +173,128 @@ async function availableCopilotModels(): Promise<{ models: ProviderModelOption[]
 
 async function providerSettings(): Promise<ModelProviderSettings> {
   const provider = configuredProvider();
-  if (provider !== 'copilot') {
-    return {
-      provider,
-      selectedModelId: process.env.MYRMECIA_MODEL || process.env.AGENT_FACTORY_MODEL,
-      models: [],
-    };
+  const selectedModelId = provider === 'copilot'
+    ? getModelRoute('provider:copilot')?.defaultModelId || process.env.MYRMECIA_MODEL || process.env.AGENT_FACTORY_MODEL || 'auto'
+    : process.env.MYRMECIA_MODEL || process.env.AGENT_FACTORY_MODEL;
+
+  if (provider === 'copilot') {
+    try {
+      const { models, warning } = await availableCopilotModels();
+      const account = await getModelGateway().copilotAuthStatus();
+      const accounts = await listGithubAccounts();
+      return {
+        provider,
+        selectedModelId: models.some(model => model.id === selectedModelId && model.selectable)
+          ? selectedModelId
+          : models.find(model => model.selectable)?.id || selectedModelId,
+        models,
+        account,
+        accounts,
+        source: warning ? 'registry' : 'provider',
+        ...(warning ? { error: warning } : {}),
+      };
+    } catch (err) {
+      const fallbackModels = cachedCopilotModels();
+      let accounts: ProviderAccount[] = [];
+      try { accounts = await listGithubAccounts(); } catch { /* preserve the model discovery error */ }
+      return { provider, selectedModelId, models: fallbackModels, accounts, account: { authenticated: false }, source: 'registry', error: err instanceof Error ? err.message : 'Unable to discover Copilot models.' };
+    }
   }
 
-  const selectedModelId = getModelRoute('provider:copilot')?.defaultModelId
-    || process.env.MYRMECIA_MODEL
-    || process.env.AGENT_FACTORY_MODEL
-    || 'auto';
   try {
-    const { models, warning } = await availableCopilotModels();
+    const providerConfig = readProviders()[discoveryProviderName()];
+    if (!providerConfig || providerConfig.type !== 'openai' || !providerConfig.apiKey || providerConfig.baseURL.includes('your-model-endpoint.example.com')) {
+      throw new Error('Provider API credentials are not configured for live model discovery.');
+    }
+    const discovered = (await getModelGateway().listProviderModels(discoveryProviderName())).filter(model => isChatModel(model.id));
+    if (discovered.length === 0) throw new Error('The provider returned no available models.');
+    const models = discovered.map(model => ({
+      id: model.id,
+      name: model.name || model.id,
+      supportsReasoningEffort: Boolean(model.supportedReasoningEfforts?.length),
+      supportedReasoningEfforts: model.supportedReasoningEfforts as ProviderModelOption['supportedReasoningEfforts'],
+      maxTokens: model.maxTokens,
+      source: 'provider' as const,
+      selectable: true,
+    }));
+    syncProviderModels(provider, discovered.map(model => ({
+      id: model.id,
+      name: model.name || model.id,
+      capabilities: model.capabilities,
+      supportsReasoningEffort: Boolean(model.supportedReasoningEfforts?.length),
+      policy: model.policy,
+      billing: model.billing,
+      maxTokens: model.maxTokens,
+    })));
     return {
       provider,
-      selectedModelId: models.some(model => model.id === selectedModelId && model.selectable)
-        ? selectedModelId
-        : models.find(model => model.selectable)?.id || selectedModelId,
+      selectedModelId: models.some(model => model.id === selectedModelId) ? selectedModelId : models[0]?.id,
       models,
-      ...(warning ? { error: warning } : {}),
+      source: 'provider',
     };
   } catch (err) {
-    const fallbackModels = cachedCopilotModels();
+    const fallbackModels = registryFallbackModels(provider);
     return {
       provider,
-      selectedModelId,
+      selectedModelId: fallbackModels.some(model => model.id === selectedModelId) ? selectedModelId : fallbackModels[0]?.id,
       models: fallbackModels,
-      error: err instanceof Error ? err.message : 'Unable to discover Copilot models.',
+      source: 'registry',
+      error: err instanceof Error ? err.message : 'Unable to discover provider models.',
     };
   }
+}
+
+function copilotCliPath(): string {
+  const configured = process.env.COPILOT_CLI_PATH?.trim();
+  if (configured) return configured;
+  const discovered = spawnSync('which', ['copilot'], { encoding: 'utf8' }).stdout.trim();
+  return discovered || 'copilot';
+}
+
+function githubCliPath(): string {
+  const configured = process.env.GH_CLI_PATH?.trim();
+  if (configured) return configured;
+  const discovered = spawnSync('which', ['gh'], { encoding: 'utf8' }).stdout.trim();
+  return discovered || 'gh';
+}
+
+function runGithubCli(args: string[]): Promise<{ ok: boolean; stdout: string; stderr: string }> {
+  return new Promise(resolve => {
+    execFile(githubCliPath(), args, {
+      windowsHide: true,
+      timeout: 30_000,
+      maxBuffer: 256 * 1024,
+    }, (error, stdout, stderr) => {
+      resolve({ ok: !error, stdout: stdout || '', stderr: stderr || '' });
+    });
+  });
+}
+
+async function listGithubAccounts(): Promise<ProviderAccount[]> {
+  const result = await runGithubCli(['auth', 'status', '--hostname', 'github.com', '--json', 'hosts']);
+  try {
+    const parsed = JSON.parse(result.stdout) as { hosts?: Record<string, Array<{ login?: string; active?: boolean; host?: string }>> };
+    return (parsed.hosts?.['github.com'] || [])
+      .filter(account => typeof account.login === 'string' && account.login.length > 0)
+      .map(account => ({
+        login: account.login!,
+        host: account.host || 'github.com',
+        active: account.active === true,
+      }));
+  } catch {
+    if (!result.ok) return [];
+    throw new Error('无法读取 GitHub CLI 账号列表。');
+  }
+}
+
+async function loginCopilot(): Promise<{ ok: boolean; message: string }> {
+  // The Copilot SDK reports the signed-in `gh` identity (`authType: gh-cli`),
+  // so use the GitHub CLI flow here as well. This makes a newly authorized
+  // account discoverable by `gh auth status` and switchable from the UI.
+  const result = await runGithubCli(['auth', 'login', '--hostname', 'github.com', '--web', '--git-protocol', 'https']);
+  return result.ok
+    ? { ok: true, message: 'GitHub 账号登录完成。' }
+    : { ok: false, message: 'GitHub 账号登录未完成，请重新发起登录。' };
 }
 
 export function createModelRoutes(): Router {
@@ -180,6 +315,53 @@ export function createModelRoutes(): Router {
 
   router.get('/provider-settings', async (_req, res) => {
     res.json(await providerSettings());
+  });
+
+  router.post('/copilot/login', async (req, res) => {
+    try {
+      requireOperatorRole(req, 'model.provider.login', ['admin', 'operator']);
+      if (configuredProvider() !== 'copilot') {
+        throw new HttpError(409, 'PROVIDER_NOT_ACTIVE', 'GitHub Copilot is not the active model provider');
+      }
+      const result = await loginCopilot();
+      if (result.ok) {
+        await shutdownModelGateway();
+        resetModelGateway();
+      }
+      res.json(result);
+    } catch (err) {
+      sendError(res, err);
+    }
+  });
+
+  router.post('/copilot/account', async (req, res) => {
+    try {
+      const actor = requireOperatorRole(req, 'model.provider.account.switch', ['admin', 'operator']);
+      if (configuredProvider() !== 'copilot') {
+        throw new HttpError(409, 'PROVIDER_NOT_ACTIVE', 'GitHub Copilot is not the active model provider');
+      }
+      const { login } = parseBody(copilotAccountSchema, req);
+      const accounts = await listGithubAccounts();
+      if (!accounts.some(account => account.login === login)) {
+        throw new HttpError(404, 'GITHUB_ACCOUNT_NOT_FOUND', 'The GitHub account is not logged in on this device');
+      }
+      const result = await runGithubCli(['auth', 'switch', '--hostname', 'github.com', '--user', login]);
+      if (!result.ok) {
+        throw new HttpError(502, 'GITHUB_ACCOUNT_SWITCH_FAILED', result.stderr.trim() || '无法切换 GitHub 账号');
+      }
+      await shutdownModelGateway();
+      resetModelGateway();
+      createOperatorAction({
+        action: 'model.provider.account.switch',
+        actor,
+        targetType: 'model',
+        targetId: `github.com:${login}`,
+        metadata: { provider: 'copilot', host: 'github.com', login },
+      });
+      res.json(await providerSettings());
+    } catch (err) {
+      sendError(res, err);
+    }
   });
 
   router.post('/', (req, res) => {
@@ -230,10 +412,14 @@ export function createModelRoutes(): Router {
         targetId: selected.id,
         metadata: { provider: 'copilot', modelId: selected.id },
       });
+      const account = await getModelGateway().copilotAuthStatus();
+      const accounts = await listGithubAccounts();
       res.json({
         provider: 'copilot',
         selectedModelId: selected.id,
         models,
+        account,
+        accounts,
         ...(warning ? { error: warning } : {}),
       } satisfies ModelProviderSettings);
     } catch (err) {

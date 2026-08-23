@@ -1,5 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { existsSync, statSync } from 'node:fs';
+import { isAbsolute, resolve } from 'node:path';
 import { listTasks, getTask, updateTask, deleteTask, getTaskLogs } from '../db/models/task.js';
 import { listQualityLoopAttempts } from '../db/models/quality-loop.js';
 import { createOperatorAction } from '../db/models/operator-action.js';
@@ -7,6 +9,7 @@ import { TaskQueue } from '../queue/task-queue.js';
 import { HttpError, notFound, parseBody, parseQuery, requireConfirmation, requireOperatorRole, sendError } from './http.js';
 import { requestCanAccessWorkspace, workspaceIdFromRequest } from '../auth/tenant.js';
 import type { Task } from '../types.js';
+import { getModel } from '../models/model-registry.js';
 
 const taskStatusSchema = z.enum(['pending', 'queued', 'assigned', 'running', 'review', 'done', 'failed', 'cancelled']);
 const taskModeSchema = z.enum(['master', 'direct', 'pipeline']);
@@ -19,6 +22,10 @@ const createTaskSchema = z.object({
   priority: prioritySchema.optional(),
   assigneeId: z.string().trim().min(1).optional(),
   input: z.string().trim().min(1).optional(),
+  modelId: z.string().trim().min(1).max(200).optional(),
+  reasoningEffort: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).optional(),
+  contextLength: z.number().int().min(8_000).max(10_000_000).optional(),
+  workspacePath: z.string().trim().min(1).max(16_384).optional(),
   domainId: z.string().trim().min(1).optional(),
 });
 
@@ -46,6 +53,23 @@ const logsQuerySchema = z.object({
   since: z.string().optional(),
 });
 
+function validateWorkspacePath(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  if (!isAbsolute(value)) throw new HttpError(400, 'INVALID_WORKSPACE_PATH', 'Workspace path must be absolute');
+  const workspacePath = resolve(value);
+  if (!existsSync(workspacePath) || !statSync(workspacePath).isDirectory()) {
+    throw new HttpError(400, 'INVALID_WORKSPACE_PATH', 'Workspace directory does not exist');
+  }
+  return workspacePath;
+}
+
+function validateModelId(value: string | undefined): string | undefined {
+  if (!value || value === 'auto') return undefined;
+  const model = getModel(value);
+  if (!model || !model.enabled) throw new HttpError(400, 'INVALID_MODEL', 'Selected model is not enabled');
+  return model.id;
+}
+
 function getAccessibleTask(req: any, taskId: string): Task {
   const task = getTask(taskId);
   if (!task || !requestCanAccessWorkspace(req, task.workspaceId)) {
@@ -60,9 +84,11 @@ export function createTaskRoutes(taskQueue: TaskQueue): Router {
   // Create task
   router.post('/', async (req, res) => {
     try {
-      const { title, description, mode, priority, assigneeId, input, domainId } = parseBody(createTaskSchema, req);
+      const { title, description, mode, priority, assigneeId, input, modelId, reasoningEffort, contextLength, workspacePath: requestedWorkspacePath, domainId } = parseBody(createTaskSchema, req);
       const actor = requireOperatorRole(req, 'task.create', ['admin', 'operator']);
       const workspaceId = workspaceIdFromRequest(req);
+      const workspacePath = validateWorkspacePath(requestedWorkspacePath);
+      const selectedModelId = validateModelId(modelId);
       const task = await taskQueue.enqueue({
         title,
         description: description || title,
@@ -70,6 +96,10 @@ export function createTaskRoutes(taskQueue: TaskQueue): Router {
         priority,
         assigneeId,
         input: input || description || title,
+        modelId: selectedModelId,
+        reasoningEffort,
+        contextLength,
+        workspacePath,
         workspaceId,
         domainId,
       });

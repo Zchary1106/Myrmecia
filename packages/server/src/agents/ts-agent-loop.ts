@@ -34,6 +34,10 @@ import type { ExecutionMiddlewareChain } from './execution-middleware.js';
 
 const MAX_RECENT_ACTIVITIES = 5;
 
+function modelRequestTuning(task: Task): Record<string, string> {
+  return task.reasoningEffort ? { reasoning_effort: task.reasoningEffort } : {};
+}
+
 export function buildMcpPolicyContext(agent: AgentDefinition, task: Task): McpCallPolicyContext {
   const persistedTask = getTask(task.id);
   const sourceTask = persistedTask || task;
@@ -310,7 +314,7 @@ export class TsAgentLoop {
     const modelSelection = selectModelForAgent(agent, task, { promptText: `${systemPrompt}\n\n${enrichedInput}` });
     const selectedModel = modelSelection.modelId;
     const providerUsage = createProviderUsage(selectedModel);
-    const limits = resolveAgentRuntimeLimits(agent, modelSelection);
+    const limits = resolveAgentRuntimeLimits(agent, modelSelection, task.contextLength);
     updateExecution(executionId, {
       modelId: selectedModel,
       modelTier: modelSelection.modelTier,
@@ -577,6 +581,7 @@ export class TsAgentLoop {
           messages,
           tools: toolDefs.length > 0 ? toolDefs : undefined,
           max_tokens: remainingResponseTokens(inputTokens, outputTokens, limits),
+          ...modelRequestTuning(task),
         };
 
         // The gateway preserves the OpenAI path and adapts Copilot sessions into
@@ -992,6 +997,7 @@ export class TsAgentLoop {
           messages,
           tools: stepToolDefs.length > 0 ? stepToolDefs : undefined,
           max_tokens: remainingResponseTokens(inputTokens, outputTokens, limits),
+          ...modelRequestTuning(task),
         }, { signal: abortController.signal });
         mergeProviderUsage(providerUsage, completion.usage);
 
@@ -1133,6 +1139,7 @@ export class TsAgentLoop {
             model: selectedModel,
             messages: [...messages, { role: 'user', content: 'Provide the result of this step as plain text.' }],
             max_tokens: remainingResponseTokens(inputTokens, outputTokens, limits),
+            ...modelRequestTuning(task),
           }, { signal: abortController.signal });
           mergeProviderUsage(providerUsage, summary.usage);
           const summaryInputTokens = summary.usage?.prompt_tokens || 0;

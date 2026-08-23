@@ -12,6 +12,10 @@ export function WorkLauncher({
   initialMode = 'direct',
   initialTeamId = '',
   initialTemplateId = '',
+  initialWorkspacePath = '',
+  initialModelId = 'auto',
+  initialReasoningEffort = 'auto',
+  initialContextLength = 'auto',
   onClose,
   onCreated,
 }: {
@@ -19,6 +23,10 @@ export function WorkLauncher({
   initialMode?: LaunchMode;
   initialTeamId?: string;
   initialTemplateId?: string;
+  initialWorkspacePath?: string;
+  initialModelId?: string;
+  initialReasoningEffort?: 'auto' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+  initialContextLength?: 'auto' | '32000' | '128000' | '200000' | '1050000';
   onClose: () => void;
   onCreated?: () => void | Promise<void>;
 }) {
@@ -33,7 +41,10 @@ export function WorkLauncher({
   const [templateId, setTemplateId] = useState(initialTemplateId);
   const [teams, setTeams] = useState<TeamDTO[]>([]);
   const [teamId, setTeamId] = useState(initialTeamId);
-  const [workspacePath, setWorkspacePath] = useState('');
+  const [workspacePath, setWorkspacePath] = useState(initialWorkspacePath);
+  const [modelId, setModelId] = useState(initialModelId);
+  const [reasoningEffort, setReasoningEffort] = useState(initialReasoningEffort);
+  const [contextLength, setContextLength] = useState(initialContextLength);
   const [gateMode, setGateMode] = useState<'auto' | 'manual'>('auto');
   const [confirmAutonomousPublish, setConfirmAutonomousPublish] = useState(false);
   const [priority, setPriority] = useState<Priority>('normal');
@@ -50,16 +61,22 @@ export function WorkLauncher({
       setTeams(next);
       setTeamId(current => current || next[0]?.id || '');
     }).catch(() => { /* teams optional */ });
-    void window.myrmeciaDesktopIntegrations?.getWorkspace().then(workspace => {
-      setWorkspacePath(workspace.path);
-    }).catch(() => {});
-  }, []);
+    if (!initialWorkspacePath) {
+      void window.myrmeciaDesktopIntegrations?.getWorkspace().then(workspace => {
+        setWorkspacePath(workspace.path);
+      }).catch(() => {});
+    }
+  }, [initialWorkspacePath]);
 
   useEffect(() => {
     if (initialTeamId) setTeamId(initialTeamId);
     if (initialTemplateId) setTemplateId(initialTemplateId);
+    if (initialWorkspacePath) setWorkspacePath(initialWorkspacePath);
+    setModelId(initialModelId);
+    setReasoningEffort(initialReasoningEffort);
+    setContextLength(initialContextLength);
     setMode(initialMode);
-  }, [initialMode, initialTeamId, initialTemplateId]);
+  }, [initialContextLength, initialMode, initialModelId, initialReasoningEffort, initialTeamId, initialTemplateId, initialWorkspacePath]);
 
   useEffect(() => {
     if (mode === 'pipeline' && !templateId && templates[0]) {
@@ -90,7 +107,11 @@ export function WorkLauncher({
     setError(null);
     try {
       if (mode === 'team') {
-        await api.teams.dispatch(teamId, `${title.trim()}\n\n${description.trim()}`, workspacePath);
+        await api.teams.dispatch(teamId, `${title.trim()}\n\n${description.trim()}`, workspacePath, {
+          modelId: modelId === 'auto' ? undefined : modelId,
+          reasoningEffort: reasoningEffort === 'auto' ? undefined : reasoningEffort,
+          contextLength: contextLength === 'auto' ? undefined : Number(contextLength),
+        });
         setActiveView('teams');
       } else if (mode === 'pipeline') {
         await api.pipelines.create({
@@ -110,6 +131,10 @@ export function WorkLauncher({
           priority,
           assigneeId: mode === 'direct' ? assigneeId : undefined,
           input: description.trim(),
+          modelId: modelId === 'auto' ? undefined : modelId,
+          reasoningEffort: reasoningEffort === 'auto' ? undefined : reasoningEffort,
+          contextLength: contextLength === 'auto' ? undefined : Number(contextLength),
+          workspacePath: workspacePath || undefined,
           domainId: domainId || undefined,
         });
         await loadTasks();

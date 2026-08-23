@@ -346,6 +346,7 @@ export function syncProviderModels(
     name: string;
     capabilities?: unknown;
     supportsReasoningEffort?: boolean;
+    maxTokens?: number;
     policy?: unknown;
     billing?: unknown;
   }>,
@@ -358,7 +359,7 @@ export function syncProviderModels(
           id, provider, display_name, description, capability_tags, cost_profile,
           max_tokens, priority, fallback_group, model_tier
         )
-        VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           provider = excluded.provider,
           display_name = excluded.display_name,
@@ -383,6 +384,7 @@ export function syncProviderModels(
           policy: model.policy || {},
           billing: model.billing || {},
         }),
+        model.maxTokens ?? null,
         90,
         provider,
         'balanced',
@@ -526,7 +528,7 @@ function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
-type ModelRouteTask = Partial<Pick<Task, 'title' | 'description' | 'input' | 'mode' | 'retryCount'>>;
+type ModelRouteTask = Partial<Pick<Task, 'title' | 'description' | 'input' | 'mode' | 'retryCount' | 'modelId'>>;
 
 function routeFromTask(agent: AgentDefinition, task?: ModelRouteTask, promptText?: string): {
   routeKey: string;
@@ -675,6 +677,19 @@ function selectCopilotModel(
 }
 
 export function selectModelForAgent(agent: AgentDefinition, task?: ModelRouteTask, options?: { promptText?: string }): ModelSelection {
+  const taskModel = task?.modelId && task.modelId !== 'auto' ? enabledModel(task.modelId) : undefined;
+  if (taskModel) {
+    const policy = agent.config.modelPolicy || {};
+    return {
+      modelId: taskModel.id,
+      source: 'task.requestedModel',
+      requestedModelId: taskModel.id,
+      fallbackGroup: taskModel.fallbackGroup,
+      modelTier: taskModel.tier,
+      budget: Object.keys(policy).length > 0 ? policy : undefined,
+      reason: 'using the model selected for this task',
+    };
+  }
   const provider = process.env.MYRMECIA_MODEL_PROVIDER?.trim().toLowerCase();
   if (provider === DEEPSEEK_PROVIDER) {
     return selectDeepSeekModel(agent, task, options);
@@ -715,7 +730,7 @@ export function selectModelForAgent(agent: AgentDefinition, task?: ModelRouteTas
     };
   }
 
-  const requestedModel = explicit ? getModel(explicit) : undefined;
+  const explicitRequestedModel = explicit ? getModel(explicit) : undefined;
   if (fallbackModel) {
     return {
       modelId: fallbackModel.id,
@@ -757,7 +772,7 @@ export function selectModelForAgent(agent: AgentDefinition, task?: ModelRouteTas
   const globalSelection = selectionFromRoute(globalRoute, 'global.route', 'using global route', explicit, budget);
   if (globalSelection) return globalSelection;
 
-  const fallback = bestEnabledModel(requestedModel?.fallbackGroup || roleRoute?.fallbackGroup || globalRoute?.fallbackGroup)
+  const fallback = bestEnabledModel(explicitRequestedModel?.fallbackGroup || roleRoute?.fallbackGroup || globalRoute?.fallbackGroup)
     || bestEnabledModel();
   if (fallback) {
     return {

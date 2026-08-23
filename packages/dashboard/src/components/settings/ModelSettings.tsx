@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { ModelDefinition } from '@myrmecia/shared';
+import type { ModelDefinition, ModelProviderSettings } from '@myrmecia/shared';
 import { api } from '../../lib/api';
 import { cn } from '../../lib/utils';
 
@@ -19,6 +19,10 @@ export function ModelSettings() {
   const [model, setModel] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [models, setModels] = useState<ModelDefinition[]>([]);
+  const [providerSettings, setProviderSettings] = useState<ModelProviderSettings | null>(null);
+  const [providerModelId, setProviderModelId] = useState('');
+  const [accountLogin, setAccountLogin] = useState('');
+  const [providerBusy, setProviderBusy] = useState<'login' | 'refresh' | 'model' | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -28,9 +32,10 @@ export function ModelSettings() {
 
   const refresh = async () => {
     setError(null);
-    const [runtimeConfig, modelList] = await Promise.all([
+    const [runtimeConfig, modelList, providerModelSettings] = await Promise.all([
       desktop?.getRuntimeConfig(),
       api.models.list(),
+      api.models.providerSettings(),
     ]);
     if (runtimeConfig) {
       setRuntime(runtimeConfig);
@@ -39,6 +44,10 @@ export function ModelSettings() {
       setModel(runtimeConfig.model);
     }
     setModels(modelList);
+    setProviderSettings(providerModelSettings);
+    setProviderModelId(providerModelSettings.selectedModelId || providerModelSettings.models[0]?.id || '');
+    setAccountLogin(providerModelSettings.account?.login || providerModelSettings.accounts?.find(account => account.active)?.login || '');
+    if (providerModelSettings.error) setMessage(providerModelSettings.error);
   };
 
   useEffect(() => {
@@ -65,6 +74,79 @@ export function ModelSettings() {
       setError(err instanceof Error ? err.message : '保存模型配置失败。');
     } finally {
       setBusy(false);
+    }
+  };
+
+  const refreshProviderModels = async () => {
+    setProviderBusy('refresh');
+    setError(null);
+    try {
+      const next = await api.models.providerSettings();
+      setProviderSettings(next);
+      setProviderModelId(next.selectedModelId || next.models[0]?.id || '');
+      setAccountLogin(next.account?.login || next.accounts?.find(account => account.active)?.login || '');
+      setMessage(next.error || '已从当前 Provider 刷新模型列表。');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '刷新 Provider 模型失败。');
+    } finally {
+      setProviderBusy(null);
+    }
+  };
+
+  const loginCopilot = async () => {
+    if (provider !== 'copilot' || providerBusy) return;
+    setProviderBusy('login');
+    setMessage(null);
+    setError(null);
+    try {
+      const result = desktop
+        ? await desktop.loginCopilot()
+        : await api.models.loginCopilot();
+      if (!result.ok) throw new Error(result.message);
+      setMessage('Copilot 登录完成，正在读取账号模型…');
+      if (desktop) {
+        desktop.restartLocalServer();
+        await new Promise(resolve => window.setTimeout(resolve, 1200));
+      }
+      await refreshProviderModels();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'GitHub Copilot 登录失败。');
+    } finally {
+      setProviderBusy(null);
+    }
+  };
+
+  const switchCopilotAccount = async () => {
+    if (!accountLogin || providerBusy || accountLogin === providerSettings?.account?.login) return;
+    setProviderBusy('refresh');
+    setMessage(null);
+    setError(null);
+    try {
+      const next = await api.models.switchCopilotAccount(accountLogin);
+      setProviderSettings(next);
+      setAccountLogin(next.account?.login || accountLogin);
+      setProviderModelId(next.selectedModelId || next.models[0]?.id || '');
+      setMessage(`已切换到 GitHub 账号 @${next.account?.login || accountLogin}。`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'GitHub 账号切换失败。');
+    } finally {
+      setProviderBusy(null);
+    }
+  };
+
+  const applyProviderModel = async () => {
+    if (!providerModelId || !providerSettings || providerBusy || providerSettings.provider !== 'copilot') return;
+    setProviderBusy('model');
+    setError(null);
+    try {
+      const next = await api.models.selectProviderModel(providerModelId);
+      setProviderSettings(next);
+      setProviderModelId(next.selectedModelId || providerModelId);
+      setMessage(`已将新任务默认模型设为 ${next.models.find(modelItem => modelItem.id === providerModelId)?.name || providerModelId}。`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '保存 Copilot 模型失败。');
+    } finally {
+      setProviderBusy(null);
     }
   };
 
@@ -162,7 +244,96 @@ export function ModelSettings() {
         </div>
       ) : (
         <div className="rounded-lg border border-yellow-500/20 bg-yellow-500/10 p-3 text-[11px] text-yellow-200">
-          当前是 Web 模式；Provider 凭据配置请在 Electron 应用的 Settings 中完成。
+          当前是 Web 模式；Provider 配置仍需通过环境变量，但账号、模型和切换操作可以在这里管理。
+        </div>
+      )}
+
+      {provider === 'copilot' && providerSettings && (
+        <div className="rounded-xl border border-blue-400/25 bg-blue-500/5 p-4">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-blue-300">
+                <span className={providerSettings.account?.authenticated ? 'h-2 w-2 rounded-full bg-emerald-400' : 'h-2 w-2 rounded-full bg-yellow-400'} />
+                GitHub Copilot 账号
+              </div>
+              {providerSettings.account?.authenticated ? (
+                <>
+                  <div className="mt-2 truncate text-base font-semibold text-app-primary">@{providerSettings.account.login || '已登录'}</div>
+                  <div className="mt-1 text-[10px] text-gray-500">{providerSettings.account.host || 'github.com'} · {providerSettings.account.authType || '本机凭据'} · 当前用于 Copilot</div>
+                </>
+              ) : (
+                <div className="mt-2 text-sm font-medium text-yellow-200">尚未登录 GitHub Copilot</div>
+              )}
+            </div>
+            <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+              {providerSettings.accounts && providerSettings.accounts.length > 0 && (
+                <select
+                  value={accountLogin}
+                  onChange={event => setAccountLogin(event.target.value)}
+                  disabled={providerBusy !== null}
+                  aria-label="GitHub 账号"
+                  className="rounded-lg border border-border bg-background px-3 py-2 text-xs outline-none focus:border-accent disabled:opacity-50"
+                >
+                  {providerSettings.accounts.map(account => <option key={`${account.host}:${account.login}`} value={account.login}>{account.login}{account.active ? ' · 当前' : ''}</option>)}
+                </select>
+              )}
+              {providerSettings.account?.authenticated ? (
+                <button type="button" onClick={() => void switchCopilotAccount()} disabled={!accountLogin || accountLogin === providerSettings.account.login || providerBusy !== null} className="rounded-lg bg-blue-500 px-4 py-2 text-xs font-semibold text-white hover:bg-blue-400 disabled:opacity-50">
+                  {providerBusy === 'refresh' && accountLogin !== providerSettings.account.login ? '切换中…' : '切换账号'}
+                </button>
+              ) : (
+                <button type="button" onClick={() => void loginCopilot()} disabled={providerBusy !== null} className="rounded-lg bg-blue-500 px-4 py-2 text-xs font-semibold text-white hover:bg-blue-400 disabled:opacity-50">
+                  {providerBusy === 'login' ? '等待授权…' : '登录 GitHub Copilot'}
+                </button>
+              )}
+              <button type="button" onClick={() => void loginCopilot()} disabled={providerBusy !== null} className="rounded-lg border border-border bg-surface-hover px-3 py-2 text-xs text-gray-300 hover:text-white disabled:opacity-50">
+                {providerBusy === 'login' ? '等待授权…' : '登录其他账号'}
+              </button>
+              <button type="button" onClick={() => void refreshProviderModels()} disabled={providerBusy !== null} className="rounded-lg border border-border px-3 py-2 text-xs text-gray-400 hover:text-white disabled:opacity-50">
+                {providerBusy === 'refresh' ? '刷新中…' : '刷新账号'}
+              </button>
+            </div>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-gray-500">
+            <span>{providerSettings.accounts?.length || 0} 个本机 GitHub 账号</span>
+            <span>{providerSettings.models.filter(modelItem => modelItem.source === 'provider' && modelItem.id !== 'auto').length} 个账号模型</span>
+            {providerSettings.error && <span className="text-yellow-300">{providerSettings.error}</span>}
+          </div>
+        </div>
+      )}
+
+      {provider === 'copilot' && providerSettings && (
+        <div className="rounded-xl border border-blue-400/20 bg-blue-500/5 p-4">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <h4 className="text-xs font-semibold text-app-primary">模型选择</h4>
+              <p className="mt-1 text-[11px] leading-relaxed text-gray-500">模型来自当前 Copilot 账号；暂时无法读取的项目会明确标记为回退，不会冒充账号模型。</p>
+            </div>
+            <div className="flex min-w-0 gap-2">
+              <select value={providerModelId} onChange={event => setProviderModelId(event.target.value)} disabled={providerBusy !== null} aria-label="Copilot account model" className="min-w-0 flex-1 rounded-lg border border-border bg-background px-3 py-2 text-xs outline-none focus:border-accent lg:w-64">
+                {providerSettings.models.map(modelItem => <option key={modelItem.id} value={modelItem.id} disabled={!modelItem.selectable}>{modelItem.name}{modelItem.source === 'provider' ? ' · account' : ' · fallback'}{modelItem.id === 'auto' ? ' · dynamic' : ''}</option>)}
+              </select>
+              <button type="button" onClick={() => void applyProviderModel()} disabled={!providerModelId || providerBusy !== null || !providerSettings.models.find(modelItem => modelItem.id === providerModelId)?.selectable} className="rounded-lg bg-accent px-3 py-2 text-xs font-semibold text-white hover:bg-accent-light disabled:opacity-50">
+                {providerBusy === 'model' ? '保存中…' : '切换模型'}
+              </button>
+            </div>
+          </div>
+          <div className="mt-3 grid gap-2 md:grid-cols-2">
+            {providerSettings.models.filter(modelItem => modelItem.id !== 'auto').map(modelItem => (
+              <div key={modelItem.id} className="rounded-lg border border-border/70 bg-background/50 px-3 py-2.5">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="truncate text-xs font-medium text-app-primary">{modelItem.name}</div>
+                    <div className="mt-0.5 truncate text-[10px] text-gray-500">{modelItem.source === 'provider' ? 'Account model' : 'Registry fallback'} · {modelItem.id}</div>
+                  </div>
+                  <span className={cn('shrink-0 rounded-full px-2 py-1 text-[9px]', modelItem.supportedReasoningEfforts?.length ? 'bg-emerald-500/10 text-emerald-300' : 'bg-border/40 text-gray-500')}>
+                    {modelItem.supportedReasoningEfforts?.length ? modelItem.supportedReasoningEfforts.join(' / ') : 'reasoning unavailable'}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+          {providerSettings.error && <div className="mt-3 rounded-lg border border-yellow-500/20 bg-yellow-500/10 px-3 py-2 text-[10px] text-yellow-200">{providerSettings.error}</div>}
         </div>
       )}
 

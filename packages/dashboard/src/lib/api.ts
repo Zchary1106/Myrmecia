@@ -93,6 +93,23 @@ async function requestBlob(path: string): Promise<Blob> {
   return res.blob();
 }
 
+async function uploadWorkspaceFile(path: string, filePath: string, file: Blob): Promise<void> {
+  const token = getApiAuthToken();
+  const res = await fetch(`${BASE}${path}`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/octet-stream',
+      'X-Workspace-File-Path': filePath,
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: file,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: { message: res.statusText } }));
+    throw new Error(err.error?.message || res.statusText);
+  }
+}
+
 export const api = {
   /** Generic GET for any path (relative to /api/v1 if starts with /, or absolute) */
   get: <T = any>(path: string) => request<T>(path.startsWith('/api/') ? path.replace('/api/v1', '') : path),
@@ -110,6 +127,19 @@ export const api = {
       request<{ success: boolean }>(`/tasks/${id}`, { method: 'DELETE', body: JSON.stringify({ confirm: confirmed }) }),
     logs: (id: string) => request<LogEntry[]>(`/tasks/${id}/logs`),
     qualityAttempts: (id: string) => request<QualityLoopAttempt[]>(`/tasks/${id}/quality-attempts`),
+  },
+  workspaces: {
+    createLocal: (name?: string) => request<{ id: string; name: string }>('/workspaces/local', {
+      method: 'POST',
+      body: JSON.stringify({ name }),
+    }),
+    uploadLocalFile: (id: string, path: string, file: Blob) => uploadWorkspaceFile(`/workspaces/local/${encodeURIComponent(id)}/file`, path, file),
+    completeLocal: (id: string) => request<{ configured: true; path: string; name: string; source: 'local'; files: number }>(`/workspaces/local/${encodeURIComponent(id)}/complete`, { method: 'POST' }),
+    cancelLocal: (id: string) => request<{ ok: boolean }>(`/workspaces/local/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    cloneRemote: (url: string, branch?: string) => request<{ configured: true; path: string; name: string; source: 'remote'; repository: string; branch?: string }>('/workspaces/remote', {
+      method: 'POST',
+      body: JSON.stringify({ url, branch }),
+    }),
   },
   agents: {
     list: () => request<AgentSummary[]>('/agents'),
@@ -159,6 +189,12 @@ export const api = {
     delete: (id: string) => request<{ success: boolean }>(`/models/${encodeURIComponent(id)}`, { method: 'DELETE' }),
     routes: () => request<ModelRoute[]>('/models/routes'),
     providerSettings: () => request<ModelProviderSettings>('/models/provider-settings'),
+    loginCopilot: () => request<{ ok: boolean; message: string }>('/models/copilot/login', { method: 'POST' }),
+    switchCopilotAccount: (login: string) =>
+      request<ModelProviderSettings>('/models/copilot/account', {
+        method: 'POST',
+        body: JSON.stringify({ login }),
+      }),
     selectProviderModel: (modelId: string) =>
       request<ModelProviderSettings>('/models/provider-settings', {
         method: 'PUT',
@@ -504,10 +540,10 @@ export const api = {
     update: (id: string, data: Partial<TeamInputDTO>) =>
       request<TeamDTO>(`/teams/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
     remove: (id: string) => request<{ ok: boolean; reverted: boolean }>(`/teams/${id}`, { method: 'DELETE' }),
-    dispatch: (id: string, goal: string, workdir?: string) =>
+    dispatch: (id: string, goal: string, workdir?: string, preferences?: Pick<Task, 'modelId' | 'reasoningEffort' | 'contextLength'>) =>
       request<{ run: TeamRunDTO; team: TeamDTO; board: TeamBoardItem[] }>(`/teams/${id}/dispatch`, {
         method: 'POST',
-        body: JSON.stringify({ goal, workdir }),
+        body: JSON.stringify({ goal, workdir, ...preferences }),
       }),
     preflight: (id: string) =>
       request<TeamPreflightResultDTO>(`/teams/${id}/preflight`),

@@ -652,6 +652,16 @@ ALTER TABLE pipelines ADD COLUMN domain_id TEXT;
 -- Runtime handles this migration by rebuilding the pipelines table because SQLite cannot ALTER CHECK constraints.
 SELECT 1;
 
+-- Migration: 202608220001_add_task_model_preferences
+ALTER TABLE tasks ADD COLUMN model_id TEXT;
+ALTER TABLE tasks ADD COLUMN reasoning_effort TEXT CHECK(reasoning_effort IN ('low','medium','high'));
+ALTER TABLE tasks ADD COLUMN context_length INTEGER;
+
+-- Migration: 202608230001_add_extended_reasoning_effort
+-- Keep the original constrained column for backwards compatibility; this column
+-- stores provider-specific values such as xhigh and max.
+ALTER TABLE tasks ADD COLUMN requested_reasoning_effort TEXT;
+
 -- Migration: 202608040001_add_social_workflow_operations
 CREATE TABLE IF NOT EXISTS social_publish_schedules (
   id TEXT PRIMARY KEY,

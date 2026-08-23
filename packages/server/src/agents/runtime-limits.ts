@@ -46,12 +46,15 @@ function minPositive(globalValue: number, policyValue: number | undefined): numb
   return policyValue && policyValue > 0 ? Math.min(globalValue, policyValue) : globalValue;
 }
 
-export function resolveAgentRuntimeLimits(agent: AgentDefinition, modelSelection?: ModelSelection): RuntimeLimits {
+export function resolveAgentRuntimeLimits(agent: AgentDefinition, modelSelection?: ModelSelection, requestedContextLength?: number): RuntimeLimits {
   const limits = getRuntimeLimits();
   const policy = modelSelection?.budget || agent.config.modelPolicy || {};
+  const maxExecutionTokens = requestedContextLength && requestedContextLength > 0
+    ? Math.min(limits.maxExecutionTokens, requestedContextLength)
+    : limits.maxExecutionTokens;
   return {
     ...limits,
-    maxExecutionTokens: minPositive(limits.maxExecutionTokens, policy.maxTokens),
+    maxExecutionTokens: minPositive(maxExecutionTokens, policy.maxTokens),
     maxModelResponseTokens: minPositive(limits.maxModelResponseTokens, policy.maxResponseTokens),
     maxToolCallsPerExecution: minPositive(limits.maxToolCallsPerExecution, policy.maxToolCalls),
     maxExecutionWallClockMs: minPositive(limits.maxExecutionWallClockMs, policy.maxWallClockMs),

@@ -165,7 +165,7 @@ export class AgentRuntime {
       agent,
       task,
       execution.id,
-      resolveAgentRuntimeLimits(agent),
+      resolveAgentRuntimeLimits(agent, undefined, task.contextLength),
     );
     const agentSpan = createTraceSpan({
       traceId: trace.id,
@@ -625,7 +625,7 @@ export class AgentRuntime {
 
     const modelSelection = selectModelForAgent(agent, task, { promptText: `${systemPrompt}\n\n${enrichedInput}` });
     const selectedModel = modelSelection.modelId;
-    const limits = resolveAgentRuntimeLimits(agent, modelSelection);
+    const limits = resolveAgentRuntimeLimits(agent, modelSelection, task.contextLength);
     updateExecution(executionId, {
       modelId: selectedModel,
       modelTier: modelSelection.modelTier,
@@ -670,12 +670,14 @@ export class AgentRuntime {
       prompt: enrichedInput,
       systemPrompt,
       model: selectedModel,
+      reasoningEffort: task.reasoningEffort,
       agentMeta: {
         name: agent.name,
         role: agent.role,
         description: agent.description,
         model: selectedModel,
         maxTurns: agent.maxTurns || agent.config.maxTurns,
+        reasoningEffort: task.reasoningEffort,
       },
       allowedTools: toolPolicy.allowedTools,
       disallowedTools: agent.disallowedTools || [],
