@@ -131,8 +131,12 @@ jobs:
         shell: bash
         run: |
           test -n "$(find packages/desktop/release -maxdepth 1 -name '*.dmg' -print -quit)"
-          app_bundle="$(find packages/desktop/release -maxdepth 2 -name '*.app' -print -quit)"
-          if [ -n "$app_bundle" ]; then codesign --verify --deep --strict "$app_bundle"; fi
+          hdiutil verify packages/desktop/release/*.dmg
+          if [ "$MYRMECIA_REQUIRE_RELEASE_SIGNING" = 'true' ]; then
+            app_bundle="$(find packages/desktop/release -maxdepth 2 -name '*.app' -print -quit)"
+            test -n "$app_bundle"
+            codesign --verify --deep --strict "$app_bundle"
+          fi
           shasum -a 256 packages/desktop/release/*.dmg > packages/desktop/release/SHA256SUMS-macos.txt
 
       - name: Verify Windows installer

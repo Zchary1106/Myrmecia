@@ -1,6 +1,6 @@
-import { execFileSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { mkdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
-import { dirname, resolve, relative } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -9,13 +9,15 @@ const stageRoot = resolve(desktopRoot, '.stage');
 const pnpm = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
 
 function run(args) {
-  execFileSync(pnpm, args, {
+  const result = spawnSync(pnpm, args, {
     cwd: repositoryRoot,
     stdio: 'inherit',
     // Windows command shims such as pnpm.cmd must be launched through the
     // shell when invoked by Node's synchronous child-process API.
     shell: process.platform === 'win32',
   });
+  if (result.error) throw result.error;
+  if (result.status !== 0) throw new Error(`${pnpm} ${args.join(' ')} exited with status ${result.status}`);
 }
 
 // This directory is generated exclusively for packaging. Source package folders
@@ -25,10 +27,9 @@ mkdirSync(stageRoot, { recursive: true });
 run(['--filter', '@myrmecia/shared', 'build']);
 run(['--filter', '@myrmecia/server', 'build']);
 run(['--filter', '@myrmecia/dashboard', 'build']);
-// `pnpm deploy` resolves its destination relative to this process' repository
-// cwd. Passing an absolute Windows path through the .cmd shell shim caused it
-// to be reinterpreted beneath packages/server; use a repository-relative path.
-const deployDestination = relative(repositoryRoot, resolve(stageRoot, 'server'));
+// The deploy target must be absolute. The Windows .cmd shim is invoked through
+// spawnSync's shell mode so the drive-qualified path remains intact.
+const deployDestination = resolve(stageRoot, 'server');
 const deployArgs = ['--filter', '@myrmecia/server', 'deploy', '--prod', deployDestination];
 
 // pnpm 9 can hit a transient EPERM while creating .bin shims on GitHub's
