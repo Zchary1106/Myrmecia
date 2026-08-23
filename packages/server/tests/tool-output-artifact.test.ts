@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { closeDb } from '../src/db/database.js';
 import { createTask } from '../src/db/models/task.js';
 import { getExecutionArtifact } from '../src/db/models/execution-artifact.js';
-import { archiveLongToolOutput } from '../src/agents/tool-output-artifact.js';
+import { archiveContextSummary, archiveLongToolOutput } from '../src/agents/tool-output-artifact.js';
 
 let testDir = '';
 
@@ -29,5 +29,15 @@ describe('tool output artifacts', () => {
     expect(id).toBeTruthy();
     expect(promptOutput.length).toBeLessThan(raw.length);
     expect(getExecutionArtifact(id!)).toMatchObject({ content: raw, taskId: task.id, executionId: 'exec-tool-output' });
+  });
+
+  it('stores each context compaction summary at a stable versioned artifact path', () => {
+    const task = createTask({ title: 'Summary task', description: 'Compact context', mode: 'direct', input: 'compact' });
+    const id = archiveContextSummary({ task, executionId: 'exec-summary', version: 2, summary: 'Fixed constraint and pending test evidence.' });
+    expect(getExecutionArtifact(id)).toMatchObject({
+      relativePath: '__context_summaries__/v2.md',
+      content: 'Fixed constraint and pending test evidence.',
+      metadata: { summaryVersion: 2, contextCompaction: true },
+    });
   });
 });

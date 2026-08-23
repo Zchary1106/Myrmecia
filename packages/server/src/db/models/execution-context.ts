@@ -21,6 +21,7 @@ function parseContextUsage(value: unknown): ExecutionContext['contextUsage'] {
     maxInputTokens: parsed.maxInputTokens,
     reservedOutputTokens: parsed.reservedOutputTokens,
     occupancyPercent: parsed.occupancyPercent,
+    ...(typeof parsed.summaryVersion === 'number' ? { summaryVersion: parsed.summaryVersion } : {}),
     updatedAt: parsed.updatedAt,
   };
 }

@@ -245,6 +245,7 @@ function ContextTab({ context, checkpoints }: { context?: ExecutionContext; chec
           <RuntimeFact label="Model" value={context.modelId || 'Provider default'} detail={context.provider || 'Provider not recorded'} />
         <RuntimeFact label="Reasoning" value={context.reasoningEffort || 'Provider default'} detail={context.contextLength ? `${context.contextLength.toLocaleString()} token context` : 'Context length not recorded'} />
         <RuntimeFact label="Context occupancy" value={context.contextUsage ? `${context.contextUsage.occupancyPercent}%` : 'Not measured'} detail={context.contextUsage ? `${context.contextUsage.estimatedInputTokens.toLocaleString()} input / ${context.contextUsage.maxInputTokens.toLocaleString()} max; ${context.contextUsage.reservedOutputTokens.toLocaleString()} reserved for output` : 'The runtime has not made a measured model request yet.'} />
+        <RuntimeFact label="Latest compaction" value={context.contextUsage?.summaryVersion ? `Summary v${context.contextUsage.summaryVersion}` : 'No compaction yet'} detail={context.contextUsage?.summaryVersion ? 'The source summary is stored as an execution artifact.' : 'Older context has not needed compaction.'} />
           <RuntimeFact label="Parent task" value={context.parentTaskId || 'Root task'} detail={`Updated ${new Date(context.updatedAt).toLocaleString()}`} />
         </div>
         {context.constraints.length > 0 && <div className="mt-3 text-[11px] text-gray-400">Constraints: {context.constraints.join(' · ')}</div>}

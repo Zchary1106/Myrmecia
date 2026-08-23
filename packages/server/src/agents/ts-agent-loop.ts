@@ -17,8 +17,8 @@ import { llmCache } from '../cache/llm-cache.js';
 import { metrics } from '../observability/telemetry.js';
 import { assertExecutionTokenBudget, remainingResponseTokens, resolveAgentRuntimeLimits } from './runtime-limits.js';
 import { compactMessages } from './context-compactor.js';
-import { persistExecutionContext } from './execution-context.js';
-import { archiveLongToolOutput } from './tool-output-artifact.js';
+import { loadExecutionContext, persistExecutionContext } from './execution-context.js';
+import { archiveContextSummary, archiveLongToolOutput } from './tool-output-artifact.js';
 import { sanitizeAgentOutput } from '../security/dlp-runtime.js';
 import { buildSandboxToolDefinition, executeTool, isSandboxTool } from '../skills/tool-sandbox.js';
 import {
@@ -36,14 +36,16 @@ import type { ExecutionMiddlewareChain } from './execution-middleware.js';
 
 const MAX_RECENT_ACTIVITIES = 5;
 
-function recordContextUsage(task: Task, estimatedInputTokens: number, maxInputTokens: number, reservedOutputTokens: number) {
+function recordContextUsage(task: Task, estimatedInputTokens: number, maxInputTokens: number, reservedOutputTokens: number, summaryVersion?: number) {
   const usableTokens = Math.max(1, maxInputTokens - reservedOutputTokens);
+  const previous = loadExecutionContext(task).contextUsage;
   persistExecutionContext(task, {
     contextUsage: {
       estimatedInputTokens,
       maxInputTokens,
       reservedOutputTokens,
       occupancyPercent: Math.min(100, Math.round((estimatedInputTokens / usableTokens) * 100)),
+      ...(summaryVersion !== undefined ? { summaryVersion } : previous?.summaryVersion !== undefined ? { summaryVersion: previous.summaryVersion } : {}),
       updatedAt: new Date().toISOString(),
     },
   });
@@ -590,6 +592,14 @@ export class TsAgentLoop {
           messages.push(...compaction.messages);
           addTaskLog(task.id, 'info', `🗜️ auto-compacted context ~${compaction.before}→${compaction.after} tokens`, agent.id);
         }
+        const summaryVersion = compaction.compacted
+          ? (loadExecutionContext(task).contextUsage?.summaryVersion ?? 0) + 1
+          : undefined;
+        if (summaryVersion !== undefined) {
+          const summary = compaction.messages.find(message => typeof message.content === 'string' && message.content.startsWith('[Auto-compacted'));
+          const artifactId = archiveContextSummary({ task, executionId, version: summaryVersion, summary: String(summary?.content || '') });
+          addTaskLog(task.id, 'info', `Context summary v${summaryVersion} archived: ${artifactId}`, agent.id);
+        }
         middleware?.beforeModelTurn({
           estimatedContextTokens: compaction.after,
           maxContextTokens: promptBudget,
@@ -600,7 +610,7 @@ export class TsAgentLoop {
         if (compaction.after > promptBudget) {
           throw new Error(`CONTEXT_BUDGET_EXCEEDED: prompt needs ${compaction.after}/${promptBudget} tokens after compaction`);
         }
-        recordContextUsage(task, compaction.after, limits.maxExecutionTokens, responseReserve);
+        recordContextUsage(task, compaction.after, limits.maxExecutionTokens, responseReserve, summaryVersion);
 
         const completionParams = {
           model: selectedModel,
@@ -1017,6 +1027,14 @@ export class TsAgentLoop {
           messages.push(...compaction.messages);
           addTaskLog(task.id, 'info', `🗜️ auto-compacted step context ~${compaction.before}→${compaction.after} tokens`, agent.id);
         }
+        const summaryVersion = compaction.compacted
+          ? (loadExecutionContext(task).contextUsage?.summaryVersion ?? 0) + 1
+          : undefined;
+        if (summaryVersion !== undefined) {
+          const summary = compaction.messages.find(message => typeof message.content === 'string' && message.content.startsWith('[Auto-compacted'));
+          const artifactId = archiveContextSummary({ task, executionId, version: summaryVersion, summary: String(summary?.content || '') });
+          addTaskLog(task.id, 'info', `Context summary v${summaryVersion} archived: ${artifactId}`, agent.id);
+        }
         middleware?.beforeModelTurn({
           estimatedContextTokens: compaction.after,
           maxContextTokens: promptBudget,
@@ -1027,7 +1045,7 @@ export class TsAgentLoop {
         if (compaction.after > promptBudget) {
           throw new Error(`CONTEXT_BUDGET_EXCEEDED: skill prompt needs ${compaction.after}/${promptBudget} tokens after compaction`);
         }
-        recordContextUsage(task, compaction.after, limits.maxExecutionTokens, responseReserve);
+        recordContextUsage(task, compaction.after, limits.maxExecutionTokens, responseReserve, summaryVersion);
 
         const completion = await getModelGateway().completeForModel(selectedModel, {
           model: selectedModel,
@@ -1183,7 +1201,15 @@ export class TsAgentLoop {
           if (summaryCompaction.after > promptBudget) {
             throw new Error(`CONTEXT_BUDGET_EXCEEDED: summary prompt needs ${summaryCompaction.after}/${promptBudget} tokens after compaction`);
           }
-          recordContextUsage(task, summaryCompaction.after, limits.maxExecutionTokens, responseReserve);
+          const summaryVersion = summaryCompaction.compacted
+            ? (loadExecutionContext(task).contextUsage?.summaryVersion ?? 0) + 1
+            : undefined;
+          if (summaryVersion !== undefined) {
+            const summary = summaryCompaction.messages.find(message => typeof message.content === 'string' && message.content.startsWith('[Auto-compacted'));
+            const artifactId = archiveContextSummary({ task, executionId, version: summaryVersion, summary: String(summary?.content || '') });
+            addTaskLog(task.id, 'info', `Context summary v${summaryVersion} archived: ${artifactId}`, agent.id);
+          }
+          recordContextUsage(task, summaryCompaction.after, limits.maxExecutionTokens, responseReserve, summaryVersion);
           const summary = await getModelGateway().completeForModel(selectedModel, {
             model: selectedModel,
             messages: summaryCompaction.messages,

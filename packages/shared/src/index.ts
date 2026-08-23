@@ -230,6 +230,8 @@ export interface ContextUsageSnapshot {
   maxInputTokens: number;
   reservedOutputTokens: number;
   occupancyPercent: number;
+  /** Latest durable summary produced by context compaction, if any. */
+  summaryVersion?: number;
   updatedAt: string;
 }
 
