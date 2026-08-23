@@ -17,6 +17,7 @@
   "devDependencies": {
     "@types/node": "^22.15.3",
     "electron": "^36.3.1",
+    "@electron/notarize": "^2.5.0",
     "electron-builder": "^26.0.12",
     "typescript": "^5.7.3"
   },
@@ -27,6 +28,7 @@
     "npmRebuild": false,
     "beforePack": "./scripts/before-pack.mjs",
     "afterPack": "./scripts/after-pack.mjs",
+    "afterSign": "./scripts/notarize.mjs",
     "directories": {
       "output": "release"
     },

@@ -163,13 +163,36 @@ export class DLPRuleEngine {
         return null;
       }
       case 'ner': {
-        // NER stub: would call LLM for entity detection in production
-        // Returns null if no API key configured
-        return null;
+        return this.matchNamedEntity(rule, content);
       }
       default:
         return null;
     }
+  }
+
+  /**
+   * Local, deterministic NER for sensitive entity classes. A rule pattern is a
+   * comma-separated list of classes (for example `email,phone,api_key`) or
+   * `any`. This deliberately does not call an LLM: DLP has to be available
+   * before credentials/provider access, and a local detector is auditable.
+   */
+  private matchNamedEntity(rule: DLPRule, content: string): DLPRuleMatch | null {
+    const requested = rule.pattern.toLowerCase().split(',').map(value => value.trim()).filter(Boolean);
+    const patterns: Array<[string, RegExp]> = [
+      ['email', /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i],
+      ['phone', /(?<!\d)(?:\+?\d{1,3}[ .-]?)?(?:\(?\d{2,4}\)?[ .-]?)?\d{3,4}[ .-]?\d{4}(?!\d)/],
+      ['credit_card', /\b(?:\d[ -]*?){13,19}\b/],
+      ['ipv4', /\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b/],
+      ['api_key', /\b(?:sk|pk|ghp|github_pat|AKIA)[_-]?[A-Za-z0-9][A-Za-z0-9_-]{15,}\b/],
+    ];
+    for (const [entity, expression] of patterns) {
+      if (!requested.includes('any') && !requested.includes(entity)) continue;
+      const match = expression.exec(content);
+      if (match) {
+        return { ruleId: rule.id, ruleName: rule.name, type: 'ner', action: rule.action, matchedText: match[0], position: match.index };
+      }
+    }
+    return null;
   }
 }
 

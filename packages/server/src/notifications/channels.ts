@@ -1,7 +1,7 @@
 /**
  * Notification Channels — Multi-platform delivery
  *
- * Supports Slack, DingTalk, Feishu, WeCom, and Email (SMTP stub).
+ * Supports Slack, DingTalk, Feishu, WeCom, and Email (SMTP).
  * ChannelRouter dispatches events to configured channels per workspace.
  */
 
@@ -9,6 +9,7 @@ import { getDb } from '../db/database.js';
 import { v4 as uuid } from 'uuid';
 import { Router } from 'express';
 import { logger } from '../lib/logger.js';
+import nodemailer from 'nodemailer';
 
 // ---------- Schema ----------
 
@@ -140,15 +141,41 @@ export class WeComChannel implements NotificationChannel {
 
 export class EmailChannel implements NotificationChannel {
   name = 'email';
-  constructor(private smtpConfig: { host: string; port: number; to: string }) {}
+  constructor(private smtpConfig: {
+    host: string;
+    port?: number;
+    to: string | string[];
+    from?: string;
+    secure?: boolean;
+    username?: string;
+    password?: string;
+  }) {}
 
   async send(message: NotificationMessage): Promise<boolean> {
-    // SMTP stub — in production, use nodemailer or similar
-    logger.info(
-      { to: this.smtpConfig.to, subject: message.title },
-      'Email notification stub (SMTP not configured)',
-    );
-    return true;
+    const { host, to, from, username, password } = this.smtpConfig;
+    if (!host || !to) {
+      logger.warn({ channel: this.name }, 'SMTP notification skipped: host and recipient are required');
+      return false;
+    }
+    const port = Number(this.smtpConfig.port || 587);
+    try {
+      const transporter = nodemailer.createTransport({
+        host,
+        port,
+        secure: this.smtpConfig.secure ?? port === 465,
+        ...(username ? { auth: { user: username, pass: password || '' } } : {}),
+      });
+      await transporter.sendMail({
+        from: from || username || 'Myrmecia <no-reply@localhost>',
+        to: Array.isArray(to) ? to.join(', ') : to,
+        subject: message.title,
+        text: message.body,
+      });
+      return true;
+    } catch (err) {
+      logger.error({ err, channel: this.name, host, port }, 'Failed to send SMTP notification');
+      return false;
+    }
   }
 }
 

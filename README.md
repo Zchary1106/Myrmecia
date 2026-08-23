@@ -380,6 +380,17 @@ a model. After launch, open **Models & Routes** to discover the models available
 to the signed-in Copilot account and persist the active model for future Agent
 executions. Existing runs keep their original model.
 
+#### Desktop release signing
+
+`Desktop installers` builds unsigned DMG/NSIS artifacts for branch validation.
+For a `v*` release tag it fails closed unless repository secrets provide the
+platform signing credentials: `MACOS_CSC_LINK`, `MACOS_CSC_KEY_PASSWORD`,
+`APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`,
+`WINDOWS_CSC_LINK`, and `WINDOWS_CSC_KEY_PASSWORD`. The macOS build notarizes
+after signing; the Windows build silently installs its generated NSIS artifact
+on the runner and verifies that `Myrmecia.exe` was installed before publishing
+checksums and release assets.
+
 #### DeepSeek direct provider
 
 DeepSeek does not need a proxy because its official API is OpenAI-compatible:

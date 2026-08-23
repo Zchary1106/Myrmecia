@@ -2,7 +2,7 @@
 import os
 import importlib
 import yaml
-from typing import Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 from config import LLM_MODEL, LLM_BASE_URL, LLM_API_KEY
 from agent_tools import build_tools
 
@@ -57,6 +57,7 @@ def build_agent(
     allowed_tools: Optional[List[str]] = None,
     disallowed_tools: Optional[List[str]] = None,
     model: Optional[str] = None,
+    step_callback: Optional[Callable[[Any], None]] = None,
 ) -> Agent:
     """Build a runtime agent from the registry definition."""
     registry = load_registry()
@@ -95,4 +96,5 @@ def build_agent(
         tools=selected_tools,
         verbose=False,
         max_iter=max_iter,
+        step_callback=step_callback,
     )

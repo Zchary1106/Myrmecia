@@ -52,6 +52,12 @@ jobs:
             artifact: myrmecia-windows
     env:
       CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      CSC_LINK: ${{ matrix.platform == 'mac' && secrets.MACOS_CSC_LINK || secrets.WINDOWS_CSC_LINK }}
+      CSC_KEY_PASSWORD: ${{ matrix.platform == 'mac' && secrets.MACOS_CSC_KEY_PASSWORD || secrets.WINDOWS_CSC_KEY_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      MYRMECIA_REQUIRE_RELEASE_SIGNING: ${{ startsWith(github.ref, 'refs/tags/v') && 'true' || 'false' }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -78,6 +84,18 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Require release signing credentials
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          test -n "$CSC_LINK"
+          test -n "$CSC_KEY_PASSWORD"
+          if [ "${{ matrix.platform }}" = 'mac' ]; then
+            test -n "$APPLE_ID"
+            test -n "$APPLE_APP_SPECIFIC_PASSWORD"
+            test -n "$APPLE_TEAM_ID"
+          fi
+
       - name: Build unsigned macOS installer
         if: matrix.platform == 'mac'
         run: pnpm --filter @myrmecia/desktop package -- --mac dmg
@@ -95,14 +113,21 @@ jobs:
         shell: bash
         run: |
           test -n "$(find packages/desktop/release -maxdepth 1 -name '*.dmg' -print -quit)"
+          app_bundle="$(find packages/desktop/release -maxdepth 2 -name '*.app' -print -quit)"
+          if [ -n "$app_bundle" ]; then codesign --verify --deep --strict "$app_bundle"; fi
           shasum -a 256 packages/desktop/release/*.dmg > packages/desktop/release/SHA256SUMS-macos.txt
 
       - name: Verify Windows installer
         if: matrix.platform == 'windows'
-        shell: bash
+        shell: pwsh
         run: |
-          test -n "$(find packages/desktop/release -maxdepth 1 -name '*.exe' -print -quit)"
-          sha256sum packages/desktop/release/*.exe > packages/desktop/release/SHA256SUMS-windows.txt
+          $installer = Get-ChildItem packages/desktop/release/*.exe | Select-Object -First 1
+          if (-not $installer) { throw 'Windows NSIS installer was not generated' }
+          $installDir = Join-Path $env:RUNNER_TEMP 'Myrmecia-install-smoke'
+          Start-Process -FilePath $installer.FullName -ArgumentList "/S /D=$installDir" -Wait -NoNewWindow
+          $app = Get-ChildItem $installDir -Filter 'Myrmecia.exe' -Recurse | Select-Object -First 1
+          if (-not $app) { throw 'NSIS installer did not install Myrmecia.exe' }
+          Get-FileHash $installer.FullName -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  $($installer.Name)" } | Set-Content packages/desktop/release/SHA256SUMS-windows.txt
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v6

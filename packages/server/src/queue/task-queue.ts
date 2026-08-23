@@ -480,13 +480,16 @@ export class TaskQueue {
   /** Get queue stats */
   async getStats() {
     if (this.queue) {
-      const [waiting, active, completed, failed] = await Promise.all([
+      const [waiting, prioritized, active, completed, failed] = await Promise.all([
         this.queue.getWaitingCount(),
+        this.queue.getPrioritizedCount(),
         this.queue.getActiveCount(),
         this.queue.getCompletedCount(),
         this.queue.getFailedCount(),
       ]);
-      return { waiting, active, completed, failed, backend: 'redis' };
+      // BullMQ keeps priority jobs in a distinct state. Expose the aggregate
+      // as waiting so dashboard/operator queue depth matches recoverable work.
+      return { waiting: waiting + prioritized, prioritized, active, completed, failed, backend: 'redis' };
     }
 
     const tasks = listTasks();
