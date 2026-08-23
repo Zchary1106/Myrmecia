@@ -7,6 +7,7 @@ import { agentRuntime } from '../agents/agent-runtime.js';
 import { spawnSync } from 'child_process';
 import { createTestReportFromOutput, hasVerifiedTestEvidence, type TestReportWithEvidence } from '../testing/test-report.js';
 import type { AgentDefinition, QualityLoopAttempt, Task } from '../types.js';
+import { loadExecutionContext, persistInheritedExecutionContext } from '../agents/execution-context.js';
 
 const MAX_PROMPT_EVIDENCE_CHARS = 12_000;
 const MAX_REVIEW_OUTPUT_CHARS = 10_000;
@@ -146,6 +147,12 @@ export class QualityLoop {
     const agent = task.assigneeId ? getAgent(task.assigneeId) : null;
     if (!agent || !['developer', 'dev'].includes(agent.role)) return;
 
+    const attempts = listQualityLoopAttempts({ taskId });
+    const latestAttempt = attempts[attempts.length - 1];
+    // Approval emits the authoritative terminal task:done event. Check it
+    // first so this listener cannot regress an approved task back to review.
+    if (latestAttempt?.status === 'approved') return;
+
     // `task:done` is emitted by the execution runtime immediately after the
     // developer process returns. Move the task to a non-terminal gate state
     // before any awaited QA work starts, so parent monitors cannot settle it
@@ -153,10 +160,6 @@ export class QualityLoop {
     if (task.status === 'done') {
       updateTask(taskId, { status: 'review', completedAt: null });
     }
-
-    const attempts = listQualityLoopAttempts({ taskId });
-    const latestAttempt = attempts[attempts.length - 1];
-    if (latestAttempt?.status === 'approved') return;
     if (attempts.length >= this.maxIterations) {
       const exhausted = createQualityLoopAttempt({
         taskId,
@@ -203,6 +206,7 @@ export class QualityLoop {
         createdBy: 'master',
         ...inheritExecutionContext(task),
       });
+      persistInheritedExecutionContext(loadExecutionContext(task), testTask);
       const testResult = await agentRuntime.execute(testAgent, testTask);
       const testReport = createTestReportFromOutput(testResult.output, `Validation for ${task.title}`);
       if (!testReport.evidence) {
@@ -240,6 +244,7 @@ export class QualityLoop {
         createdBy: 'master',
         ...inheritExecutionContext(task),
       });
+      persistInheritedExecutionContext(loadExecutionContext(task), reviewTask);
       attempt = updateQualityLoopAttempt(attempt.id, { reviewTaskId: reviewTask.id }) || attempt;
       eventBus.emit('quality:updated', { taskId, attempt });
 
@@ -308,6 +313,7 @@ ${task.output?.slice(0, 8000) || ''}`;
         createdBy: 'master',
         ...inheritExecutionContext(task),
       });
+      persistInheritedExecutionContext(loadExecutionContext(task), fixTask);
       attempt = updateQualityLoopAttempt(attempt.id, {
         status: 'fixing',
         fixTaskId: fixTask.id,

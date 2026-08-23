@@ -42,6 +42,8 @@ import type {
   GitHubFixRun,
   ExecutionArtifact,
   ArtifactContract,
+  ExecutionContext,
+  TaskCheckpoint,
   TeamTemplateVersion,
   WorkflowEdgeContract,
   WorkflowGraphContract,
@@ -127,6 +129,9 @@ export const api = {
       request<{ success: boolean }>(`/tasks/${id}`, { method: 'DELETE', body: JSON.stringify({ confirm: confirmed }) }),
     logs: (id: string) => request<LogEntry[]>(`/tasks/${id}/logs`),
     qualityAttempts: (id: string) => request<QualityLoopAttempt[]>(`/tasks/${id}/quality-attempts`),
+    context: (id: string) => request<ExecutionContext>(`/tasks/${id}/context`),
+    checkpoints: (id: string) => request<TaskCheckpoint[]>(`/tasks/${id}/checkpoints`),
+    resume: (id: string) => request<Task>(`/tasks/${id}/resume`, { method: 'POST' }),
   },
   workspaces: {
     createLocal: (name?: string) => request<{ id: string; name: string }>('/workspaces/local', {

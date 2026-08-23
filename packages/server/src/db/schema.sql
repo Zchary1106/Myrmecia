@@ -129,6 +129,43 @@ CREATE TABLE IF NOT EXISTS task_executions (
   completed_at DATETIME
 );
 
+-- Durable execution state.  These records deliberately sit beside tasks rather
+-- than replacing their legacy fields so old task producers remain compatible.
+CREATE TABLE IF NOT EXISTS execution_contexts (
+  id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL UNIQUE REFERENCES tasks(id) ON DELETE CASCADE,
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  workspace_path TEXT,
+  workdir TEXT,
+  provider TEXT,
+  model_id TEXT,
+  reasoning_effort TEXT,
+  context_length INTEGER,
+  goal TEXT NOT NULL,
+  constraints JSON NOT NULL DEFAULT '[]',
+  parent_task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL,
+  code_baseline JSON NOT NULL DEFAULT '{}',
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_execution_contexts_workspace ON execution_contexts(workspace_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_execution_contexts_parent_task ON execution_contexts(parent_task_id);
+
+CREATE TABLE IF NOT EXISTS task_checkpoints (
+  id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  execution_context_id TEXT NOT NULL REFERENCES execution_contexts(id) ON DELETE CASCADE,
+  phase TEXT NOT NULL,
+  completed JSON NOT NULL DEFAULT '[]',
+  pending JSON NOT NULL DEFAULT '[]',
+  blocked JSON NOT NULL DEFAULT '[]',
+  last_validation JSON,
+  resume_hint TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_task_checkpoints_task ON task_checkpoints(task_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_task_checkpoints_context ON task_checkpoints(execution_context_id, created_at DESC);
+
 -- Execution Messages (real-time activity stream)
 CREATE TABLE IF NOT EXISTS execution_messages (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -668,6 +705,41 @@ ALTER TABLE tasks ADD COLUMN requested_reasoning_effort TEXT;
 ALTER TABLE pipelines ADD COLUMN model_id TEXT;
 ALTER TABLE pipelines ADD COLUMN reasoning_effort TEXT;
 ALTER TABLE pipelines ADD COLUMN context_length INTEGER;
+
+-- Migration: 202608230003_add_durable_execution_contexts
+CREATE TABLE IF NOT EXISTS execution_contexts (
+  id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL UNIQUE REFERENCES tasks(id) ON DELETE CASCADE,
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  workspace_path TEXT,
+  workdir TEXT,
+  provider TEXT,
+  model_id TEXT,
+  reasoning_effort TEXT,
+  context_length INTEGER,
+  goal TEXT NOT NULL,
+  constraints JSON NOT NULL DEFAULT '[]',
+  parent_task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL,
+  code_baseline JSON NOT NULL DEFAULT '{}',
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_execution_contexts_workspace ON execution_contexts(workspace_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_execution_contexts_parent_task ON execution_contexts(parent_task_id);
+CREATE TABLE IF NOT EXISTS task_checkpoints (
+  id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  execution_context_id TEXT NOT NULL REFERENCES execution_contexts(id) ON DELETE CASCADE,
+  phase TEXT NOT NULL,
+  completed JSON NOT NULL DEFAULT '[]',
+  pending JSON NOT NULL DEFAULT '[]',
+  blocked JSON NOT NULL DEFAULT '[]',
+  last_validation JSON,
+  resume_hint TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_task_checkpoints_task ON task_checkpoints(task_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_task_checkpoints_context ON task_checkpoints(execution_context_id, created_at DESC);
 
 -- Migration: 202608040001_add_social_workflow_operations
 CREATE TABLE IF NOT EXISTS social_publish_schedules (

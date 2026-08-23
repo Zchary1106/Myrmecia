@@ -6,6 +6,7 @@ import { AgentManager } from '../agents/agent-manager.js';
 import { metrics } from '../observability/telemetry.js';
 import { logger } from '../lib/logger.js';
 import type { ReasoningEffort, Task, TaskMode, Priority } from '../types.js';
+import { checkpointExecutionContext, loadExecutionContext, persistExecutionContext, persistInheritedExecutionContext } from '../agents/execution-context.js';
 
 const QUEUE_NAME = 'agent-factory-tasks';
 export const PUBLISH_RECONFIRMATION_ERROR = 'Interrupted publish task requires renewed pipeline confirmation';
@@ -161,6 +162,17 @@ export class TaskQueue {
     const task = createTask({
       ...data,
       createdBy: data.parentTaskId ? 'master' : 'user',
+    });
+    const parent = data.parentTaskId ? getTask(data.parentTaskId) : undefined;
+    const context = parent
+      ? persistInheritedExecutionContext(loadExecutionContext(parent), task)
+      : persistExecutionContext(task);
+    checkpointExecutionContext(context, {
+      phase: 'queued',
+      completed: [],
+      pending: ['agent execution'],
+      blocked: [],
+      resumeHint: 'Run the queued task with its durable execution context.',
     });
 
     eventBus.emit('task:created', { taskId: task.id, task, workspaceId: task.workspaceId });
@@ -376,6 +388,14 @@ export class TaskQueue {
       error: null,
     });
     addTaskLog(taskId, 'info', `Retry requested (${retryCount})`, 'system');
+    const context = loadExecutionContext(task);
+    checkpointExecutionContext(context, {
+      phase: 'retrying',
+      completed: [],
+      pending: ['agent execution'],
+      blocked: [],
+      resumeHint: 'Retry from the latest durable checkpoint; the previous process is not resumed.',
+    });
 
     if (this.queue) {
       await this.queue.add('execute-task', { taskId }, {
@@ -436,6 +456,14 @@ export class TaskQueue {
       addTaskLog(task.id, 'warn', wasInFlight
         ? (this.queue ? 'Task interrupted by server restart — re-queuing from last checkpoint hint' : MEMORY_QUEUE_RECOVERY_NOTE)
         : 'Queued task recovered after server restart — scheduling', 'system');
+      const context = loadExecutionContext(task);
+      checkpointExecutionContext(context, {
+        phase: 'recovering',
+        completed: [],
+        pending: ['agent execution'],
+        blocked: wasInFlight ? ['previous process was interrupted'] : [],
+        resumeHint: 'Re-queue from this checkpoint; an in-flight process cannot be resumed.',
+      });
       updateTask(task.id, { status: 'pending' });
 
       if (this.queue) {

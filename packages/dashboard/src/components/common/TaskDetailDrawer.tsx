@@ -3,10 +3,10 @@ import { useStore } from '../../stores/store';
 import { api } from '../../lib/api';
 import { cn } from '../../lib/utils';
 import { readOnlyControlMessage, runtimeControlsAllowed } from '../../lib/permissions';
-import type { ExecutionMessage, LogEntry, OperatorAction, QualityLoopAttempt, Task } from '@myrmecia/shared';
+import type { ExecutionContext, ExecutionMessage, LogEntry, OperatorAction, QualityLoopAttempt, Task, TaskCheckpoint } from '@myrmecia/shared';
 import { SkillStepProgress } from '../tasks/SkillStepProgress';
 
-type DetailTab = 'overview' | 'trace' | 'logs' | 'quality' | 'audit';
+type DetailTab = 'overview' | 'context' | 'trace' | 'logs' | 'quality' | 'audit';
 
 const statusClass: Record<string, string> = {
   pending: 'bg-gray-500/15 text-gray-400 border-gray-500/20',
@@ -58,9 +58,135 @@ function ActionSummary({ action }: { action: OperatorAction }) {
   );
 }
 
-function OverviewTab({ task, agentName }: { task: Task; agentName?: string }) {
+function latestByDate<T extends { createdAt: string }>(items: T[]): T | undefined {
+  return items.reduce<T | undefined>((latest, item) => (
+    !latest || new Date(item.createdAt).getTime() > new Date(latest.createdAt).getTime() ? item : latest
+  ), undefined);
+}
+
+function relativeTime(value?: string) {
+  if (!value) return 'No telemetry yet';
+  const deltaMs = Math.max(0, Date.now() - new Date(value).getTime());
+  if (deltaMs < 60_000) return 'just now';
+  if (deltaMs < 3_600_000) return `${Math.floor(deltaMs / 60_000)}m ago`;
+  if (deltaMs < 86_400_000) return `${Math.floor(deltaMs / 3_600_000)}h ago`;
+  return `${Math.floor(deltaMs / 86_400_000)}d ago`;
+}
+
+function taskPhase(status: Task['status']) {
+  const phases: Record<Task['status'], string> = {
+    pending: 'Waiting to schedule',
+    queued: 'Queued',
+    assigned: 'Agent assigned',
+    running: 'Working',
+    review: 'Quality gate',
+    done: 'Completed',
+    failed: 'Needs attention',
+    cancelled: 'Stopped',
+  };
+  return phases[status];
+}
+
+function RuntimeStatusCard({
+  task,
+  execution,
+  logs,
+  attempts,
+  executionContext,
+  checkpoints,
+  onOpenEvidence,
+}: {
+  task: Task;
+  execution?: { status: string; startedAt: string; completedAt?: string };
+  logs: LogEntry[];
+  attempts: QualityLoopAttempt[];
+  executionContext?: ExecutionContext;
+  checkpoints: TaskCheckpoint[];
+  onOpenEvidence: (tab: DetailTab) => void;
+}) {
+  const heartbeat = latestByDate(logs.filter(log => /\bheartbeat\b/i.test(log.message)));
+  const checkpoint = checkpoints[0];
+  const runtimeReason = task.error
+    || latestByDate(logs.filter(log => /\b(?:timed_out|stalled|retry(?:ing)?|blocked)\b/i.test(log.message)))?.message
+    || latestByDate(attempts.filter(attempt => Boolean(attempt.error)))?.error;
+  const hasEvidence = logs.length > 0 || attempts.length > 0 || Boolean(execution);
+
+  return (
+    <section aria-label="Runtime status" className="rounded-xl border border-border bg-background/70 p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">Runtime status</div>
+          <div className="mt-1 text-sm font-semibold text-gray-200">{taskPhase(task.status)}</div>
+        </div>
+        {execution ? (
+          <span className="rounded-full bg-blue-500/10 px-2 py-1 text-[10px] text-blue-300">
+            {execution.status} execution
+          </span>
+        ) : (
+          <span className="rounded-full bg-gray-500/10 px-2 py-1 text-[10px] text-gray-500">No execution record</span>
+        )}
+      </div>
+
+      <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <RuntimeFact label="Latest heartbeat" value={heartbeat ? relativeTime(heartbeat.createdAt) : 'Not recorded'} detail={heartbeat ? new Date(heartbeat.createdAt).toLocaleString() : 'The runtime has not emitted a heartbeat for this task.'} />
+        <RuntimeFact label="Checkpoint" value={checkpoint ? checkpoint.phase : 'No checkpoint'} detail={checkpoint ? checkpoint.resumeHint || `Recorded ${new Date(checkpoint.createdAt).toLocaleString()}` : 'A resumable checkpoint has not been recorded.'} />
+      </div>
+
+      {runtimeReason ? (
+        <div className="mt-3 rounded-lg border border-amber-500/20 bg-amber-500/5 px-2.5 py-2">
+          <div className="text-[10px] font-semibold uppercase tracking-wide text-amber-300">Runtime attention</div>
+          <p className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-amber-100/80">{runtimeReason}</p>
+        </div>
+      ) : task.status === 'running' && !heartbeat ? (
+        <div className="mt-3 rounded-lg border border-border bg-surface px-2.5 py-2 text-[11px] text-gray-500">
+          Running without a recorded heartbeat yet. Check Trace or Logs for live evidence.
+        </div>
+      ) : null}
+
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <span className="text-[10px] text-gray-600">Evidence</span>
+        <button type="button" onClick={() => onOpenEvidence('trace')} disabled={!execution} className="rounded-md border border-border px-2 py-1 text-[10px] text-gray-400 hover:border-accent/50 hover:text-accent-light disabled:cursor-not-allowed disabled:opacity-40">Trace</button>
+        <button type="button" onClick={() => onOpenEvidence('logs')} disabled={logs.length === 0} className="rounded-md border border-border px-2 py-1 text-[10px] text-gray-400 hover:border-accent/50 hover:text-accent-light disabled:cursor-not-allowed disabled:opacity-40">Logs{logs.length ? ` (${logs.length})` : ''}</button>
+        <button type="button" onClick={() => onOpenEvidence('quality')} disabled={attempts.length === 0} className="rounded-md border border-border px-2 py-1 text-[10px] text-gray-400 hover:border-accent/50 hover:text-accent-light disabled:cursor-not-allowed disabled:opacity-40">Quality{attempts.length ? ` (${attempts.length})` : ''}</button>
+        <button type="button" onClick={() => onOpenEvidence('context')} disabled={!executionContext} className="rounded-md border border-border px-2 py-1 text-[10px] text-gray-400 hover:border-accent/50 hover:text-accent-light disabled:cursor-not-allowed disabled:opacity-40">Context{checkpoints.length ? ` (${checkpoints.length})` : ''}</button>
+        {!hasEvidence && <span className="text-[10px] text-gray-600">No trace, logs, or quality evidence has been recorded.</span>}
+      </div>
+    </section>
+  );
+}
+
+function RuntimeFact({ label, value, detail }: { label: string; value: string; detail: string }) {
+  return (
+    <div className="min-w-0 rounded-lg border border-border bg-surface px-2.5 py-2">
+      <div className="text-[10px] uppercase tracking-wide text-gray-600">{label}</div>
+      <div className="mt-1 truncate text-[11px] font-medium text-gray-300" title={value}>{value}</div>
+      <div className="mt-0.5 truncate text-[10px] text-gray-600" title={detail}>{detail}</div>
+    </div>
+  );
+}
+
+function OverviewTab({
+  task,
+  agentName,
+  execution,
+  logs,
+  attempts,
+  executionContext,
+  checkpoints,
+  onOpenEvidence,
+}: {
+  task: Task;
+  agentName?: string;
+  execution?: { status: string; startedAt: string; completedAt?: string };
+  logs: LogEntry[];
+  attempts: QualityLoopAttempt[];
+  executionContext?: ExecutionContext;
+  checkpoints: TaskCheckpoint[];
+  onOpenEvidence: (tab: DetailTab) => void;
+}) {
   return (
     <div className="space-y-4">
+      <RuntimeStatusCard task={task} execution={execution} logs={logs} attempts={attempts} executionContext={executionContext} checkpoints={checkpoints} onOpenEvidence={onOpenEvidence} />
       <div className="grid grid-cols-2 gap-3">
         <InfoCard label="Status" value={task.status} />
         <InfoCard label="Mode" value={task.mode} />
@@ -101,6 +227,40 @@ function OverviewTab({ task, agentName }: { task: Task; agentName?: string }) {
           </pre>
         </section>
       )}
+    </div>
+  );
+}
+
+function ContextTab({ context, checkpoints }: { context?: ExecutionContext; checkpoints: TaskCheckpoint[] }) {
+  if (!context) return <EmptyState icon="🧠" text="Execution context has not been recorded for this task" />;
+  return (
+    <div className="space-y-3">
+      <section className="rounded-lg border border-border bg-background p-3">
+        <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">Working summary</div>
+        <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-gray-300">{context.goal}</p>
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          <RuntimeFact label="Workspace" value={context.workspacePath || context.workspaceId} detail={context.workdir || 'No workdir recorded'} />
+          <RuntimeFact label="Model" value={context.modelId || 'Provider default'} detail={context.provider || 'Provider not recorded'} />
+          <RuntimeFact label="Reasoning" value={context.reasoningEffort || 'Provider default'} detail={context.contextLength ? `${context.contextLength.toLocaleString()} token context` : 'Context length not recorded'} />
+          <RuntimeFact label="Parent task" value={context.parentTaskId || 'Root task'} detail={`Updated ${new Date(context.updatedAt).toLocaleString()}`} />
+        </div>
+        {context.constraints.length > 0 && <div className="mt-3 text-[11px] text-gray-400">Constraints: {context.constraints.join(' · ')}</div>}
+        {context.codeBaseline && Object.keys(context.codeBaseline).length > 0 && <div className="mt-1 text-[11px] text-gray-500">Baseline: {context.codeBaseline.branch || 'unknown branch'} {context.codeBaseline.revision ? `@ ${context.codeBaseline.revision}` : ''}</div>}
+      </section>
+      <section className="rounded-lg border border-border bg-background p-3">
+        <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">Recovery checkpoints</div>
+        <div className="mt-2 space-y-2">
+          {checkpoints.map(checkpoint => (
+            <div key={checkpoint.id} className="rounded-md border border-border/70 bg-surface px-2.5 py-2">
+              <div className="flex items-center justify-between gap-2"><span className="text-xs font-medium text-gray-300">{checkpoint.phase}</span><span className="text-[10px] text-gray-600">{new Date(checkpoint.createdAt).toLocaleString()}</span></div>
+              {checkpoint.resumeHint && <p className="mt-1 text-[11px] text-gray-400">{checkpoint.resumeHint}</p>}
+              {checkpoint.blocked.length > 0 && <p className="mt-1 text-[11px] text-amber-300">Blocked: {checkpoint.blocked.join(' · ')}</p>}
+              {checkpoint.lastValidation && <pre className="mt-1 overflow-auto text-[10px] text-gray-500">{JSON.stringify(checkpoint.lastValidation, null, 2)}</pre>}
+            </div>
+          ))}
+          {checkpoints.length === 0 && <p className="text-xs text-gray-600">No checkpoints have been recorded.</p>}
+        </div>
+      </section>
     </div>
   );
 }
@@ -212,6 +372,8 @@ export function TaskDetailDrawer({ taskId, onClose }: { taskId: string | null; o
   } = useStore();
   const [tab, setTab] = useState<DetailTab>('overview');
   const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [executionContext, setExecutionContext] = useState<ExecutionContext>();
+  const [checkpoints, setCheckpoints] = useState<TaskCheckpoint[]>([]);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -235,6 +397,8 @@ export function TaskDetailDrawer({ taskId, onClose }: { taskId: string | null; o
     void loadQualityLoopAttempts(taskId);
     void loadOperatorActions();
     api.tasks.logs(taskId).then(setLogs).catch((err: Error) => setError(err.message));
+    api.tasks.context(taskId).then(setExecutionContext).catch((err: Error) => setError(err.message));
+    api.tasks.checkpoints(taskId).then(setCheckpoints).catch((err: Error) => setError(err.message));
   }, [taskId]);
 
   useEffect(() => {
@@ -245,10 +409,15 @@ export function TaskDetailDrawer({ taskId, onClose }: { taskId: string | null; o
 
   const refresh = async () => {
     await Promise.all([loadTasks(), loadExecutions(), loadQualityLoopAttempts(taskId), loadOperatorActions()]);
-    setLogs(await api.tasks.logs(taskId));
+    const [nextLogs, nextContext, nextCheckpoints] = await Promise.all([
+      api.tasks.logs(taskId), api.tasks.context(taskId), api.tasks.checkpoints(taskId),
+    ]);
+    setLogs(nextLogs);
+    setExecutionContext(nextContext);
+    setCheckpoints(nextCheckpoints);
   };
 
-  const runTaskAction = async (action: 'cancel' | 'retry') => {
+  const runTaskAction = async (action: 'cancel' | 'retry' | 'resume') => {
     if (!task) return;
     if (action === 'cancel' && !window.confirm(`Cancel task "${task.title}"? This stops queued/running work.`)) return;
     setBusyAction(action);
@@ -256,6 +425,7 @@ export function TaskDetailDrawer({ taskId, onClose }: { taskId: string | null; o
     try {
       if (action === 'cancel') await api.tasks.cancel(task.id, true);
       if (action === 'retry') await api.tasks.retry(task.id);
+      if (action === 'resume') await api.tasks.resume(task.id);
       await refresh();
     } catch (err: any) {
       setError(err.message);
@@ -298,14 +468,25 @@ export function TaskDetailDrawer({ taskId, onClose }: { taskId: string | null; o
               </button>
             )}
             {['failed', 'cancelled'].includes(task.status) && (
-              <button
-                onClick={() => void runTaskAction('retry')}
-                disabled={!!busyAction || !canControl}
-                title={canControl ? undefined : readOnlyControlMessage}
-                className="px-3 py-1.5 rounded-lg bg-accent/10 text-accent-light text-[11px] hover:bg-accent/20 disabled:opacity-50"
-              >
-                {busyAction === 'retry' ? 'Retrying...' : 'Retry'}
-              </button>
+              checkpoints.length > 0 ? (
+                <button
+                  onClick={() => void runTaskAction('resume')}
+                  disabled={!!busyAction || !canControl}
+                  title={canControl ? undefined : readOnlyControlMessage}
+                  className="px-3 py-1.5 rounded-lg bg-accent/10 text-accent-light text-[11px] hover:bg-accent/20 disabled:opacity-50"
+                >
+                  {busyAction === 'resume' ? 'Resuming...' : 'Resume from checkpoint'}
+                </button>
+              ) : (
+                <button
+                  onClick={() => void runTaskAction('retry')}
+                  disabled={!!busyAction || !canControl}
+                  title={canControl ? undefined : readOnlyControlMessage}
+                  className="px-3 py-1.5 rounded-lg bg-accent/10 text-accent-light text-[11px] hover:bg-accent/20 disabled:opacity-50"
+                >
+                  {busyAction === 'retry' ? 'Retrying...' : 'Retry'}
+                </button>
+              )
             )}
             <button
               onClick={() => void refresh()}
@@ -322,7 +503,7 @@ export function TaskDetailDrawer({ taskId, onClose }: { taskId: string | null; o
 
       <div className="px-4 pt-3 border-b border-border">
         <div className="flex gap-1 overflow-x-auto">
-          {(['overview', 'trace', 'logs', 'quality', 'audit'] as const).map(item => (
+          {(['overview', 'context', 'trace', 'logs', 'quality', 'audit'] as const).map(item => (
             <button
               key={item}
               onClick={() => setTab(item)}
@@ -345,7 +526,19 @@ export function TaskDetailDrawer({ taskId, onClose }: { taskId: string | null; o
 
       <div className="flex-1 overflow-y-auto p-4">
         {!task && <EmptyState icon="📋" text="Task not found in the current workspace snapshot" />}
-        {task && tab === 'overview' && <OverviewTab task={task} agentName={agent?.name} />}
+        {task && tab === 'overview' && (
+          <OverviewTab
+            task={task}
+            agentName={agent?.name}
+            execution={execution}
+            logs={logs}
+            attempts={attempts}
+            executionContext={executionContext}
+            checkpoints={checkpoints}
+            onOpenEvidence={setTab}
+          />
+        )}
+        {task && tab === 'context' && <ContextTab context={executionContext} checkpoints={checkpoints} />}
         {task && tab === 'trace' && <TraceTab messages={messages} />}
         {task && tab === 'logs' && <LogsTab logs={logs} />}
         {task && tab === 'quality' && <QualityTab attempts={attempts} />}

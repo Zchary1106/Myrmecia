@@ -215,6 +215,56 @@ export interface Task {
   completedAt?: string;
 }
 
+/** A durable code baseline captured before an agent changes a workspace. */
+export interface CodeBaseline {
+  revision?: string;
+  branch?: string;
+  dirty?: boolean;
+  changedFiles?: string[];
+  capturedAt?: string;
+}
+
+/**
+ * The immutable execution contract for a task.  Task keeps its existing
+ * workspace/model fields for backwards compatibility; this record is the
+ * durable source of truth for long-running and child-task execution.
+ */
+export interface ExecutionContext {
+  id: string;
+  taskId: string;
+  workspaceId: string;
+  workspacePath?: string;
+  workdir?: string;
+  provider?: string;
+  modelId?: string;
+  reasoningEffort?: ReasoningEffort;
+  contextLength?: number;
+  goal: string;
+  constraints: string[];
+  parentTaskId?: string;
+  codeBaseline?: CodeBaseline;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ExecutionContextInput = Omit<ExecutionContext, 'id' | 'createdAt' | 'updatedAt'>;
+
+/** A durable recovery point written at an execution boundary. */
+export interface TaskCheckpoint {
+  id: string;
+  taskId: string;
+  executionContextId: string;
+  phase: string;
+  completed: string[];
+  pending: string[];
+  blocked: string[];
+  lastValidation?: Record<string, unknown>;
+  resumeHint?: string;
+  createdAt: string;
+}
+
+export type TaskCheckpointInput = Omit<TaskCheckpoint, 'id' | 'createdAt'>;
+
 export interface LogEntry {
   id: number;
   taskId: string;

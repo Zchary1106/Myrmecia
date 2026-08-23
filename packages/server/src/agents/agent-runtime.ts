@@ -12,7 +12,7 @@ import { workspaceManager } from '../workspace/workspace-manager.js';
 import { createToolExecution, completeToolExecution, summarizeToolPayload } from '../tools/tool-execution.js';
 import { resolveAllowedToolsForAgent } from '../tools/tool-policy.js';
 import { completeRunTrace, completeTraceSpan, createRunTrace, createTraceSpan } from '../db/models/trace.js';
-import { recordModelUsage, selectModelForAgent } from '../models/model-registry.js';
+import { getModel, recordModelUsage, selectModelForAgent } from '../models/model-registry.js';
 import { resolveSkillForAgent } from '../db/models/skill.js';
 import { getExecutor, DEFAULT_LIMITS } from './executor.js';
 import { getTrajectoryStore } from '../memory/trajectory-store.js';
@@ -32,6 +32,7 @@ import { shouldUseTsAgentLoop, selectRuntimeAdapter, type RuntimeAdapter } from 
 import { logger } from '../lib/logger.js';
 import { ExecutionMiddlewareChain } from './execution-middleware.js';
 import { indexExecutionArtifacts } from '../artifacts/execution-artifact-indexer.js';
+import { checkpointExecutionContext, loadExecutionContext, persistExecutionContext } from './execution-context.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MAX_RECENT_ACTIVITIES = 5;
@@ -151,6 +152,15 @@ export class AgentRuntime {
     if (workspacePath && !task.workdir) {
       task.workdir = workspacePath;
     }
+    if (workspacePath) task.workspacePath = workspacePath;
+    const executionContext = persistExecutionContext(task);
+    checkpointExecutionContext(executionContext, {
+      phase: 'starting',
+      completed: [],
+      pending: ['agent execution'],
+      blocked: [],
+      resumeHint: 'Start or retry the agent from this execution context.',
+    });
 
     // Create execution instance
     const runtimeSkill = resolveSkillForAgent(agent);
@@ -251,6 +261,14 @@ export class AgentRuntime {
       if (!settledDuringRun) {
         updateTask(task.id, { status: 'done', output: safeResult.output, completedAt: new Date().toISOString() });
       }
+      checkpointExecutionContext(executionContext, {
+        phase: 'completed',
+        completed: ['agent execution'],
+        pending: [],
+        blocked: [],
+        lastValidation: { executionId: execution.id, status: 'done', durationMs: safeResult.durationMs },
+        resumeHint: 'Execution completed; inspect QA/review state before making further changes.',
+      });
       try {
         const artifactCount = indexExecutionArtifacts({
           task,
@@ -333,6 +351,14 @@ export class AgentRuntime {
       if (!alreadyTerminal) {
         updateTask(task.id, { status: 'failed', error: errorMsg });
       }
+      checkpointExecutionContext(loadExecutionContext(task), {
+        phase: 'failed',
+        completed: [],
+        pending: ['operator retry or replan'],
+        blocked: [errorMsg],
+        lastValidation: { executionId: execution.id, status: 'failed' },
+        resumeHint: 'Inspect the failure and retry from this checkpoint or replan the task.',
+      });
 
       const stats = { ...agent.stats };
       stats.tasksFailed++;
@@ -625,6 +651,10 @@ export class AgentRuntime {
 
     const modelSelection = selectModelForAgent(agent, task, { promptText: `${systemPrompt}\n\n${enrichedInput}` });
     const selectedModel = modelSelection.modelId;
+    persistExecutionContext(task, {
+      modelId: selectedModel,
+      provider: getModel(selectedModel)?.provider,
+    });
     const limits = resolveAgentRuntimeLimits(agent, modelSelection, task.contextLength);
     updateExecution(executionId, {
       modelId: selectedModel,
@@ -761,6 +791,13 @@ export class AgentRuntime {
         if (lastActivityAt - lastCheckpointAt >= limits.executionHeartbeatMs) {
           lastCheckpointAt = lastActivityAt;
           addTaskLog(task.id, 'info', `Runtime checkpoint: ${boundary}; execution=${executionId}`, agent.id);
+          checkpointExecutionContext(loadExecutionContext(task), {
+            phase: 'running',
+            completed: [],
+            pending: ['agent execution'],
+            blocked: [],
+            resumeHint: `Continue from runtime activity boundary: ${boundary}.`,
+          });
         }
       };
 
