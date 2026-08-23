@@ -98,13 +98,13 @@ jobs:
 
       - name: Build unsigned macOS installer
         if: matrix.platform == 'mac'
-        run: pnpm --filter @myrmecia/desktop package -- --mac dmg
+        run: pnpm --filter @myrmecia/desktop package:mac
         env:
           ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder-cache
 
       - name: Build unsigned Windows installer
         if: matrix.platform == 'windows'
-        run: pnpm --filter @myrmecia/desktop package -- --win nsis
+        run: pnpm --filter @myrmecia/desktop package:win
         env:
           ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder-cache
 

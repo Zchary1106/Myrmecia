@@ -12,7 +12,9 @@
     "prepare:dev": "pnpm --filter @myrmecia/shared build && pnpm --filter @myrmecia/server build && pnpm --filter @myrmecia/dashboard build",
     "dev": "pnpm run prepare:dev && pnpm run build && electron .",
     "stage": "node scripts/stage-resources.mjs",
-    "package": "pnpm run build && pnpm run stage && electron-builder"
+    "package": "pnpm run build && pnpm run stage && electron-builder",
+    "package:mac": "pnpm run build && pnpm run stage && electron-builder --mac dmg",
+    "package:win": "pnpm run build && pnpm run stage && electron-builder --win nsis"
   },
   "devDependencies": {
     "@types/node": "^22.15.3",

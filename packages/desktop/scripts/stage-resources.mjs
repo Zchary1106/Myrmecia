@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { dirname, resolve, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -25,7 +25,11 @@ mkdirSync(stageRoot, { recursive: true });
 run(['--filter', '@myrmecia/shared', 'build']);
 run(['--filter', '@myrmecia/server', 'build']);
 run(['--filter', '@myrmecia/dashboard', 'build']);
-run(['--filter', '@myrmecia/server', 'deploy', '--prod', resolve(stageRoot, 'server')]);
+// `pnpm deploy` resolves its destination relative to this process' repository
+// cwd. Passing an absolute Windows path through the .cmd shell shim caused it
+// to be reinterpreted beneath packages/server; use a repository-relative path.
+const deployDestination = relative(repositoryRoot, resolve(stageRoot, 'server'));
+run(['--filter', '@myrmecia/server', 'deploy', '--prod', deployDestination]);
 
 const stagedServer = resolve(stageRoot, 'server');
 writeFileSync(
