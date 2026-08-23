@@ -10,6 +10,8 @@ import { HttpError, notFound, parseBody, parseQuery, requireConfirmation, requir
 import { requestCanAccessWorkspace, workspaceIdFromRequest } from '../auth/tenant.js';
 import type { Task } from '../types.js';
 import { getModel } from '../models/model-registry.js';
+import { getLatestTaskCheckpoint, listTaskCheckpoints } from '../db/models/execution-context.js';
+import { checkpointExecutionContext, loadExecutionContext } from '../agents/execution-context.js';
 
 const taskStatusSchema = z.enum(['pending', 'queued', 'assigned', 'running', 'review', 'done', 'failed', 'cancelled']);
 const taskModeSchema = z.enum(['master', 'direct', 'pipeline']);
@@ -240,6 +242,55 @@ export function createTaskRoutes(taskQueue: TaskQueue): Router {
       res.json(listQualityLoopAttempts({ taskId: req.params.id }));
     } catch (err) {
       sendError(res, err);
+    }
+  });
+
+  // Durable context and append-only checkpoints are read-only evidence for operators.
+  router.get('/:id/context', (req, res) => {
+    try {
+      const task = getAccessibleTask(req, req.params.id);
+      res.json(loadExecutionContext(task));
+    } catch (err) {
+      sendError(res, err);
+    }
+  });
+
+  router.get('/:id/checkpoints', (req, res) => {
+    try {
+      getAccessibleTask(req, req.params.id);
+      res.json(listTaskCheckpoints(req.params.id));
+    } catch (err) {
+      sendError(res, err);
+    }
+  });
+
+  // Resume is intentionally a re-queue from the latest checkpoint, never a claim that
+  // the interrupted process itself can be resumed.
+  router.post('/:id/resume', async (req, res) => {
+    try {
+      const task = getAccessibleTask(req, req.params.id);
+      const actor = requireOperatorRole(req, 'task.retry', ['admin', 'operator']);
+      const latest = getLatestTaskCheckpoint(task.id);
+      if (!latest) throw new HttpError(409, 'TASK_CHECKPOINT_MISSING', 'Task has no checkpoint to resume from');
+      const context = loadExecutionContext(task);
+      checkpointExecutionContext(context, {
+        phase: 'resuming',
+        completed: latest.completed,
+        pending: ['agent execution'],
+        blocked: [],
+        lastValidation: latest.lastValidation,
+        resumeHint: 'Operator requested a re-queue from the latest checkpoint.',
+      });
+      const resumed = await taskQueue.retryTask(task.id);
+      createOperatorAction({
+        action: 'task.retry', actor, targetType: 'task', targetId: task.id, taskId: task.id,
+        metadata: { previousStatus: task.status, checkpointId: latest.id, resumedFromCheckpoint: true },
+      });
+      res.json(resumed);
+    } catch (err: any) {
+      sendError(res, err?.message?.includes('not retryable')
+        ? new HttpError(400, 'TASK_RESUME_FAILED', err.message)
+        : err);
     }
   });
 

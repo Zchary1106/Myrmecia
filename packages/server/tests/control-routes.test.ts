@@ -28,6 +28,7 @@ import { getModelGateway } from '../src/models/gateway.js';
 import type { TaskQueue } from '../src/queue/task-queue.js';
 import { isPipelinePublisherTask } from '../src/queue/task-queue.js';
 import type { PipelineEngine } from '../src/pipelines/pipeline-engine.js';
+import { checkpointExecutionContext, persistExecutionContext } from '../src/agents/execution-context.js';
 
 beforeAll(() => {
   process.env.DB_PATH = join(mkdtempSync(join(tmpdir(), 'agent-factory-routes-')), 'test.db');
@@ -53,6 +54,8 @@ afterEach(() => {
     DELETE FROM skills;
     DELETE FROM inbox_entries;
     DELETE FROM quality_loop_attempts;
+    DELETE FROM task_checkpoints;
+    DELETE FROM execution_contexts;
     DELETE FROM platform_events;
     DELETE FROM task_logs;
     DELETE FROM tasks;
@@ -69,6 +72,7 @@ afterEach(() => {
   delete process.env.API_AUTH_TOKEN;
   delete process.env.API_AUTH_ENABLED;
   delete process.env.MYRMECIA_MODEL_PROVIDER;
+  delete process.env.GH_CLI_PATH;
 });
 
 async function withApp<T>(app: express.Express, fn: (baseUrl: string) => Promise<T>): Promise<T> {
@@ -247,6 +251,39 @@ describe('control routes', () => {
     });
   });
 
+  it('returns durable context and resumes a retryable task from its latest checkpoint', async () => {
+    const task = createTask({
+      title: 'Resumable', description: 'Finish the migration', input: 'run', mode: 'direct',
+      workspacePath: '/workspace/project', workdir: '/workspace/project', modelId: 'gpt-5', reasoningEffort: 'high', contextLength: 128000,
+    });
+    updateTask(task.id, { status: 'failed', error: 'server restarted', completedAt: new Date().toISOString() });
+    const context = persistExecutionContext(task, { provider: 'copilot', constraints: ['Keep the API stable'] });
+    const checkpoint = checkpointExecutionContext(context, {
+      phase: 'testing', completed: ['implementation'], pending: ['tests'], blocked: ['server restarted'],
+      lastValidation: { command: 'pnpm test', exitCode: 1 }, resumeHint: 'Run the remaining tests.',
+    });
+    const retryTask = vi.fn(async (taskId: string) => updateTask(taskId, {
+      status: 'pending', retryCount: 1, error: null, completedAt: null,
+    })!);
+    const app = express();
+    app.use(express.json());
+    app.use('/tasks', createTaskRoutes({ retryTask } as unknown as TaskQueue));
+
+    await withApp(app, async (baseUrl) => {
+      const contextResponse = await jsonFetch<any>(baseUrl, `/tasks/${task.id}/context`);
+      expect(contextResponse).toMatchObject({ status: 200, body: { taskId: task.id, provider: 'copilot', modelId: 'gpt-5' } });
+      const checkpointsResponse = await jsonFetch<any[]>(baseUrl, `/tasks/${task.id}/checkpoints`);
+      expect(checkpointsResponse).toMatchObject({ status: 200 });
+      expect(checkpointsResponse.body[0]).toMatchObject({ id: checkpoint.id, phase: 'testing', resumeHint: 'Run the remaining tests.' });
+
+      const resumed = await jsonFetch<any>(baseUrl, `/tasks/${task.id}/resume`, { method: 'POST' });
+      expect(resumed).toMatchObject({ status: 200, body: { id: task.id, status: 'pending', retryCount: 1 } });
+      expect(retryTask).toHaveBeenCalledWith(task.id);
+      const allCheckpoints = await jsonFetch<any[]>(baseUrl, `/tasks/${task.id}/checkpoints`);
+      expect(allCheckpoints.body[0]).toMatchObject({ phase: 'resuming' });
+    });
+  });
+
   it('dispatches pipeline approve, skip, and cancel controls', async () => {
     const engine = {
       approveGate: vi.fn(async () => undefined),
@@ -418,7 +455,16 @@ describe('control routes', () => {
 
   it('discovers and persists the selected Copilot provider model', async () => {
     process.env.MYRMECIA_MODEL_PROVIDER = 'copilot';
+    // Provider account discovery shells out to gh. Keep this route-contract
+    // test deterministic; the SDK/model catalog is mocked below and account
+    // enumeration is not the subject under test.
+    process.env.GH_CLI_PATH = process.execPath;
     syncBuiltinModels();
+    vi.spyOn(getModelGateway(), 'copilotAuthStatus').mockResolvedValue({
+      authenticated: true,
+      authType: 'gh-cli',
+      login: 'test-user',
+    });
     vi.spyOn(getModelGateway(), 'listProviderModels').mockResolvedValue([
       {
         id: 'gpt-5',
@@ -481,7 +527,13 @@ describe('control routes', () => {
 
   it('keeps cached Copilot models selectable when live discovery temporarily returns only Auto', async () => {
     process.env.MYRMECIA_MODEL_PROVIDER = 'copilot';
+    process.env.GH_CLI_PATH = process.execPath;
     syncBuiltinModels();
+    vi.spyOn(getModelGateway(), 'copilotAuthStatus').mockResolvedValue({
+      authenticated: true,
+      authType: 'gh-cli',
+      login: 'test-user',
+    });
     syncProviderModels('copilot', [{
       id: 'gpt-cached',
       name: 'GPT Cached',

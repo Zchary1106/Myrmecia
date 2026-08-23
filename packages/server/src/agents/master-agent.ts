@@ -7,6 +7,7 @@ import { TaskQueue } from '../queue/task-queue.js';
 import { getMemoryService } from '../memory/memory-service.js';
 import { logger } from '../lib/logger.js';
 import type { Task } from '../types.js';
+import { loadExecutionContext, persistInheritedExecutionContext } from './execution-context.js';
 
 interface SubTask {
   title: string;
@@ -135,6 +136,9 @@ Example output:
         modelId: parentTask.modelId,
         reasoningEffort: parentTask.reasoningEffort,
         contextLength: parentTask.contextLength,
+      });
+      persistInheritedExecutionContext(loadExecutionContext(parentTask), decomposeTask, {
+        goal: `Plan and decompose: ${parentTask.description || parentTask.title}`,
       });
 
       const result = await agentRuntime.execute(masterAgent, decomposeTask);
