@@ -9,7 +9,8 @@ import { getDb } from '../db/database.js';
 import { v4 as uuid } from 'uuid';
 import { Router } from 'express';
 import { logger } from '../lib/logger.js';
-import nodemailer from 'nodemailer';
+import net from 'node:net';
+import tls from 'node:tls';
 
 // ---------- Schema ----------
 
@@ -147,6 +148,7 @@ export class EmailChannel implements NotificationChannel {
     to: string | string[];
     from?: string;
     secure?: boolean;
+    starttls?: boolean;
     username?: string;
     password?: string;
   }) {}
@@ -159,23 +161,133 @@ export class EmailChannel implements NotificationChannel {
     }
     const port = Number(this.smtpConfig.port || 587);
     try {
-      const transporter = nodemailer.createTransport({
-        host,
-        port,
-        secure: this.smtpConfig.secure ?? port === 465,
-        ...(username ? { auth: { user: username, pass: password || '' } } : {}),
-      });
-      await transporter.sendMail({
-        from: from || username || 'Myrmecia <no-reply@localhost>',
-        to: Array.isArray(to) ? to.join(', ') : to,
-        subject: message.title,
-        text: message.body,
-      });
+      await sendSmtpMessage({
+        host, port, to, from: from || username || 'no-reply@localhost',
+        username, password, secure: this.smtpConfig.secure ?? port === 465,
+        starttls: this.smtpConfig.starttls ?? port === 587,
+      }, message);
       return true;
     } catch (err) {
       logger.error({ err, channel: this.name, host, port }, 'Failed to send SMTP notification');
       return false;
     }
+  }
+}
+
+interface SmtpConfig {
+  host: string;
+  port: number;
+  to: string | string[];
+  from: string;
+  username?: string;
+  password?: string;
+  secure: boolean;
+  starttls: boolean;
+}
+
+class SmtpSession {
+  private buffer = '';
+  private pending: Array<{ resolve: (value: string[]) => void; reject: (reason: Error) => void }> = [];
+
+  constructor(private socket: net.Socket | tls.TLSSocket) {
+    socket.setTimeout(30_000);
+    socket.on('data', data => this.consume(data.toString('utf8')));
+    socket.on('error', error => this.reject(error));
+    socket.on('timeout', () => this.reject(new Error('SMTP connection timed out')));
+    socket.on('close', () => this.reject(new Error('SMTP connection closed unexpectedly')));
+  }
+
+  private consume(data: string): void {
+    this.buffer += data;
+    const lines: string[] = [];
+    let index: number;
+    while ((index = this.buffer.indexOf('\r\n')) >= 0) {
+      lines.push(this.buffer.slice(0, index));
+      this.buffer = this.buffer.slice(index + 2);
+      if (/^\d{3} /.test(lines[lines.length - 1])) {
+        const request = this.pending.shift();
+        if (request) request.resolve(lines.splice(0));
+      }
+    }
+  }
+
+  private reject(error: Error): void {
+    while (this.pending.length) this.pending.shift()!.reject(error);
+  }
+
+  response(): Promise<string[]> {
+    return new Promise((resolve, reject) => this.pending.push({ resolve, reject }));
+  }
+
+  async command(command: string, accepted: number[] = [250]): Promise<string[]> {
+    const response = this.response();
+    this.socket.write(`${command}\r\n`);
+    const lines = await response;
+    const status = Number(lines.at(-1)?.slice(0, 3));
+    if (!accepted.includes(status)) throw new Error(`SMTP ${command.split(' ')[0]} failed: ${lines.join(' | ')}`);
+    return lines;
+  }
+
+  async data(content: string): Promise<void> {
+    await this.command('DATA', [354]);
+    const response = this.response();
+    this.socket.write(`${content.replace(/^\./gm, '..')}\r\n.\r\n`);
+    const lines = await response;
+    if (Number(lines.at(-1)?.slice(0, 3)) !== 250) throw new Error(`SMTP DATA failed: ${lines.join(' | ')}`);
+  }
+
+  async upgradeToTls(host: string): Promise<SmtpSession> {
+    // STARTTLS upgrades this exact TCP connection; opening a second connection
+    // would discard the SMTP protocol state and can leak a plaintext attempt.
+    this.socket.removeAllListeners('data');
+    this.socket.removeAllListeners('error');
+    this.socket.removeAllListeners('timeout');
+    this.socket.removeAllListeners('close');
+    const secureSocket = tls.connect({ socket: this.socket, servername: host });
+    await new Promise<void>((resolve, reject) => { secureSocket.once('secureConnect', resolve); secureSocket.once('error', reject); });
+    return new SmtpSession(secureSocket);
+  }
+
+  end(): void { this.socket.end(); }
+}
+
+async function connectSmtp(config: SmtpConfig): Promise<SmtpSession> {
+  const socket = config.secure
+    ? tls.connect({ host: config.host, port: config.port, servername: config.host })
+    : net.createConnection({ host: config.host, port: config.port });
+  await new Promise<void>((resolve, reject) => {
+    socket.once(config.secure ? 'secureConnect' : 'connect', resolve);
+    socket.once('error', reject);
+  });
+  return new SmtpSession(socket);
+}
+
+export async function sendSmtpMessage(config: SmtpConfig, message: NotificationMessage): Promise<void> {
+  let session = await connectSmtp(config);
+  try {
+    await session.response(); // server greeting
+    let capabilities = await session.command('EHLO myrmecia.local');
+    const supportsStarttls = capabilities.some(line => /\bSTARTTLS\b/i.test(line));
+    if (!config.secure && config.starttls) {
+      if (!supportsStarttls) throw new Error('SMTP server does not advertise STARTTLS');
+      await session.command('STARTTLS', [220]);
+      session = await session.upgradeToTls(config.host);
+      capabilities = await session.command('EHLO myrmecia.local');
+    }
+    if (config.username) {
+      if (!config.secure && !config.starttls) throw new Error('SMTP authentication requires TLS; enable secure or STARTTLS');
+      const credentials = Buffer.from(`\0${config.username}\0${config.password || ''}`).toString('base64');
+      await session.command(`AUTH PLAIN ${credentials}`, [235]);
+    }
+    await session.command(`MAIL FROM:<${config.from}>`);
+    for (const recipient of (Array.isArray(config.to) ? config.to : [config.to])) {
+      await session.command(`RCPT TO:<${recipient}>`, [250, 251]);
+    }
+    const body = [`From: ${config.from}`, `To: ${Array.isArray(config.to) ? config.to.join(', ') : config.to}`, `Subject: ${message.title}`, 'Content-Type: text/plain; charset=utf-8', '', message.body].join('\r\n');
+    await session.data(body);
+    await session.command('QUIT', [221]);
+  } finally {
+    session.end();
   }
 }
 

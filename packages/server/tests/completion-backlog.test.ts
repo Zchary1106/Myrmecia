@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import nodemailer from 'nodemailer';
+import net from 'node:net';
+import { once } from 'node:events';
 import { closeDb, getDb } from '../src/db/database.js';
 import { EmailChannel } from '../src/notifications/channels.js';
 import { dlpRuleEngine } from '../src/security/dlp-rules.js';
@@ -26,12 +27,37 @@ describe('completed reliability backlog capabilities', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  it('delivers SMTP notifications through a configured transporter', async () => {
-    const sendMail = vi.fn().mockResolvedValue({ messageId: 'message-1' });
-    vi.spyOn(nodemailer, 'createTransport').mockReturnValue({ sendMail } as any);
-    const channel = new EmailChannel({ host: 'smtp.example.test', port: 587, username: 'mailer', password: 'secret', to: 'ops@example.test' });
+  it('delivers SMTP notifications through a configured SMTP server', async () => {
+    let delivered = '';
+    const server = net.createServer(socket => {
+      let buffer = '';
+      let acceptingData = false;
+      socket.write('220 test SMTP\r\n');
+      socket.on('data', chunk => {
+        buffer += chunk.toString();
+        if (acceptingData) {
+          const end = buffer.indexOf('\r\n.\r\n');
+          if (end >= 0) { delivered = buffer.slice(0, end); buffer = buffer.slice(end + 5); acceptingData = false; socket.write('250 accepted\r\n'); }
+          return;
+        }
+        let lineEnd: number;
+        while ((lineEnd = buffer.indexOf('\r\n')) >= 0) {
+          const line = buffer.slice(0, lineEnd); buffer = buffer.slice(lineEnd + 2);
+          if (line === 'DATA') { acceptingData = true; socket.write('354 send body\r\n'); }
+          else if (line === 'QUIT') socket.write('221 bye\r\n');
+          else socket.write('250 ok\r\n');
+        }
+      });
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const address = server.address() as net.AddressInfo;
+    const channel = new EmailChannel({ host: '127.0.0.1', port: address.port, secure: false, starttls: false, to: 'ops@example.test' });
     await expect(channel.send({ title: 'Task finished', body: 'Done', event: 'task.done' })).resolves.toBe(true);
-    expect(sendMail).toHaveBeenCalledWith(expect.objectContaining({ to: 'ops@example.test', subject: 'Task finished' }));
+    await new Promise(resolve => setTimeout(resolve, 5));
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    expect(delivered).toContain('Subject: Task finished');
+    expect(delivered).toContain('Done');
   });
 
   it('syncs markdown skills from an administrator-selected local directory', async () => {
