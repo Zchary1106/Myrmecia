@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { existsSync, mkdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -47,6 +47,22 @@ function deployServer() {
       lastError = error;
       if (attempt < attempts) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, attempt * 1_000);
     }
+  }
+  const deployedRoot = resolve(stageRoot, 'server');
+  const runtimeFiles = [
+    'dist/index.js',
+    'package.json',
+    'node_modules/express/package.json',
+    'node_modules/better-sqlite3/package.json',
+    'node_modules/openai/package.json',
+  ];
+  // pnpm 9 on Windows can finish copying the runtime tree and then fail only
+  // while linking optional dependency CLIs. Myrmecia starts Node directly and
+  // never resolves node_modules/.bin, so accept this narrowly verified layout.
+  if (process.platform === 'win32' && runtimeFiles.every(file => existsSync(join(deployedRoot, file)))) {
+    rmSync(join(deployedRoot, 'node_modules', '.bin'), { recursive: true, force: true });
+    console.warn('pnpm deploy completed runtime files but failed linking optional .bin shims; continuing with verified runtime tree.');
+    return;
   }
   throw lastError;
 }
