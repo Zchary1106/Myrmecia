@@ -5,7 +5,7 @@ import { createTask, getTask, updateTask, addTaskLog, listTasks, listDependents 
 import { AgentManager } from '../agents/agent-manager.js';
 import { metrics } from '../observability/telemetry.js';
 import { logger } from '../lib/logger.js';
-import type { Task, TaskMode, Priority } from '../types.js';
+import type { ReasoningEffort, Task, TaskMode, Priority } from '../types.js';
 
 const QUEUE_NAME = 'agent-factory-tasks';
 export const PUBLISH_RECONFIRMATION_ERROR = 'Interrupted publish task requires renewed pipeline confirmation';
@@ -142,6 +142,9 @@ export class TaskQueue {
     pipelineId?: string;
     stageIndex?: number;
     dependsOn?: string[];
+    modelId?: string;
+    reasoningEffort?: ReasoningEffort;
+    contextLength?: number;
     workdir?: string;
     workspacePath?: string;
     workspaceId?: string;

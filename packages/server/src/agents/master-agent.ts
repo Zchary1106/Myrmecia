@@ -132,6 +132,9 @@ Example output:
         input: prompt,
         workspaceId: parentTask.workspaceId,
         workdir: parentTask.workdir,
+        modelId: parentTask.modelId,
+        reasoningEffort: parentTask.reasoningEffort,
+        contextLength: parentTask.contextLength,
       });
 
       const result = await agentRuntime.execute(masterAgent, decomposeTask);
@@ -193,6 +196,9 @@ Example output:
           workdir: parentTask.workdir,
           workspaceId: parentTask.workspaceId,
           domainId: parentTask.domainId,
+          modelId: parentTask.modelId,
+          reasoningEffort: parentTask.reasoningEffort,
+          contextLength: parentTask.contextLength,
         });
 
         createdTasks.push(task);

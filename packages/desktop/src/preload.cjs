@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('myrmeciaDesktop', {
   runDoctor: () => ipcRenderer.invoke('desktop:run-doctor'),
   getRuntimeConfig: () => ipcRenderer.invoke('desktop:get-runtime-config'),
   saveRuntimeConfig: configuration => ipcRenderer.invoke('desktop:save-runtime-config', configuration),
+  loginCopilot: () => ipcRenderer.invoke('desktop:login-copilot'),
   continueStartup: () => ipcRenderer.send('desktop:continue-startup'),
   quit: () => ipcRenderer.invoke('desktop:quit'),
 });

@@ -20,7 +20,6 @@ import { join } from 'node:path';
 import { logger } from '../lib/logger.js';
 import { modelBaseURL, modelApiKey } from '../lib/brand-config.js';
 import { CopilotProvider, type CopilotToolCall } from './copilot-provider.js';
-import type { ModelInfo } from '@github/copilot-sdk';
 
 export interface OpenAIProviderConfig {
   type: 'openai';
@@ -35,6 +34,16 @@ export interface CopilotProviderConfig {
 }
 
 export type ProviderConfig = OpenAIProviderConfig | CopilotProviderConfig;
+
+export interface ProviderModelInfo {
+  id: string;
+  name: string;
+  capabilities?: unknown;
+  policy?: { state?: 'enabled' | 'disabled' | 'unconfigured'; terms?: string };
+  billing?: { multiplier?: number };
+  supportedReasoningEfforts?: string[];
+  maxTokens?: number;
+}
 
 export interface StreamAccumulation {
   choices: Array<{
@@ -170,14 +179,40 @@ export class ModelGateway {
     return true;
   }
 
-  async listProviderModels(providerName: string): Promise<ModelInfo[]> {
+  async listProviderModels(providerName: string): Promise<ProviderModelInfo[]> {
     const providers = readProviders();
     const cfg = providers[providerName];
     if (!cfg) throw new Error(`Provider "${providerName}" is not configured.`);
-    if (cfg.type !== 'copilot') {
-      throw new Error(`Provider "${providerName}" does not support authenticated model discovery.`);
+    if (cfg.type === 'copilot') {
+      const models = await this.copilotProviderFor(providerName, cfg).listModels();
+      return models.map(model => ({
+        id: model.id,
+        name: model.name,
+        capabilities: model.capabilities,
+        policy: model.policy as ProviderModelInfo['policy'],
+        billing: model.billing as ProviderModelInfo['billing'],
+        supportedReasoningEfforts: model.supportedReasoningEfforts?.map(String),
+        maxTokens: model.capabilities?.limits?.max_context_window_tokens,
+      }));
     }
-    return this.copilotProviderFor(providerName, cfg).listModels();
+
+    const client = new OpenAI({ baseURL: cfg.baseURL, apiKey: cfg.apiKey, maxRetries: 1, timeout: 15_000 });
+    const response = await client.models.list();
+    return response.data.map(model => ({ id: model.id, name: model.id }));
+  }
+
+  async copilotAuthStatus(): Promise<{ authenticated: boolean; login?: string; host?: string; authType?: string; statusMessage?: string }> {
+    const providers = readProviders();
+    const cfg = providers.copilot;
+    if (!cfg || cfg.type !== 'copilot') return { authenticated: false, statusMessage: 'GitHub Copilot is not configured.' };
+    const status = await this.copilotProviderFor('copilot', cfg).getAuthStatus();
+    return {
+      authenticated: status.isAuthenticated,
+      ...(status.login ? { login: status.login } : {}),
+      ...(status.host ? { host: status.host } : {}),
+      ...(status.authType ? { authType: status.authType } : {}),
+      ...(status.statusMessage ? { statusMessage: status.statusMessage } : {}),
+    };
   }
 
   /**

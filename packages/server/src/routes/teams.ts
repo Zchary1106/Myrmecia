@@ -18,11 +18,15 @@ import {
   publishTeamTemplateVersion,
 } from '../db/models/team-template-version.js';
 import { createGraphWorkflow } from '../agents/graph-workflow.js';
+import { getModel } from '../models/model-registry.js';
 
 const dispatchSchema = z.object({
   goal: z.string().trim().min(1, 'goal is required'),
   workspaceId: z.string().trim().optional(),
   workdir: z.string().trim().min(1).max(16_384).optional(),
+  modelId: z.string().trim().min(1).max(200).optional(),
+  reasoningEffort: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).optional(),
+  contextLength: z.number().int().min(8_000).max(10_000_000).optional(),
 });
 
 function validateWorkdir(value: string | undefined): string | undefined {
@@ -33,6 +37,13 @@ function validateWorkdir(value: string | undefined): string | undefined {
     throw new HttpError(400, 'INVALID_WORKDIR', 'Workspace directory does not exist');
   }
   return workdir;
+}
+
+function validateModelId(value: string | undefined): string | undefined {
+  if (!value || value === 'auto') return undefined;
+  const model = getModel(value);
+  if (!model || !model.enabled) throw new HttpError(400, 'INVALID_MODEL', 'Selected model is not enabled');
+  return model.id;
 }
 
 const messageSchema = z.object({
@@ -323,7 +334,11 @@ export function createTeamRoutes(coordinator: TeamCoordinator): Router {
       const team = getTeam(req.params.id, ws(req));
       if (!team) notFound('TEAM_NOT_FOUND', 'Team not found');
       const body = parseBody(dispatchSchema, req);
-      const result = await coordinator.dispatch(team!.id, body.goal, ws(req), validateWorkdir(body.workdir));
+      const result = await coordinator.dispatch(team!.id, body.goal, ws(req), validateWorkdir(body.workdir), {
+        modelId: validateModelId(body.modelId),
+        reasoningEffort: body.reasoningEffort,
+        contextLength: body.contextLength,
+      });
       res.status(201).json(result);
     } catch (err) {
       sendError(res, err);

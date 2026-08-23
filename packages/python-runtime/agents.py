@@ -14,7 +14,7 @@ REGISTRY_PATH = os.path.join(os.path.dirname(__file__), "../../agents/registry.y
 AGENTS_DIR = os.path.join(os.path.dirname(__file__), "../../agents")
 
 
-def get_llm(model: Optional[str] = None) -> LLM:
+def get_llm(model: Optional[str] = None, reasoning_effort: Optional[str] = None) -> LLM:
     """Create LLM instance for the OpenAI-compatible gateway.
 
     crewai/LiteLLM needs an explicit ``openai/`` provider prefix to route a
@@ -24,11 +24,14 @@ def get_llm(model: Optional[str] = None) -> LLM:
     chosen = model or LLM_MODEL
     if "/" not in chosen:
         chosen = f"openai/{chosen}"
-    return LLM(
-        model=chosen,
-        base_url=LLM_BASE_URL,
-        api_key=LLM_API_KEY,
-    )
+    options = {
+        "model": chosen,
+        "base_url": LLM_BASE_URL,
+        "api_key": LLM_API_KEY,
+    }
+    if reasoning_effort:
+        options["reasoning_effort"] = reasoning_effort
+    return LLM(**options)
 
 
 def load_registry() -> dict:
@@ -88,7 +91,7 @@ def build_agent(
         role=agent_def.get("role", agent_id),
         goal=agent_def.get("description", "Complete the assigned task thoroughly."),
         backstory=backstory,
-        llm=get_llm(model),
+        llm=get_llm(model, (agent_meta or {}).get("reasoningEffort")),
         tools=selected_tools,
         verbose=False,
         max_iter=max_iter,
