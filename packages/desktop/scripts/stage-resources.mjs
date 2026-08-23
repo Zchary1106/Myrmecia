@@ -29,7 +29,27 @@ run(['--filter', '@myrmecia/dashboard', 'build']);
 // cwd. Passing an absolute Windows path through the .cmd shell shim caused it
 // to be reinterpreted beneath packages/server; use a repository-relative path.
 const deployDestination = relative(repositoryRoot, resolve(stageRoot, 'server'));
-run(['--filter', '@myrmecia/server', 'deploy', '--prod', deployDestination]);
+const deployArgs = ['--filter', '@myrmecia/server', 'deploy', '--prod', deployDestination];
+
+// pnpm 9 can hit a transient EPERM while creating .bin shims on GitHub's
+// Windows runner. The staging directory is entirely generated, so retrying a
+// clean deploy is safe; keep non-Windows and persistent failures fail-closed.
+function deployServer() {
+  const attempts = process.platform === 'win32' ? 3 : 1;
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      rmSync(resolve(stageRoot, 'server'), { recursive: true, force: true });
+      run(deployArgs);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, attempt * 1_000);
+    }
+  }
+  throw lastError;
+}
+deployServer();
 
 const stagedServer = resolve(stageRoot, 'server');
 writeFileSync(
