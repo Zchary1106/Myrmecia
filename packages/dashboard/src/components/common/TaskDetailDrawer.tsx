@@ -13,6 +13,7 @@ const statusClass: Record<string, string> = {
   queued: 'bg-yellow-500/15 text-yellow-400 border-yellow-500/20',
   assigned: 'bg-blue-500/15 text-blue-300 border-blue-500/20',
   running: 'bg-blue-500/15 text-blue-400 border-blue-500/20',
+  waiting_for_tool: 'bg-cyan-500/15 text-cyan-300 border-cyan-500/20',
   review: 'bg-purple-500/15 text-purple-400 border-purple-500/20',
   done: 'bg-green-500/15 text-green-400 border-green-500/20',
   failed: 'bg-red-500/15 text-red-400 border-red-500/20',
@@ -79,6 +80,7 @@ function taskPhase(status: Task['status']) {
     queued: 'Queued',
     assigned: 'Agent assigned',
     running: 'Working',
+    waiting_for_tool: 'Waiting for tool',
     review: 'Quality gate',
     done: 'Completed',
     failed: 'Needs attention',
@@ -241,7 +243,9 @@ function ContextTab({ context, checkpoints }: { context?: ExecutionContext; chec
         <div className="mt-3 grid grid-cols-2 gap-2">
           <RuntimeFact label="Workspace" value={context.workspacePath || context.workspaceId} detail={context.workdir || 'No workdir recorded'} />
           <RuntimeFact label="Model" value={context.modelId || 'Provider default'} detail={context.provider || 'Provider not recorded'} />
-          <RuntimeFact label="Reasoning" value={context.reasoningEffort || 'Provider default'} detail={context.contextLength ? `${context.contextLength.toLocaleString()} token context` : 'Context length not recorded'} />
+        <RuntimeFact label="Reasoning" value={context.reasoningEffort || 'Provider default'} detail={context.contextLength ? `${context.contextLength.toLocaleString()} token context` : 'Context length not recorded'} />
+        <RuntimeFact label="Context occupancy" value={context.contextUsage ? `${context.contextUsage.occupancyPercent}%` : 'Not measured'} detail={context.contextUsage ? `${context.contextUsage.estimatedInputTokens.toLocaleString()} input / ${context.contextUsage.maxInputTokens.toLocaleString()} max; ${context.contextUsage.reservedOutputTokens.toLocaleString()} reserved for output` : 'The runtime has not made a measured model request yet.'} />
+        <RuntimeFact label="Latest compaction" value={context.contextUsage?.summaryVersion ? `Summary v${context.contextUsage.summaryVersion}` : 'No compaction yet'} detail={context.contextUsage?.summaryVersion ? 'The source summary is stored as an execution artifact.' : 'Older context has not needed compaction.'} />
           <RuntimeFact label="Parent task" value={context.parentTaskId || 'Root task'} detail={`Updated ${new Date(context.updatedAt).toLocaleString()}`} />
         </div>
         {context.constraints.length > 0 && <div className="mt-3 text-[11px] text-gray-400">Constraints: {context.constraints.join(' · ')}</div>}
@@ -417,7 +421,7 @@ export function TaskDetailDrawer({ taskId, onClose }: { taskId: string | null; o
     setCheckpoints(nextCheckpoints);
   };
 
-  const runTaskAction = async (action: 'cancel' | 'retry' | 'resume') => {
+  const runTaskAction = async (action: 'cancel' | 'retry' | 'resume' | 'replan') => {
     if (!task) return;
     if (action === 'cancel' && !window.confirm(`Cancel task "${task.title}"? This stops queued/running work.`)) return;
     setBusyAction(action);
@@ -426,6 +430,7 @@ export function TaskDetailDrawer({ taskId, onClose }: { taskId: string | null; o
       if (action === 'cancel') await api.tasks.cancel(task.id, true);
       if (action === 'retry') await api.tasks.retry(task.id);
       if (action === 'resume') await api.tasks.resume(task.id);
+      if (action === 'replan') await api.tasks.replan(task.id);
       await refresh();
     } catch (err: any) {
       setError(err.message);
@@ -457,7 +462,7 @@ export function TaskDetailDrawer({ taskId, onClose }: { taskId: string | null; o
 
         {task && (
           <div className="flex items-center gap-2 mt-4">
-            {['pending', 'queued', 'assigned', 'running'].includes(task.status) && (
+            {['pending', 'queued', 'assigned', 'running', 'waiting_for_tool'].includes(task.status) && (
               <button
                 onClick={() => void runTaskAction('cancel')}
                 disabled={!!busyAction || !canControl}
@@ -487,6 +492,16 @@ export function TaskDetailDrawer({ taskId, onClose }: { taskId: string | null; o
                   {busyAction === 'retry' ? 'Retrying...' : 'Retry'}
                 </button>
               )
+            )}
+            {['failed', 'cancelled', 'done'].includes(task.status) && (
+              <button
+                onClick={() => void runTaskAction('replan')}
+                disabled={!!busyAction || !canControl}
+                title={canControl ? undefined : readOnlyControlMessage}
+                className="px-3 py-1.5 rounded-lg border border-border text-gray-300 text-[11px] hover:border-accent/50 hover:text-accent-light disabled:opacity-50"
+              >
+                {busyAction === 'replan' ? 'Creating plan...' : 'Replan'}
+              </button>
             )}
             <button
               onClick={() => void refresh()}

@@ -76,6 +76,7 @@ export function persistExecutionContext(task: Task, overrides: ExecutionContextO
     constraints: existing?.constraints,
     parentTaskId: task.parentTaskId ?? existing?.parentTaskId,
     codeBaseline: existing?.codeBaseline,
+    contextUsage: existing?.contextUsage,
   };
   const merged = { ...preserved, ...overrides };
   if (!merged.provider && merged.modelId) merged.provider = getModel(merged.modelId)?.provider;

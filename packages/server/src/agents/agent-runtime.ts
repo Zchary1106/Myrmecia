@@ -33,6 +33,7 @@ import { logger } from '../lib/logger.js';
 import { ExecutionMiddlewareChain } from './execution-middleware.js';
 import { indexExecutionArtifacts } from '../artifacts/execution-artifact-indexer.js';
 import { checkpointExecutionContext, loadExecutionContext, persistExecutionContext } from './execution-context.js';
+import { archiveLongToolOutput } from './tool-output-artifact.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MAX_RECENT_ACTIVITIES = 5;
@@ -154,6 +155,15 @@ export class AgentRuntime {
     }
     if (workspacePath) task.workspacePath = workspacePath;
     const executionContext = persistExecutionContext(task);
+    persistExecutionContext(task, {
+      contextUsage: {
+        estimatedInputTokens: estimateTokenCount(task.input),
+        maxInputTokens: task.contextLength || getRuntimeLimits().maxExecutionTokens,
+        reservedOutputTokens: getRuntimeLimits().maxModelResponseTokens,
+        occupancyPercent: Math.min(100, Math.round((estimateTokenCount(task.input) / Math.max(1, (task.contextLength || getRuntimeLimits().maxExecutionTokens) - getRuntimeLimits().maxModelResponseTokens)) * 100)),
+        updatedAt: new Date().toISOString(),
+      },
+    });
     checkpointExecutionContext(executionContext, {
       phase: 'starting',
       completed: [],
@@ -525,6 +535,16 @@ export class AgentRuntime {
       ...outputContext,
       purpose: `tool ${toolName} result`,
     });
+    const evidenceOutput = rawOutput === undefined
+      ? content
+      : sanitizeAgentOutput(String(rawOutput), { ...outputContext, purpose: `tool ${toolName} raw evidence` });
+    archiveLongToolOutput({
+      task,
+      executionId,
+      toolExecutionId: String(event.toolExecutionId || `${toolName}_${Date.now()}`),
+      toolName,
+      output: evidenceOutput,
+    });
     const updated = completeToolExecution(String(event.toolExecutionId), {
       status,
       output: safeOutput,
@@ -656,6 +676,21 @@ export class AgentRuntime {
       provider: getModel(selectedModel)?.provider,
     });
     const limits = resolveAgentRuntimeLimits(agent, modelSelection, task.contextLength);
+    const reservedOutputTokens = Math.min(limits.maxModelResponseTokens, limits.maxExecutionTokens);
+    const estimatedInputTokens = estimateTokenCount(`${systemPrompt}\n\n${enrichedInput}`);
+    const promptBudget = Math.max(1, limits.maxExecutionTokens - reservedOutputTokens);
+    if (estimatedInputTokens > promptBudget) {
+      throw new Error(`CONTEXT_BUDGET_EXCEEDED: Python runtime prompt needs ${estimatedInputTokens}/${promptBudget} tokens after reserving output`);
+    }
+    persistExecutionContext(task, {
+      contextUsage: {
+        estimatedInputTokens,
+        maxInputTokens: limits.maxExecutionTokens,
+        reservedOutputTokens,
+        occupancyPercent: Math.min(100, Math.round((estimatedInputTokens / promptBudget) * 100)),
+        updatedAt: new Date().toISOString(),
+      },
+    });
     updateExecution(executionId, {
       modelId: selectedModel,
       modelTier: modelSelection.modelTier,
@@ -761,6 +796,8 @@ export class AgentRuntime {
           AGENT_FACTORY_CPU_TIME_SEC: String(cpuTimeoutSeconds),
           AGENT_FACTORY_MEMORY_MB: String(limits.pythonRuntimeMemoryMB),
           AGENT_FACTORY_MAX_OUTPUT_CHARS: String(limits.maxOutputChars),
+          AGENT_FACTORY_TOOL_RESULT_MAX_CHARS: String(Math.min(2_000, limits.maxOutputChars)),
+          AGENT_FACTORY_TOOL_EVIDENCE_MAX_CHARS: String(Math.min(65_536, limits.pythonRuntimeMaxStdoutBytes)),
           AGENT_FACTORY_MAX_EXECUTION_TOKENS: String(limits.maxExecutionTokens),
           AGENT_FACTORY_MAX_RESPONSE_TOKENS: String(limits.maxModelResponseTokens),
           AGENT_FACTORY_MAX_TOOL_CALLS: String(limits.maxToolCallsPerExecution),
@@ -870,11 +907,15 @@ export class AgentRuntime {
         }
 
         if (ev.type === 'tool_use') {
+          updateTask(task.id, { status: 'waiting_for_tool' });
           this.recordToolStarted(executionId, traceId, rootSpanId, task, agent, tracker, ev);
         }
 
         if (ev.type === 'tool_result') {
           this.recordToolResult(executionId, task, agent, ev);
+          if (!['cancelled', 'failed', 'done'].includes(getTask(task.id)?.status || '')) {
+            updateTask(task.id, { status: 'running' });
+          }
         }
 
         // Handle error event

@@ -17,6 +17,8 @@ import { llmCache } from '../cache/llm-cache.js';
 import { metrics } from '../observability/telemetry.js';
 import { assertExecutionTokenBudget, remainingResponseTokens, resolveAgentRuntimeLimits } from './runtime-limits.js';
 import { compactMessages } from './context-compactor.js';
+import { loadExecutionContext, persistExecutionContext } from './execution-context.js';
+import { archiveContextSummary, archiveLongToolOutput } from './tool-output-artifact.js';
 import { sanitizeAgentOutput } from '../security/dlp-runtime.js';
 import { buildSandboxToolDefinition, executeTool, isSandboxTool } from '../skills/tool-sandbox.js';
 import {
@@ -33,6 +35,21 @@ import { getSandboxProfile } from './sandbox-profile.js';
 import type { ExecutionMiddlewareChain } from './execution-middleware.js';
 
 const MAX_RECENT_ACTIVITIES = 5;
+
+function recordContextUsage(task: Task, estimatedInputTokens: number, maxInputTokens: number, reservedOutputTokens: number, summaryVersion?: number) {
+  const usableTokens = Math.max(1, maxInputTokens - reservedOutputTokens);
+  const previous = loadExecutionContext(task).contextUsage;
+  persistExecutionContext(task, {
+    contextUsage: {
+      estimatedInputTokens,
+      maxInputTokens,
+      reservedOutputTokens,
+      occupancyPercent: Math.min(100, Math.round((estimatedInputTokens / usableTokens) * 100)),
+      ...(summaryVersion !== undefined ? { summaryVersion } : previous?.summaryVersion !== undefined ? { summaryVersion: previous.summaryVersion } : {}),
+      updatedAt: new Date().toISOString(),
+    },
+  });
+}
 
 function modelRequestTuning(task: Task): Record<string, string> {
   return task.reasoningEffort ? { reasoning_effort: task.reasoningEffort } : {};
@@ -510,6 +527,7 @@ export class TsAgentLoop {
           toolExecutionId: toolExecId, toolId: toolName, taskId: task.id, workspaceId: task.workspaceId,
           executionId, agentId: agent.id, inputSummary: summarizeToolPayload(toolInput),
         });
+        updateTask(task.id, { status: 'waiting_for_tool' });
 
         let output = '';
         let status: 'done' | 'failed' = 'done';
@@ -557,30 +575,48 @@ export class TsAgentLoop {
           executionId, agentId: agent.id, status, error: status === 'failed' ? output : undefined,
           durationMs, outputSummary: String(output).slice(0, 200),
         });
-        return output;
+        if (!['cancelled', 'failed', 'done'].includes(getTask(task.id)?.status || '')) {
+          updateTask(task.id, { status: 'running' });
+        }
+        return archiveLongToolOutput({ task, executionId, toolExecutionId: toolExecId, toolName, output: String(output) });
       };
 
       while (numTurns < maxTurns) {
         numTurns++;
 
-        const compaction = compactMessages(messages, limits.maxExecutionTokens, { keepRecent: 6, triggerRatio: 0.5 });
+        const responseReserve = remainingResponseTokens(inputTokens, outputTokens, limits);
+        const promptBudget = Math.max(1, limits.maxExecutionTokens - responseReserve);
+        const compaction = compactMessages(messages, promptBudget, { keepRecent: 6, triggerRatio: 0.5 });
         if (compaction.compacted) {
           messages.length = 0;
           messages.push(...compaction.messages);
           addTaskLog(task.id, 'info', `🗜️ auto-compacted context ~${compaction.before}→${compaction.after} tokens`, agent.id);
         }
+        const summaryVersion = compaction.compacted
+          ? (loadExecutionContext(task).contextUsage?.summaryVersion ?? 0) + 1
+          : undefined;
+        if (summaryVersion !== undefined) {
+          const summary = compaction.messages.find(message => typeof message.content === 'string' && message.content.startsWith('[Auto-compacted'));
+          const artifactId = archiveContextSummary({ task, executionId, version: summaryVersion, summary: String(summary?.content || '') });
+          addTaskLog(task.id, 'info', `Context summary v${summaryVersion} archived: ${artifactId}`, agent.id);
+        }
         middleware?.beforeModelTurn({
           estimatedContextTokens: compaction.after,
-          maxContextTokens: limits.maxExecutionTokens,
+          maxContextTokens: promptBudget,
           turn: numTurns,
           compacted: compaction.compacted,
         });
+
+        if (compaction.after > promptBudget) {
+          throw new Error(`CONTEXT_BUDGET_EXCEEDED: prompt needs ${compaction.after}/${promptBudget} tokens after compaction`);
+        }
+        recordContextUsage(task, compaction.after, limits.maxExecutionTokens, responseReserve, summaryVersion);
 
         const completionParams = {
           model: selectedModel,
           messages,
           tools: toolDefs.length > 0 ? toolDefs : undefined,
-          max_tokens: remainingResponseTokens(inputTokens, outputTokens, limits),
+          max_tokens: responseReserve,
           ...modelRequestTuning(task),
         };
 
@@ -729,6 +765,7 @@ export class TsAgentLoop {
             addExecutionMessage({ executionId, type: 'tool_use', content: summarizeToolPayload(toolInput), toolName });
             eventBus.emit('tool:started', { toolExecutionId: toolExecId, toolId: toolName, taskId: task.id, workspaceId: task.workspaceId, executionId, agentId: agent.id, inputSummary: summarizeToolPayload(toolInput) });
             eventBus.emit('execution:progress', { executionId, taskId: task.id, agentDefId: agent.id, workspaceId: task.workspaceId, progress: getProgressSnapshot(tracker) });
+            updateTask(task.id, { status: 'waiting_for_tool' });
 
             try {
               if (totalToolCalls >= limits.maxToolCallsPerExecution) {
@@ -806,11 +843,14 @@ export class TsAgentLoop {
               executionId, agentId: agent.id, status: toolStatus, error: toolStatus === 'failed' ? toolOutput : undefined,
               durationMs, outputSummary: String(toolOutput).slice(0, 200),
             });
+            if (!['cancelled', 'failed', 'done'].includes(getTask(task.id)?.status || '')) {
+              updateTask(task.id, { status: 'running' });
+            }
 
             messages.push({
               role: 'tool',
               tool_call_id: toolCallId,
-              content: toolOutput,
+              content: archiveLongToolOutput({ task, executionId, toolExecutionId: toolExecId, toolName, output: String(toolOutput) }),
             });
           }
         } else {
@@ -979,24 +1019,39 @@ export class TsAgentLoop {
       for (let turn = 0; turn < maxTurns; turn++) {
         if (abortController.signal.aborted) throw new Error('Execution aborted');
 
-        const compaction = compactMessages(messages, limits.maxExecutionTokens, { keepRecent: 6, triggerRatio: 0.5 });
+        const responseReserve = remainingResponseTokens(inputTokens, outputTokens, limits);
+        const promptBudget = Math.max(1, limits.maxExecutionTokens - responseReserve);
+        const compaction = compactMessages(messages, promptBudget, { keepRecent: 6, triggerRatio: 0.5 });
         if (compaction.compacted) {
           messages.length = 0;
           messages.push(...compaction.messages);
           addTaskLog(task.id, 'info', `🗜️ auto-compacted step context ~${compaction.before}→${compaction.after} tokens`, agent.id);
         }
+        const summaryVersion = compaction.compacted
+          ? (loadExecutionContext(task).contextUsage?.summaryVersion ?? 0) + 1
+          : undefined;
+        if (summaryVersion !== undefined) {
+          const summary = compaction.messages.find(message => typeof message.content === 'string' && message.content.startsWith('[Auto-compacted'));
+          const artifactId = archiveContextSummary({ task, executionId, version: summaryVersion, summary: String(summary?.content || '') });
+          addTaskLog(task.id, 'info', `Context summary v${summaryVersion} archived: ${artifactId}`, agent.id);
+        }
         middleware?.beforeModelTurn({
           estimatedContextTokens: compaction.after,
-          maxContextTokens: limits.maxExecutionTokens,
+          maxContextTokens: promptBudget,
           turn: turn + 1,
           compacted: compaction.compacted,
         });
+
+        if (compaction.after > promptBudget) {
+          throw new Error(`CONTEXT_BUDGET_EXCEEDED: skill prompt needs ${compaction.after}/${promptBudget} tokens after compaction`);
+        }
+        recordContextUsage(task, compaction.after, limits.maxExecutionTokens, responseReserve, summaryVersion);
 
         const completion = await getModelGateway().completeForModel(selectedModel, {
           model: selectedModel,
           messages,
           tools: stepToolDefs.length > 0 ? stepToolDefs : undefined,
-          max_tokens: remainingResponseTokens(inputTokens, outputTokens, limits),
+          max_tokens: responseReserve,
           ...modelRequestTuning(task),
         }, { signal: abortController.signal });
         mergeProviderUsage(providerUsage, completion.usage);
@@ -1084,6 +1139,7 @@ export class TsAgentLoop {
               throw new Error(`Execution tool runtime budget exceeded (${limits.maxToolRuntimeMsPerExecution}ms)`);
             }
             executionToolCalls++;
+            updateTask(task.id, { status: 'waiting_for_tool' });
             const remainingToolBudgetMs = Math.min(
               limits.maxToolCallTimeoutMs,
               limits.maxToolRuntimeMsPerStep - stepToolRuntimeMs,
@@ -1118,11 +1174,14 @@ export class TsAgentLoop {
               purpose: `tool ${toolName} result`,
             });
             middleware?.afterToolCall(toolName, toolInput, result.status, safeToolOutput, workdir, toolElapsedMs);
+            if (!['cancelled', 'failed', 'done'].includes(getTask(task.id)?.status || '')) {
+              updateTask(task.id, { status: 'running' });
+            }
 
             messages.push({
               role: 'tool',
               tool_call_id: tc.id,
-              content: safeToolOutput,
+              content: archiveLongToolOutput({ task, executionId, toolExecutionId: `skill_${executionId}_${tc.id}`, toolName, output: safeToolOutput }),
             });
           }
         } else {
@@ -1135,10 +1194,26 @@ export class TsAgentLoop {
       // tools so step validation has a concrete textual result to check.
       if (!finalOutput.trim()) {
         try {
+          const responseReserve = remainingResponseTokens(inputTokens, outputTokens, limits);
+          const promptBudget = Math.max(1, limits.maxExecutionTokens - responseReserve);
+          const summaryMessages = [...messages, { role: 'user' as const, content: 'Provide the result of this step as plain text.' }];
+          const summaryCompaction = compactMessages(summaryMessages, promptBudget, { keepRecent: 6, triggerRatio: 0.5 });
+          if (summaryCompaction.after > promptBudget) {
+            throw new Error(`CONTEXT_BUDGET_EXCEEDED: summary prompt needs ${summaryCompaction.after}/${promptBudget} tokens after compaction`);
+          }
+          const summaryVersion = summaryCompaction.compacted
+            ? (loadExecutionContext(task).contextUsage?.summaryVersion ?? 0) + 1
+            : undefined;
+          if (summaryVersion !== undefined) {
+            const summary = summaryCompaction.messages.find(message => typeof message.content === 'string' && message.content.startsWith('[Auto-compacted'));
+            const artifactId = archiveContextSummary({ task, executionId, version: summaryVersion, summary: String(summary?.content || '') });
+            addTaskLog(task.id, 'info', `Context summary v${summaryVersion} archived: ${artifactId}`, agent.id);
+          }
+          recordContextUsage(task, summaryCompaction.after, limits.maxExecutionTokens, responseReserve, summaryVersion);
           const summary = await getModelGateway().completeForModel(selectedModel, {
             model: selectedModel,
-            messages: [...messages, { role: 'user', content: 'Provide the result of this step as plain text.' }],
-            max_tokens: remainingResponseTokens(inputTokens, outputTokens, limits),
+            messages: summaryCompaction.messages,
+            max_tokens: responseReserve,
             ...modelRequestTuning(task),
           }, { signal: abortController.signal });
           mergeProviderUsage(providerUsage, summary.usage);

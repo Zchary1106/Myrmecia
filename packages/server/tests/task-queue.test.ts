@@ -136,6 +136,21 @@ describe('TaskQueue failure state handling', () => {
     expect(getTaskLogs(running.id).some(log => log.message.includes('cannot resume an in-flight process'))).toBe(true);
   });
 
+  it('recovers a task interrupted while waiting for a tool', async () => {
+    const agent = createAgent({ id: 'tool-agent', name: 'Tool Agent', role: 'dev' });
+    const task = createTask({ title: 'tool wait', description: 't', input: 't', mode: 'direct', assigneeId: agent.id });
+    updateTask(task.id, { status: 'waiting_for_tool' });
+    const executed: string[] = [];
+    const queue = new TaskQueue({
+      executeTask: vi.fn(async (_agentId: string, recovered: any) => { executed.push(recovered.id); }),
+    } as unknown as AgentManager);
+
+    await queue.recoverRunningTasks();
+
+    expect(executed).toContain(task.id);
+    expect(getTaskLogs(task.id).some(log => log.message.includes('cannot resume an in-flight process'))).toBe(true);
+  });
+
   it('does not invalidate a publish task that was only queued at restart', async () => {
     const publisher = createAgent({ id: 'social-publisher', name: 'Publisher', role: 'dev' });
     const task = createTask({

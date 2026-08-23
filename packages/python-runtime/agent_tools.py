@@ -40,6 +40,14 @@ _repeated_tool_calls = 0
 _tool_failures: Dict[str, int] = {}
 
 
+def _env_int(name: str, default: int) -> int:
+    try:
+        value = int(os.getenv(name, ""))
+        return value if value > 0 else default
+    except ValueError:
+        return default
+
+
 def _safe_url(url: str) -> str:
     if os.getenv("AGENT_FACTORY_NETWORK_ALLOWED", "true").lower() != "true":
         raise ValueError("Network access is disabled by guardrails")
@@ -67,6 +75,14 @@ def _fetch_text(url: str) -> str:
 def _compact_text(value: str, limit: int = 6000) -> str:
     text = re.sub(r"\s+", " ", value).strip()
     return text[:limit]
+
+
+def _tool_result_limit() -> int:
+    return _env_int("AGENT_FACTORY_TOOL_RESULT_MAX_CHARS", 1800)
+
+
+def _tool_evidence_limit() -> int:
+    return _env_int("AGENT_FACTORY_TOOL_EVIDENCE_MAX_CHARS", 65536)
 
 
 def _json_safe(value, limit: int = 1200):
@@ -124,18 +140,23 @@ def _instrument_tool(name: str, fn: Callable) -> Callable:
         })
         try:
             result = fn(*args, **kwargs)
+            raw_result = str(result)
+            # The model receives only a bounded result. The Node runtime gets
+            # the larger evidence payload and persists it as an artifact.
+            bounded_result = _compact_text(raw_result, _tool_result_limit())
             duration_ms = int((time.time() - started) * 1000)
             _emit_tool_event({
                 "type": "tool_result",
                 "toolExecutionId": tool_execution_id,
                 "toolName": name,
                 "status": "done",
-                "outputSummary": _compact_text(str(result), 1200),
+                "outputSummary": _compact_text(bounded_result, 1200),
+                "output": _compact_text(raw_result, _tool_evidence_limit()),
                 "durationMs": duration_ms,
                 "completedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             })
             _tool_failures.pop(name, None)
-            return result
+            return bounded_result
         except Exception as exc:
             _tool_failures[name] = _tool_failures.get(name, 0) + 1
             duration_ms = int((time.time() - started) * 1000)

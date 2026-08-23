@@ -61,7 +61,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   title TEXT NOT NULL,
   description TEXT NOT NULL,
   mode TEXT NOT NULL CHECK(mode IN ('master','direct','pipeline')),
-  status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','queued','assigned','running','review','done','failed','cancelled')),
+  status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','queued','assigned','running','waiting_for_tool','review','done','failed','cancelled')),
   priority TEXT NOT NULL DEFAULT 'normal' CHECK(priority IN ('low','normal','high','urgent')),
   assignee_id TEXT REFERENCES agents(id),
   created_by TEXT NOT NULL DEFAULT 'user',
@@ -740,6 +740,13 @@ CREATE TABLE IF NOT EXISTS task_checkpoints (
 );
 CREATE INDEX IF NOT EXISTS idx_task_checkpoints_task ON task_checkpoints(task_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_task_checkpoints_context ON task_checkpoints(execution_context_id, created_at DESC);
+
+-- Migration: 202608230004_add_waiting_for_tool_task_status
+-- Runtime handles this migration by rebuilding SQLite's CHECK constraint.
+SELECT 1;
+
+-- Migration: 202608230005_add_execution_context_usage
+ALTER TABLE execution_contexts ADD COLUMN context_usage JSON NOT NULL DEFAULT '{}';
 
 -- Migration: 202608040001_add_social_workflow_operations
 CREATE TABLE IF NOT EXISTS social_publish_schedules (

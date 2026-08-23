@@ -180,7 +180,7 @@ export interface SkillExecutorConfig {
 }
 
 export type TaskMode = 'master' | 'direct' | 'pipeline';
-export type TaskStatus = 'pending' | 'queued' | 'assigned' | 'running' | 'review' | 'done' | 'failed' | 'cancelled';
+export type TaskStatus = 'pending' | 'queued' | 'assigned' | 'running' | 'waiting_for_tool' | 'review' | 'done' | 'failed' | 'cancelled';
 export type Priority = 'low' | 'normal' | 'high' | 'urgent';
 export type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
@@ -224,6 +224,17 @@ export interface CodeBaseline {
   capturedAt?: string;
 }
 
+/** Latest prompt-budget telemetry for an execution context. */
+export interface ContextUsageSnapshot {
+  estimatedInputTokens: number;
+  maxInputTokens: number;
+  reservedOutputTokens: number;
+  occupancyPercent: number;
+  /** Latest durable summary produced by context compaction, if any. */
+  summaryVersion?: number;
+  updatedAt: string;
+}
+
 /**
  * The immutable execution contract for a task.  Task keeps its existing
  * workspace/model fields for backwards compatibility; this record is the
@@ -243,6 +254,7 @@ export interface ExecutionContext {
   constraints: string[];
   parentTaskId?: string;
   codeBaseline?: CodeBaseline;
+  contextUsage?: ContextUsageSnapshot;
   createdAt: string;
   updatedAt: string;
 }
