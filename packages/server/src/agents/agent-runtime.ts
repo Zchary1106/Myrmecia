@@ -700,6 +700,17 @@ export class AgentRuntime {
         durationMs: Date.now() - startTime,
       });
     };
+    // `timeout: 300` was the historical generated-agent default. Treat it as a
+    // legacy default rather than an explicit five-minute policy, so deployments
+    // can raise the global long-task limit without editing every existing agent.
+    // Any other positive value remains an intentional per-agent ceiling.
+    const legacyAgentTimeoutSeconds = 300;
+    const requestedAgentTimeoutSeconds = agent.config.timeout && agent.config.timeout !== legacyAgentTimeoutSeconds
+      ? agent.config.timeout
+      : Math.ceil(limits.maxExecutionWallClockMs / 1000);
+    const timeoutMs = Math.min(requestedAgentTimeoutSeconds * 1000, limits.maxExecutionWallClockMs);
+    const cpuTimeoutSeconds = Math.min(limits.pythonRuntimeCpuSeconds, Math.ceil(timeoutMs / 1000));
+
     return new Promise((resolve, reject) => {
       const executor = getExecutor();
       const python = resolvePythonRuntimeInvocation(executor.name);
@@ -717,7 +728,7 @@ export class AgentRuntime {
           AGENT_FACTORY_EXECUTION_ID: executionId,
           AGENT_FACTORY_TASK_ID: task.id,
           AGENT_FACTORY_AGENT_ID: agent.id,
-          AGENT_FACTORY_CPU_TIME_SEC: String(Math.min(limits.pythonRuntimeCpuSeconds, agent.config.timeout || 300)),
+          AGENT_FACTORY_CPU_TIME_SEC: String(cpuTimeoutSeconds),
           AGENT_FACTORY_MEMORY_MB: String(limits.pythonRuntimeMemoryMB),
           AGENT_FACTORY_MAX_OUTPUT_CHARS: String(limits.maxOutputChars),
           AGENT_FACTORY_MAX_EXECUTION_TOKENS: String(limits.maxExecutionTokens),
@@ -729,7 +740,7 @@ export class AgentRuntime {
         signal: abortController.signal,
         limits: {
           ...DEFAULT_LIMITS,
-          timeoutSec: Math.ceil(Math.min((agent.config.timeout || 300) * 1000, limits.maxExecutionWallClockMs) / 1000),
+          timeoutSec: Math.ceil(timeoutMs / 1000),
           memoryMB: limits.pythonRuntimeMemoryMB,
         },
       });
@@ -738,6 +749,26 @@ export class AgentRuntime {
       let stdoutBytes = 0, stderrBytes = 0;
       let settled = false;
       let timeout: ReturnType<typeof setTimeout> | undefined;
+      let heartbeat: ReturnType<typeof setInterval> | undefined;
+      let idleWatchdog: ReturnType<typeof setInterval> | undefined;
+      let lastActivityAt = Date.now();
+      let lastCheckpointAt = startTime;
+
+      const noteActivity = (boundary: string) => {
+        lastActivityAt = Date.now();
+        // Task logs are persisted and therefore give restart recovery a useful
+        // checkpoint hint without pretending that an in-flight process resumed.
+        if (lastActivityAt - lastCheckpointAt >= limits.executionHeartbeatMs) {
+          lastCheckpointAt = lastActivityAt;
+          addTaskLog(task.id, 'info', `Runtime checkpoint: ${boundary}; execution=${executionId}`, agent.id);
+        }
+      };
+
+      const clearMonitors = () => {
+        if (timeout) clearTimeout(timeout);
+        if (heartbeat) clearInterval(heartbeat);
+        if (idleWatchdog) clearInterval(idleWatchdog);
+      };
 
       const recordFailure = (reason: string) => {
         recordModelUsage({
@@ -756,7 +787,7 @@ export class AgentRuntime {
       const fail = (err: Error, metadata?: Record<string, unknown>) => {
         if (settled) return;
         settled = true;
-        if (timeout) clearTimeout(timeout);
+        clearMonitors();
         abortController.abort();
         proc.kill('SIGTERM');
         finishLlmSpan('failed', metadata, err.message);
@@ -778,6 +809,7 @@ export class AgentRuntime {
       };
 
       const handlePythonRuntimeEvent = (ev: any) => {
+        noteActivity(`runtime event ${String(ev.type || 'unknown')}`);
         // Handle assistant messages (text output from the Python runtime)
         if (ev.type === 'assistant' && ev.message?.content) {
           for (const block of ev.message.content) {
@@ -817,6 +849,7 @@ export class AgentRuntime {
       proc.stdout?.on('data', (data: Buffer) => {
         if (settled) return;
         try {
+          noteActivity('stdout');
           stdoutBytes += data.byteLength;
           if (stdoutBytes > limits.pythonRuntimeMaxStdoutBytes) {
             throw new Error(`Python runtime stdout exceeded limit (${stdoutBytes}/${limits.pythonRuntimeMaxStdoutBytes} bytes)`);
@@ -843,6 +876,7 @@ export class AgentRuntime {
       proc.stderr?.on('data', (data: Buffer) => {
         if (settled) return;
         try {
+          noteActivity('stderr');
           const t = sanitizePythonRuntimeOutput(data.toString(), 'python runtime stderr');
           stderrBytes += data.byteLength;
           if (stderrBytes > limits.pythonRuntimeMaxStderrBytes) {
@@ -860,15 +894,32 @@ export class AgentRuntime {
         }
       });
 
-      const timeoutMs = Math.min((agent.config.timeout || 300) * 1000, limits.maxExecutionWallClockMs);
       timeout = setTimeout(() => {
-        fail(new Error(`Python runtime timeout after ${Math.ceil(timeoutMs / 1000)}s`), { reason: 'timeout' });
+        fail(new Error(`TIMED_OUT: wall-clock limit reached after ${Math.ceil(timeoutMs / 1000)}s`), {
+          reason: 'timed_out', timeoutMs,
+        });
       }, timeoutMs);
+      const heartbeatMs = Math.max(1_000, Math.min(limits.executionHeartbeatMs, limits.maxExecutionIdleMs));
+      heartbeat = setInterval(() => {
+        if (settled) return;
+        const idleMs = Date.now() - lastActivityAt;
+        addTaskLog(task.id, 'info', `Runtime heartbeat: execution=${executionId}; idle=${Math.ceil(idleMs / 1000)}s`, agent.id);
+      }, heartbeatMs);
+      idleWatchdog = setInterval(() => {
+        if (settled) return;
+        const idleMs = Date.now() - lastActivityAt;
+        if (idleMs >= limits.maxExecutionIdleMs) {
+          fail(new Error(`STALLED: no runtime activity for ${Math.ceil(idleMs / 1000)}s`), {
+            reason: 'stalled', idleMs, idleLimitMs: limits.maxExecutionIdleMs,
+          });
+        }
+      }, heartbeatMs);
+      addTaskLog(task.id, 'info', `Runtime checkpoint: started; execution=${executionId}; wallClock=${timeoutMs}ms; idle=${limits.maxExecutionIdleMs}ms`, agent.id);
 
       proc.on('close', (code) => {
         if (settled) return;
         settled = true;
-        if (timeout) clearTimeout(timeout);
+        clearMonitors();
         try {
           if (buffer.trim()) handleNonJsonLine(buffer);
           if (code === 0) {

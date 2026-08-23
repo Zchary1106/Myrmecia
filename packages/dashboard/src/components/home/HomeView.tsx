@@ -48,12 +48,15 @@ function StatusDot({ status }: { status: string }) {
 }
 
 export function HomeView() {
-  const { agents, tasks, pipelines, templates, inboxEntries, health, models, loadModels, setActiveView, setSelectedTaskId } = useStore();
+  const { agents, tasks, pipelines, templates, inboxEntries, health, models, loadModels, loadTasks, setActiveView, setSelectedTaskId } = useStore();
   const [input, setInput] = useState('');
   const [showLauncher, setShowLauncher] = useState(false);
-  const [launcherMode, setLauncherMode] = useState<LaunchMode>('direct');
+  const [launcherMode, setLauncherMode] = useState<LaunchMode>('master');
   const [launcherTeamId, setLauncherTeamId] = useState('');
   const [launcherTemplateId, setLauncherTemplateId] = useState('');
+  const [launchBusy, setLaunchBusy] = useState(false);
+  const [launchMessage, setLaunchMessage] = useState<string | null>(null);
+  const [launchError, setLaunchError] = useState<string | null>(null);
   const [teams, setTeams] = useState<TeamDTO[]>([]);
   const [teamPickerOpen, setTeamPickerOpen] = useState(false);
   const [workspace, setWorkspace] = useState<WorkspaceConfig | null>(null);
@@ -252,13 +255,34 @@ export function HomeView() {
     setWorkspacePickerOpen(false);
   };
 
-  const submit = (event: FormEvent) => {
+  const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (!input.trim()) return;
-    setLauncherMode('direct');
-    setLauncherTeamId('');
-    setLauncherTemplateId('');
-    setShowLauncher(true);
+    const goal = input.trim();
+    if (!goal || launchBusy) return;
+    setLaunchBusy(true);
+    setLaunchMessage(null);
+    setLaunchError(null);
+    try {
+      const result = await api.supervisor.dispatch(goal, {
+        modelId: modelId === 'auto' ? undefined : modelId,
+        reasoningEffort: reasoningEffort === 'auto' ? undefined : reasoningEffort,
+        contextLength: contextLength === 'auto' ? undefined : Number(contextLength),
+        workspacePath: workspace?.path || undefined,
+        workspaceMode: Boolean(workspace?.path),
+      });
+      await loadTasks();
+      const task = result.tasks[0];
+      if (task) {
+        setSelectedTaskId(task.id);
+        setActiveView('timeline');
+      } else {
+        setLaunchMessage('Agent 已处理这个目标。');
+      }
+    } catch (error) {
+      setLaunchError(error instanceof Error ? error.message : 'Unable to start the Agent task.');
+    } finally {
+      setLaunchBusy(false);
+    }
   };
 
   const openTeamLauncher = (teamId: string) => {
@@ -283,7 +307,8 @@ export function HomeView() {
   };
 
   return (
-    <div className="mx-auto flex min-h-full w-full max-w-[1320px] flex-col px-5 pb-12 pt-8 sm:px-8 lg:px-12 lg:pt-12">
+    <div className="mx-auto flex min-h-full w-full max-w-[1320px] flex-col px-5 py-8 sm:px-8 lg:px-12 lg:py-12">
+      <div className="my-auto w-full">
       <section className="mx-auto w-full max-w-[900px] text-center">
         <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-border bg-surface/70 px-3 py-1.5 text-[11px] font-medium text-app-secondary shadow-sm">
           <span className={cn('h-1.5 w-1.5 rounded-full', health?.status === 'ok' ? 'bg-emerald-400' : 'bg-amber-400')} />
@@ -296,12 +321,12 @@ export function HomeView() {
           Bring together Teams, Agents, Skills, and Workflows in one focused workspace.
         </p>
 
-        <form onSubmit={submit} className="app-panel relative mt-9 p-2 text-left transition focus-within:border-accent/60 focus-within:shadow-[0_20px_70px_rgb(86_145_255_/_0.12)]">
+        <form onSubmit={event => void submit(event)} className="app-panel relative mt-9 p-2 text-left transition focus-within:border-accent/60 focus-within:shadow-[0_20px_70px_rgb(86_145_255_/_0.12)]">
           <textarea
             value={input}
             onChange={event => setInput(event.target.value)}
             onKeyDown={event => {
-              if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') submit(event);
+              if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') void submit(event);
             }}
             rows={3}
             aria-label="Describe work for your Agent Team"
@@ -374,10 +399,12 @@ export function HomeView() {
                 )}
               </div>
             </div>
-            <button type="submit" disabled={!input.trim()} className="app-focus inline-flex items-center gap-2 rounded-lg bg-accent px-3.5 py-2 text-xs font-semibold text-white transition hover:-translate-y-px hover:bg-accent-light active:translate-y-px disabled:cursor-not-allowed disabled:opacity-40">
-              Start work <ArrowUpRight size={14} />
+            <button type="submit" disabled={!input.trim() || launchBusy} className="app-focus inline-flex items-center gap-2 rounded-lg bg-accent px-3.5 py-2 text-xs font-semibold text-white transition hover:-translate-y-px hover:bg-accent-light active:translate-y-px disabled:cursor-not-allowed disabled:opacity-40">
+              {launchBusy ? 'Starting…' : workspace ? 'Start in workspace' : 'Start with Agent'} <ArrowUpRight size={14} />
             </button>
           </div>
+          {workspace && <div className="truncate px-2 pt-2 text-[10px] text-app-muted">Working in {workspace.name}</div>}
+          {launchError && <p className="px-2 pt-2 text-[11px] text-red-500">{launchError}</p>}
           {workspacePickerOpen && (
             <div className="absolute bottom-14 left-3 z-30 w-[min(460px,calc(100vw-2rem))] rounded-2xl border border-border bg-surface p-4 text-left shadow-2xl" role="dialog" aria-label="Set workspace">
               <div className="flex items-start justify-between gap-3">
@@ -416,9 +443,11 @@ export function HomeView() {
           )}
         </form>
 
+        {launchMessage && <p className="mt-3 text-center text-[11px] text-emerald-500">{launchMessage}</p>}
+
         <div className="mt-4 flex flex-wrap justify-center gap-2">
           {starterPrompts.map(prompt => (
-            <button key={prompt.label} type="button" onClick={() => { setInput(prompt.text); setShowLauncher(true); }} className="app-focus rounded-full border border-border px-3 py-2 text-[11px] text-app-secondary transition hover:border-accent/50 hover:bg-accent/5 hover:text-app-primary">
+            <button key={prompt.label} type="button" onClick={() => { setInput(prompt.text); setLaunchMessage(null); setLaunchError(null); }} className="app-focus rounded-full border border-border px-3 py-2 text-[11px] text-app-secondary transition hover:border-accent/50 hover:bg-accent/5 hover:text-app-primary">
               {prompt.label}
             </button>
           ))}
@@ -495,6 +524,7 @@ export function HomeView() {
           </button>
         )) : <EmptyRow icon={<Clock3 size={17} />} text="No history yet" detail="Completed and failed work will appear here." />}
       </section>
+      </div>
 
       {showLauncher && (
         <WorkLauncher

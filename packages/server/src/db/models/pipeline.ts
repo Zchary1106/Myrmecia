@@ -1,6 +1,6 @@
 import { getDb } from '../database.js';
 import { v4 as uuid } from 'uuid';
-import type { Pipeline, PipelineStage, PipelineStatus, PipelineTemplate } from '../../types.js';
+import type { Pipeline, PipelineStage, PipelineStatus, PipelineTemplate, ReasoningEffort } from '../../types.js';
 
 function rowToPipeline(row: any): Pipeline {
   return {
@@ -10,6 +10,9 @@ function rowToPipeline(row: any): Pipeline {
     gateMode: row.gate_mode,
     templateId: row.template_id,
     workspaceId: row.workspace_id || 'default',
+    modelId: row.model_id || undefined,
+    reasoningEffort: row.reasoning_effort || undefined,
+    contextLength: row.context_length || undefined,
     domainId: row.domain_id || undefined,
     createdAt: row.created_at,
     completedAt: row.completed_at,
@@ -25,14 +28,23 @@ export function createPipeline(data: {
   input: string;
   workspaceId?: string;
   domainId?: string;
+  modelId?: string;
+  reasoningEffort?: ReasoningEffort;
+  contextLength?: number;
 }): Pipeline {
   const db = getDb();
   const id = `pipe_${uuid().slice(0, 8)}`;
 
   db.run(`
-    INSERT INTO pipelines (id, name, template_id, stages, gate_mode, input, workspace_id, domain_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `, id, data.name, data.templateId || null, JSON.stringify(data.stages), data.gateMode || 'auto', data.input, data.workspaceId || 'default', data.domainId || null);
+    INSERT INTO pipelines (
+      id, name, template_id, stages, gate_mode, input, workspace_id, domain_id,
+      model_id, reasoning_effort, context_length
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `,
+    id, data.name, data.templateId || null, JSON.stringify(data.stages), data.gateMode || 'auto', data.input,
+    data.workspaceId || 'default', data.domainId || null,
+    data.modelId || null, data.reasoningEffort || null, data.contextLength || null,
+  );
 
   return getPipeline(id)!;
 }

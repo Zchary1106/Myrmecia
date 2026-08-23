@@ -9,6 +9,14 @@ import type { ReasoningEffort, Task, TaskMode, Priority } from '../types.js';
 
 const QUEUE_NAME = 'agent-factory-tasks';
 export const PUBLISH_RECONFIRMATION_ERROR = 'Interrupted publish task requires renewed pipeline confirmation';
+const MEMORY_QUEUE_RECOVERY_NOTE = 'Memory queue cannot resume an in-flight process after restart; task is re-queued from its last runtime checkpoint hint.';
+
+function interruptedReason(error: unknown): 'timed_out' | 'stalled' | null {
+  const message = error instanceof Error ? error.message : String(error || '');
+  if (message.includes('TIMED_OUT:')) return 'timed_out';
+  if (message.includes('STALLED:')) return 'stalled';
+  return null;
+}
 
 // Priority mapping: lower number = higher priority in BullMQ
 const PRIORITY_MAP: Record<string, number> = {
@@ -236,6 +244,7 @@ export class TaskQueue {
     const maxAttempts = job?.opts.attempts ?? (current.maxRetries + 1);
     const willRetry = !isPipelinePublisherTask(current) && attemptsMade < maxAttempts;
     const error = err?.message || String(err);
+    const interruption = interruptedReason(err);
 
     const updated = updateTask(taskId, {
       status: willRetry ? 'queued' : 'failed',
@@ -248,8 +257,8 @@ export class TaskQueue {
       taskId,
       willRetry ? 'warn' : 'error',
       willRetry
-        ? `Execution attempt failed; retrying (${attemptsMade}/${maxAttempts}): ${error}`
-        : `Execution failed after ${attemptsMade}/${maxAttempts} attempts: ${error}`,
+        ? `Execution attempt failed; retrying (${attemptsMade}/${maxAttempts}): ${error}${interruption ? ` [${interruption}]` : ''}`
+        : `Execution failed after ${attemptsMade}/${maxAttempts} attempts: ${error}${interruption ? ` [${interruption}]` : ''}`,
       'system',
     );
 
@@ -290,9 +299,10 @@ export class TaskQueue {
     this.agentManager.executeTask(agentId, getTask(task.id)!).catch(err => {
       logger.error({ taskId: task.id, err: err.message }, 'Task execution failed');
       const current = getTask(task.id)!;
+      const interruption = interruptedReason(err);
       if (!isPipelinePublisherTask(current) && current.retryCount < current.maxRetries) {
         updateTask(task.id, { status: 'pending', retryCount: current.retryCount + 1 });
-        addTaskLog(task.id, 'warn', `Retrying (${current.retryCount + 1}/${current.maxRetries})`, 'system');
+        addTaskLog(task.id, 'warn', `${interruption === 'timed_out' ? 'Timed out' : interruption === 'stalled' ? 'Stalled' : 'Execution failed'}; retrying (${current.retryCount + 1}/${current.maxRetries}): ${err.message}`, 'system');
         this.tryExecute(getTask(task.id)!);
       } else {
         this.recordExecutionFailure(task.id, err);
@@ -391,14 +401,19 @@ export class TaskQueue {
   async recoverRunningTasks() {
     const runningTasks = listTasks({ status: 'running' });
     const assignedTasks = listTasks({ status: 'assigned' });
-    const toRecover = [...runningTasks, ...assignedTasks];
+    const queuedTasks = listTasks({ status: 'queued' });
+    const toRecover = [...runningTasks, ...assignedTasks, ...queuedTasks];
 
     if (toRecover.length === 0) return;
 
     logger.info({ count: toRecover.length }, 'Recovering interrupted tasks');
 
     for (const task of toRecover) {
-      if (isPipelinePublisherTask(task)) {
+      const wasInFlight = task.status === 'running' || task.status === 'assigned';
+      // A publish that was merely waiting in the durable task store can be
+      // scheduled normally. Only an in-flight publish needs renewed user
+      // confirmation, because its external side effect may be indeterminate.
+      if (isPipelinePublisherTask(task) && wasInFlight) {
         updateTask(task.id, {
           status: 'failed',
           error: PUBLISH_RECONFIRMATION_ERROR,
@@ -414,11 +429,13 @@ export class TaskQueue {
       // status out from under resumeMonitoring(). Leave them running so the
       // master monitor can re-arm and finalize them (see TeamCoordinator.recover).
       if (listTasks({ parentTaskId: task.id }).length > 0) {
-        addTaskLog(task.id, 'info', 'Parent task left for master monitor to reconcile after restart', 'system');
+        addTaskLog(task.id, 'info', 'Parent task is recoverable only by its master monitor; execution is not re-run as a leaf after restart', 'system');
         continue;
       }
 
-      addTaskLog(task.id, 'warn', 'Task interrupted by server restart — re-queuing', 'system');
+      addTaskLog(task.id, 'warn', wasInFlight
+        ? (this.queue ? 'Task interrupted by server restart — re-queuing from last checkpoint hint' : MEMORY_QUEUE_RECOVERY_NOTE)
+        : 'Queued task recovered after server restart — scheduling', 'system');
       updateTask(task.id, { status: 'pending' });
 
       if (this.queue) {

@@ -1,4 +1,7 @@
 import { Router } from 'express';
+import { existsSync, statSync } from 'node:fs';
+import { isAbsolute, resolve } from 'node:path';
+import { z } from 'zod';
 import { intentClassifier } from '../agents/intent-classifier.js';
 import { guardrails } from '../agents/safety-guardrails.js';
 import { TaskQueue } from '../queue/task-queue.js';
@@ -15,6 +18,26 @@ import {
 import { getDb } from '../db/database.js';
 import { listTasks, getTask } from '../db/models/task.js';
 import { requestCanAccessWorkspace, workspaceIdFromRequest } from '../auth/tenant.js';
+import { getModel } from '../models/model-registry.js';
+
+const dispatchSchema = z.object({
+  input: z.string().trim().min(1),
+  workspacePath: z.string().trim().min(1).max(16_384).optional(),
+  workspaceMode: z.boolean().optional(),
+  modelId: z.string().trim().min(1).max(200).optional(),
+  reasoningEffort: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).optional(),
+  contextLength: z.number().int().min(8_000).max(10_000_000).optional(),
+});
+
+function validateWorkspacePath(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  if (!isAbsolute(value)) throw new Error('Workspace path must be absolute');
+  const workspacePath = resolve(value);
+  if (!existsSync(workspacePath) || !statSync(workspacePath).isDirectory()) {
+    throw new Error('Workspace directory does not exist');
+  }
+  return workspacePath;
+}
 
 export function createSupervisorRoutes(taskQueue: TaskQueue, pipelineEngine: PipelineEngine, agentManager: AgentManager): Router {
   const router = Router();
@@ -27,8 +50,13 @@ export function createSupervisorRoutes(taskQueue: TaskQueue, pipelineEngine: Pip
    */
   router.post('/dispatch', async (req, res) => {
     try {
-      const { input } = req.body;
-      if (!input) return res.status(400).json({ error: { message: 'input is required' } });
+      const body = dispatchSchema.parse(req.body);
+      const input = body.input;
+      const workspacePath = validateWorkspacePath(body.workspacePath);
+      const modelId = body.modelId === 'auto' ? undefined : body.modelId;
+      if (modelId && (!getModel(modelId) || !getModel(modelId)?.enabled)) {
+        return res.status(400).json({ error: { code: 'INVALID_MODEL', message: 'Selected model is not enabled' } });
+      }
 
       // 1. Check budget
       const budget = guardrails.checkBudget();
@@ -37,10 +65,28 @@ export function createSupervisorRoutes(taskQueue: TaskQueue, pipelineEngine: Pip
       }
 
       // 2. Classify intent
-      const intent = await intentClassifier.classify(input);
+      const classifiedIntent = await intentClassifier.classify(input);
+      // A selected workspace is the development fast path: keep the user's
+      // worktree and let the Master Agent split coding, review, and testing
+      // instead of silently creating an isolated template workspace.
+      const intent = body.workspaceMode && workspacePath
+        ? {
+            ...classifiedIntent,
+            suggestedMode: 'master' as const,
+            suggestedAgent: undefined,
+            suggestedTemplate: undefined,
+            complexity: classifiedIntent.complexity === 'trivial' ? 'medium' as const : classifiedIntent.complexity,
+          }
+        : classifiedIntent;
 
       // 3. Orchestrate (unified entry — handles trivial, pipeline, and complex)
-      const result = await orchestrator.plan(input, intent);
+      const result = await orchestrator.plan(input, intent, {
+        workspacePath,
+        workspaceId: workspaceIdFromRequest(req),
+        modelId,
+        reasoningEffort: body.reasoningEffort,
+        contextLength: body.contextLength,
+      });
 
       res.status(201).json({
         orchestrationId: result.orchestration.id,

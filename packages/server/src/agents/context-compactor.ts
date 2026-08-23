@@ -100,3 +100,131 @@ export function compactMessages(
   const compacted = [...head, summary, ...tail];
   return { messages: compacted, compacted: true, before, after: estimateMessagesTokens(compacted) };
 }
+
+
+/**
+ * A prompt-facing token budget. The output reserve is never spent on input,
+ * so callers can keep model replies predictable across providers.
+ */
+export interface ContextBudgetContract {
+  maxInputTokens: number;
+  reservedOutputTokens: number;
+  fixedTokens?: number;
+  recentWindowTokens?: number;
+}
+
+export type ContextFactKind =
+  | 'goal'
+  | 'constraint'
+  | 'open_question'
+  | 'failure_evidence'
+  | 'summary'
+  | 'tool_output';
+
+export interface ContextBudgetFact {
+  id: string;
+  kind: ContextFactKind;
+  content: string;
+  tokenCount?: number;
+  artifactId?: string;
+  summaryVersion?: number;
+}
+
+export interface ContextArtifactReference {
+  id: string;
+  label: string;
+  artifactId?: string;
+  summaryVersion?: number;
+  tokenCount: number;
+}
+
+export interface ContextBudgetPlan {
+  availableTokens: number;
+  usedTokens: number;
+  protectedFacts: ContextBudgetFact[];
+  summaries: ContextBudgetFact[];
+  recentWindow: ContextBudgetFact[];
+  references: ContextArtifactReference[];
+  compactedToolOutputCount: number;
+  hardBudgetExceeded: boolean;
+}
+
+const PROTECTED_CONTEXT_KINDS = new Set<ContextFactKind>([
+  'goal',
+  'constraint',
+  'open_question',
+  'failure_evidence',
+]);
+
+/**
+ * Estimate deliberately conservatively. Providers tokenize differently, but
+ * this keeps one enormous log from monopolising a prompt before compaction.
+ */
+export function estimateContextTokens(content: string): number {
+  return Math.max(1, Math.ceil(content.length / 3.5));
+}
+
+/**
+ * Produces a bounded prompt plan without silently dropping task-critical
+ * facts. Historical tool output is represented by an artifact/reference
+ * instead of replaying its raw log into the next model request.
+ */
+export function buildContextBudgetPlan(
+  contract: ContextBudgetContract,
+  facts: ContextBudgetFact[],
+): ContextBudgetPlan {
+  const availableTokens = Math.max(
+    0,
+    contract.maxInputTokens - contract.reservedOutputTokens - (contract.fixedTokens ?? 0),
+  );
+  const toTokens = (fact: ContextBudgetFact) => fact.tokenCount ?? estimateContextTokens(fact.content);
+  const protectedFacts = facts.filter((fact) => PROTECTED_CONTEXT_KINDS.has(fact.kind));
+  const summaries = facts
+    .filter((fact) => fact.kind === 'summary')
+    .sort((a, b) => (a.summaryVersion ?? 0) - (b.summaryVersion ?? 0));
+
+  let usedTokens = protectedFacts.reduce((total, fact) => total + toTokens(fact), 0);
+  const hardBudgetExceeded = usedTokens > availableTokens;
+  const recentWindow: ContextBudgetFact[] = [];
+  const recentLimit = Math.max(0, contract.recentWindowTokens ?? availableTokens);
+
+  for (const fact of [...facts].reverse()) {
+    if (fact.kind === 'tool_output' || PROTECTED_CONTEXT_KINDS.has(fact.kind) || fact.kind === 'summary') {
+      continue;
+    }
+    const tokens = toTokens(fact);
+    if (usedTokens + tokens > availableTokens || recentWindow.reduce((total, item) => total + toTokens(item), 0) + tokens > recentLimit) {
+      continue;
+    }
+    recentWindow.unshift(fact);
+    usedTokens += tokens;
+  }
+
+  const selectedSummaries: ContextBudgetFact[] = [];
+  for (const fact of [...summaries].reverse()) {
+    const tokens = toTokens(fact);
+    if (usedTokens + tokens > availableTokens) continue;
+    selectedSummaries.unshift(fact);
+    usedTokens += tokens;
+  }
+
+  const compactedToolOutput = facts.filter((fact) => fact.kind === 'tool_output');
+  const references = compactedToolOutput.map((fact) => ({
+    id: fact.id,
+    label: fact.content.slice(0, 160),
+    artifactId: fact.artifactId,
+    summaryVersion: fact.summaryVersion,
+    tokenCount: toTokens(fact),
+  }));
+
+  return {
+    availableTokens,
+    usedTokens,
+    protectedFacts,
+    summaries: selectedSummaries,
+    recentWindow,
+    references,
+    compactedToolOutputCount: compactedToolOutput.length,
+    hardBudgetExceeded,
+  };
+}

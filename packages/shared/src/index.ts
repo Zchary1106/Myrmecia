@@ -553,6 +553,10 @@ export interface Pipeline {
   gateMode: 'auto' | 'manual';
   input: string;
   workspaceId?: string;
+  /** Model preferences selected when the pipeline was dispatched. */
+  modelId?: string;
+  reasoningEffort?: ReasoningEffort;
+  contextLength?: number;
   /** Optional Domain Pack id — inherited by every stage task for persona + knowledge injection. */
   domainId?: string;
   createdAt: string;

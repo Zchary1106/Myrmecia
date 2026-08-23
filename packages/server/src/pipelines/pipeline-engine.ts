@@ -360,6 +360,9 @@ export class PipelineEngine {
     confirmAutonomousPublish?: boolean;
     workspaceId?: string;
     domainId?: string;
+    modelId?: string;
+    reasoningEffort?: import('../types.js').ReasoningEffort;
+    contextLength?: number;
   }): Promise<Pipeline> {
     const template = getTemplate(data.templateId);
     if (!template) throw new Error(`Template ${data.templateId} not found`);
@@ -403,6 +406,9 @@ export class PipelineEngine {
       input: data.input,
       workspaceId: data.workspaceId,
       domainId: data.domainId,
+      modelId: data.modelId,
+      reasoningEffort: data.reasoningEffort,
+      contextLength: data.contextLength,
     });
 
     // Create isolated workspace for this pipeline
@@ -561,6 +567,9 @@ export class PipelineEngine {
         workspacePath,
         workspaceId: pipeline.workspaceId,
         domainId: pipeline.domainId,
+        modelId: pipeline.modelId,
+        reasoningEffort: pipeline.reasoningEffort,
+        contextLength: pipeline.contextLength,
       });
 
       const latest = getPipeline(pipelineId);

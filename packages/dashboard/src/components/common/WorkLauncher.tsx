@@ -7,9 +7,15 @@ import type { Priority, TaskMode } from '@myrmecia/shared';
 
 export type LaunchMode = Extract<TaskMode, 'direct' | 'master'> | 'team' | 'pipeline';
 
+function taskTitleFromGoal(goal: string): string {
+  const compact = goal.replace(/\s+/g, ' ').trim();
+  if (compact.length <= 72) return compact;
+  return `${compact.slice(0, 69)}…`;
+}
+
 export function WorkLauncher({
   initialInput = '',
-  initialMode = 'direct',
+  initialMode = 'master',
   initialTeamId = '',
   initialTemplateId = '',
   initialWorkspacePath = '',
@@ -92,8 +98,8 @@ export function WorkLauncher({
 
   const validationError = useMemo(() => {
     if (!canLaunch) return readOnlyControlMessage;
-    if (!title.trim()) return 'Title is required.';
     if (!description.trim()) return 'Input or description is required.';
+    if (mode !== 'master' && !title.trim()) return 'Title is required.';
     if (mode === 'direct' && !assigneeId) return 'Select an agent for direct work.';
     if (mode === 'team' && !teamId) return 'Select an Agent Team.';
     if (mode === 'team' && !workspacePath) return 'Choose a local project in Agent Teams before dispatching.';
@@ -105,6 +111,7 @@ export function WorkLauncher({
     if (validationError || busy) return;
     setBusy(true);
     setError(null);
+    const taskTitle = title.trim() || taskTitleFromGoal(description);
     try {
       if (mode === 'team') {
         await api.teams.dispatch(teamId, `${title.trim()}\n\n${description.trim()}`, workspacePath, {
@@ -115,7 +122,7 @@ export function WorkLauncher({
         setActiveView('teams');
       } else if (mode === 'pipeline') {
         await api.pipelines.create({
-          name: title.trim(),
+          name: taskTitle,
           templateId,
           input: description.trim(),
           gateMode,
@@ -124,19 +131,29 @@ export function WorkLauncher({
         });
         await loadPipelines();
       } else {
-        await api.tasks.create({
-          title: title.trim(),
-          description: description.trim(),
-          mode,
-          priority,
-          assigneeId: mode === 'direct' ? assigneeId : undefined,
-          input: description.trim(),
-          modelId: modelId === 'auto' ? undefined : modelId,
-          reasoningEffort: reasoningEffort === 'auto' ? undefined : reasoningEffort,
-          contextLength: contextLength === 'auto' ? undefined : Number(contextLength),
-          workspacePath: workspacePath || undefined,
-          domainId: domainId || undefined,
-        });
+        if (mode === 'master') {
+          await api.supervisor.dispatch(description.trim(), {
+            modelId: modelId === 'auto' ? undefined : modelId,
+            reasoningEffort: reasoningEffort === 'auto' ? undefined : reasoningEffort,
+            contextLength: contextLength === 'auto' ? undefined : Number(contextLength),
+            workspacePath: workspacePath || undefined,
+            workspaceMode: Boolean(workspacePath),
+          });
+        } else {
+          await api.tasks.create({
+            title: taskTitle,
+            description: description.trim(),
+            mode,
+            priority,
+            assigneeId: mode === 'direct' ? assigneeId : undefined,
+            input: description.trim(),
+            modelId: modelId === 'auto' ? undefined : modelId,
+            reasoningEffort: reasoningEffort === 'auto' ? undefined : reasoningEffort,
+            contextLength: contextLength === 'auto' ? undefined : Number(contextLength),
+            workspacePath: workspacePath || undefined,
+            domainId: domainId || undefined,
+          });
+        }
         await loadTasks();
       }
       await onCreated?.();
@@ -155,7 +172,7 @@ export function WorkLauncher({
           <div>
             <h3 className="text-lg font-bold">Launch work</h3>
             <p className="text-[12px] text-gray-500 mt-1">
-              Start direct agent work, route through the master agent, or launch a template pipeline.
+              Start with Auto routing, or choose an explicit Team, Agent, or Workflow when needed.
             </p>
           </div>
           <button type="button" onClick={onClose} aria-label="Close launch work" className="app-focus rounded-lg px-2 py-1 text-gray-500 transition hover:bg-surface-hover hover:text-white">×</button>
@@ -164,8 +181,8 @@ export function WorkLauncher({
         <div className="space-y-5">
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             {([
+              { id: 'master' as const, title: 'Auto', detail: 'Agent decides the route', icon: '🧠' },
               { id: 'direct' as const, title: 'Direct', detail: 'Assign one agent', icon: '🎯' },
-              { id: 'master' as const, title: 'Master', detail: 'Let orchestrator decide', icon: '🧠' },
               { id: 'team' as const, title: 'Team', detail: 'Use a specialist squad', icon: '🐜' },
               { id: 'pipeline' as const, title: 'Pipeline', detail: 'Run a template flow', icon: '🔗' },
             ]).map(option => (
@@ -185,13 +202,15 @@ export function WorkLauncher({
           </div>
 
           <div className="grid gap-3">
-            <input
-              value={title}
-              onChange={event => setTitle(event.target.value)}
-              placeholder={mode === 'pipeline' ? 'Pipeline name' : 'Task title'}
-              disabled={!canLaunch}
-              className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm focus:border-accent outline-none disabled:opacity-50"
-            />
+            {mode !== 'master' && (
+              <input
+                value={title}
+                onChange={event => setTitle(event.target.value)}
+                placeholder={mode === 'pipeline' ? 'Pipeline name' : 'Task title'}
+                disabled={!canLaunch}
+                className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm focus:border-accent outline-none disabled:opacity-50"
+              />
+            )}
             <textarea
               value={description}
               onChange={event => setDescription(event.target.value)}

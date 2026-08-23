@@ -662,6 +662,13 @@ ALTER TABLE tasks ADD COLUMN context_length INTEGER;
 -- stores provider-specific values such as xhigh and max.
 ALTER TABLE tasks ADD COLUMN requested_reasoning_effort TEXT;
 
+-- Migration: 202608230002_add_pipeline_execution_preferences
+-- Persist user-selected execution preferences so every stage and recovery run
+-- uses the same model/context configuration rather than silently falling back.
+ALTER TABLE pipelines ADD COLUMN model_id TEXT;
+ALTER TABLE pipelines ADD COLUMN reasoning_effort TEXT;
+ALTER TABLE pipelines ADD COLUMN context_length INTEGER;
+
 -- Migration: 202608040001_add_social_workflow_operations
 CREATE TABLE IF NOT EXISTS social_publish_schedules (
   id TEXT PRIMARY KEY,

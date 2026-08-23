@@ -376,7 +376,11 @@ export const api = {
       request<InboxEntry>(`/inbox/${id}/respond`, { method: 'POST', body: JSON.stringify(data) }),
   },
   supervisor: {
-    dispatch: (input: string) => request<unknown>('/supervisor/dispatch', { method: 'POST', body: JSON.stringify({ input }) }),
+    dispatch: (input: string, options?: Pick<Task, 'modelId' | 'reasoningEffort' | 'contextLength'> & { workspacePath?: string; workspaceMode?: boolean }) =>
+      request<{ orchestrationId: string; mode: string; intent: unknown; orchestration: unknown; tasks: Task[] }>('/supervisor/dispatch', {
+        method: 'POST',
+        body: JSON.stringify({ input, ...options }),
+      }),
     classify: (input: string) => request<unknown>('/supervisor/classify', { method: 'POST', body: JSON.stringify({ input }) }),
     guardrails: () => request<unknown>('/supervisor/guardrails'),
     updateGuardrails: (data: unknown) => request<unknown>('/supervisor/guardrails', { method: 'PATCH', body: JSON.stringify(data) }),

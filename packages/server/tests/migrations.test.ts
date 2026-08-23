@@ -35,6 +35,9 @@ describe('database migrations', () => {
     expect(columns.map(column => column.name)).toContain('domain_id');
     const pipelineColumns = db.all('PRAGMA table_info(pipelines)') as { name: string }[];
     expect(pipelineColumns.map(column => column.name)).toContain('domain_id');
+    expect(pipelineColumns.map(column => column.name)).toEqual(expect.arrayContaining([
+      'model_id', 'reasoning_effort', 'context_length',
+    ]));
     expect(() => {
       db.run(`
         INSERT INTO pipelines (id, name, status, stages, input)
