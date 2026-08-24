@@ -1073,7 +1073,6 @@ async function startServer(): Promise<void> {
 }
 
 function showSplashForFailure(): void {
-  if (!splashWindow || splashWindow.isDestroyed()) createSplashWindow();
   splashWindow?.show();
   splashWindow?.focus();
 }
