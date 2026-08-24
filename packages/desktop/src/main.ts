@@ -132,6 +132,8 @@ if (configuredUserDataDirectory) {
 
 let splashWindow: BrowserWindow | null = null;
 let dashboardWindow: BrowserWindow | null = null;
+const smokeTestMode = process.argv.includes('--smoke-test');
+let smokeTestTimeout: NodeJS.Timeout | undefined;
 let serverChild: ServerChild | null = null;
 let serverLog: WriteStream | null = null;
 let serverOrigin: string | null = null;
@@ -618,6 +620,19 @@ function createDashboardWindow(origin: string): void {
   dashboardWindow.removeMenu();
   configureWindowSecurity(dashboardWindow, true);
   dashboardWindow.once('ready-to-show', () => dashboardWindow?.show());
+  if (smokeTestMode) {
+    dashboardWindow.webContents.once('did-finish-load', () => {
+      if (smokeTestTimeout) clearTimeout(smokeTestTimeout);
+      process.exitCode = 0;
+      setTimeout(() => app.quit(), 250);
+    });
+    dashboardWindow.webContents.once('did-fail-load', (_event, errorCode, errorDescription) => {
+      console.error(`Desktop smoke test failed to load dashboard: ${errorCode} ${errorDescription}`);
+      if (smokeTestTimeout) clearTimeout(smokeTestTimeout);
+      process.exitCode = 1;
+      app.quit();
+    });
+  }
   dashboardWindow.on('closed', () => {
     dashboardWindow = null;
   });
@@ -876,7 +891,7 @@ async function isPortAvailable(port: number): Promise<boolean> {
     probe.once('error', (error: NodeJS.ErrnoException) => {
       // Some machines have IPv6 disabled. In that case IPv4 remains a valid
       // launch path; only treat an actual address-in-use error as occupied.
-      resolveAvailable(host === '::' && (error.code === 'EAFNOSUPPORT' || error.code === 'EADDRNOTAVAIL')
+      resolveAvailable(host.startsWith('::') && (error.code === 'EAFNOSUPPORT' || error.code === 'EADDRNOTAVAIL')
         ? true
         : false);
     });
@@ -885,11 +900,13 @@ async function isPortAvailable(port: number): Promise<boolean> {
     });
   });
 
-  const [ipv4Available, ipv6Available] = await Promise.all([
+  const availability = await Promise.all([
+    probeHost('127.0.0.1'),
     probeHost('0.0.0.0'),
+    probeHost('::1'),
     probeHost('::'),
   ]);
-  return ipv4Available && ipv6Available;
+  return availability.every(Boolean);
 }
 
 function healthCheck(origin: string, healthToken: string): Promise<boolean> {
@@ -1171,6 +1188,13 @@ if (!hasSingleInstanceLock) {
   app.quit();
 } else {
   app.whenReady().then(async () => {
+    if (smokeTestMode) {
+      smokeTestTimeout = setTimeout(() => {
+        console.error('Desktop smoke test timed out before the dashboard loaded.');
+        process.exitCode = 1;
+        app.quit();
+      }, 90_000);
+    }
     const layout = getResourceLayout();
     if (process.platform === 'darwin' && app.dock) {
       const dockIcon = nativeImage.createFromPath(layout.iconPath);

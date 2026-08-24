@@ -36,6 +36,8 @@ export default defineConfig({
   use: {
     baseURL: `http://localhost:${dashboardPort}`,
     headless: true,
+    trace: 'retain-on-failure',
+    screenshot: 'only-on-failure',
   },
   webServer: [
     {

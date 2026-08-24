@@ -87,6 +87,8 @@
       ]
     },
     "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
       "runAfterFinish": false
     },
     "linux": {

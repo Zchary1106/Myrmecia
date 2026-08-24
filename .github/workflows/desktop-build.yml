@@ -132,10 +132,16 @@ jobs:
         run: |
           test -n "$(find packages/desktop/release -maxdepth 1 -name '*.dmg' -print -quit)"
           hdiutil verify packages/desktop/release/*.dmg
+          app_bundle="$(find packages/desktop/release -maxdepth 3 -name '*.app' -print -quit)"
+          test -n "$app_bundle"
+          "$app_bundle/Contents/MacOS/Myrmecia" --smoke-test
           if [ "$MYRMECIA_REQUIRE_RELEASE_SIGNING" = 'true' ]; then
-            app_bundle="$(find packages/desktop/release -maxdepth 2 -name '*.app' -print -quit)"
-            test -n "$app_bundle"
             codesign --verify --deep --strict "$app_bundle"
+            xcrun stapler validate "$app_bundle"
+            dmg_path="$(find packages/desktop/release -maxdepth 1 -name '*.dmg' -print -quit)"
+            xcrun notarytool submit "$dmg_path" --apple-id "$APPLE_ID" --password "$APPLE_APP_SPECIFIC_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
+            xcrun stapler staple "$dmg_path"
+            xcrun stapler validate "$dmg_path"
           fi
           shasum -a 256 packages/desktop/release/*.dmg > packages/desktop/release/SHA256SUMS-macos.txt
 
@@ -154,9 +160,16 @@ jobs:
           if ($process.ExitCode -ne 0) { throw "NSIS installer exited with code $($process.ExitCode)" }
           $app = Get-ChildItem $installDir -Filter 'Myrmecia.exe' -Recurse | Select-Object -First 1
           if (-not $app) { throw 'NSIS installer did not install Myrmecia.exe' }
+          $smoke = Start-Process -FilePath $app.FullName -ArgumentList '--smoke-test' -PassThru
+          if (-not $smoke.WaitForExit(120000)) {
+            Stop-Process -Id $smoke.Id -Force
+            throw 'Installed Myrmecia.exe did not complete its startup smoke test'
+          }
+          if ($smoke.ExitCode -ne 0) { throw "Installed Myrmecia.exe smoke test exited with code $($smoke.ExitCode)" }
           Get-FileHash $installer.FullName -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  $($installer.Name)" } | Set-Content packages/desktop/release/SHA256SUMS-windows.txt
 
       - name: Upload installer artifact
+        if: always()
         uses: actions/upload-artifact@v6
         with:
           name: ${{ matrix.artifact }}
