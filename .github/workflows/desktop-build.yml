@@ -171,9 +171,21 @@ jobs:
             Get-Process | Where-Object { $_.ProcessName -match 'Myrmecia|Setup' } | Format-Table Id, ProcessName, Path
             throw 'NSIS installer did not install Myrmecia.exe under the per-user Programs directory'
           }
+          $resources = Join-Path $app.Directory.FullName 'resources'
+          $requiredFiles = @(
+            (Join-Path $resources 'app.asar'),
+            (Join-Path $resources 'server/dist/index.js'),
+            (Join-Path $resources 'dashboard/index.html')
+          )
+          foreach ($requiredFile in $requiredFiles) {
+            if (-not (Test-Path $requiredFile -PathType Leaf)) {
+              throw "NSIS installation is incomplete; missing $requiredFile"
+            }
+          }
           if (-not $process.HasExited) {
+            Write-Warning 'NSIS wrapper remained active after the complete application tree was installed; terminating the wrapper before launch verification.'
             & taskkill.exe /PID $process.Id /T /F | Out-Host
-            throw 'NSIS one-click installer did not exit after installing files'
+            $process.WaitForExit(10000) | Out-Null
           } elseif ($process.ExitCode -ne 0) {
             throw "NSIS installer exited with code $($process.ExitCode)"
           }
