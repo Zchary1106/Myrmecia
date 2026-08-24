@@ -78,6 +78,48 @@ describe('SqliteMemoryStore', () => {
     store.forget(item.id);
     expect(store.get(item.id)).toBeUndefined();
     expect(store.size()).toBe(0);
+    const deleted = store.get(item.id, { includeDeleted: true });
+    expect(deleted?.deletedAt).toBeTruthy();
+    expect(store.restore(item.id)?.content).toBe('forget me please');
+    expect(store.size()).toBe(1);
+  });
+
+  it('migrates an existing memory table before creating the active-item index', async () => {
+    closeDb();
+    const path = join(mkdtempSync(join(tmpdir(), 'agent-factory-memory-legacy-')), 'test.db');
+    process.env.DB_PATH = path;
+    const db = getDb();
+    db.exec(`
+      CREATE TABLE memory_items (
+        id TEXT PRIMARY KEY,
+        type TEXT NOT NULL,
+        scope_org TEXT,
+        scope_workspace TEXT,
+        scope_user TEXT,
+        scope_agent TEXT,
+        scope_session TEXT,
+        scope_pipeline TEXT,
+        content TEXT NOT NULL,
+        summary TEXT,
+        embedding BLOB,
+        importance REAL NOT NULL DEFAULT 0.5,
+        success REAL,
+        quality REAL,
+        source_type TEXT,
+        source_id TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        last_accessed_at DATETIME,
+        access_count INTEGER NOT NULL DEFAULT 0,
+        valid_from DATETIME,
+        valid_to DATETIME,
+        expires_at DATETIME,
+        metadata JSON NOT NULL DEFAULT '{}'
+      );
+    `);
+    resetMemoryStore();
+    await expect(getMemoryStore().initialize()).resolves.toBeUndefined();
+    const columns = db.all('PRAGMA table_info(memory_items)') as Array<{ name: string }>;
+    expect(columns.some(column => column.name === 'deleted_at')).toBe(true);
   });
 
   it('tracks access stats on recall', async () => {

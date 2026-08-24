@@ -20,6 +20,28 @@ export const MEMORY_TYPES: readonly MemoryType[] = [
 ] as const;
 
 /**
+ * Explicit, user-visible links between knowledge nodes.  This intentionally
+ * stays smaller than the internal graph vocabulary so that the topology UI is
+ * understandable and safe to edit without an LLM.
+ */
+export type MemoryRelation =
+  | 'supports'
+  | 'derived_from'
+  | 'contradicts'
+  | 'related_to'
+  | 'part_of'
+  | 'produced_by';
+
+export const MEMORY_RELATIONS: readonly MemoryRelation[] = [
+  'supports',
+  'derived_from',
+  'contradicts',
+  'related_to',
+  'part_of',
+  'produced_by',
+] as const;
+
+/**
  * Namespace a memory belongs to. Every field is optional; an unset field means
  * "not scoped to this dimension" (i.e. global on that axis).
  */
@@ -63,6 +85,30 @@ export interface MemoryItem {
   validTo?: string;
   expiresAt?: string;
   metadata: Record<string, unknown>;
+  /** Monotonic revision used by editors to identify stale data. */
+  version?: number;
+  /** Recoverable deletion marker. Deleted items are excluded from recall/list. */
+  deletedAt?: string;
+}
+
+/** A persisted, explainable relation shown in the knowledge topology. */
+export interface MemoryEdge {
+  sourceId: string;
+  targetId: string;
+  relation: MemoryRelation;
+  weight: number;
+  sourceType?: string;
+  evidenceId?: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  validFrom?: string;
+  validTo?: string;
+}
+
+/** Bounded graph response used by the API and dashboard. */
+export interface MemoryGraph {
+  nodes: MemoryItem[];
+  edges: MemoryEdge[];
 }
 
 export interface MemoryWriteInput {
@@ -118,6 +164,7 @@ export interface MemoryStore {
   get(id: string): MemoryItem | undefined;
   recall(query: MemoryQuery): Promise<ScoredMemory[]>;
   forget(id: string): void;
+  restore?(id: string): MemoryItem | undefined;
   touch(id: string): void;
   size(type?: MemoryType): number;
   persist(): void;

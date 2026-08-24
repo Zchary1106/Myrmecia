@@ -87,7 +87,13 @@ export function upsertExecutionArtifact(data: {
     data.sizeBytes || 0,
     JSON.stringify(data.metadata || {}),
   );
-  return getExecutionArtifact(id)!;
+  const artifact = getExecutionArtifact(id)!;
+  // Runtime evidence is captured asynchronously as an unconfirmed candidate.
+  // Failure must never block artifact persistence or task completion.
+  void import('../../memory/runtime-knowledge-bridge.js')
+    .then(({ captureExecutionArtifactKnowledge }) => captureExecutionArtifactKnowledge(artifact))
+    .catch(() => undefined);
+  return artifact;
 }
 
 export function getExecutionArtifact(id: string): StoredExecutionArtifact | undefined {

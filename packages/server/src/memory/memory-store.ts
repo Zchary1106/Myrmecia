@@ -50,14 +50,15 @@ CREATE TABLE IF NOT EXISTS memory_items (
   valid_from DATETIME,
   valid_to DATETIME,
   expires_at DATETIME,
-  metadata JSON NOT NULL DEFAULT '{}'
+  metadata JSON NOT NULL DEFAULT '{}',
+  version INTEGER NOT NULL DEFAULT 1,
+  deleted_at DATETIME
 );
 
 CREATE INDEX IF NOT EXISTS idx_mem_type ON memory_items(type);
 CREATE INDEX IF NOT EXISTS idx_mem_workspace ON memory_items(scope_workspace);
 CREATE INDEX IF NOT EXISTS idx_mem_agent ON memory_items(scope_agent);
 CREATE INDEX IF NOT EXISTS idx_mem_source ON memory_items(source_type, source_id);
-
 CREATE TABLE IF NOT EXISTS memory_edges (
   src_id TEXT NOT NULL,
   dst_id TEXT NOT NULL,
@@ -157,6 +158,8 @@ function rowToItem(row: any): MemoryItem {
     validTo: row.valid_to ?? undefined,
     expiresAt: row.expires_at ?? undefined,
     metadata: safeJson(row.metadata),
+    version: row.version ?? 1,
+    deletedAt: row.deleted_at ?? undefined,
   };
 }
 
@@ -222,6 +225,18 @@ export class SqliteMemoryStore implements MemoryStore {
 
     const db = getDb();
     db.exec(MEMORY_SCHEMA);
+    const columns = new Set(
+      (db.all('PRAGMA table_info(memory_items)') as Array<{ name: string }>).map(column => column.name),
+    );
+    if (!columns.has('version')) {
+      db.exec('ALTER TABLE memory_items ADD COLUMN version INTEGER NOT NULL DEFAULT 1');
+    }
+    if (!columns.has('deleted_at')) {
+      db.exec('ALTER TABLE memory_items ADD COLUMN deleted_at DATETIME');
+    }
+    // Create this index only after additive migration. Older databases do not
+    // have deleted_at when MEMORY_SCHEMA first executes.
+    db.exec('CREATE INDEX IF NOT EXISTS idx_mem_active_workspace ON memory_items(deleted_at, scope_workspace)');
 
     const saved = db.get(
       'SELECT data, dimensions FROM hnsw_indexes WHERE name = ?',
@@ -292,9 +307,12 @@ export class SqliteMemoryStore implements MemoryStore {
     return this.get(id)!;
   }
 
-  get(id: string): MemoryItem | undefined {
+  get(id: string, options: { includeDeleted?: boolean } = {}): MemoryItem | undefined {
     const db = getDb();
-    const row = db.get('SELECT * FROM memory_items WHERE id = ?', id);
+    const row = db.get(
+      `SELECT * FROM memory_items WHERE id = ?${options.includeDeleted ? '' : ' AND deleted_at IS NULL'}`,
+      id,
+    );
     return row ? rowToItem(row) : undefined;
   }
 
@@ -326,6 +344,7 @@ export class SqliteMemoryStore implements MemoryStore {
     }
 
     if (sets.length === 0) return existing;
+    sets.push('version = version + 1');
     params.push(id);
     db.run(`UPDATE memory_items SET ${sets.join(', ')} WHERE id = ?`, ...params);
 
@@ -356,9 +375,12 @@ export class SqliteMemoryStore implements MemoryStore {
     const scored: Array<ScoredMemory & { embedding: number[] }> = [];
 
     for (const hit of pool) {
-      const row = db.get('SELECT * FROM memory_items WHERE id = ?', hit.id);
+      const row = db.get('SELECT * FROM memory_items WHERE id = ? AND deleted_at IS NULL', hit.id);
       if (!row) continue;
       const item = rowToItem(row);
+      // Runtime evidence is quarantined until a user confirms it. This keeps
+      // unreviewed test logs, model output and inferred facts out of prompts.
+      if (item.metadata.knowledgeStatus === 'candidate') continue;
 
       if (query.types && !query.types.includes(item.type)) continue;
       if (!itemMatchesScope(item, query.scope)) continue;
@@ -390,9 +412,25 @@ export class SqliteMemoryStore implements MemoryStore {
 
   forget(id: string): void {
     const db = getDb();
-    db.run('DELETE FROM memory_items WHERE id = ?', id);
+    db.run(
+      'UPDATE memory_items SET deleted_at = CURRENT_TIMESTAMP, version = version + 1 WHERE id = ? AND deleted_at IS NULL',
+      id,
+    );
     this.index?.remove(id);
     this.persist();
+  }
+
+  restore(id: string): MemoryItem | undefined {
+    const db = getDb();
+    const row = db.get('SELECT * FROM memory_items WHERE id = ? AND deleted_at IS NOT NULL', id) as any;
+    if (!row) return this.get(id);
+    const item = rowToItem(row);
+    db.run('UPDATE memory_items SET deleted_at = NULL, version = version + 1 WHERE id = ?', id);
+    if (item.embedding?.length === this.embedding.dimensions) {
+      this.index?.add(id, item.embedding);
+      this.persist();
+    }
+    return this.get(id);
   }
 
   touch(id: string): void {
@@ -406,8 +444,8 @@ export class SqliteMemoryStore implements MemoryStore {
   size(type?: MemoryType): number {
     const db = getDb();
     const row = type
-      ? (db.get('SELECT COUNT(*) AS n FROM memory_items WHERE type = ?', type) as any)
-      : (db.get('SELECT COUNT(*) AS n FROM memory_items') as any);
+      ? (db.get('SELECT COUNT(*) AS n FROM memory_items WHERE type = ? AND deleted_at IS NULL', type) as any)
+      : (db.get('SELECT COUNT(*) AS n FROM memory_items WHERE deleted_at IS NULL') as any);
     return row?.n ?? 0;
   }
 
@@ -427,14 +465,15 @@ export class SqliteMemoryStore implements MemoryStore {
     const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
     const limit = Math.min(Math.max(opts.limit ?? 50, 1), 500);
     params.push(limit);
-    const rows = db.all(`SELECT * FROM memory_items ${where} ORDER BY created_at DESC LIMIT ?`, ...params) as any[];
+    const active = where ? `${where} AND deleted_at IS NULL` : 'WHERE deleted_at IS NULL';
+    const rows = db.all(`SELECT * FROM memory_items ${active} ORDER BY created_at DESC LIMIT ?`, ...params) as any[];
     return rows.map(rowToItem);
   }
 
   /** Count memories grouped by type. */
   countByType(): Record<string, number> {
     const db = getDb();
-    const rows = db.all('SELECT type, COUNT(*) AS n FROM memory_items GROUP BY type') as Array<{ type: string; n: number }>;
+    const rows = db.all('SELECT type, COUNT(*) AS n FROM memory_items WHERE deleted_at IS NULL GROUP BY type') as Array<{ type: string; n: number }>;
     const out: Record<string, number> = { working: 0, episodic: 0, semantic: 0, procedural: 0, entity: 0 };
     for (const r of rows) out[r.type] = r.n;
     return out;
