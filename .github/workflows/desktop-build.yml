@@ -151,8 +151,8 @@ jobs:
         run: |
           $installer = Get-ChildItem packages/desktop/release/*.exe | Select-Object -First 1
           if (-not $installer) { throw 'Windows NSIS installer was not generated' }
-          $installDir = Join-Path $env:RUNNER_TEMP 'Myrmecia-install-smoke'
-          $process = Start-Process -FilePath $installer.FullName -ArgumentList "/S /D=$installDir" -PassThru -NoNewWindow
+          $installDir = Join-Path $env:LOCALAPPDATA 'Programs/Myrmecia'
+          $process = Start-Process -FilePath $installer.FullName -ArgumentList '/S /currentuser' -PassThru -NoNewWindow
           $deadline = (Get-Date).AddSeconds(180)
           $app = $null
           while ((Get-Date) -lt $deadline) {
@@ -165,9 +165,8 @@ jobs:
           }
           if (-not $app) { throw 'NSIS installer did not install Myrmecia.exe' }
           if (-not $process.HasExited) {
-            Write-Warning 'NSIS wrapper remained active after files were installed; terminating the wrapper before launch verification.'
             & taskkill.exe /PID $process.Id /T /F | Out-Host
-            $process.WaitForExit(10000) | Out-Null
+            throw 'NSIS one-click installer did not exit after installing files'
           } elseif ($process.ExitCode -ne 0) {
             throw "NSIS installer exited with code $($process.ExitCode)"
           }
