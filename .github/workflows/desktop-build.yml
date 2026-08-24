@@ -152,8 +152,9 @@ jobs:
           $installer = Get-ChildItem packages/desktop/release/*.exe | Select-Object -First 1
           if (-not $installer) { throw 'Windows NSIS installer was not generated' }
           $installRoot = Join-Path $env:LOCALAPPDATA 'Programs'
-          $process = Start-Process -FilePath $installer.FullName -ArgumentList '/S /currentuser' -PassThru -NoNewWindow
-          $deadline = (Get-Date).AddSeconds(180)
+          $process = Start-Process -FilePath $installer.FullName -ArgumentList @('/S', '/currentuser') -PassThru -WindowStyle Hidden
+          $startedAt = Get-Date
+          $deadline = $startedAt.AddMinutes(15)
           $app = $null
           while ((Get-Date) -lt $deadline) {
             $app = Get-ChildItem $installRoot -Filter 'Myrmecia.exe' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -161,6 +162,8 @@ jobs:
             if ($process.HasExited -and $process.ExitCode -ne 0) {
               throw "NSIS installer exited with code $($process.ExitCode) before installing Myrmecia.exe"
             }
+            $elapsed = [int]((Get-Date) - $startedAt).TotalSeconds
+            if (($elapsed % 30) -lt 2) { Write-Host "Waiting for NSIS extraction: ${elapsed}s" }
             Start-Sleep -Seconds 2
           }
           if (-not $app) {
