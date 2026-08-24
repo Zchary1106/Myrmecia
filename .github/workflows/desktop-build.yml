@@ -151,19 +151,23 @@ jobs:
         run: |
           $installer = Get-ChildItem packages/desktop/release/*.exe | Select-Object -First 1
           if (-not $installer) { throw 'Windows NSIS installer was not generated' }
-          $installDir = Join-Path $env:LOCALAPPDATA 'Programs/Myrmecia'
+          $installRoot = Join-Path $env:LOCALAPPDATA 'Programs'
           $process = Start-Process -FilePath $installer.FullName -ArgumentList '/S /currentuser' -PassThru -NoNewWindow
           $deadline = (Get-Date).AddSeconds(180)
           $app = $null
           while ((Get-Date) -lt $deadline) {
-            $app = Get-ChildItem $installDir -Filter 'Myrmecia.exe' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+            $app = Get-ChildItem $installRoot -Filter 'Myrmecia.exe' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
             if ($app) { break }
             if ($process.HasExited -and $process.ExitCode -ne 0) {
               throw "NSIS installer exited with code $($process.ExitCode) before installing Myrmecia.exe"
             }
             Start-Sleep -Seconds 2
           }
-          if (-not $app) { throw 'NSIS installer did not install Myrmecia.exe' }
+          if (-not $app) {
+            Get-ChildItem $installRoot -Recurse -ErrorAction SilentlyContinue | Select-Object -First 100 | Format-Table FullName
+            Get-Process | Where-Object { $_.ProcessName -match 'Myrmecia|Setup' } | Format-Table Id, ProcessName, Path
+            throw 'NSIS installer did not install Myrmecia.exe under the per-user Programs directory'
+          }
           if (-not $process.HasExited) {
             & taskkill.exe /PID $process.Id /T /F | Out-Host
             throw 'NSIS one-click installer did not exit after installing files'
