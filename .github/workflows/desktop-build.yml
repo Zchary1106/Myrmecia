@@ -52,6 +52,7 @@ jobs:
             artifact: myrmecia-windows
     env:
       CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      MYRMECIA_REQUIRE_RELEASE_SIGNING: ${{ startsWith(github.ref, 'refs/tags/v') && 'true' || 'false' }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -78,15 +79,50 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Configure release signing credentials
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          MACOS_CSC_LINK: ${{ secrets.MACOS_CSC_LINK }}
+          MACOS_CSC_KEY_PASSWORD: ${{ secrets.MACOS_CSC_KEY_PASSWORD }}
+          WINDOWS_CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
+          WINDOWS_CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
+          APPLE_ID_SECRET: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD_SECRET: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID_SECRET: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ "${{ matrix.platform }}" = 'mac' ]; then
+            echo "CSC_LINK=$MACOS_CSC_LINK" >> "$GITHUB_ENV"
+            echo "CSC_KEY_PASSWORD=$MACOS_CSC_KEY_PASSWORD" >> "$GITHUB_ENV"
+            echo "APPLE_ID=$APPLE_ID_SECRET" >> "$GITHUB_ENV"
+            echo "APPLE_APP_SPECIFIC_PASSWORD=$APPLE_APP_PASSWORD_SECRET" >> "$GITHUB_ENV"
+            echo "APPLE_TEAM_ID=$APPLE_TEAM_ID_SECRET" >> "$GITHUB_ENV"
+          else
+            echo "CSC_LINK=$WINDOWS_CSC_LINK" >> "$GITHUB_ENV"
+            echo "CSC_KEY_PASSWORD=$WINDOWS_CSC_KEY_PASSWORD" >> "$GITHUB_ENV"
+          fi
+
+      - name: Require release signing credentials
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          test -n "$CSC_LINK"
+          test -n "$CSC_KEY_PASSWORD"
+          if [ "${{ matrix.platform }}" = 'mac' ]; then
+            test -n "$APPLE_ID"
+            test -n "$APPLE_APP_SPECIFIC_PASSWORD"
+            test -n "$APPLE_TEAM_ID"
+          fi
+
       - name: Build unsigned macOS installer
         if: matrix.platform == 'mac'
-        run: pnpm --filter @myrmecia/desktop package -- --mac dmg
+        run: pnpm --filter @myrmecia/desktop package:mac
         env:
           ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder-cache
 
       - name: Build unsigned Windows installer
         if: matrix.platform == 'windows'
-        run: pnpm --filter @myrmecia/desktop package -- --win nsis
+        run: pnpm --filter @myrmecia/desktop package:win
         env:
           ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder-cache
 
@@ -95,14 +131,30 @@ jobs:
         shell: bash
         run: |
           test -n "$(find packages/desktop/release -maxdepth 1 -name '*.dmg' -print -quit)"
+          hdiutil verify packages/desktop/release/*.dmg
+          if [ "$MYRMECIA_REQUIRE_RELEASE_SIGNING" = 'true' ]; then
+            app_bundle="$(find packages/desktop/release -maxdepth 2 -name '*.app' -print -quit)"
+            test -n "$app_bundle"
+            codesign --verify --deep --strict "$app_bundle"
+          fi
           shasum -a 256 packages/desktop/release/*.dmg > packages/desktop/release/SHA256SUMS-macos.txt
 
       - name: Verify Windows installer
         if: matrix.platform == 'windows'
-        shell: bash
+        shell: pwsh
         run: |
-          test -n "$(find packages/desktop/release -maxdepth 1 -name '*.exe' -print -quit)"
-          sha256sum packages/desktop/release/*.exe > packages/desktop/release/SHA256SUMS-windows.txt
+          $installer = Get-ChildItem packages/desktop/release/*.exe | Select-Object -First 1
+          if (-not $installer) { throw 'Windows NSIS installer was not generated' }
+          $installDir = Join-Path $env:RUNNER_TEMP 'Myrmecia-install-smoke'
+          $process = Start-Process -FilePath $installer.FullName -ArgumentList "/S /D=$installDir" -PassThru -NoNewWindow
+          if (-not $process.WaitForExit(120000)) {
+            Stop-Process -Id $process.Id -Force
+            throw 'NSIS silent installation timed out after 120 seconds'
+          }
+          if ($process.ExitCode -ne 0) { throw "NSIS installer exited with code $($process.ExitCode)" }
+          $app = Get-ChildItem $installDir -Filter 'Myrmecia.exe' -Recurse | Select-Object -First 1
+          if (-not $app) { throw 'NSIS installer did not install Myrmecia.exe' }
+          Get-FileHash $installer.FullName -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  $($installer.Name)" } | Set-Content packages/desktop/release/SHA256SUMS-windows.txt
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v6

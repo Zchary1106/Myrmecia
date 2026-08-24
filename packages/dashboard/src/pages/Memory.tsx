@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api, type MemoryItemDTO, type ScoredMemoryDTO } from '../lib/api';
+import { KnowledgeGraphPanel } from '../components/memory/KnowledgeGraphPanel';
 import { cn } from '../lib/utils';
 
 const TYPES = ['semantic', 'episodic', 'procedural', 'working'] as const;
@@ -86,6 +87,7 @@ export function MemoryPage() {
           <div>
             <div className="text-xs uppercase tracking-[0.24em] text-accent-light">Memory</div>
             <h2 className="mt-2 text-3xl font-bold">Unified Memory</h2>
+            <KnowledgeGraphPanel />
             <p className="mt-2 max-w-2xl text-sm text-gray-400">
               平台的长期记忆：语义事实、历史执行（episodic）、可复用经验（procedural）。Agent 在路由、分解和 Pipeline 执行时会自动召回。
             </p>

@@ -56,6 +56,11 @@ def enforce_output_limit(output: str) -> str:
     return output
 
 
+def estimate_tokens(value: object) -> int:
+    """A transparent fallback when a provider does not expose usage."""
+    return max(0, len(str(value)) // 4)
+
+
 apply_resource_limits()
 
 # Ensure this directory is on the path for local imports
@@ -92,10 +97,37 @@ def main():
         sys.exit(1)
 
     start_time = time.time()
+    model_call_count = 0
+
+    def on_agent_step(step):
+        """CrewAI invokes this after each agent/LLM step.
+
+        Providers expose usage differently, so we keep any observed fields and
+        mark absent values as estimates rather than reporting invented totals.
+        """
+        nonlocal model_call_count
+        model_call_count += 1
+        usage = getattr(step, "usage_metrics", None) or getattr(step, "usage", None) or {}
+        if not isinstance(usage, dict):
+            usage = getattr(usage, "__dict__", {})
+        input_tokens = usage.get("prompt_tokens", usage.get("input_tokens", 0)) or 0
+        output_tokens = usage.get("completion_tokens", usage.get("output_tokens", 0)) or 0
+        text = getattr(step, "text", None) or getattr(step, "output", None) or ""
+        if not output_tokens:
+            output_tokens = estimate_tokens(text)
+        emit({
+            "type": "model_call",
+            "sequence": model_call_count,
+            "phase": "completed",
+            "model": model,
+            "input_tokens": int(input_tokens),
+            "output_tokens": int(output_tokens),
+            "usage_source": "provider" if input_tokens else "estimated_output",
+        })
 
     try:
         # Build agent
-        agent = build_agent(agent_id, system_prompt, agent_meta, allowed_tools, disallowed_tools, model)
+        agent = build_agent(agent_id, system_prompt, agent_meta, allowed_tools, disallowed_tools, model, on_agent_step)
 
         # Emit start event
         emit({
@@ -139,7 +171,7 @@ def main():
             "result": output,
             "total_cost_usd": 0,
             "duration_ms": duration_ms,
-            "num_turns": 1,
+            "num_turns": max(1, model_call_count),
             "usage": {
                 "input_tokens": 0,
                 "output_tokens": 0,

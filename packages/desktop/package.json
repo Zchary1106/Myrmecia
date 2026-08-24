@@ -12,11 +12,14 @@
     "prepare:dev": "pnpm --filter @myrmecia/shared build && pnpm --filter @myrmecia/server build && pnpm --filter @myrmecia/dashboard build",
     "dev": "pnpm run prepare:dev && pnpm run build && electron .",
     "stage": "node scripts/stage-resources.mjs",
-    "package": "pnpm run build && pnpm run stage && electron-builder"
+    "package": "pnpm run build && pnpm run stage && electron-builder",
+    "package:mac": "pnpm run build && pnpm run stage && electron-builder --mac dmg",
+    "package:win": "pnpm run build && pnpm run stage && electron-builder --win nsis"
   },
   "devDependencies": {
     "@types/node": "^22.15.3",
     "electron": "^36.3.1",
+    "@electron/notarize": "^2.5.0",
     "electron-builder": "^26.0.12",
     "typescript": "^5.7.3"
   },
@@ -27,6 +30,7 @@
     "npmRebuild": false,
     "beforePack": "./scripts/before-pack.mjs",
     "afterPack": "./scripts/after-pack.mjs",
+    "afterSign": "./scripts/notarize.mjs",
     "directories": {
       "output": "release"
     },
@@ -81,6 +85,9 @@
       "target": [
         "nsis"
       ]
+    },
+    "nsis": {
+      "runAfterFinish": false
     },
     "linux": {
       "icon": "assets/icon.png",

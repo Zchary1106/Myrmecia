@@ -75,10 +75,37 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @myrmecia/dashboard test
 
+  redis-recovery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9.15.9
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @myrmecia/server exec vitest run tests/task-queue.redis.test.ts
+        env:
+          REDIS_URL: redis://127.0.0.1:6379
+
   e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    needs: [lint-and-build, test-server, test-dashboard]
+    needs: [lint-and-build, test-server, test-dashboard, redis-recovery]
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -105,7 +132,7 @@ jobs:
   desktop-stage:
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    needs: [lint-and-build, test-server, test-dashboard]
+    needs: [lint-and-build, test-server, test-dashboard, redis-recovery]
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6

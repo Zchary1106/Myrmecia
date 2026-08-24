@@ -71,6 +71,7 @@ export class GraphMemory {
     const existing = db.get(
       `SELECT id FROM memory_items
         WHERE source_type = 'entity' AND LOWER(content) = LOWER(?)
+          AND deleted_at IS NULL
           AND (scope_workspace IS ? OR scope_workspace = ?)
         LIMIT 1`,
       name,
@@ -191,6 +192,7 @@ export class GraphMemory {
       const node = db.get(
         `SELECT id, content FROM memory_items
           WHERE source_type='entity' AND LOWER(content)=LOWER(?)
+            AND deleted_at IS NULL
             AND (scope_workspace IS ? OR scope_workspace = ?) LIMIT 1`,
         name, scope?.workspace ?? null, scope?.workspace ?? null
       ) as { id: string; content: string } | undefined;

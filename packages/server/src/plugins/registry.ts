@@ -32,6 +32,8 @@ import { v4 as uuid } from 'uuid';
 import { getDb } from '../db/database.js';
 import { logger } from '../lib/logger.js';
 import { Router } from 'express';
+import { resolve, join } from 'node:path';
+import { pluginSandbox } from './sandbox.js';
 
 // ---------- Types ----------
 
@@ -73,6 +75,7 @@ export interface InstalledPlugin {
   manifest: PluginManifest;
   status: PluginStatus;
   workspaceId: string;
+  sourceUrl?: string;
   installedAt: string;
   error?: string;
 }
@@ -181,6 +184,7 @@ export class PluginRegistry {
       manifest: JSON.parse(row.manifest),
       status: row.status,
       workspaceId: row.workspace_id,
+      sourceUrl: row.source_url || undefined,
       installedAt: row.installed_at,
       error: row.error || undefined,
     };
@@ -224,6 +228,32 @@ export function createPluginRoutes(): Router {
     const workspaceId = (req as any).tenantContext?.workspaceId || 'default';
     const plugin = pluginRegistry.disable(workspaceId, req.params.pluginId);
     plugin ? res.json(plugin) : res.status(404).json({ error: { message: 'Plugin not found' } });
+  });
+
+  router.post('/:pluginId/execute', async (req, res) => {
+    const workspaceId = (req as any).tenantContext?.workspaceId || 'default';
+    const plugin = pluginRegistry.get(workspaceId, req.params.pluginId);
+    if (!plugin) return res.status(404).json({ error: { message: 'Plugin not found' } });
+    if (plugin.status !== 'enabled') return res.status(409).json({ error: { message: 'Plugin must be enabled before execution' } });
+    if (!plugin.sourceUrl || /^(https?:|git\+)/i.test(plugin.sourceUrl)) {
+      return res.status(400).json({ error: { message: 'Only administrator-installed local plugin sources can execute' } });
+    }
+    const { method, args, timeoutMs } = req.body || {};
+    if (!method || typeof method !== 'string' || !Array.isArray(args || [])) {
+      return res.status(400).json({ error: { message: 'method (string) and args (array) are required' } });
+    }
+    try {
+      const sourceRoot = resolve(plugin.sourceUrl);
+      const value = await pluginSandbox.execute(plugin.pluginId, method, args || [], {
+        modulePath: join(sourceRoot, plugin.manifest.entry),
+        allowedRoot: sourceRoot,
+        timeoutMs: typeof timeoutMs === 'number' ? timeoutMs : undefined,
+      });
+      res.json({ value });
+    } catch (err: any) {
+      logger.warn({ err: err.message, pluginId: plugin.pluginId }, 'Plugin execution failed');
+      res.status(422).json({ error: { message: err.message } });
+    }
   });
 
   router.delete('/:pluginId', (req, res) => {

@@ -1,4 +1,7 @@
 import { createHash } from 'crypto';
+import { readdir, readFile } from 'node:fs/promises';
+import { resolve, relative, join } from 'node:path';
+import { pathToFileURL, fileURLToPath } from 'node:url';
 import { getDb } from '../db/database.js';
 import { modelBaseURL, modelApiKey, defaultModel } from '../lib/brand-config.js';
 import { parseSkillContent } from './skill-parser.js';
@@ -135,8 +138,10 @@ export async function syncSource(sourceId: string): Promise<{ added: number; upd
   } else if (source.type === 'http') {
     // HTTP sources serve a JSON index
     files = await fetchHttpIndex(source);
+  } else if (source.type === 'local') {
+    files = await fetchLocalTree(source);
   } else {
-    throw new Error(`Source type "${source.type}" sync not implemented`);
+    throw new Error(`Unsupported source type "${source.type}"`);
   }
 
   let added = 0, updated = 0;
@@ -275,7 +280,26 @@ async function fetchHttpIndex(source: RegistrySource): Promise<{ path: string; d
   return data.skills.map(s => ({ path: s.path, downloadUrl: s.url }));
 }
 
+async function fetchLocalTree(source: RegistrySource): Promise<{ path: string; downloadUrl: string }[]> {
+  const root = resolve(source.url);
+  const base = source.pathPrefix ? resolve(root, source.pathPrefix) : root;
+  if (relative(root, base).startsWith('..')) throw new Error('Local skill pathPrefix must stay within its source root');
+  const files: { path: string; downloadUrl: string }[] = [];
+  const visit = async (directory: string): Promise<void> => {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const fullPath = join(directory, entry.name);
+      if (entry.isDirectory()) await visit(fullPath);
+      else if (entry.isFile() && entry.name.endsWith('.md')) {
+        files.push({ path: relative(base, fullPath), downloadUrl: pathToFileURL(fullPath).href });
+      }
+    }
+  };
+  await visit(base);
+  return files;
+}
+
 async function fetchFileContent(url: string, authToken?: string): Promise<string> {
+  if (url.startsWith('file:')) return readFile(fileURLToPath(url), 'utf8');
   const headers: Record<string, string> = {};
   if (authToken) headers.Authorization = `token ${authToken}`;
   const res = await fetch(url, { headers });
@@ -290,6 +314,13 @@ function buildDownloadUrl(source: RegistrySource, path: string): string {
     const [, owner, repo] = match;
     const fullPath = source.pathPrefix ? `${source.pathPrefix}/${path}` : path;
     return `https://raw.githubusercontent.com/${owner}/${repo}/${source.branch}/${fullPath}`;
+  }
+  if (source.type === 'local') {
+    const root = resolve(source.url);
+    const base = source.pathPrefix ? resolve(root, source.pathPrefix) : root;
+    const filePath = resolve(base, path);
+    if (relative(base, filePath).startsWith('..')) throw new Error('Local skill path escapes source root');
+    return pathToFileURL(filePath).href;
   }
   return `${source.url}/${path}`;
 }

@@ -1,36 +1,22 @@
 /**
- * Plugin Sandbox Isolation
+ * Plugin execution boundary.
  *
- * Runs each plugin in an isolated Worker thread with limited API access.
- * Communication via structured IPC messages with timeout enforcement.
+ * Plugins are local, administrator-installed code. A Worker keeps execution
+ * isolated from request state and gives the entry point no platform internals,
+ * but it is not a security boundary for hostile JavaScript. Remote URLs are
+ * deliberately rejected by the route that invokes this class.
  */
 
 import { Worker } from 'worker_threads';
+import { realpathSync } from 'node:fs';
+import { relative, resolve } from 'node:path';
 import { logger } from '../lib/logger.js';
-
-// ---------- Types ----------
-
-export interface SandboxMessage {
-  type: 'call';
-  method: string;
-  args: any[];
-}
-
-export interface SandboxResult {
-  type: 'result';
-  value: any;
-}
-
-export interface SandboxError {
-  type: 'error';
-  message: string;
-}
 
 export interface SandboxOptions {
   timeoutMs?: number;
+  modulePath?: string;
+  allowedRoot?: string;
 }
-
-// ---------- PluginSandbox ----------
 
 export class PluginSandbox {
   private defaultTimeout: number;
@@ -39,85 +25,57 @@ export class PluginSandbox {
     this.defaultTimeout = opts?.defaultTimeoutMs ?? 30_000;
   }
 
-  /**
-   * Execute a method in an isolated Worker thread.
-   * The plugin code is evaluated inside the worker with restricted globals.
-   */
-  async execute(pluginId: string, method: string, args: any[] = [], opts?: SandboxOptions): Promise<any> {
-    const timeout = opts?.timeoutMs ?? this.defaultTimeout;
-
-    // Worker inline code: receives a call message and responds
+  async execute(pluginId: string, method: string, args: unknown[] = [], opts?: SandboxOptions): Promise<unknown> {
+    if (!opts?.modulePath || !opts.allowedRoot) {
+      throw new Error(`Plugin ${pluginId} requires a trusted local module path`);
+    }
+    const root = realpathSync(resolve(opts.allowedRoot));
+    const modulePath = realpathSync(resolve(opts.modulePath));
+    if (relative(root, modulePath).startsWith('..')) {
+      throw new Error(`Plugin ${pluginId} entry escapes its installed source root`);
+    }
+    const timeout = opts.timeoutMs ?? this.defaultTimeout;
     const workerCode = `
-      const { parentPort, workerData } = require('worker_threads');
-
-      // Remove dangerous globals
-      delete globalThis.process.env;
-      globalThis.require = undefined;
-
-      parentPort.on('message', (msg) => {
-        if (msg.type === 'call') {
-          try {
-            // Plugin execution stub — in production, load the plugin module
-            // For now, return a structured response indicating the call was received
-            parentPort.postMessage({
-              type: 'result',
-              value: {
-                pluginId: workerData.pluginId,
-                method: msg.method,
-                args: msg.args,
-                executed: true,
-              },
-            });
-          } catch (err) {
-            parentPort.postMessage({
-              type: 'error',
-              message: err.message || String(err),
-            });
-          }
+      const { parentPort, workerData } = require('node:worker_threads');
+      const { pathToFileURL } = require('node:url');
+      parentPort.on('message', async (message) => {
+        try {
+          const plugin = await import(pathToFileURL(workerData.modulePath).href);
+          const target = plugin[message.method] || plugin.default?.[message.method];
+          if (typeof target !== 'function') throw new Error('Plugin method is not exported: ' + message.method);
+          const value = await target(...message.args);
+          parentPort.postMessage({ type: 'result', value });
+        } catch (error) {
+          parentPort.postMessage({ type: 'error', message: error instanceof Error ? error.message : String(error) });
         }
       });
     `;
 
-    return new Promise((resolve, reject) => {
-      const worker = new Worker(workerCode, {
-        eval: true,
-        workerData: { pluginId },
-      });
-
-      const timer = setTimeout(() => {
-        worker.terminate();
-        reject(new Error(`Plugin ${pluginId}.${method} timed out after ${timeout}ms`));
-      }, timeout);
-
-      worker.on('message', (msg: SandboxResult | SandboxError) => {
+    return new Promise((resolveResult, reject) => {
+      const worker = new Worker(workerCode, { eval: true, workerData: { modulePath } });
+      let settled = false;
+      const finish = (callback: () => void) => {
+        if (settled) return;
+        settled = true;
         clearTimeout(timer);
-        worker.terminate();
-        if (msg.type === 'error') {
-          reject(new Error(msg.message));
-        } else {
-          resolve(msg.value);
-        }
+        void worker.terminate();
+        callback();
+      };
+      const timer = setTimeout(() => finish(() => reject(new Error(`Plugin ${pluginId}.${method} timed out after ${timeout}ms`))), timeout);
+      worker.on('message', (message: { type: 'result' | 'error'; value?: unknown; message?: string }) => {
+        if (message.type === 'error') finish(() => reject(new Error(message.message || 'Plugin execution failed')));
+        else finish(() => resolveResult(message.value));
       });
-
-      worker.on('error', (err) => {
-        clearTimeout(timer);
-        logger.error({ err, pluginId, method }, 'Plugin sandbox worker error');
-        reject(err);
+      worker.once('error', err => {
+        logger.error({ err, pluginId, method }, 'Plugin worker error');
+        finish(() => reject(err));
       });
-
-      worker.on('exit', (code) => {
-        clearTimeout(timer);
-        if (code !== 0) {
-          reject(new Error(`Plugin worker exited with code ${code}`));
-        }
+      worker.once('exit', code => {
+        if (code !== 0) finish(() => reject(new Error(`Plugin worker exited with code ${code}`)));
       });
-
-      // Send the call message
-      worker.postMessage({ type: 'call', method, args } satisfies SandboxMessage);
+      worker.postMessage({ method, args });
     });
   }
 }
-
-// ---------- Singleton ----------
 
 export const pluginSandbox = new PluginSandbox();

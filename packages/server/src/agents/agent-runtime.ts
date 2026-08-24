@@ -906,6 +906,18 @@ export class AgentRuntime {
           assertExecutionTokenBudget(inputTokens, outputTokens, finalResult, 'Python runtime execution', limits);
         }
 
+        if (ev.type === 'model_call') {
+          const callInputTokens = Number(ev.input_tokens || 0);
+          const callOutputTokens = Number(ev.output_tokens || 0);
+          inputTokens += Number.isFinite(callInputTokens) ? callInputTokens : 0;
+          outputTokens += Number.isFinite(callOutputTokens) ? callOutputTokens : 0;
+          addExecutionMessage({
+            executionId,
+            type: 'progress',
+            content: `Python model call #${ev.sequence || '?'} ${ev.phase || 'completed'}: model=${ev.model || selectedModel}; input=${callInputTokens}; output=${callOutputTokens}; usage=${ev.usage_source || 'provider'}`,
+          });
+        }
+
         if (ev.type === 'tool_use') {
           updateTask(task.id, { status: 'waiting_for_tool' });
           this.recordToolStarted(executionId, traceId, rootSpanId, task, agent, tracker, ev);
