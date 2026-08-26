@@ -74,6 +74,144 @@ button { -webkit-tap-highlight-color: transparent; }
   .app-focus {
     @apply outline-none focus-visible:ring-2 focus-visible:ring-accent/50 focus-visible:ring-offset-2 focus-visible:ring-offset-background;
   }
+
+  .home-command-card {
+    @apply rounded-[22px] border border-transparent;
+    background:
+      linear-gradient(rgb(var(--color-surface) / .96), rgb(var(--color-surface) / .96)) padding-box,
+      linear-gradient(118deg, rgb(80 132 255 / .52), rgb(145 92 246 / .44), rgb(90 151 255 / .26)) border-box;
+    box-shadow: 0 20px 60px rgb(39 51 77 / .10), inset 0 1px 0 rgb(255 255 255 / .55);
+  }
+
+  .home-primary-button {
+    background: linear-gradient(112deg, rgb(72 122 255), rgb(139 76 246));
+    box-shadow: 0 10px 28px rgb(103 87 225 / .28);
+  }
+
+  .home-primary-button:hover {
+    box-shadow: 0 14px 34px rgb(103 87 225 / .34);
+    filter: saturate(1.06) brightness(1.03);
+  }
+
+  .home-tool-button {
+    @apply inline-flex h-9 items-center justify-center rounded-xl border border-border/70 bg-background/55 text-app-muted transition duration-200 hover:-translate-y-px hover:border-accent/30 hover:bg-surface-hover hover:text-app-primary active:translate-y-px;
+    min-width: 2.25rem;
+  }
+
+  .home-quick-action {
+    @apply inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-surface/75 px-3 py-2 text-[11px] text-app-secondary shadow-sm transition duration-200 hover:-translate-y-px hover:border-accent/35 hover:text-app-primary active:translate-y-px;
+  }
+
+  .home-metric-card {
+    @apply rounded-2xl border border-border/70 bg-surface/80;
+    box-shadow: 0 12px 36px rgb(39 51 77 / .07), inset 0 1px 0 rgb(255 255 255 / .45);
+  }
+
+  .app-page-shell {
+    @apply mx-auto w-full;
+    max-width: 1440px;
+  }
+
+  .app-page-shell-wide {
+    @apply mx-auto w-full;
+    max-width: 1760px;
+  }
+
+  .page-heading-row {
+    @apply border-b border-border/70 pb-4;
+  }
+
+  .page-hero {
+    background:
+      radial-gradient(circle at 88% 10%, rgb(var(--color-accent) / .13), transparent 19rem),
+      linear-gradient(135deg, rgb(var(--color-surface) / .98), rgb(var(--color-background) / .72));
+    box-shadow: 0 18px 54px rgb(39 51 77 / .08), inset 0 1px 0 rgb(255 255 255 / .45);
+  }
+
+  .premium-card {
+    box-shadow: 0 16px 46px rgb(39 51 77 / .08), inset 0 1px 0 rgb(255 255 255 / .38);
+  }
+
+  .premium-list-item {
+    box-shadow: 0 6px 20px rgb(39 51 77 / .04);
+  }
+
+  .premium-list-item:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 10px 28px rgb(39 51 77 / .08);
+  }
+}
+
+[data-theme='light'] .app-page-shell section[class*='bg-surface'],
+[data-theme='light'] .app-page-shell aside[class*='bg-surface'] {
+  box-shadow: 0 12px 36px rgb(39 51 77 / .055), inset 0 1px 0 rgb(255 255 255 / .65);
+}
+
+.app-page-shell button,
+.app-page-shell-wide button {
+  transition-duration: 200ms;
+}
+
+@media (max-width: 640px) {
+  .app-page-shell { padding: 1rem; }
+  .page-hero { padding: 1.25rem; }
+}
+
+.home-quick-scroll {
+  scrollbar-width: none;
+}
+
+.home-quick-scroll::-webkit-scrollbar { display: none; }
+
+@media (max-width: 767px) {
+  .home-quick-scroll {
+    mask-image: linear-gradient(to right, black calc(100% - 2rem), transparent);
+  }
+}
+
+.home-canvas {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 82% 10%, rgb(var(--color-accent) / .12), transparent 24rem),
+    radial-gradient(circle at 63% 2%, rgb(255 255 255 / .75), transparent 18rem),
+    rgb(var(--color-background));
+}
+
+.home-canvas::before,
+.home-canvas::after {
+  content: '';
+  position: absolute;
+  z-index: 0;
+  border: 1px solid rgb(var(--color-accent) / .16);
+  border-radius: 999px;
+  pointer-events: none;
+  transform: rotate(-24deg);
+}
+
+.home-canvas::before {
+  width: 17rem;
+  height: 8rem;
+  right: 6%;
+  top: 4.5rem;
+  box-shadow: 0 0 90px rgb(var(--color-accent) / .12), inset 0 0 50px rgb(var(--color-accent) / .08);
+}
+
+.home-canvas::after {
+  width: 8rem;
+  height: 17rem;
+  right: 12%;
+  top: 1.5rem;
+}
+
+[data-theme='dark'] .home-canvas {
+  background: radial-gradient(circle at 82% 8%, rgb(var(--color-accent) / .13), transparent 24rem), rgb(var(--color-background));
+}
+
+@media (max-width: 760px) {
+  .home-canvas::before,
+  .home-canvas::after { opacity: .38; right: -7rem; }
 }
 
 @layer components {

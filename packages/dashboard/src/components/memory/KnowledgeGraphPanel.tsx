@@ -158,10 +158,11 @@ export function KnowledgeGraphPanel() {
                 <div className="min-w-0">
                   <div className="truncate text-[10px] text-gray-300">{candidate.item.content}</div>
                   <div className="mt-0.5 text-[9px] text-gray-600">{candidate.evidenceKind || 'evidence'}{candidate.taskId ? ' · task ' + candidate.taskId : ''}</div>
+                  {typeof candidate.item.metadata?.previewUrl === 'string' && <a href={candidate.item.metadata.previewUrl} target="_blank" rel="noreferrer" className="mt-1 inline-block text-[9px] text-accent-light hover:underline">View original evidence</a>}
                 </div>
                 <div className="flex flex-none gap-2">
-                  <button type="button" onClick={() => void decideCandidate(candidate.item.id, true)} disabled={busy} className="text-[9px] text-emerald-300 hover:underline">Confirm</button>
-                  <button type="button" onClick={() => void decideCandidate(candidate.item.id, false)} disabled={busy} className="text-[9px] text-red-300 hover:underline">Reject</button>
+                  <button type="button" aria-label={`Confirm ${candidate.item.content}`} onClick={() => void decideCandidate(candidate.item.id, true)} disabled={busy} className="text-[9px] text-emerald-300 hover:underline">Confirm</button>
+                  <button type="button" aria-label={`Reject ${candidate.item.content}`} onClick={() => void decideCandidate(candidate.item.id, false)} disabled={busy} className="text-[9px] text-red-300 hover:underline">Reject</button>
                 </div>
               </div>
             ))}
@@ -183,7 +184,7 @@ export function KnowledgeGraphPanel() {
                 const point = positions.get(node.id)!;
                 const active = node.id === selectedId;
                 return (
-                  <g key={node.id} onClick={() => setSelectedId(node.id)} className="cursor-pointer">
+                  <g key={node.id} role="button" tabIndex={0} aria-label={`Memory: ${node.content}`} onClick={() => setSelectedId(node.id)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') setSelectedId(node.id); }} className="cursor-pointer outline-none focus-visible:stroke-accent-light">
                     <circle cx={point.x} cy={point.y} r={active ? 22 : 18} className={active ? 'fill-accent stroke-accent-light' : 'fill-surface-hover stroke-border'} strokeWidth="1.5" />
                     <text x={point.x} y={point.y + 3} textAnchor="middle" className={active ? 'fill-background text-[8px]' : 'fill-gray-300 text-[8px]'}>{node.type.slice(0, 3).toUpperCase()}</text>
                   </g>
@@ -216,7 +217,7 @@ export function KnowledgeGraphPanel() {
                     {selectedEdges.map(edge => (
                       <div key={edge.sourceId + edge.targetId + edge.relation} className="mt-1 flex items-center justify-between gap-1 text-[9px] text-gray-400">
                         <span className="truncate">{edge.relation.replace('_', ' ')}</span>
-                        <button type="button" onClick={() => void removeEdge(edge)} disabled={busy} className="text-red-300 hover:underline">Remove</button>
+                        <button type="button" aria-label={`Remove ${edge.relation.replace('_', ' ')} relationship`} onClick={() => void removeEdge(edge)} disabled={busy} className="text-red-300 hover:underline">Remove</button>
                       </div>
                     ))}
                   </div>
@@ -229,9 +230,9 @@ export function KnowledgeGraphPanel() {
 
       {graph.nodes.length > 1 && (
         <div className="mt-3 grid gap-2 sm:grid-cols-4">
-          <select value={sourceId} onChange={event => setSourceId(event.target.value)} className="field text-xs">{graph.nodes.map(node => <option key={node.id} value={node.id}>{node.content.slice(0, 34)}</option>)}</select>
-          <select value={relation} onChange={event => setRelation(event.target.value as Relation)} className="field text-xs">{relations.map(item => <option key={item} value={item}>{item.replace('_', ' ')}</option>)}</select>
-          <select value={targetId} onChange={event => setTargetId(event.target.value)} className="field text-xs">{graph.nodes.map(node => <option key={node.id} value={node.id}>{node.content.slice(0, 34)}</option>)}</select>
+          <select aria-label="Relationship source memory" value={sourceId} onChange={event => setSourceId(event.target.value)} className="field text-xs">{graph.nodes.map(node => <option key={node.id} value={node.id}>{node.content.slice(0, 34)}</option>)}</select>
+          <select aria-label="Relationship type" value={relation} onChange={event => setRelation(event.target.value as Relation)} className="field text-xs">{relations.map(item => <option key={item} value={item}>{item.replace('_', ' ')}</option>)}</select>
+          <select aria-label="Relationship target memory" value={targetId} onChange={event => setTargetId(event.target.value)} className="field text-xs">{graph.nodes.map(node => <option key={node.id} value={node.id}>{node.content.slice(0, 34)}</option>)}</select>
           <button type="button" onClick={() => void createEdge()} disabled={busy} className="rounded-lg bg-accent/15 px-3 py-2 text-xs font-semibold text-accent-light hover:bg-accent/25 disabled:opacity-40">Link memories</button>
         </div>
       )}

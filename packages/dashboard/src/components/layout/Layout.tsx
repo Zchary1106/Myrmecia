@@ -135,9 +135,9 @@ function MainContent() {
     case 'console':
       return <InteractionConsolePage />;
     case 'agents':
-      return <AgentWorkspace />;
-    case 'agent-settings':
       return <AgentsPage />;
+    case 'agent-settings':
+      return <AgentWorkspace />;
     case 'tools':
       return <ToolsPage />;
     case 'models':

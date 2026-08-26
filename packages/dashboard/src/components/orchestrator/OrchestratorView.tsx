@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useStore } from '../../stores/store';
 import { api } from '../../lib/api';
 import { cn } from '../../lib/utils';
 import { readOnlyControlMessage, runtimeControlsAllowed } from '../../lib/permissions';
 import type { Pipeline, PipelineTemplate, PipelineTemplateValidationResult } from '@myrmecia/shared';
+import { Activity, CheckCircle2, GitBranch, Plus, ShieldAlert } from 'lucide-react';
+import { WorkflowCatalog } from './WorkflowCatalog';
 
 const stageStatusConfig: Record<string, { bg: string; text: string; icon: string }> = {
   pending: { bg: 'bg-gray-500/20', text: 'text-gray-500', icon: '⏸' },
@@ -200,11 +202,11 @@ const emptyStage: PipelineTemplate['stages'][number] = {
   promptTemplate: 'Use the previous context and user input to complete this stage:\n\n{input}',
 };
 
-function PipelineBuilder() {
+function PipelineBuilder({ initialTemplateId = 'new' }: { initialTemplateId?: string }) {
   const { templates, agents, diagnostics, loadTemplates, loadPipelines, loadTasks } = useStore();
   const canControl = runtimeControlsAllowed(diagnostics);
   const roles = useMemo(() => Array.from(new Set(agents.map(agent => agent.role))).sort(), [agents]);
-  const [templateId, setTemplateId] = useState<string>('new');
+  const [templateId, setTemplateId] = useState<string>(initialTemplateId);
   const [name, setName] = useState('Custom Pipeline');
   const [description, setDescription] = useState('');
   const [stages, setStages] = useState<PipelineTemplate['stages']>([{ ...emptyStage }]);
@@ -215,6 +217,10 @@ function PipelineBuilder() {
   const [validation, setValidation] = useState<PipelineTemplateValidationResult | null>(null);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setTemplateId(initialTemplateId);
+  }, [initialTemplateId]);
 
   useEffect(() => {
     if (templateId === 'new') return;
@@ -509,46 +515,78 @@ function PipelineBuilder() {
 }
 
 export function OrchestratorView() {
-  const { pipelines } = useStore();
-  const activePipelines = pipelines.filter(p => p.status === 'running' || p.status === 'paused');
+  const { pipelines, templates } = useStore();
+  const [view, setView] = useState<'catalog' | 'active' | 'history' | 'builder'>('catalog');
+  const [query, setQuery] = useState('');
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
+  const [builderTemplateId, setBuilderTemplateId] = useState('new');
+  const activePipelines = pipelines.filter(p => ['running', 'paused', 'blocked', 'awaiting_retry'].includes(p.status));
   const completedPipelines = pipelines.filter(p => p.status === 'done' || p.status === 'failed');
+  const waitingPipelines = pipelines.filter(p => ['paused', 'blocked', 'awaiting_retry'].includes(p.status) || p.stages.some(stage => stage.status === 'review'));
+  const failedPipelines = pipelines.filter(p => p.status === 'failed');
+
+  useEffect(() => {
+    if (!selectedTemplateId && templates.length) setSelectedTemplateId(templates[0].id);
+  }, [selectedTemplateId, templates]);
+
+  const openBuilder = (templateId = 'new') => {
+    setBuilderTemplateId(templateId);
+    setView('builder');
+  };
 
   return (
-    <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="app-page-shell space-y-6 p-6">
+      <div className="page-heading-row flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-xl font-bold">Orchestrator</h2>
-          <p className="text-[12px] text-gray-500 mt-0.5">Pipeline orchestration and multi-agent workflows</p>
+          <h1 className="text-xl font-bold tracking-[-0.025em]">Workflows</h1>
+          <p className="mt-1 text-[12px] text-gray-500">Browse repeatable procedures, start runs, and intervene when execution needs you.</p>
         </div>
-        <div className="flex gap-2 text-[11px]">
-          <span className="bg-blue-500/10 text-blue-400 px-2 py-1 rounded-lg">
-            {activePipelines.length} active
-          </span>
-          <span className="bg-green-500/10 text-green-400 px-2 py-1 rounded-lg">
-            {completedPipelines.length} completed
-          </span>
-        </div>
+        <button type="button" onClick={() => openBuilder()} className="home-primary-button app-focus inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-xs font-semibold text-white"><Plus size={14} /> Create Workflow</button>
       </div>
 
-      <PipelineBuilder />
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <WorkflowMetric icon={<GitBranch size={17} />} label="Workflow templates" value={templates.length} detail="reusable execution procedures" />
+        <WorkflowMetric icon={<Activity size={17} />} label="Active runs" value={activePipelines.length} detail="running or paused" tone="violet" />
+        <WorkflowMetric icon={<ShieldAlert size={17} />} label="Needs input" value={waitingPipelines.length} detail="approval, retry, or intervention" tone="amber" />
+        <WorkflowMetric icon={<CheckCircle2 size={17} />} label="Completed runs" value={completedPipelines.filter(item => item.status === 'done').length} detail={`${failedPipelines.length} failed`} tone="green" />
+      </section>
+
+      <nav className="flex gap-5 border-b border-border" aria-label="Workflow sections">
+        {([
+          ['catalog', 'Catalog', templates.length],
+          ['active', 'Active runs', activePipelines.length],
+          ['history', 'History', completedPipelines.length],
+          ['builder', 'Builder', null],
+        ] as const).map(([id, label, count]) => (
+          <button key={id} type="button" onClick={() => setView(id)} className={cn('app-focus border-b-2 px-1 pb-3 text-xs font-medium transition', view === id ? 'border-accent text-accent-light' : 'border-transparent text-app-muted hover:text-app-primary')}>
+            {label}{count != null && <span className="ml-1.5 rounded-full bg-accent/10 px-1.5 py-0.5 text-[9px]">{count}</span>}
+          </button>
+        ))}
+      </nav>
+
+      {view === 'catalog' && <WorkflowCatalog templates={templates} pipelines={pipelines} query={query} selectedId={selectedTemplateId} onQueryChange={setQuery} onSelect={setSelectedTemplateId} onConfigure={openBuilder} />}
+
+      {view === 'builder' && <PipelineBuilder initialTemplateId={builderTemplateId} />}
 
       {/* Active pipelines */}
-      {activePipelines.length > 0 && (
+      {view === 'active' && activePipelines.length > 0 && (
         <div>
-          <h3 className="text-sm font-semibold text-gray-400 mb-3 flex items-center gap-2">
+          <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-app-primary">
             <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
-            Active Pipelines
-          </h3>
+            Active workflow runs
+          </h2>
           {activePipelines.map(p => (
             <PipelineFlow key={p.id} pipeline={p} />
           ))}
         </div>
       )}
 
+      {view === 'active' && activePipelines.length === 0 && <WorkflowEmpty title="No active runs" detail="Choose a workflow from the catalog and configure a new run." onAction={() => setView('catalog')} />}
+
       {/* Completed */}
-      {completedPipelines.length > 0 && (
+      {view === 'history' && completedPipelines.length > 0 && (
         <div>
-          <h3 className="text-sm font-semibold text-gray-400 mb-3">Completed</h3>
+          <h2 className="mb-3 text-sm font-semibold text-app-primary">Workflow history</h2>
           {completedPipelines.map(p => (
             <PipelineFlow key={p.id} pipeline={p} />
           ))}
@@ -556,15 +594,16 @@ export function OrchestratorView() {
       )}
 
       {/* Empty state */}
-      {pipelines.length === 0 && (
-        <div className="text-center py-16 text-gray-600">
-          <div className="text-4xl mb-3 opacity-30">🔗</div>
-          <p className="text-sm">No pipelines yet</p>
-          <p className="text-[11px] text-gray-700 mt-1">
-            Switch to Orchestrate mode and describe a complex task
-          </p>
-        </div>
-      )}
+      {view === 'history' && completedPipelines.length === 0 && <WorkflowEmpty title="No workflow history" detail="Completed and failed runs will appear here." onAction={() => setView('catalog')} />}
     </div>
   );
+}
+
+function WorkflowMetric({ icon, label, value, detail, tone = 'blue' }: { icon: ReactNode; label: string; value: number; detail: string; tone?: 'blue' | 'green' | 'violet' | 'amber' }) {
+  const toneClass = { blue: 'bg-blue-500/10 text-blue-500', green: 'bg-emerald-500/10 text-emerald-500', violet: 'bg-violet-500/10 text-violet-500', amber: 'bg-amber-500/10 text-amber-500' }[tone];
+  return <div className="premium-card flex min-h-[112px] items-center justify-between gap-3 rounded-2xl border border-border bg-surface p-4"><div className="min-w-0"><div className="text-[10px] font-medium text-app-muted">{label}</div><div className="mt-2 text-2xl font-semibold tabular-nums tracking-[-0.04em] text-app-primary">{value}</div><div className="mt-1 truncate text-[9px] text-app-muted">{detail}</div></div><span className={cn('flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl', toneClass)}>{icon}</span></div>;
+}
+
+function WorkflowEmpty({ title, detail, onAction }: { title: string; detail: string; onAction: () => void }) {
+  return <div className="premium-card rounded-2xl border border-dashed border-border bg-surface/60 px-6 py-16 text-center"><div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-accent/10 text-accent-light"><GitBranch size={20} /></div><h2 className="mt-4 text-sm font-semibold text-app-primary">{title}</h2><p className="mt-1 text-[11px] text-app-muted">{detail}</p><button type="button" onClick={onAction} className="app-focus mt-4 rounded-xl bg-accent/10 px-4 py-2 text-xs font-medium text-accent-light hover:bg-accent/15">Browse workflows</button></div>;
 }

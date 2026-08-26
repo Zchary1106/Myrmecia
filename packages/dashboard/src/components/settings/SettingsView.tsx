@@ -309,8 +309,8 @@ export function SettingsView() {
   };
 
   return (
-    <div className="p-6 space-y-6">
-      <div>
+    <div className="app-page-shell p-6 space-y-6">
+      <div className="page-heading-row">
         <h2 className="text-xl font-bold">Settings</h2>
         <p className="text-[12px] text-gray-500 mt-0.5">
           API token, connection diagnostics, and deployment readiness checks.

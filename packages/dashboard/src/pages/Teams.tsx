@@ -4,6 +4,9 @@ import { wsClient } from '../lib/ws';
 import { useStore } from '../stores/store';
 import { cn } from '../lib/utils';
 import type { GitHubConnectionStatus, GitHubFixDiff, GitHubFixRun } from '@myrmecia/shared';
+import { Activity, Bot, ChevronRight, Plus, Search, Users, Workflow } from 'lucide-react';
+
+const CORE_BUILTIN_TEAM_IDS = new Set(['feature', 'quality', 'social-three-lanes']);
 
 const statusStyle: Record<string, string> = {
   done: 'border-emerald-500/70 bg-emerald-500/5',
@@ -51,11 +54,24 @@ export function TeamsPage() {
   const [error, setError] = useState('');
   const [editing, setEditing] = useState<TeamDTO | 'new' | null>(null);
   const [copying, setCopying] = useState<TeamDTO | null>(null);
+  const [catalogView, setCatalogView] = useState<'teams' | 'workflows'>('teams');
+  const [teamSearch, setTeamSearch] = useState('');
   const activeRunRef = useRef<string | null>(null);
   activeRunRef.current = activeRunId;
 
   const team = useMemo(() => teams.find(t => t.id === picked) || null, [teams, picked]);
   const roles = useMemo(() => [...new Set(agents.map(a => a.role))].sort(), [agents]);
+  const coreTeams = useMemo(() => teams.filter(item => !item.builtin || CORE_BUILTIN_TEAM_IDS.has(item.id)), [teams]);
+  const workflowPresetTeams = useMemo(() => teams.filter(item => item.builtin && !CORE_BUILTIN_TEAM_IDS.has(item.id)), [teams]);
+  const displayedTeams = useMemo(() => {
+    const source = catalogView === 'teams' ? coreTeams : workflowPresetTeams;
+    const needle = teamSearch.trim().toLowerCase();
+    return needle
+      ? source.filter(item => `${item.name} ${item.id} ${item.blurb} ${item.members.join(' ')}`.toLowerCase().includes(needle))
+      : source;
+  }, [catalogView, coreTeams, teamSearch, workflowPresetTeams]);
+  const uniqueAgentCount = useMemo(() => new Set(coreTeams.flatMap(item => item.members)).size, [coreTeams]);
+  const runningTeamRuns = runs.filter(item => ['planning', 'running'].includes(item.status));
 
   const reloadTeams = () => api.teams.list().then(setTeams).catch(e => setError(e.message));
 
@@ -63,7 +79,7 @@ export function TeamsPage() {
     if (!agents.length) loadAgents();
     api.teams.list().then(ts => {
       setTeams(ts);
-      if (ts.length && !picked) setPicked(ts.find(team => team.id === 'bugfix')?.id || ts[0].id);
+      if (ts.length && !picked) setPicked(ts.find(team => team.id === 'feature')?.id || ts[0].id);
     }).catch(e => setError(e.message));
     api.teams.runs().then(setRuns).catch(() => {});
     void window.myrmeciaDesktopIntegrations?.getWorkspace().then(workspace => {
@@ -245,21 +261,57 @@ export function TeamsPage() {
   };
 
   return (
-    <div className="h-full min-h-0 overflow-y-auto p-3 sm:p-4 xl:overflow-hidden">
-      <div className="mx-auto flex min-h-full w-full max-w-[1680px] flex-col gap-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+    <div className="app-page-shell-wide min-h-full overflow-y-auto p-4 sm:p-6">
+      <div className="mx-auto flex min-h-full w-full max-w-[1680px] flex-col gap-6">
+      <div className="page-heading-row flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-lg font-semibold text-gray-100">Agent Teams</h1>
-          <p className="max-w-3xl text-[12px] leading-relaxed text-gray-500">Choose a squad to preview its roster and workflow. Dispatch work to open a live, shared execution board.</p>
+          <p className="max-w-3xl text-[12px] leading-relaxed text-gray-500">Stable capability groups own the work. Repeatable procedures live under Workflows.</p>
         </div>
-        {toast && <div className="text-[12px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 rounded-lg px-3 py-1.5">{toast}</div>}
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="relative min-w-[240px] flex-1 sm:flex-none">
+            <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-app-muted" />
+            <input value={teamSearch} onChange={event => setTeamSearch(event.target.value)} placeholder="Search teams or members…" className="w-full rounded-xl border border-border bg-surface/80 py-2.5 pl-9 pr-3 text-xs text-app-primary outline-none transition focus:border-accent/50" />
+          </label>
+          <button type="button" onClick={() => setEditing('new')} className="home-primary-button app-focus inline-flex items-center gap-1.5 rounded-xl px-4 py-2.5 text-xs font-semibold text-white"><Plus size={14} /> Create Team</button>
+        </div>
       </div>
 
+      {toast && <div className="text-[12px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 rounded-lg px-3 py-1.5">{toast}</div>}
       {error && <div className="text-[12px] text-red-400 bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2">{error}</div>}
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 xl:grid-cols-[minmax(280px,340px)_minmax(0,1fr)]">
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        <TeamMetric icon={<Users size={17} />} label="Core teams" value={coreTeams.length} detail={`${workflowPresetTeams.length} procedures moved to Workflows`} />
+        <TeamMetric icon={<Bot size={17} />} label="Team agents" value={uniqueAgentCount} detail={`${agents.filter(agent => agent.activeExecutions > 0).length} currently active`} tone="green" />
+        <TeamMetric icon={<Activity size={17} />} label="Running work" value={runningTeamRuns.length} detail="live shared executions" tone="violet" />
+        <TeamMetric icon={<Workflow size={17} />} label="Workflow presets" value={workflowPresetTeams.length} detail="specialized procedures" tone="amber" />
+        <TeamMetric icon={<ChevronRight size={17} />} label="Completed runs" value={runs.filter(item => item.status === 'done').length} detail="retained in recent activity" />
+      </section>
+
+      <section>
+        <div className="mb-4 flex flex-col gap-3 border-b border-border sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex gap-5">
+            <button type="button" onClick={() => setCatalogView('teams')} className={cn('border-b-2 px-1 pb-3 text-xs font-medium transition', catalogView === 'teams' ? 'border-accent text-accent-light' : 'border-transparent text-app-muted hover:text-app-primary')}>All Teams</button>
+            <button type="button" onClick={() => setCatalogView('workflows')} className={cn('border-b-2 px-1 pb-3 text-xs font-medium transition', catalogView === 'workflows' ? 'border-accent text-accent-light' : 'border-transparent text-app-muted hover:text-app-primary')}>Workflow presets <span className="ml-1 rounded-full bg-accent/10 px-1.5 py-0.5 text-[9px]">{workflowPresetTeams.length}</span></button>
+          </div>
+          <p className="pb-3 text-[10px] text-app-muted">Teams are durable capability groups; Workflows define repeatable execution paths.</p>
+        </div>
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+          {displayedTeams.map(item => (
+            <TeamCatalogCard key={item.id} team={item} selected={catalogView === 'teams' && picked === item.id}
+              runCount={runs.filter(runItem => runItem.teamId === item.id).length}
+              active={runs.some(runItem => runItem.teamId === item.id && ['planning', 'running'].includes(runItem.status))}
+              workflowPreset={catalogView === 'workflows'}
+              onSelect={() => catalogView === 'workflows' ? setActiveView('orchestrator') : selectTeam(item.id)}
+              onEdit={!item.builtin ? () => setEditing(item) : undefined} />
+          ))}
+        </div>
+        {displayedTeams.length === 0 && <div className="rounded-2xl border border-dashed border-border p-10 text-center text-xs text-app-muted">No teams match this search.</div>}
+      </section>
+
+      {catalogView === 'teams' && <div className="min-h-0">
         {/* Left: team picker + dispatch + recent runs */}
-        <div className="flex min-h-0 flex-col gap-3">
+        <div className="hidden">
           <div className="flex items-center justify-between">
             <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Squads</span>
             <button onClick={() => setEditing('new')}
@@ -269,7 +321,7 @@ export function TeamsPage() {
             {teams.map(t => (
               <div key={t.id}
                 onClick={() => selectTeam(t.id)}
-                className={cn('group min-w-0 w-full text-left rounded-xl border p-3 transition-colors cursor-pointer',
+                className={cn('premium-list-item group min-w-0 w-full text-left rounded-xl border p-3 transition-colors cursor-pointer',
                   picked === t.id ? 'border-accent bg-accent/10' : 'border-border hover:border-gray-600 bg-surface')}>
                 <div className="flex items-center gap-2">
                   <span className="text-lg">{t.emoji}</span>
@@ -301,7 +353,7 @@ export function TeamsPage() {
         </div>
 
         {/* Right: live shared board */}
-        <div className="flex min-h-[430px] min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-surface xl:min-h-0">
+        <div className="premium-card flex min-h-[430px] min-w-0 flex-col overflow-hidden rounded-2xl border border-border bg-surface xl:min-h-0">
           {!activeRunId ? (
             <TeamPreview
               team={team}
@@ -453,12 +505,12 @@ export function TeamsPage() {
             </>
           )}
         </div>
-      </div>
+      </div>}
 
       {/* Recent runs strip */}
       {runs.length > 0 && (
-        <div className="flex shrink-0 items-center gap-2 overflow-x-auto pb-1">
-          <span className="text-[11px] text-gray-600 shrink-0">Recent:</span>
+        <div className="premium-card flex shrink-0 items-center gap-2 overflow-x-auto rounded-2xl border border-border bg-surface p-4">
+          <span className="text-[11px] font-semibold text-app-primary shrink-0">Recent activity</span>
           {runs.slice(0, 12).map(r => (
             <button key={r.id} onClick={() => selectRun(r)}
               className={cn('shrink-0 flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] transition-colors',
@@ -482,6 +534,66 @@ export function TeamsPage() {
       )}
       </div>
     </div>
+  );
+}
+
+function TeamMetric({ icon, label, value, detail, tone = 'blue' }: { icon: ReactNode; label: string; value: number; detail: string; tone?: 'blue' | 'green' | 'violet' | 'amber' }) {
+  const toneClass = {
+    blue: 'bg-blue-500/10 text-blue-500',
+    green: 'bg-emerald-500/10 text-emerald-500',
+    violet: 'bg-violet-500/10 text-violet-500',
+    amber: 'bg-amber-500/10 text-amber-500',
+  }[tone];
+  return (
+    <div className="premium-card flex min-h-[112px] items-center justify-between gap-3 rounded-2xl border border-border bg-surface p-4">
+      <div className="min-w-0">
+        <div className="text-[10px] font-medium text-app-muted">{label}</div>
+        <div className="mt-2 text-2xl font-semibold tabular-nums tracking-[-0.04em] text-app-primary">{value}</div>
+        <div className="mt-1 truncate text-[9px] text-app-muted">{detail}</div>
+      </div>
+      <span className={cn('flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl', toneClass)}>{icon}</span>
+    </div>
+  );
+}
+
+function TeamCatalogCard({ team, selected, runCount, active, workflowPreset, onSelect, onEdit }: {
+  team: TeamDTO;
+  selected: boolean;
+  runCount: number;
+  active: boolean;
+  workflowPreset: boolean;
+  onSelect: () => void;
+  onEdit?: () => void;
+}) {
+  const members = team.roster?.length ? team.roster.map(item => item.agentId) : team.members;
+  return (
+    <article className={cn('premium-card group relative overflow-hidden rounded-2xl border bg-surface transition duration-200 hover:-translate-y-0.5', selected ? 'border-accent/60 ring-2 ring-accent/10' : 'border-border hover:border-accent/30')}>
+      <button type="button" onClick={onSelect} className="app-focus block w-full p-4 text-left">
+        <div className="flex items-start gap-3">
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-accent/10 text-xl">{team.emoji}</span>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <h2 className="truncate text-sm font-semibold text-app-primary">{team.name}</h2>
+              <span className={cn('ml-auto rounded-full px-2 py-0.5 text-[9px] font-medium', active ? 'bg-emerald-500/10 text-emerald-500' : 'bg-surface-hover text-app-muted')}>{active ? 'Active' : workflowPreset ? 'Workflow' : 'Ready'}</span>
+            </div>
+            <p className="mt-1 line-clamp-2 min-h-8 text-[10px] leading-4 text-app-muted">{team.blurb}</p>
+          </div>
+        </div>
+        <div className="mt-4 flex items-center gap-1.5 overflow-hidden">
+          {members.slice(0, 4).map((member, index) => <span key={member} title={member} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border-2 border-surface bg-accent/10 text-[9px] font-semibold text-accent-light" style={{ marginLeft: index ? '-6px' : 0 }}>{member.slice(0, 1).toUpperCase()}</span>)}
+          {members.length > 4 && <span className="ml-1 text-[9px] text-app-muted">+{members.length - 4}</span>}
+          <span className="ml-auto truncate text-[9px] text-app-muted">{team.template || 'Dynamic routing'}</span>
+        </div>
+        <div className="mt-4 grid grid-cols-3 border-t border-border pt-3 text-center">
+          <div><div className="text-xs font-semibold text-app-primary">{members.length}</div><div className="mt-0.5 text-[9px] text-app-muted">Agents</div></div>
+          <div className="border-x border-border"><div className="text-xs font-semibold text-app-primary">{runCount}</div><div className="mt-0.5 text-[9px] text-app-muted">Runs</div></div>
+          <div><div className="truncate px-1 text-xs font-semibold text-app-primary">{team.lead}</div><div className="mt-0.5 text-[9px] text-app-muted">Lead</div></div>
+        </div>
+        <div className="mt-3 flex items-center justify-between text-[10px] font-medium text-accent-light"><span>{workflowPreset ? 'Open in Workflows' : selected ? 'Selected team' : 'Open workbench'}</span><ChevronRight size={13} /></div>
+      </button>
+      {onEdit && <button type="button" onClick={onEdit} className="app-focus absolute right-3 top-14 rounded-lg px-2 py-1 text-[9px] text-app-muted opacity-0 transition group-hover:opacity-100 hover:bg-surface-hover hover:text-app-primary">Edit</button>}
+      <div className={cn('h-0.5 w-full', workflowPreset ? 'bg-violet-400/60' : selected ? 'bg-accent' : 'bg-accent/25')} />
+    </article>
   );
 }
 
@@ -1080,5 +1192,3 @@ function TeamEditor({
     </div>
   );
 }
-
-

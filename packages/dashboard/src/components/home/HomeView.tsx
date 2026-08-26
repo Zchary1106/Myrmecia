@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent, type InputHTMLAttributes, type ReactNode } from 'react';
-import { ArrowUpRight, Check, ChevronDown, ChevronRight, CircleDot, Clock3, FolderOpen, GitBranch, Inbox, Layers3, Plus, Sparkles, Users, X } from 'lucide-react';
+import { ArrowUpRight, AtSign, Check, ChevronDown, ChevronRight, CircleDot, Clock3, FolderOpen, GitBranch, Inbox, Layers3, Paperclip, Plus, Sparkles, Users, WandSparkles, X } from 'lucide-react';
 import { api, type TeamDTO } from '../../lib/api';
 import { useStore } from '../../stores/store';
 import { cn } from '../../lib/utils';
@@ -34,6 +34,13 @@ function providerModelLabel(model: ProviderModelOption): string {
   // The provider's display name is enough here. Showing the id as a suffix
   // makes providers that use the same value for both fields look duplicated.
   return model.name || model.id;
+}
+
+function timeBasedGreeting(date = new Date()): string {
+  const hour = date.getHours();
+  if (hour < 12) return 'Good morning';
+  if (hour < 18) return 'Good afternoon';
+  return 'Good evening';
 }
 
 function StatusDot({ status }: { status: string }) {
@@ -154,6 +161,7 @@ export function HomeView() {
     () => tasks.filter(task => !['running', 'assigned', 'queued'].includes(task.status)).slice(0, 4),
     [tasks],
   );
+  const greeting = timeBasedGreeting();
 
   useEffect(() => {
     if (models.length === 0) void loadModels();
@@ -307,21 +315,22 @@ export function HomeView() {
   };
 
   return (
-    <div className="mx-auto flex min-h-full w-full max-w-[1320px] flex-col px-5 py-8 sm:px-8 lg:px-12 lg:py-12">
-      <div className="my-auto w-full">
-      <section className="mx-auto w-full max-w-[900px] text-center">
-        <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-border bg-surface/70 px-3 py-1.5 text-[11px] font-medium text-app-secondary shadow-sm">
+    <div className="home-canvas min-h-full w-full px-5 pb-12 pt-10 sm:px-8 lg:px-12 lg:pb-16 lg:pt-16">
+      <div className="relative z-10 mx-auto w-full max-w-[1120px]">
+      <section className="w-full text-left">
+        <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-border/70 bg-surface/80 px-3 py-1.5 text-[11px] font-medium text-app-secondary shadow-sm backdrop-blur-xl">
           <span className={cn('h-1.5 w-1.5 rounded-full', health?.status === 'ok' ? 'bg-emerald-400' : 'bg-amber-400')} />
           {health?.status === 'ok' ? 'Myrmecia is ready' : 'Connecting to runtime'}
         </div>
-        <h1 className="text-balance text-3xl font-semibold tracking-[-0.04em] text-app-primary sm:text-5xl">
-          What should your team work on?
+        <h1 className="max-w-[760px] text-balance text-4xl font-semibold tracking-[-0.045em] text-app-primary sm:text-5xl">
+          {greeting}, Yadong. <span aria-hidden="true">👋</span>
         </h1>
-        <p className="mx-auto mt-4 max-w-[620px] text-sm leading-6 text-app-secondary sm:text-base">
+        <p className="mt-4 max-w-[560px] text-sm leading-6 text-app-secondary sm:text-base">
           Bring together Teams, Agents, Skills, and Workflows in one focused workspace.
         </p>
 
-        <form onSubmit={event => void submit(event)} className="app-panel relative mt-9 p-2 text-left transition focus-within:border-accent/60 focus-within:shadow-[0_20px_70px_rgb(86_145_255_/_0.12)]">
+        <h2 className="mt-10 text-lg font-semibold tracking-[-0.025em] text-app-primary">What should your team work on?</h2>
+        <form onSubmit={event => void submit(event)} className="home-command-card relative mt-4 p-3 text-left transition focus-within:shadow-[0_24px_80px_rgb(91_84_220_/_0.16)] sm:p-4">
           <textarea
             value={input}
             onChange={event => setInput(event.target.value)}
@@ -331,18 +340,21 @@ export function HomeView() {
             rows={3}
             aria-label="Describe work for your Agent Team"
             placeholder="Describe a goal, a bug, or a piece of content to create..."
-            className="min-h-[92px] w-full resize-none bg-transparent px-4 py-3 text-sm leading-6 text-app-primary outline-none placeholder:text-app-muted"
+            className="min-h-[112px] w-full resize-none bg-transparent px-3 py-4 text-sm leading-6 text-app-primary outline-none placeholder:text-app-muted"
           />
-          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-2 pt-2">
+          <div className="flex flex-wrap items-end justify-between gap-3 px-1 pb-1">
             <div className="flex items-center gap-1.5 text-[11px] text-app-muted">
-              <button type="button" onClick={() => openWorkflowLauncher()} className="app-focus inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 transition hover:bg-surface-hover hover:text-app-primary">
-                <Plus size={14} /> Choose workflow
+              <button type="button" onClick={() => openWorkflowLauncher()} className="home-tool-button app-focus" aria-label="Choose workflow" title="Choose workflow">
+                <Paperclip size={15} />
+              </button>
+              <button type="button" onClick={() => setTeamPickerOpen(current => !current)} className="home-tool-button app-focus" aria-label="Choose a Team" title="Choose a Team">
+                <AtSign size={15} />
               </button>
               <button
                 type="button"
                 onClick={openWorkspacePicker}
                 title={workspace?.path || 'Set a workspace'}
-                className={cn('app-focus inline-flex max-w-[190px] items-center gap-1.5 rounded-lg px-2.5 py-1.5 transition hover:bg-surface-hover hover:text-app-primary', workspace && 'text-accent-light')}
+                className={cn('home-tool-button app-focus max-w-[210px] gap-1.5 px-2.5', workspace && 'border-accent/30 text-accent-light')}
               >
                 <FolderOpen size={14} />
                 <span className="truncate">{workspace?.name || 'Set workspace'}</span>
@@ -399,7 +411,7 @@ export function HomeView() {
                 )}
               </div>
             </div>
-            <button type="submit" disabled={!input.trim() || launchBusy} className="app-focus inline-flex items-center gap-2 rounded-lg bg-accent px-3.5 py-2 text-xs font-semibold text-white transition hover:-translate-y-px hover:bg-accent-light active:translate-y-px disabled:cursor-not-allowed disabled:opacity-40">
+            <button type="submit" disabled={!input.trim() || launchBusy} className="home-primary-button app-focus inline-flex items-center gap-2 rounded-xl px-5 py-3 text-xs font-semibold text-white transition duration-200 hover:-translate-y-0.5 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-40">
               {launchBusy ? 'Starting…' : workspace ? 'Start in workspace' : 'Start with Agent'} <ArrowUpRight size={14} />
             </button>
           </div>
@@ -445,25 +457,22 @@ export function HomeView() {
 
         {launchMessage && <p className="mt-3 text-center text-[11px] text-emerald-500">{launchMessage}</p>}
 
-        <div className="mt-4 flex flex-wrap justify-center gap-2">
+        <div className="home-quick-scroll relative mt-5 flex flex-nowrap gap-2 overflow-x-auto pb-2 md:justify-center">
           {starterPrompts.map(prompt => (
-            <button key={prompt.label} type="button" onClick={() => { setInput(prompt.text); setLaunchMessage(null); setLaunchError(null); }} className="app-focus rounded-full border border-border px-3 py-2 text-[11px] text-app-secondary transition hover:border-accent/50 hover:bg-accent/5 hover:text-app-primary">
-              {prompt.label}
+            <button key={prompt.label} type="button" onClick={() => { setInput(prompt.text); setLaunchMessage(null); setLaunchError(null); }} className="home-quick-action app-focus shrink-0">
+              <WandSparkles size={13} className="text-accent-light" /> {prompt.label}
             </button>
           ))}
-        </div>
-
-        <div className="relative mt-5 flex flex-wrap justify-center gap-2">
-          <button type="button" onClick={() => setTeamPickerOpen(current => !current)} className="app-focus inline-flex items-center gap-1.5 rounded-full border border-border px-3 py-2 text-[11px] text-app-secondary transition hover:border-accent/50 hover:text-app-primary">
+          <button type="button" onClick={() => setTeamPickerOpen(current => !current)} className="home-quick-action app-focus shrink-0">
             <Users size={13} /> Use a Team
           </button>
           {templates.slice(0, 2).map(template => (
-            <button key={template.id} type="button" onClick={() => openWorkflowLauncher(template.id)} className="app-focus inline-flex max-w-[220px] items-center gap-1.5 truncate rounded-full border border-border px-3 py-2 text-[11px] text-app-secondary transition hover:border-accent/50 hover:text-app-primary">
+            <button key={template.id} type="button" onClick={() => openWorkflowLauncher(template.id)} className="home-quick-action app-focus max-w-[220px] shrink-0 truncate">
               <GitBranch size={13} /> <span className="truncate">{template.name}</span>
             </button>
           ))}
           {teamPickerOpen && (
-            <div className="absolute top-full z-20 mt-2 w-[min(360px,calc(100vw-2rem))] rounded-2xl border border-border bg-surface p-2 text-left shadow-2xl">
+            <div className="absolute left-0 top-full z-20 mt-2 w-[min(360px,calc(100vw-2rem))] rounded-2xl border border-border bg-surface p-2 text-left shadow-2xl">
               <div className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-app-muted">Choose a Team</div>
               {teams.length > 0 ? teams.slice(0, 6).map(team => (
                 <button key={team.id} type="button" onClick={() => openTeamLauncher(team.id)} className="app-focus flex w-full items-center gap-2 rounded-xl px-2 py-2.5 text-left transition hover:bg-surface-hover">
@@ -478,7 +487,7 @@ export function HomeView() {
         </div>
       </section>
 
-      <section className="mt-14 grid gap-4 sm:grid-cols-3">
+      <section className="mt-10 grid gap-4 sm:grid-cols-3">
         <Metric icon={<Users size={16} />} label="Active agents" value={`${runningAgents}/${agents.length || 0}`} detail="ready to collaborate" />
         <Metric icon={<CircleDot size={16} />} label="Running work" value={String(activeTasks.length)} detail="across your workspace" />
         <Metric icon={<Inbox size={16} />} label="Needs your input" value={String(pendingReviews)} detail="review gates and decisions" />
@@ -545,12 +554,13 @@ export function HomeView() {
 
 function Metric({ icon, label, value, detail }: { icon: ReactNode; label: string; value: string; detail: string }) {
   return (
-    <div className="flex items-center gap-3 rounded-xl border border-border/70 bg-surface/55 px-4 py-3.5">
-      <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent/10 text-accent-light">{icon}</span>
+    <div className="home-metric-card flex min-h-[118px] items-center justify-between gap-4 px-5 py-5">
       <div className="min-w-0">
-        <div className="flex items-baseline gap-2"><span className="text-lg font-semibold tabular-nums text-app-primary">{value}</span><span className="text-[11px] text-app-secondary">{label}</span></div>
-        <div className="mt-0.5 truncate text-[10px] text-app-muted">{detail}</div>
+        <div className="text-[11px] font-medium text-app-muted">{label}</div>
+        <div className="mt-2 text-2xl font-semibold tabular-nums tracking-[-0.03em] text-app-primary">{value}</div>
+        <div className="mt-1 truncate text-[10px] text-app-muted">{detail}</div>
       </div>
+      <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-accent/10 text-accent-light">{icon}</span>
     </div>
   );
 }
@@ -558,7 +568,7 @@ function Metric({ icon, label, value, detail }: { icon: ReactNode; label: string
 function PanelHeader({ title, action, onClick }: { title: string; action: string; onClick: () => void }) {
   return (
     <div className="flex items-center justify-between px-4 py-3.5">
-      <h2 className="text-xs font-semibold uppercase tracking-[0.12em] text-app-secondary">{title}</h2>
+      <h2 className="text-xs font-semibold tracking-[-0.01em] text-app-primary">{title}</h2>
       <button type="button" onClick={onClick} className="app-focus inline-flex items-center gap-1 text-[11px] text-app-muted transition hover:text-app-primary">{action}<ArrowUpRight size={13} /></button>
     </div>
   );
