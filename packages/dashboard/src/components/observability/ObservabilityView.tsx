@@ -116,7 +116,7 @@ export function ObservabilityView() {
   };
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="app-page-shell p-6 space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-bold">Observability</h2>

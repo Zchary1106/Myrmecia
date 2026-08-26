@@ -31,8 +31,19 @@ test('home shell remains usable at a narrow viewport', async ({ page }) => {
 });
 
 test('tasks page is accessible', async ({ page }) => {
-  await page.goto('/tasks');
-  await expect(page.locator('body')).toBeVisible();
+  await page.goto('/');
+  await page.getByTitle('Queue').click();
+  await expect(page.getByRole('heading', { name: 'Work Queue' })).toBeVisible();
+  await expect(page.getByRole('table')).toBeVisible();
+  await expect(page.getByText('10 / page · newest first')).toBeVisible();
+  const rows = page.getByRole('row').filter({ has: page.getByRole('cell') });
+  expect(await rows.count()).toBeLessThanOrEqual(10);
+  if (await rows.count()) {
+    await rows.first().click();
+    await expect(page.getByRole('complementary', { name: 'Task details' })).toBeVisible();
+    await page.getByRole('button', { name: 'Close task details' }).click();
+    await expect(page.getByRole('complementary', { name: 'Task details' })).toBeHidden();
+  }
 });
 
 test('artifact workbench is accessible', async ({ page }) => {
@@ -40,6 +51,44 @@ test('artifact workbench is accessible', async ({ page }) => {
   await page.getByTitle('Artifacts').click();
   await expect(page.getByRole('heading', { name: 'Outputs you can actually inspect' })).toBeVisible();
   await expect(page.getByText('No artifacts yet')).toBeVisible();
+});
+
+test('workflow catalog separates browsing, runs, and the advanced builder', async ({ page }) => {
+  await page.goto('/');
+  await page.getByTitle('Workflows').click();
+
+  await expect(page.getByRole('heading', { name: 'Workflows', exact: true })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Workflow catalog' })).toBeVisible();
+  await expect(page.getByPlaceholder('Search workflows or stages…')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Create Workflow' })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Builder', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Visual Template Builder' })).toBeVisible();
+  await page.getByRole('button', { name: /Active runs/ }).click();
+  await expect(page.getByRole('heading', { name: 'Active workflow runs' })).toBeVisible();
+});
+
+test('agent catalog keeps creation advanced and preserves the workspace entry', async ({ page }) => {
+  await page.goto('/');
+  await page.getByTitle('Agents').click();
+  await expect(page.getByRole('heading', { name: 'Agents', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Open Agent workspace' })).toBeVisible();
+  await expect(page.getByRole('button', { name: /All Agents/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Create Custom Agent' })).toBeHidden();
+  await page.getByRole('button', { name: 'Create Agent' }).click();
+  await expect(page.getByRole('heading', { name: 'Create Custom Agent' })).toBeVisible();
+});
+
+test('skill catalog separates registry, version editor, assignments, and marketplace', async ({ page }) => {
+  await page.goto('/');
+  await page.getByTitle('Skills').click();
+  await expect(page.getByRole('heading', { name: 'Skills', exact: true, level: 1 })).toBeVisible();
+  await expect(page.getByRole('navigation', { name: 'Skill sections' })).toBeVisible();
+  await expect(page.getByPlaceholder('Search skills or source paths…')).toBeVisible();
+  await page.getByRole('button', { name: /Version editor/ }).click();
+  await expect(page.getByRole('heading', { name: 'Skills', exact: true, level: 1 })).toBeVisible();
+  await page.getByRole('button', { name: /Assignments/ }).click();
+  await expect(page.getByRole('heading', { name: 'Agent assignments' })).toBeVisible();
 });
 
 test('team composer exposes canvas, contract inspector and versions', async ({ page }) => {
@@ -69,14 +118,11 @@ test('team composer remains usable when the window is resized', async ({ page })
   await expect(page.getByText('Inspector', { exact: true })).toBeVisible();
 });
 
-test('Content Studio opens the governed WeChat article workflow', async ({ page }) => {
+test('WeChat article remains available as a governed workflow preset', async ({ page }) => {
   await page.goto('/');
-  await page.getByTitle('Agents').click();
-  await page.getByRole('button', { name: /Content Studio/i }).click();
-
-  await expect(page.getByTestId('content-studio')).toBeVisible();
-  await page.getByTestId('content-studio-team').selectOption('content');
-  await expect(page.getByRole('heading', { name: 'WeChat Official Account Studio' })).toBeVisible();
-  await expect(page.getByText('选题 · 写作 · 审核 · 排版 · 草稿箱 · 人工发布', { exact: true })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Create WeChat article run' })).toBeVisible();
+  await page.getByTitle('Workflows').click();
+  await page.getByPlaceholder('Search workflows or stages…').fill('WeChat Article');
+  await page.getByRole('button', { name: /WeChat Article/ }).click();
+  await expect(page.getByRole('heading', { name: 'WeChat Article', level: 2 })).toBeVisible();
+  await expect(page.getByText('Human publish confirmation retained')).toBeVisible();
 });

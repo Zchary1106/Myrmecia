@@ -6,6 +6,7 @@ import { cn } from '../lib/utils';
 import { useStore } from '../stores/store';
 import { AuditDrawer } from '../components/audit/AuditDrawer';
 import { SkillMarketplace } from '../components/tasks/SkillMarketplace';
+import { Bot, GitBranch, Link2, Search, Sparkles } from 'lucide-react';
 
 const statusClass: Record<SkillVersion['status'], string> = {
   draft: 'border-yellow-500/20 bg-yellow-500/10 text-yellow-300',
@@ -38,7 +39,8 @@ export function SkillsPage() {
     loadSkillAssignments,
     loadAgents,
   } = useStore();
-  const [activeTab, setActiveTab] = useState<'registry' | 'marketplace'>('registry');
+  const [activeTab, setActiveTab] = useState<'registry' | 'editor' | 'assignments' | 'marketplace'>('registry');
+  const [query, setQuery] = useState('');
   const [selectedSkillId, setSelectedSkillId] = useState<string | null>(null);
   const [detail, setDetail] = useState<SkillDetail | null>(null);
   const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
@@ -90,6 +92,10 @@ export function SkillsPage() {
   const assignmentByAgent = useMemo(() => {
     return new Map(skillAssignments.map(assignment => [assignment.agentId, assignment]));
   }, [skillAssignments]);
+  const filteredSkills = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return needle ? skills.filter(skill => `${skill.name} ${skill.description || ''} ${skill.sourcePath || ''}`.toLowerCase().includes(needle)) : skills;
+  }, [query, skills]);
 
   const refreshDetail = async () => {
     if (!selectedSkillId) return;
@@ -154,56 +160,44 @@ export function SkillsPage() {
   const diff = useMemo(() => diffLines(baseline, editorContent), [baseline, editorContent]);
 
   return (
-    <div className="p-6 space-y-6">
-      <div className="rounded-2xl border border-border bg-gradient-to-br from-surface to-background p-6">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+    <div className="app-page-shell p-6 space-y-6">
+      <div className="page-heading-row flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <div className="text-xs uppercase tracking-[0.24em] text-accent-light">Skill Versioning</div>
-            <h2 className="mt-2 text-3xl font-bold">Skill Registry</h2>
-            <p className="mt-2 max-w-2xl text-sm text-gray-400">
-              管理 Agent 的 Markdown skill prompt、版本发布、回滚和 Agent 绑定。每次执行都会记录实际使用的 skill version。
-            </p>
+            <h1 className="text-2xl font-bold tracking-[-0.03em]">Skills</h1>
+            <p className="mt-1 max-w-2xl text-[12px] text-gray-500">Browse reusable capabilities, manage versioned instructions, and assign published versions to Agents.</p>
           </div>
           <div className="flex flex-wrap gap-2">
             <AuditDrawer targetType="skill" targetId={selectedSkillId || undefined} label="Audit" />
             <button
               onClick={() => Promise.all([loadSkills(), loadSkillAssignments()])}
-              className="rounded-xl bg-surface-hover px-4 py-2 text-sm text-gray-300 hover:text-white"
+              className="app-focus rounded-xl border border-border bg-surface px-4 py-2.5 text-xs text-app-secondary hover:border-accent/30 hover:text-app-primary"
             >
               Refresh
             </button>
           </div>
-        </div>
-
-        <div className="mt-6 grid grid-cols-2 gap-3 md:grid-cols-4">
-          <Metric label="Skills" value={skills.length} />
-          <Metric label="Published versions" value={skills.filter(skill => skill.publishedVersionId).length} tone="green" />
-          <Metric label="Assignments" value={skillAssignments.length} tone="blue" />
-          <Metric label="Agents" value={agents.length} />
-        </div>
-
-        {/* Tab Navigation */}
-        <div className="mt-6 flex gap-1 border-b border-border">
-          <button
-            onClick={() => setActiveTab('registry')}
-            className={cn('px-4 py-2 text-sm font-medium border-b-2 -mb-px transition',
-              activeTab === 'registry' ? 'border-accent text-white' : 'border-transparent text-gray-500 hover:text-gray-300')}
-          >
-            Local Registry
-          </button>
-          <button
-            onClick={() => setActiveTab('marketplace')}
-            className={cn('px-4 py-2 text-sm font-medium border-b-2 -mb-px transition',
-              activeTab === 'marketplace' ? 'border-accent text-white' : 'border-transparent text-gray-500 hover:text-gray-300')}
-          >
-            🛒 Marketplace
-          </button>
-        </div>
       </div>
+
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <Metric icon={<Sparkles size={17} />} label="Skills" value={skills.length} />
+        <Metric icon={<GitBranch size={17} />} label="Published" value={skills.filter(skill => skill.publishedVersionId).length} tone="green" />
+        <Metric icon={<Link2 size={17} />} label="Assignments" value={skillAssignments.length} tone="blue" />
+        <Metric icon={<Bot size={17} />} label="Agents" value={agents.length} />
+      </section>
+
+      <nav className="flex gap-5 overflow-x-auto border-b border-border" aria-label="Skill sections">
+        {([['registry', 'Registry', skills.length], ['editor', 'Version editor', null], ['assignments', 'Assignments', skillAssignments.length], ['marketplace', 'Marketplace', null]] as const).map(([id, label, count]) => <button key={id} type="button" onClick={() => setActiveTab(id)} className={cn('app-focus shrink-0 border-b-2 px-1 pb-3 text-xs font-medium transition', activeTab === id ? 'border-accent text-accent-light' : 'border-transparent text-app-muted hover:text-app-primary')}>{label}{count != null && <span className="ml-1.5 rounded-full bg-accent/10 px-1.5 py-0.5 text-[9px]">{count}</span>}</button>)}
+      </nav>
+
+      {activeTab === 'registry' && <section>
+        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-sm font-semibold text-app-primary">Skill registry</h2><p className="mt-1 text-[10px] text-app-muted">Published capabilities available to Agent runtime resolution.</p></div><label className="relative w-full sm:w-[300px]"><Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-app-muted" /><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search skills or source paths…" className="w-full rounded-xl border border-border bg-surface py-2.5 pl-9 pr-3 text-xs outline-none focus:border-accent/50" /></label></div>
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{filteredSkills.map(skill => <button key={skill.id} type="button" onClick={() => { setSelectedSkillId(skill.id); setActiveTab('editor'); }} className={cn('app-focus premium-card rounded-2xl border bg-surface p-4 text-left transition duration-200 hover:-translate-y-0.5 hover:border-accent/30', selectedSkillId === skill.id ? 'border-accent/50' : 'border-border')}><div className="flex items-start gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-accent/10 text-accent-light"><Sparkles size={17} /></span><div className="min-w-0 flex-1"><h3 className="truncate text-sm font-semibold text-app-primary">{skill.name}</h3><p className="mt-1 line-clamp-2 min-h-8 text-[10px] leading-4 text-app-muted">{skill.description || 'Reusable Agent capability.'}</p></div><span className={cn('rounded-full px-2 py-0.5 text-[9px]', skill.publishedVersionId ? 'bg-emerald-500/10 text-emerald-500' : 'bg-amber-500/10 text-amber-500')}>{skill.publishedVersionId ? 'Published' : 'Draft'}</span></div><div className="mt-4 flex items-center justify-between border-t border-border pt-3 text-[9px] text-app-muted"><span className="max-w-[70%] truncate">{skill.sourcePath || skill.id}</span><span className="font-medium text-accent-light">Open editor →</span></div></button>)}</div>
+      </section>}
+
+      {activeTab === 'assignments' && <section className="premium-card overflow-hidden rounded-2xl border border-border bg-surface"><header className="border-b border-border p-4"><h2 className="text-sm font-semibold text-app-primary">Agent assignments</h2><p className="mt-1 text-[10px] text-app-muted">Current published Skill version selected for each Agent.</p></header><div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-3">{agents.map(agent => { const assignment = assignmentByAgent.get(agent.id); return <button key={agent.id} type="button" onClick={() => { setAgentId(agent.id); setActiveTab('editor'); }} className="app-focus rounded-xl border border-border bg-background/60 p-3 text-left hover:border-accent/30"><div className="flex items-center gap-2"><span className="flex h-8 w-8 items-center justify-center rounded-xl bg-accent/10">{agent.emoji || '🤖'}</span><div className="min-w-0 flex-1"><div className="truncate text-xs font-semibold text-app-primary">{agent.name}</div><div className="text-[9px] text-app-muted">{agent.role}</div></div><span className={cn('rounded-full px-2 py-0.5 text-[9px]', assignment ? 'bg-emerald-500/10 text-emerald-500' : 'bg-gray-500/10 text-gray-500')}>{assignment ? 'Assigned' : 'Unassigned'}</span></div><div className="mt-3 truncate text-[9px] text-app-muted">{assignment?.skillVersionId || 'No explicit Skill version'}</div></button>; })}</div></section>}
 
       {activeTab === 'marketplace' ? (
         <SkillMarketplace />
-      ) : (<>
+      ) : activeTab === 'editor' ? (<>
 
       {error && <div className="rounded-lg border border-red-500/20 bg-red-500/10 p-3 text-sm text-red-300">{error}</div>}
 
@@ -379,7 +373,7 @@ export function SkillsPage() {
           </div>
         </aside>
       </div>
-      </>)}
+      </>) : null}
     </div>
   );
 }
@@ -394,23 +388,20 @@ function Panel({ title, children }: { title: string; children: ReactNode }) {
 }
 
 function Metric({
+  icon,
   label,
   value,
   tone = 'default',
 }: {
+  icon: ReactNode;
   label: string;
   value: string | number;
   tone?: 'default' | 'green' | 'blue';
 }) {
   const toneClass = {
-    default: 'text-gray-100',
-    green: 'text-emerald-300',
-    blue: 'text-blue-300',
+    default: 'bg-violet-500/10 text-violet-500',
+    green: 'bg-emerald-500/10 text-emerald-500',
+    blue: 'bg-blue-500/10 text-blue-500',
   }[tone];
-  return (
-    <div className="rounded-xl border border-border bg-background/70 p-4">
-      <div className={cn('text-2xl font-bold', toneClass)}>{value}</div>
-      <div className="mt-1 text-[10px] text-gray-500">{label}</div>
-    </div>
-  );
+  return <div className="premium-card flex min-h-[112px] items-center justify-between gap-3 rounded-2xl border border-border bg-surface p-4"><div><div className="text-[10px] text-app-muted">{label}</div><div className="mt-2 text-2xl font-semibold text-app-primary">{value}</div></div><span className={cn('flex h-10 w-10 items-center justify-center rounded-2xl', toneClass)}>{icon}</span></div>;
 }

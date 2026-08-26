@@ -90,8 +90,8 @@ export function ArtifactsPage() {
   };
 
   return (
-    <div className="flex h-full min-h-[calc(100vh-3.5rem)] flex-col p-4 lg:p-6">
-      <div className="mb-4 flex items-start justify-between gap-4">
+    <div className="app-page-shell flex h-full min-h-[calc(100vh-3.5rem)] flex-col p-4 lg:p-6">
+      <div className="page-heading-row mb-4 flex items-start justify-between gap-4">
         <div>
           <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-accent-light">Artifact Workbench</div>
           <h1 className="mt-1 text-2xl font-bold">Outputs you can actually inspect</h1>

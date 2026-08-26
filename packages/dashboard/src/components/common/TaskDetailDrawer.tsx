@@ -440,7 +440,7 @@ export function TaskDetailDrawer({ taskId, onClose }: { taskId: string | null; o
   };
 
   return (
-    <div className="fixed inset-y-0 right-0 z-40 w-[520px] max-w-[calc(100vw-2rem)] bg-surface border-l border-border shadow-2xl flex flex-col">
+    <aside aria-label="Task details" className="fixed bottom-0 right-0 top-14 z-40 flex w-[440px] max-w-[calc(100vw-1rem)] flex-col rounded-tl-2xl border-l border-t border-border bg-surface shadow-2xl">
       <div className="p-4 border-b border-border">
         <div className="flex items-start gap-3">
           <div className="flex-1 min-w-0">
@@ -457,7 +457,7 @@ export function TaskDetailDrawer({ taskId, onClose }: { taskId: string | null; o
               {agent ? `${agent.emoji || '🤖'} ${agent.name}` : 'No agent assigned'} · {task?.mode || 'unknown'}
             </p>
           </div>
-          <button onClick={onClose} className="text-gray-500 hover:text-white transition">✕</button>
+          <button onClick={onClose} aria-label="Close task details" className="app-focus rounded-lg p-1.5 text-gray-500 transition hover:bg-surface-hover hover:text-app-primary">✕</button>
         </div>
 
         {task && (
@@ -564,6 +564,6 @@ export function TaskDetailDrawer({ taskId, onClose }: { taskId: string | null; o
           </div>
         )}
       </div>
-    </div>
+    </aside>
   );
 }

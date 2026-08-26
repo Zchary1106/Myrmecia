@@ -8,6 +8,7 @@ import { AgentPet } from '../components/agents/AgentPet';
 import { AgentWorkbench } from '../components/agents/AgentWorkbench';
 import { AgentSetupWizard } from '../components/agents/AgentSetupWizard';
 import { AuditDrawer } from '../components/audit/AuditDrawer';
+import { Bot, Play, Plus, Search, Sparkles, Wrench } from 'lucide-react';
 
 interface LegacyReplacement { agentId: string; skills: string[]; tools: string[] }
 interface LegacyAnnotation { deprecated: boolean; replacement?: LegacyReplacement }
@@ -145,10 +146,11 @@ function formFromAgent(agent: AgentSummary): AgentFormState {
 }
 
 export function AgentsPage() {
-  const { agents, loadAgents, models, loadModels } = useStore();
+  const { agents, loadAgents, models, loadModels, setActiveView } = useStore();
   const [query, setQuery] = useState('');
   const [roleFilter, setRoleFilter] = useState('all');
-  const [isBuilderOpen, setIsBuilderOpen] = useState(true);
+  const [isBuilderOpen, setIsBuilderOpen] = useState(false);
+  const [catalogView, setCatalogView] = useState<'all' | 'working' | 'custom' | 'legacy'>('all');
   const [isWizardOpen, setIsWizardOpen] = useState(false);
   const [editingAgentId, setEditingAgentId] = useState<string | null>(null);
   const [workbenchAgentId, setWorkbenchAgentId] = useState<string | null>(null);
@@ -188,6 +190,9 @@ export function AgentsPage() {
     const q = query.trim().toLowerCase();
     return stableAgents.filter(agent => {
       const matchesRole = roleFilter === 'all' || agent.role === roleFilter;
+      const matchesView = catalogView === 'all'
+        || (catalogView === 'working' && derivedStatus(agent) === 'working')
+        || (catalogView === 'custom' && agent.role === 'custom');
       const text = [
         agent.name,
         agent.role,
@@ -195,9 +200,9 @@ export function AgentsPage() {
         ...(agent.capabilities || []),
         ...(agent.allowedTools || agent.config?.allowedTools || []),
       ].join(' ').toLowerCase();
-      return matchesRole && (!q || text.includes(q));
+      return matchesRole && matchesView && (!q || text.includes(q));
     });
-  }, [stableAgents, query, roleFilter]);
+  }, [stableAgents, query, roleFilter, catalogView]);
   const filteredLegacy = useMemo(() => {
     const q = query.trim().toLowerCase();
     return legacyAliases.filter(alias => !q || [
@@ -304,21 +309,18 @@ export function AgentsPage() {
   };
 
   return (
-    <div className="p-6 space-y-6">
-      <div className="rounded-2xl border border-border bg-gradient-to-br from-surface to-background p-6">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+    <div className="app-page-shell p-6 space-y-6">
+      <div className="page-heading-row flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <div className="text-xs uppercase tracking-[0.24em] text-accent-light">Agent Control Center</div>
-            <h2 className="mt-2 text-3xl font-bold">Agents</h2>
-            <p className="mt-2 max-w-2xl text-sm text-gray-400">
-              管理内置 Agent、自定义 Agent、能力标签和工具白名单。动态创建的 Agent 会直接进入 DB，并通过 runtime 传入对应 skill 与 tools。
-            </p>
+            <h1 className="text-2xl font-bold tracking-[-0.03em]">Agents</h1>
+            <p className="mt-1 max-w-2xl text-[12px] text-gray-500">Browse stable roles, inspect runtime capability, and create specialized Agents.</p>
           </div>
           <div className="flex flex-wrap gap-2">
             <AuditDrawer targetType="agent" label="Audit" />
+            <button type="button" onClick={() => setActiveView('agent-settings')} className="app-focus rounded-xl border border-border bg-surface px-4 py-2.5 text-xs font-semibold text-app-secondary hover:border-accent/30 hover:text-app-primary">Open Agent workspace</button>
             <button
               onClick={() => setIsWizardOpen(true)}
-              className="rounded-xl bg-purple-500/20 px-4 py-2 text-sm font-semibold text-purple-200 hover:bg-purple-500/30"
+              className="app-focus rounded-xl border border-border bg-surface px-4 py-2.5 text-xs font-semibold text-app-secondary hover:border-accent/30 hover:text-app-primary"
             >
               Setup Wizard
             </button>
@@ -327,28 +329,36 @@ export function AgentsPage() {
                 if (!isBuilderOpen) resetBuilder();
                 setIsBuilderOpen(v => !v);
               }}
-              className="rounded-xl bg-accent px-4 py-2 text-sm font-semibold text-white hover:bg-accent/90"
+              className="home-primary-button app-focus inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-semibold text-white"
             >
-              {isBuilderOpen ? 'Hide Builder' : '+ Create Agent'}
+              <Plus size={14} /> {isBuilderOpen ? 'Hide Builder' : 'Create Agent'}
             </button>
           </div>
-        </div>
-
-        <div className="mt-6 grid grid-cols-2 gap-3 md:grid-cols-4">
-          <Metric label="Stable Roles" value={stableAgents.length} />
-          <Metric label="Running" value={runningCount} tone="blue" />
-          <Metric label="Tool Enabled" value={toolEnabledCount} tone="purple" />
-          <Metric label="Legacy Aliases" value={legacyAliases.length} tone="yellow" />
-        </div>
       </div>
+
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        <Metric icon={<Bot size={17} />} label="Stable Agents" value={stableAgents.length} />
+        <Metric icon={<Play size={17} />} label="Working" value={runningCount} tone="green" />
+        <Metric icon={<Wrench size={17} />} label="Tool enabled" value={toolEnabledCount} tone="purple" />
+        <Metric icon={<Sparkles size={17} />} label="Custom" value={stableAgents.filter(agent => agent.role === 'custom').length} tone="blue" />
+        <Metric icon={<Bot size={17} />} label="Legacy aliases" value={legacyAliases.length} tone="yellow" />
+      </section>
+
+      <section>
+        <div className="flex flex-col gap-3 border-b border-border lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex gap-5 overflow-x-auto">
+            {([['all', 'All Agents', stableAgents.length], ['working', 'Working', runningCount], ['custom', 'Custom', stableAgents.filter(agent => agent.role === 'custom').length], ['legacy', 'Legacy', legacyAliases.length]] as const).map(([id, label, count]) => <button key={id} type="button" onClick={() => setCatalogView(id)} className={cn('app-focus shrink-0 border-b-2 px-1 pb-3 text-xs font-medium transition', catalogView === id ? 'border-accent text-accent-light' : 'border-transparent text-app-muted hover:text-app-primary')}>{label}<span className="ml-1.5 rounded-full bg-accent/10 px-1.5 py-0.5 text-[9px]">{count}</span></button>)}
+          </div>
+          <div className="flex flex-wrap gap-2 pb-3">
+            <label className="relative min-w-[240px] flex-1"><Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-app-muted" /><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search agents, roles, capabilities…" className="w-full rounded-xl border border-border bg-surface py-2.5 pl-9 pr-3 text-xs outline-none focus:border-accent/50" /></label>
+            <select value={roleFilter} onChange={event => setRoleFilter(event.target.value)} className="rounded-xl border border-border bg-surface px-3 py-2 text-xs outline-none focus:border-accent"><option value="all">All roles</option>{roles.map(role => <option key={role} value={role}>{role}</option>)}</select>
+          </div>
+        </div>
+      </section>
 
       <div className={cn('grid gap-6', isBuilderOpen ? 'xl:grid-cols-[1fr_420px]' : 'grid-cols-1')}>
         <div className="space-y-4">
-          {workbenchAgent && (
-            <AgentWorkbench agent={workbenchAgent} onEdit={startEditing} teams={teamNamesByAgent.get(workbenchAgent.id)} />
-          )}
-
-          <div className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-4 md:flex-row md:items-center">
+          <div className="hidden flex-col gap-3 rounded-xl border border-border bg-surface p-4 md:flex-row md:items-center">
             <input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
@@ -390,7 +400,11 @@ export function AgentsPage() {
             </div>
           )}
 
-          {legacyAliases.length > 0 && (
+          {catalogView !== 'legacy' && workbenchAgent && (
+            <AgentWorkbench agent={workbenchAgent} onEdit={startEditing} teams={teamNamesByAgent.get(workbenchAgent.id)} />
+          )}
+
+          {catalogView === 'legacy' && legacyAliases.length > 0 && (
             <div data-testid="legacy-aliases" className="rounded-xl border border-border bg-surface/40">
               <button
                 type="button"
@@ -590,20 +604,15 @@ export function AgentsPage() {
   );
 }
 
-function Metric({ label, value, tone = 'default' }: { label: string; value: number; tone?: 'default' | 'blue' | 'purple' | 'green' | 'yellow' }) {
+function Metric({ icon, label, value, tone = 'default' }: { icon: ReactNode; label: string; value: number; tone?: 'default' | 'blue' | 'purple' | 'green' | 'yellow' }) {
   const toneClass = {
-    default: 'text-gray-100',
-    blue: 'text-blue-300',
-    purple: 'text-purple-300',
-    green: 'text-emerald-300',
-    yellow: 'text-amber-300',
+    default: 'bg-blue-500/10 text-blue-500',
+    blue: 'bg-blue-500/10 text-blue-500',
+    purple: 'bg-violet-500/10 text-violet-500',
+    green: 'bg-emerald-500/10 text-emerald-500',
+    yellow: 'bg-amber-500/10 text-amber-500',
   }[tone];
-  return (
-    <div className="rounded-xl border border-border bg-background/70 p-4">
-      <div className={cn('text-2xl font-bold', toneClass)}>{value}</div>
-      <div className="mt-1 text-xs text-gray-500">{label}</div>
-    </div>
-  );
+  return <div className="premium-card flex min-h-[112px] items-center justify-between gap-3 rounded-2xl border border-border bg-surface p-4"><div><div className="text-[10px] text-app-muted">{label}</div><div className="mt-2 text-2xl font-semibold text-app-primary">{value}</div></div><span className={cn('flex h-10 w-10 items-center justify-center rounded-2xl', toneClass)}>{icon}</span></div>;
 }
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
@@ -634,7 +643,7 @@ function AgentCard({
 
   return (
     <div className={cn(
-      'rounded-xl border bg-surface p-5 transition hover:border-accent/30 hover:shadow-lg hover:shadow-accent/5',
+      'premium-card rounded-2xl border bg-surface p-5 transition duration-200 hover:-translate-y-0.5 hover:border-accent/30',
       selected ? 'border-accent/50 ring-1 ring-accent/20' : 'border-border',
     )}>
       <div className="mb-4 flex items-center gap-3">

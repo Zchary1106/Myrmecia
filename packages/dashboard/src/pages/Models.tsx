@@ -140,8 +140,8 @@ export function ModelsPage() {
   const selectedProviderModel = providerSettings?.models.find(model => model.id === providerModelId);
 
   return (
-    <div className="p-6 space-y-6">
-      <div className="rounded-2xl border border-border bg-gradient-to-br from-surface to-background p-6">
+    <div className="app-page-shell p-6 space-y-6">
+      <div className="page-hero rounded-2xl border border-border p-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>
             <div className="text-xs uppercase tracking-[0.24em] text-accent-light">Model Registry</div>
