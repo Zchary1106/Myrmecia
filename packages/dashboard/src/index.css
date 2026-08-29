@@ -309,3 +309,121 @@ button { -webkit-tap-highlight-color: transparent; }
     color: rgb(194 65 12);
   }
 }
+
+[data-app-sidebar] {
+  position: relative;
+  z-index: 10;
+  border-right: 1px solid color-mix(in srgb, var(--app-border) 86%, transparent);
+  box-shadow: 10px 0 26px -24px rgba(15, 23, 42, 0.48);
+}
+
++
+
+/* Configuration workspace */
+[data-configuration-page] {
+  width: min(100%, 92rem);
+  margin-inline: auto;
+  padding: clamp(1.25rem, 2vw, 2rem);
+  color: var(--app-primary);
+}
+
+[data-configuration-page]::before {
+  content: "Configuration · " attr(data-configuration-context);
+  display: block;
+  margin-bottom: .55rem;
+  color: var(--app-muted);
+  font-size: .68rem;
+  font-weight: 650;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+}
+
+[data-configuration-page] > .page-heading-row,
+[data-configuration-page] > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding-bottom: 1.35rem;
+  border-bottom: 1px solid var(--app-border);
+}
+
+[data-configuration-page] > .page-heading-row h1,
+[data-configuration-page] > .page-heading-row h2,
+[data-configuration-page] > header h1,
+[data-configuration-page] > header h2 {
+  font-size: clamp(1.65rem, 2vw, 2.15rem);
+  line-height: 1.1;
+  letter-spacing: -.035em;
+  font-weight: 680;
+}
+
+[data-configuration-page] > section,
+[data-configuration-page] > div > section {
+  border-color: color-mix(in srgb, var(--app-border) 88%, transparent);
+  box-shadow: 0 16px 38px -34px rgba(15, 23, 42, .4);
+}
+
+[data-configuration-page] table {
+  width: 100%;
+  font-variant-numeric: tabular-nums;
+}
+
+[data-configuration-page] thead {
+  background: var(--app-subtle);
+}
+
+[data-configuration-page] tbody tr {
+  transition: background-color 180ms ease;
+}
+
+[data-configuration-page] tbody tr:hover {
+  background: var(--app-subtle);
+}
+
+[data-configuration-page] input,
+[data-configuration-page] select,
+[data-configuration-page] textarea {
+  min-height: 2.5rem;
+  transition: border-color 180ms ease, box-shadow 180ms ease, background-color 180ms ease;
+}
+
+[data-configuration-page] input:focus,
+[data-configuration-page] select:focus,
+[data-configuration-page] textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+[data-configuration-page] button {
+  transition: transform 160ms ease, background-color 180ms ease, color 180ms ease, border-color 180ms ease;
+}
+
+[data-configuration-page] button:active:not(:disabled) {
+  transform: translateY(1px) scale(.99);
+}
+
+[data-configuration-context="Usage and cost control"]::before,
+[data-configuration-context="Usage and cost control"] .page-subtitle {
+  display: none;
+}
+
+[data-configuration-context="Usage and cost control"] > header,
+[data-configuration-context="Usage and cost control"] > .page-heading-row {
+  align-items: center;
+}
+
+[data-cost-visuals] article {
+  min-width: 0;
+}
+
+@media (max-width: 760px) {
+  [data-configuration-page] > .page-heading-row,
+  [data-configuration-page] > header {
+    flex-direction: column;
+  }
+
+  [data-configuration-page] {
+    padding: 1rem;
+  }
+}

@@ -5,401 +5,130 @@ import { cn } from '../lib/utils';
 import { useStore } from '../stores/store';
 import { AuditDrawer } from '../components/audit/AuditDrawer';
 
-const healthClass: Record<ModelDefinition['healthStatus'], string> = {
-  unknown: 'bg-gray-500/10 text-gray-400',
-  healthy: 'bg-emerald-500/10 text-emerald-300',
-  degraded: 'bg-yellow-500/10 text-yellow-300',
-  disabled: 'bg-red-500/10 text-red-300',
-};
-
-const routeLabels: Record<string, string> = {
-  global: 'Global default',
-  'role:orchestrator': 'Orchestrator',
-  'role:product-manager': 'Product Manager',
-  'role:designer': 'Designer',
-  'role:developer': 'Developer',
-  'role:tester': 'Tester',
-  'role:devops': 'DevOps',
-  'role:reviewer': 'Reviewer',
-  'role:content-writer': 'Content Writer',
-  'role:wechat-writer': 'WeChat Writer',
-  'role:xiaohongshu-writer': 'Xiaohongshu Writer',
-  'role:douyin-writer': 'Douyin Writer',
-  'role:researcher': 'Researcher',
-};
+type Section = 'providers' | 'models' | 'routing' | 'health';
+type RuntimeProvider = MyrmeciaRuntimeConfiguration['provider'];
+const inputClass = 'w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none transition focus:border-accent';
+const healthClass: Record<ModelDefinition['healthStatus'], string> = { unknown: 'bg-gray-500/10 text-gray-500', healthy: 'bg-emerald-500/10 text-emerald-300', degraded: 'bg-yellow-500/10 text-yellow-300', disabled: 'bg-red-500/10 text-red-300' };
+const routeLabels: Record<string, string> = { global: 'Global default', 'role:orchestrator': 'Orchestrator', 'role:product-manager': 'Product Manager', 'role:designer': 'Designer', 'role:developer': 'Developer', 'role:tester': 'Tester', 'role:devops': 'DevOps', 'role:reviewer': 'Reviewer', 'role:content-writer': 'Content Writer', 'role:wechat-writer': 'WeChat Writer', 'role:xiaohongshu-writer': 'Xiaohongshu Writer', 'role:douyin-writer': 'Douyin Writer', 'role:researcher': 'Researcher' };
 
 export function ModelsPage() {
   const { models, modelRoutes, loadModels, loadModelRoutes } = useStore();
+  const desktop = window.myrmeciaDesktopIntegrations;
+  const [section, setSection] = useState<Section>('providers');
   const [query, setQuery] = useState('');
   const [group, setGroup] = useState('all');
+  const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
+  const [providerBusy, setProviderBusy] = useState<'login' | 'refresh' | 'model' | 'runtime' | null>(null);
   const [routeDrafts, setRouteDrafts] = useState<Record<string, Pick<ModelRoute, 'defaultModelId' | 'fallbackGroup'>>>({});
   const [providerSettings, setProviderSettings] = useState<ModelProviderSettings | null>(null);
+  const [runtime, setRuntime] = useState<MyrmeciaRuntimeConfiguration | null>(null);
+  const [provider, setProvider] = useState<RuntimeProvider>('copilot');
+  const [baseUrl, setBaseUrl] = useState('');
+  const [runtimeModel, setRuntimeModel] = useState('');
+  const [apiKey, setApiKey] = useState('');
   const [providerModelId, setProviderModelId] = useState('');
-  const [error, setError] = useState('');
+  const [accountLogin, setAccountLogin] = useState('');
+  const [newModel, setNewModel] = useState({ id: '', displayName: '', provider: 'openai-compatible', fallbackGroup: 'balanced', tier: 'balanced' as const });
+  const [notice, setNotice] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const loadProviderSettings = async () => {
-    try {
-      const settings = await api.models.providerSettings();
-      setProviderSettings(settings);
-      setProviderModelId(settings.selectedModelId || settings.models[0]?.id || '');
-    } catch (err: any) {
-      setError(err.message || 'Load provider models failed');
-    }
+    const settings = await api.models.providerSettings();
+    setProviderSettings(settings);
+    setProviderModelId(settings.selectedModelId || settings.models[0]?.id || '');
+    setAccountLogin(settings.account?.login || settings.accounts?.find(account => account.active)?.login || '');
+    if (settings.error) setNotice(settings.error);
   };
-
-  useEffect(() => {
-    void Promise.all([loadModels(), loadModelRoutes(), loadProviderSettings()]);
-  }, []);
-
-  useEffect(() => {
-    setRouteDrafts(Object.fromEntries(modelRoutes.map(route => [
-      route.routeKey,
-      { defaultModelId: route.defaultModelId, fallbackGroup: route.fallbackGroup },
-    ])));
-  }, [modelRoutes]);
+  const refresh = async () => {
+    setLoading(true); setError(null);
+    try {
+      const nextRuntime = await desktop?.getRuntimeConfig();
+      if (nextRuntime) { setRuntime(nextRuntime); setProvider(nextRuntime.provider); setBaseUrl(nextRuntime.baseUrl); setRuntimeModel(nextRuntime.model); }
+      await Promise.all([loadModels(), loadModelRoutes(), loadProviderSettings()]);
+    } catch (err) { setError(err instanceof Error ? err.message : 'Unable to load model configuration.'); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { void refresh(); }, []);
+  useEffect(() => { setRouteDrafts(Object.fromEntries(modelRoutes.map(route => [route.routeKey, { defaultModelId: route.defaultModelId, fallbackGroup: route.fallbackGroup }]))); }, [modelRoutes]);
 
   const groups = useMemo(() => Array.from(new Set(models.map(model => model.fallbackGroup))).sort(), [models]);
   const enabledModels = useMemo(() => models.filter(model => model.enabled), [models]);
   const filteredModels = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    return models.filter(model => {
-      const haystack = [model.id, model.displayName, model.description, model.fallbackGroup, model.healthStatus, ...model.capabilityTags].join(' ').toLowerCase();
-      return (group === 'all' || model.fallbackGroup === group) && (!needle || haystack.includes(needle));
-    });
+    return models.filter(model => (group === 'all' || model.fallbackGroup === group) && (!needle || [model.id, model.displayName, model.description, model.provider, model.fallbackGroup, model.healthStatus, ...model.capabilityTags].join(' ').toLowerCase().includes(needle)));
   }, [models, query, group]);
-
-  const updateModel = async (model: ModelDefinition, updates: { enabled?: boolean; priority?: number; fallbackGroup?: string }) => {
-    setSavingId(model.id);
-    setError('');
-    try {
-      await api.models.update(model.id, updates);
-      await loadModels();
-    } catch (err: any) {
-      setError(err.message || 'Update model failed');
-    } finally {
-      setSavingId(null);
-    }
-  };
-
-  const healthCheck = async (model: ModelDefinition) => {
-    setSavingId(model.id);
-    setError('');
-    try {
-      await api.models.healthCheck(model.id);
-      await loadModels();
-    } catch (err: any) {
-      setError(err.message || 'Health check failed');
-    } finally {
-      setSavingId(null);
-    }
-  };
-
-  const updateRouteDraft = (routeKey: string, updates: Partial<Pick<ModelRoute, 'defaultModelId' | 'fallbackGroup'>>) => {
-    setRouteDrafts(current => ({
-      ...current,
-      [routeKey]: { ...current[routeKey], ...updates },
-    }));
-  };
-
-  const saveRoute = async (route: ModelRoute) => {
-    setSavingId(route.routeKey);
-    setError('');
-    try {
-      const draft = routeDrafts[route.routeKey] || {};
-      await api.models.updateRoute({
-        routeKey: route.routeKey,
-        defaultModelId: draft.defaultModelId,
-        fallbackGroup: draft.fallbackGroup || 'balanced',
-      });
-      await Promise.all([loadModelRoutes(), loadModels()]);
-    } catch (err: any) {
-      setError(err.message || 'Update route failed');
-    } finally {
-      setSavingId(null);
-    }
-  };
-
-  const saveProviderModel = async () => {
-    if (!providerModelId) return;
-    setSavingId('provider:copilot');
-    setError('');
-    try {
-      const settings = await api.models.selectProviderModel(providerModelId);
-      setProviderSettings(settings);
-      setProviderModelId(settings.selectedModelId || providerModelId);
-      await Promise.all([loadModels(), loadModelRoutes()]);
-    } catch (err: any) {
-      setError(err.message || 'Update Copilot model failed');
-    } finally {
-      setSavingId(null);
-    }
-  };
-
-  const usesCopilot = providerSettings?.provider === 'copilot';
   const selectedProviderModel = providerSettings?.models.find(model => model.id === providerModelId);
 
-  return (
-    <div className="app-page-shell p-6 space-y-6">
-      <div className="page-hero rounded-2xl border border-border p-6">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div>
-            <div className="text-xs uppercase tracking-[0.24em] text-accent-light">Model Registry</div>
-            <h2 className="mt-2 text-3xl font-bold">Models & Routes</h2>
-            <p className="mt-2 max-w-2xl text-sm text-gray-400">
-              管理 OpenAI-compatible、DeepSeek 与 GitHub Copilot SDK 模型的健康状态、fallback group 和 role 默认路由。
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <AuditDrawer targetType="model" label="Audit" />
-            <button
-              onClick={() => Promise.all([loadModels(), loadModelRoutes(), loadProviderSettings()])}
-              className="rounded-xl bg-surface-hover px-4 py-2 text-sm text-gray-300 hover:text-white"
-            >
-              Refresh
-            </button>
-          </div>
-        </div>
+  const saveRuntime = async () => {
+    if (!desktop || providerBusy) return;
+    setProviderBusy('runtime'); setError(null); setNotice(null);
+    try {
+      const next = await desktop.saveRuntimeConfig({ provider, baseUrl: provider === 'copilot' ? undefined : baseUrl.trim(), model: runtimeModel.trim() || undefined, apiKey: provider === 'copilot' ? undefined : apiKey.trim() || undefined });
+      setRuntime(next); setApiKey(''); setNotice('Provider configuration saved. Restarting the local service…'); desktop.restartLocalServer();
+    } catch (err) { setError(err instanceof Error ? err.message : 'Unable to save provider configuration.'); }
+    finally { setProviderBusy(null); }
+  };
+  const refreshProviderModels = async () => { setProviderBusy('refresh'); setError(null); try { await loadProviderSettings(); setNotice('Provider account and discovered models refreshed.'); } catch (err) { setError(err instanceof Error ? err.message : 'Unable to refresh provider models.'); } finally { setProviderBusy(null); } };
+  const loginCopilot = async () => {
+    if (providerBusy) return;
+    setProviderBusy('login'); setError(null); setNotice(null);
+    try {
+      const result = desktop ? await desktop.loginCopilot() : await api.models.loginCopilot();
+      if (!result.ok) throw new Error(result.message);
+      if (desktop) { desktop.restartLocalServer(); await new Promise(resolve => window.setTimeout(resolve, 1200)); }
+      await loadProviderSettings(); setNotice('Copilot login completed and account models were refreshed.');
+    } catch (err) { setError(err instanceof Error ? err.message : 'GitHub Copilot login failed.'); }
+    finally { setProviderBusy(null); }
+  };
+  const switchCopilotAccount = async () => {
+    if (!accountLogin || providerBusy || accountLogin === providerSettings?.account?.login) return;
+    setProviderBusy('refresh'); setError(null);
+    try { const next = await api.models.switchCopilotAccount(accountLogin); setProviderSettings(next); setAccountLogin(next.account?.login || accountLogin); setProviderModelId(next.selectedModelId || next.models[0]?.id || ''); setNotice(`Switched GitHub Copilot to @${next.account?.login || accountLogin}.`); }
+    catch (err) { setError(err instanceof Error ? err.message : 'Unable to switch GitHub account.'); }
+    finally { setProviderBusy(null); }
+  };
+  const saveProviderModel = async () => {
+    if (!providerModelId || !selectedProviderModel?.selectable || providerBusy) return;
+    setProviderBusy('model'); setError(null);
+    try { const next = await api.models.selectProviderModel(providerModelId); setProviderSettings(next); setProviderModelId(next.selectedModelId || providerModelId); await Promise.all([loadModels(), loadModelRoutes()]); setNotice(`New tasks will use ${selectedProviderModel.name}.`); }
+    catch (err) { setError(err instanceof Error ? err.message : 'Unable to apply the provider model.'); }
+    finally { setProviderBusy(null); }
+  };
+  const updateModel = async (model: ModelDefinition, updates: { enabled?: boolean; priority?: number; fallbackGroup?: string }) => { setSavingId(model.id); setError(null); try { await api.models.update(model.id, updates); await loadModels(); } catch (err) { setError(err instanceof Error ? err.message : 'Unable to update model.'); } finally { setSavingId(null); } };
+  const healthCheck = async (model: ModelDefinition) => { setSavingId(model.id); setError(null); try { await api.models.healthCheck(model.id); await loadModels(); } catch (err) { setError(err instanceof Error ? err.message : 'Model health check failed.'); } finally { setSavingId(null); } };
+  const addModel = async () => {
+    if (!newModel.id.trim() || !newModel.displayName.trim() || savingId) return;
+    setSavingId('new-model'); setError(null);
+    try { await api.models.create({ id: newModel.id.trim(), displayName: newModel.displayName.trim(), provider: newModel.provider, fallbackGroup: newModel.fallbackGroup.trim() || 'balanced', tier: newModel.tier }); setNewModel({ id: '', displayName: '', provider: 'openai-compatible', fallbackGroup: 'balanced', tier: 'balanced' }); await loadModels(); setNotice('Model added to the registry.'); }
+    catch (err) { setError(err instanceof Error ? err.message : 'Unable to add model.'); }
+    finally { setSavingId(null); }
+  };
+  const deleteModel = async (model: ModelDefinition) => { if (savingId || model.costProfile.source !== 'custom' || !window.confirm(`Delete ${model.displayName}?`)) return; setSavingId(model.id); setError(null); try { await api.models.delete(model.id); await loadModels(); setNotice('Custom model removed from the registry.'); } catch (err) { setError(err instanceof Error ? err.message : 'Unable to delete model.'); } finally { setSavingId(null); } };
+  const updateRouteDraft = (routeKey: string, updates: Partial<Pick<ModelRoute, 'defaultModelId' | 'fallbackGroup'>>) => setRouteDrafts(current => ({ ...current, [routeKey]: { ...current[routeKey], ...updates } }));
+  const saveRoute = async (route: ModelRoute) => { setSavingId(route.routeKey); setError(null); try { const draft = routeDrafts[route.routeKey] || {}; await api.models.updateRoute({ routeKey: route.routeKey, defaultModelId: draft.defaultModelId, fallbackGroup: draft.fallbackGroup || 'balanced' }); await Promise.all([loadModelRoutes(), loadModels()]); setNotice(`${routeLabels[route.routeKey] || route.routeKey} route saved.`); } catch (err) { setError(err instanceof Error ? err.message : 'Unable to save route.'); } finally { setSavingId(null); } };
 
-        <div className="mt-6 grid grid-cols-2 gap-3 md:grid-cols-4">
-          <Metric label="Models" value={models.length} />
-          <Metric label="Enabled" value={models.filter(model => model.enabled).length} tone="green" />
-          <Metric label="Healthy" value={models.filter(model => model.healthStatus === 'healthy').length} tone="green" />
-          <Metric label="Routes" value={modelRoutes.length} tone="blue" />
-        </div>
-      </div>
-
-      {error && <div className="rounded-lg border border-red-500/20 bg-red-500/10 p-3 text-sm text-red-300">{error}</div>}
-
-      {usesCopilot && (
-        <section className="rounded-2xl border border-blue-400/20 bg-gradient-to-br from-blue-500/10 via-surface to-surface p-5">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="rounded-full bg-blue-400/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-blue-300">
-                  Local Copilot Login
-                </span>
-                <span className="text-xs text-gray-500">GitHub Copilot SDK</span>
-              </div>
-              <h3 className="mt-3 text-lg font-semibold">当前 Copilot 模型</h3>
-              <p className="mt-1 text-xs text-gray-400">
-                模型来自当前已登录的 GitHub Copilot 账号。这里的选择会用于全部 Agent，下次启动仍然保留。
-                Auto 表示由 Copilot 在每次请求时动态选择，执行记录会另外保存实际使用的模型。
-              </p>
-            </div>
-            <div className="flex min-w-0 flex-col gap-2 sm:min-w-[360px] sm:flex-row">
-              <select
-                value={providerModelId}
-                onChange={event => setProviderModelId(event.target.value)}
-                disabled={providerSettings.models.length === 0 || savingId === 'provider:copilot'}
-                className="min-w-0 flex-1 rounded-xl border border-blue-400/20 bg-background px-3 py-2.5 text-sm outline-none focus:border-blue-400 disabled:opacity-50"
-              >
-                {providerSettings.models.length === 0 && <option value="">没有可用模型</option>}
-                {providerSettings.models.map(model => (
-                  <option key={model.id} value={model.id} disabled={!model.selectable}>
-                    {model.name} · {model.id}
-                    {model.id === 'auto' ? ' · dynamic' : ''}
-                    {model.supportsReasoningEffort ? ' · reasoning' : ''}
-                    {model.billingMultiplier != null ? ` · ${model.billingMultiplier}x` : ''}
-                    {!model.selectable ? ' · disabled by policy' : ''}
-                  </option>
-                ))}
-              </select>
-              <button
-                onClick={saveProviderModel}
-                disabled={!providerModelId || !selectedProviderModel?.selectable || savingId === 'provider:copilot'}
-                className="rounded-xl bg-blue-500 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
-              >
-                {savingId === 'provider:copilot' ? '保存中…' : '应用模型'}
-              </button>
-            </div>
-          </div>
-          {providerSettings.error && (
-            <div className="mt-4 rounded-lg border border-yellow-500/20 bg-yellow-500/10 p-3 text-xs text-yellow-200">
-              无法刷新 Copilot 模型列表：{providerSettings.error}
-            </div>
-          )}
-          {selectedProviderModel?.policyTerms && (
-            <div className="mt-3 text-[11px] text-gray-500">
-              Policy: {selectedProviderModel.policyState || 'unconfigured'} · {selectedProviderModel.policyTerms}
-            </div>
-          )}
-        </section>
-      )}
-
-      <div className="grid gap-4 xl:grid-cols-[1fr_420px]">
-        <section className="space-y-4">
-          <div className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-4 md:flex-row md:items-center">
-            <input
-              value={query}
-              onChange={event => setQuery(event.target.value)}
-              placeholder="Search model id, capability, group..."
-              className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-accent"
-            />
-            <select
-              value={group}
-              onChange={event => setGroup(event.target.value)}
-              className="rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-accent"
-            >
-              <option value="all">All groups</option>
-              {groups.map(item => <option key={item} value={item}>{item}</option>)}
-            </select>
-          </div>
-
-          <div className="grid gap-4 lg:grid-cols-2">
-            {filteredModels.map(model => (
-              <ModelCard
-                key={model.id}
-                model={model}
-                saving={savingId === model.id}
-                onUpdate={updates => updateModel(model, updates)}
-                onHealthCheck={() => healthCheck(model)}
-              />
-            ))}
-          </div>
-        </section>
-
-        <aside className="rounded-2xl border border-border bg-surface p-5">
-          <h3 className="text-sm font-semibold text-gray-300">{usesCopilot ? 'Copilot routing' : 'Role routing'}</h3>
-          <p className="mt-1 text-xs text-gray-500">
-            {usesCopilot
-              ? 'Copilot 模式使用上方统一模型选择；角色路由不会覆盖已选择的 Copilot 模型。'
-              : '执行时按 Agent 显式模型、role route、global route、fallback group 顺序选择模型。'}
-          </p>
-          {usesCopilot ? (
-            <div className="mt-4 rounded-xl border border-blue-400/15 bg-blue-500/5 p-4">
-              <div className="text-xs font-semibold text-blue-200">{providerModelId || '尚未选择模型'}</div>
-              <p className="mt-2 text-xs leading-relaxed text-gray-500">
-                切换模型后，新启动的 Agent 执行会使用该模型；正在运行的任务不会被中断。
-              </p>
-            </div>
-          ) : (
-            <div className="mt-4 space-y-3">
-              {modelRoutes.map(route => {
-              const draft = routeDrafts[route.routeKey] || { defaultModelId: route.defaultModelId, fallbackGroup: route.fallbackGroup };
-              return (
-                <div key={route.routeKey} className="rounded-xl border border-border bg-background p-3">
-                  <div className="mb-2 flex items-center justify-between gap-2">
-                    <div>
-                      <div className="text-xs font-semibold">{routeLabels[route.routeKey] || route.routeKey}</div>
-                      <div className="text-[10px] text-gray-600">{route.routeKey}</div>
-                    </div>
-                    <button
-                      onClick={() => saveRoute(route)}
-                      disabled={savingId === route.routeKey}
-                      className="rounded-lg bg-accent/10 px-2 py-1 text-[10px] font-semibold text-accent-light disabled:opacity-50"
-                    >
-                      Save
-                    </button>
-                  </div>
-                  <select
-                    value={draft.defaultModelId || ''}
-                    onChange={event => updateRouteDraft(route.routeKey, { defaultModelId: event.target.value || undefined })}
-                    className="w-full rounded-lg border border-border bg-surface px-2 py-2 text-xs outline-none focus:border-accent"
-                  >
-                    <option value="">No default model</option>
-                    {enabledModels.map(model => (
-                      <option key={model.id} value={model.id}>{model.displayName} · {model.id}</option>
-                    ))}
-                  </select>
-                  <input
-                    value={draft.fallbackGroup || ''}
-                    onChange={event => updateRouteDraft(route.routeKey, { fallbackGroup: event.target.value })}
-                    placeholder="fallback group"
-                    className="mt-2 w-full rounded-lg border border-border bg-surface px-2 py-2 text-xs outline-none focus:border-accent"
-                  />
-                </div>
-              );
-              })}
-            </div>
-          )}
-        </aside>
-      </div>
-    </div>
-  );
+  return <main data-configuration-page data-configuration-context="Model providers and routing" className="app-page-shell space-y-6 p-6">
+    <header className="page-hero rounded-2xl border border-border p-6"><div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between"><div><div className="text-xs font-semibold uppercase tracking-[0.2em] text-accent-light">Configuration</div><h2 className="mt-2 text-3xl font-bold tracking-tight">Models & providers</h2><p className="mt-2 max-w-2xl text-sm leading-relaxed text-gray-500">Connect an account or API first, then select discovered models and set optional fallback routing.</p></div><div className="flex items-center gap-2"><AuditDrawer targetType="model" label="Audit" /><button onClick={() => void refresh()} disabled={loading} className="rounded-lg bg-surface-hover px-3 py-2 text-xs font-medium text-gray-300 transition hover:text-app-primary disabled:opacity-50">{loading ? 'Refreshing…' : 'Refresh'}</button></div></div><div className="mt-6 grid grid-cols-2 gap-3 md:grid-cols-4"><Metric label="Registered" value={models.length} /><Metric label="Enabled" value={enabledModels.length} tone="green" /><Metric label="Healthy" value={models.filter(model => model.healthStatus === 'healthy').length} tone="green" /><Metric label="Routes" value={modelRoutes.length} tone="blue" /></div></header>
+    <nav aria-label="Model configuration sections" className="flex gap-1 overflow-x-auto border-b border-border">{([['providers', 'Providers'], ['models', 'Models'], ['routing', 'Routing'], ['health', 'Health']] as const).map(([key, label]) => <button key={key} type="button" onClick={() => setSection(key)} className={cn('border-b-2 px-3 py-2.5 text-xs font-medium transition', section === key ? 'border-accent text-accent-light' : 'border-transparent text-gray-500 hover:text-app-primary')}>{label}</button>)}</nav>
+    {error && <div role="alert" className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-300">{error}</div>}{notice && <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-4 py-3 text-sm text-emerald-300">{notice}</div>}
+    {loading ? <LoadingState /> : <>
+      {section === 'providers' && <div className="space-y-4"><section className="rounded-2xl border border-border bg-surface p-5"><SectionHeading title="Runtime provider" detail="This credential-backed provider is used for new local runs." />{desktop ? <div className="mt-5 grid gap-3 lg:grid-cols-2"><Field label="Provider"><select value={provider} onChange={event => setProvider(event.target.value as RuntimeProvider)} className={inputClass}><option value="copilot">GitHub Copilot</option><option value="deepseek">DeepSeek API</option><option value="openai-compatible">OpenAI-compatible gateway</option></select></Field><Field label="Default model ID"><input value={runtimeModel} onChange={event => setRuntimeModel(event.target.value)} placeholder={provider === 'copilot' ? 'auto' : 'gpt-5.4-mini'} className={inputClass} /></Field>{provider !== 'copilot' && <><Field label="Base URL"><input value={baseUrl} onChange={event => setBaseUrl(event.target.value)} placeholder="https://api.example.com/v1" className={inputClass} /></Field><Field label="API key"><input type="password" value={apiKey} onChange={event => setApiKey(event.target.value)} placeholder={runtime?.apiKeyConfigured ? 'Configured — leave blank to keep it' : 'Enter API key'} className={inputClass} /></Field></>}<div className="flex flex-wrap items-center gap-3 lg:col-span-2"><button type="button" onClick={() => void saveRuntime()} disabled={providerBusy !== null} className="rounded-lg bg-accent px-4 py-2 text-xs font-semibold text-white transition hover:bg-accent-light disabled:opacity-50">{providerBusy === 'runtime' ? 'Saving…' : 'Save & apply'}</button><span className="text-[11px] text-gray-500">{runtime?.secureStorageAvailable === false ? 'Secure storage is unavailable; provide API keys through environment variables.' : 'Saving restarts the local service.'}</span></div></div> : <WebModeNotice />}</section><section className="rounded-2xl border border-border bg-surface p-5"><SectionHeading title="GitHub Copilot account" detail="Account and model discovery are read from the active local Copilot login." />{providerSettings ? <CopilotAccount settings={providerSettings} accountLogin={accountLogin} busy={providerBusy} onAccountChange={setAccountLogin} onLogin={() => void loginCopilot()} onSwitch={() => void switchCopilotAccount()} onRefresh={() => void refreshProviderModels()} /> : <EmptyState title="Provider details unavailable" detail="Refresh to read the active provider account and discovered models." />}</section><section className="rounded-2xl border border-border bg-surface p-5"><SectionHeading title="Discovered model" detail="Select a model supplied by the current provider. This choice affects newly started tasks only." />{providerSettings ? <ProviderPicker settings={providerSettings} value={providerModelId} busy={providerBusy} onChange={setProviderModelId} onSave={() => void saveProviderModel()} /> : <EmptyState title="No discovered models" detail="Log in or refresh the provider to populate its available models." />}</section></div>}
+      {section === 'models' && <div className="space-y-4"><section className="rounded-2xl border border-border bg-surface p-5"><SectionHeading title="Add registry model" detail="Register models that your configured provider can serve. Keys remain in the runtime provider configuration." /><div className="mt-4 grid gap-2 lg:grid-cols-[1.2fr_1.2fr_1fr_0.8fr_0.7fr_auto]"><input value={newModel.id} onChange={event => setNewModel(current => ({ ...current, id: event.target.value }))} placeholder="Model ID" className={inputClass} /><input value={newModel.displayName} onChange={event => setNewModel(current => ({ ...current, displayName: event.target.value }))} placeholder="Display name" className={inputClass} /><select value={newModel.provider} onChange={event => setNewModel(current => ({ ...current, provider: event.target.value }))} className={inputClass}><option value="openai-compatible">OpenAI-compatible</option><option value="deepseek">DeepSeek</option><option value="copilot">GitHub Copilot</option></select><input value={newModel.fallbackGroup} onChange={event => setNewModel(current => ({ ...current, fallbackGroup: event.target.value }))} placeholder="Fallback group" className={inputClass} /><select value={newModel.tier} onChange={event => setNewModel(current => ({ ...current, tier: event.target.value as typeof newModel.tier }))} className={inputClass}><option value="strong">strong</option><option value="balanced">balanced</option><option value="cheap">cheap</option><option value="fallback">fallback</option></select><button type="button" onClick={() => void addModel()} disabled={savingId === 'new-model' || !newModel.id.trim() || !newModel.displayName.trim()} className="rounded-lg bg-accent/10 px-3 py-2 text-xs font-semibold text-accent-light transition hover:bg-accent/20 disabled:opacity-40">{savingId === 'new-model' ? 'Adding…' : 'Add model'}</button></div></section><section className="rounded-2xl border border-border bg-surface p-5"><div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between"><SectionHeading title="Model registry" detail="Enable models, tune priority and fallback groups, or remove custom entries." /><div className="grid w-full gap-2 sm:grid-cols-[1fr_160px] md:max-w-lg"><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search models, provider, capabilities…" className={inputClass} /><select value={group} onChange={event => setGroup(event.target.value)} className={inputClass}><option value="all">All fallback groups</option>{groups.map(item => <option key={item} value={item}>{item}</option>)}</select></div></div>{filteredModels.length ? <div className="mt-5 grid gap-3 xl:grid-cols-2">{filteredModels.map(model => <ModelCard key={model.id} model={model} saving={savingId === model.id} onUpdate={updates => void updateModel(model, updates)} onHealthCheck={() => void healthCheck(model)} onDelete={model.costProfile.source === 'custom' ? () => void deleteModel(model) : undefined} />)}</div> : <EmptyState title="No models match this view" detail={models.length ? 'Try another search term or fallback group.' : 'Add a model or connect a provider to begin.'} />}</section></div>}
+      {section === 'routing' && <section className="rounded-2xl border border-border bg-surface p-5"><SectionHeading title="Role routing" detail="Advanced: a task uses an explicit model first, then its role route, the global route, and finally a fallback group. The active Copilot provider model remains primary when Copilot is selected." />{modelRoutes.length ? <div className="mt-5 grid gap-3 xl:grid-cols-2">{modelRoutes.map(route => <RouteCard key={route.routeKey} route={route} draft={routeDrafts[route.routeKey] || { defaultModelId: route.defaultModelId, fallbackGroup: route.fallbackGroup }} enabledModels={enabledModels} saving={savingId === route.routeKey} onChange={updates => updateRouteDraft(route.routeKey, updates)} onSave={() => void saveRoute(route)} />)}</div> : <EmptyState title="No role routes configured" detail="Routes will appear once the server has initialized the model routing registry." />}</section>}
+      {section === 'health' && <section className="rounded-2xl border border-border bg-surface p-5"><SectionHeading title="Health checks" detail="Run a real provider health check for a registered model. Results are stored with the model record." />{models.length ? <div className="mt-5 space-y-2">{models.map(model => <HealthRow key={model.id} model={model} saving={savingId === model.id} onCheck={() => void healthCheck(model)} />)}</div> : <EmptyState title="No registered models" detail="Connect a provider or add a registry model before running health checks." />}</section>}
+    </>}
+  </main>;
 }
 
-function ModelCard({
-  model,
-  saving,
-  onUpdate,
-  onHealthCheck,
-}: {
-  model: ModelDefinition;
-  saving: boolean;
-  onUpdate: (updates: { enabled?: boolean; priority?: number; fallbackGroup?: string }) => void;
-  onHealthCheck: () => void;
-}) {
-  const [priority, setPriority] = useState(String(model.priority));
-  const [fallbackGroup, setFallbackGroup] = useState(model.fallbackGroup);
-
-  useEffect(() => {
-    setPriority(String(model.priority));
-    setFallbackGroup(model.fallbackGroup);
-  }, [model.priority, model.fallbackGroup]);
-
-  return (
-    <div className={cn('rounded-xl border bg-surface p-5 transition hover:border-accent/30', model.enabled ? 'border-border' : 'border-red-500/20 opacity-75')}>
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="truncate font-semibold">{model.displayName}</div>
-          <div className="mt-1 text-xs text-gray-500">{model.provider} · {model.id}</div>
-        </div>
-        <span className={cn('rounded-full px-2 py-1 text-[10px] font-semibold', healthClass[model.healthStatus])}>{model.healthStatus}</span>
-      </div>
-      <p className="mt-3 min-h-10 text-xs leading-relaxed text-gray-400">{model.description}</p>
-      <div className="mt-3 flex flex-wrap gap-1.5">
-        {model.capabilityTags.map(tag => (
-          <span key={tag} className="rounded bg-background px-1.5 py-1 text-[10px] text-gray-500">{tag}</span>
-        ))}
-      </div>
-      <div className="mt-4 grid grid-cols-[1fr_92px] gap-2">
-        <input
-          value={fallbackGroup}
-          onChange={event => setFallbackGroup(event.target.value)}
-          onBlur={() => fallbackGroup !== model.fallbackGroup && onUpdate({ fallbackGroup })}
-          className="rounded-lg border border-border bg-background px-2 py-2 text-xs outline-none focus:border-accent"
-        />
-        <input
-          type="number"
-          value={priority}
-          onChange={event => setPriority(event.target.value)}
-          onBlur={() => Number(priority) !== model.priority && onUpdate({ priority: Number(priority) })}
-          className="rounded-lg border border-border bg-background px-2 py-2 text-xs outline-none focus:border-accent"
-        />
-      </div>
-      <div className="mt-4 flex items-center justify-between gap-2 rounded-lg border border-border bg-background p-3">
-        <label className="flex cursor-pointer items-center gap-2 text-xs text-gray-300">
-          <input
-            type="checkbox"
-            checked={model.enabled}
-            disabled={saving}
-            onChange={event => onUpdate({ enabled: event.target.checked })}
-          />
-          Enabled
-        </label>
-        <button
-          onClick={onHealthCheck}
-          disabled={saving}
-          className="rounded-lg bg-surface-hover px-3 py-1.5 text-xs text-gray-300 hover:text-white disabled:opacity-50"
-        >
-          Health check
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function Metric({ label, value, tone = 'default' }: { label: string; value: number; tone?: 'default' | 'green' | 'blue' }) {
-  const toneClass = {
-    default: 'text-gray-100',
-    green: 'text-emerald-300',
-    blue: 'text-blue-300',
-  }[tone];
-  return (
-    <div className="rounded-xl border border-border bg-background/70 p-4">
-      <div className={cn('text-2xl font-bold', toneClass)}>{value}</div>
-      <div className="mt-1 text-xs text-gray-500">{label}</div>
-    </div>
-  );
-}
+function SectionHeading({ title, detail }: { title: string; detail: string }) { return <div><h3 className="text-sm font-semibold text-app-primary">{title}</h3><p className="mt-1 max-w-3xl text-[11px] leading-relaxed text-gray-500">{detail}</p></div>; }
+function Field({ label, children }: { label: string; children: React.ReactNode }) { return <label className="block"><span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wide text-gray-500">{label}</span>{children}</label>; }
+function Metric({ label, value, tone = 'default' }: { label: string; value: number; tone?: 'default' | 'green' | 'blue' }) { return <div className="rounded-xl border border-border bg-background/70 p-4"><div className={cn('text-2xl font-bold tabular-nums', tone === 'green' ? 'text-emerald-300' : tone === 'blue' ? 'text-blue-300' : 'text-app-primary')}>{value}</div><div className="mt-1 text-xs text-gray-500">{label}</div></div>; }
+function LoadingState() { return <div className="space-y-4" aria-label="Loading model configuration"><div className="h-48 animate-pulse rounded-2xl border border-border bg-surface" /><div className="h-72 animate-pulse rounded-2xl border border-border bg-surface" /></div>; }
+function EmptyState({ title, detail }: { title: string; detail: string }) { return <div className="mt-5 rounded-xl border border-dashed border-border bg-background/40 px-4 py-10 text-center"><div className="text-sm font-medium text-gray-400">{title}</div><p className="mx-auto mt-1 max-w-md text-[11px] leading-relaxed text-gray-600">{detail}</p></div>; }
+function WebModeNotice() { return <div className="mt-5 rounded-xl border border-yellow-500/20 bg-yellow-500/5 px-4 py-3 text-[11px] leading-relaxed text-yellow-200">Web mode does not write local provider credentials. Configure provider environment variables, then use the account and discovered-model controls below.</div>; }
+function CopilotAccount({ settings, accountLogin, busy, onAccountChange, onLogin, onSwitch, onRefresh }: { settings: ModelProviderSettings; accountLogin: string; busy: string | null; onAccountChange: (value: string) => void; onLogin: () => void; onSwitch: () => void; onRefresh: () => void }) { const authenticated = settings.account?.authenticated; return <div className="mt-5 rounded-xl border border-border bg-background/60 p-4"><div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between"><div className="min-w-0"><div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wide text-gray-500"><span className={cn('h-2 w-2 rounded-full', authenticated ? 'bg-emerald-400' : 'bg-yellow-400')} /> GitHub Copilot</div><div className="mt-2 truncate text-base font-semibold text-app-primary">{authenticated ? `@${settings.account?.login || 'Signed in'}` : 'Not signed in'}</div><p className="mt-1 text-[11px] text-gray-500">{authenticated ? `${settings.account?.host || 'github.com'} · ${settings.account?.authType || 'local credential'}` : 'Sign in to discover the models available to this account.'}</p></div><div className="flex flex-wrap items-center gap-2">{settings.accounts?.length ? <select value={accountLogin} onChange={event => onAccountChange(event.target.value)} disabled={busy !== null} aria-label="GitHub Copilot account" className="rounded-lg border border-border bg-surface px-3 py-2 text-xs outline-none focus:border-accent">{settings.accounts.map(account => <option key={`${account.host}:${account.login}`} value={account.login}>{account.login}{account.active ? ' · active' : ''}</option>)}</select> : null}{authenticated && <button type="button" onClick={onSwitch} disabled={!accountLogin || accountLogin === settings.account?.login || busy !== null} className="rounded-lg bg-accent px-3 py-2 text-xs font-semibold text-white transition hover:bg-accent-light disabled:opacity-40">{busy === 'refresh' ? 'Switching…' : 'Switch account'}</button>}<button type="button" onClick={onLogin} disabled={busy !== null} className="rounded-lg border border-border bg-surface-hover px-3 py-2 text-xs text-gray-300 transition hover:text-app-primary disabled:opacity-40">{busy === 'login' ? 'Waiting for approval…' : authenticated ? 'Sign in to another account' : 'Sign in to GitHub Copilot'}</button><button type="button" onClick={onRefresh} disabled={busy !== null} className="rounded-lg border border-border px-3 py-2 text-xs text-gray-400 transition hover:text-app-primary disabled:opacity-40">{busy === 'refresh' ? 'Refreshing…' : 'Refresh account'}</button></div></div><div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-gray-500"><span>{settings.accounts?.length || 0} local GitHub account{settings.accounts?.length === 1 ? '' : 's'}</span><span>{settings.models.filter(model => model.source === 'provider' && model.id !== 'auto').length} discovered account models</span>{settings.error && <span className="text-yellow-300">{settings.error}</span>}</div></div>; }
+function ProviderPicker({ settings, value, busy, onChange, onSave }: { settings: ModelProviderSettings; value: string; busy: string | null; onChange: (value: string) => void; onSave: () => void }) { const selected = settings.models.find(model => model.id === value); return <div className="mt-5"><div className="flex flex-col gap-3 lg:flex-row lg:items-end"><Field label="Available model"><select value={value} onChange={event => onChange(event.target.value)} disabled={!settings.models.length || busy !== null} className={inputClass}>{!settings.models.length && <option value="">No models available</option>}{settings.models.map(model => <option key={model.id} value={model.id} disabled={!model.selectable}>{model.name} · {model.id}{model.source === 'provider' ? ' · account' : ' · registry fallback'}{model.id === 'auto' ? ' · dynamic' : ''}{!model.selectable ? ' · unavailable' : ''}</option>)}</select></Field><button type="button" onClick={onSave} disabled={!value || !selected?.selectable || busy !== null} className="rounded-lg bg-accent px-4 py-2 text-xs font-semibold text-white transition hover:bg-accent-light disabled:opacity-40">{busy === 'model' ? 'Applying…' : 'Apply model'}</button></div>{selected && <div className="mt-3 flex flex-wrap gap-2 text-[10px] text-gray-500"><span className="rounded-md bg-background px-2 py-1">{selected.source === 'provider' ? 'Account model' : 'Registry fallback'}</span><span className="rounded-md bg-background px-2 py-1">{selected.supportedReasoningEfforts?.length ? `Reasoning: ${selected.supportedReasoningEfforts.join(' / ')}` : 'Reasoning options unavailable'}</span>{selected.maxTokens && <span className="rounded-md bg-background px-2 py-1">Context: {selected.maxTokens.toLocaleString()}</span>}{selected.policyTerms && <span className="rounded-md bg-background px-2 py-1">Policy: {selected.policyState || 'unconfigured'}</span>}</div>}{settings.error && <div className="mt-3 rounded-lg border border-yellow-500/20 bg-yellow-500/5 px-3 py-2 text-[11px] text-yellow-200">Unable to refresh provider models: {settings.error}</div>}</div>; }
+function ModelCard({ model, saving, onUpdate, onHealthCheck, onDelete }: { model: ModelDefinition; saving: boolean; onUpdate: (updates: { enabled?: boolean; priority?: number; fallbackGroup?: string }) => void; onHealthCheck: () => void; onDelete?: () => void }) { const [priority, setPriority] = useState(String(model.priority)); const [fallbackGroup, setFallbackGroup] = useState(model.fallbackGroup); useEffect(() => { setPriority(String(model.priority)); setFallbackGroup(model.fallbackGroup); }, [model.priority, model.fallbackGroup]); return <article className={cn('rounded-xl border bg-background/60 p-4 transition hover:border-accent/30', model.enabled ? 'border-border' : 'border-red-500/20 opacity-70')}><div className="flex items-start justify-between gap-3"><div className="min-w-0"><h4 className="truncate text-sm font-semibold text-app-primary">{model.displayName}</h4><div className="mt-1 truncate text-[10px] text-gray-500">{model.provider} · {model.id} · {model.tier}</div></div><span className={cn('shrink-0 rounded-md px-2 py-1 text-[10px] font-semibold', healthClass[model.healthStatus])}>{model.healthStatus}</span></div>{model.description && <p className="mt-3 min-h-8 text-[11px] leading-relaxed text-gray-500">{model.description}</p>}<div className="mt-3 flex flex-wrap gap-1.5">{model.capabilityTags.map(tag => <span key={tag} className="rounded bg-surface px-1.5 py-1 text-[10px] text-gray-500">{tag}</span>)}</div><div className="mt-4 grid grid-cols-[1fr_92px] gap-2"><Field label="Fallback group"><input value={fallbackGroup} onChange={event => setFallbackGroup(event.target.value)} onBlur={() => fallbackGroup !== model.fallbackGroup && onUpdate({ fallbackGroup })} className={inputClass} /></Field><Field label="Priority"><input type="number" value={priority} onChange={event => setPriority(event.target.value)} onBlur={() => Number(priority) !== model.priority && onUpdate({ priority: Number(priority) })} className={inputClass} /></Field></div><div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3"><label className="flex cursor-pointer items-center gap-2 text-xs text-gray-400"><input type="checkbox" checked={model.enabled} disabled={saving} onChange={event => onUpdate({ enabled: event.target.checked })} /> Enabled</label><div className="flex items-center gap-2"><button type="button" onClick={onHealthCheck} disabled={saving} className="text-[11px] text-gray-400 transition hover:text-app-primary disabled:opacity-40">{saving ? 'Saving…' : 'Health check'}</button>{onDelete && <button type="button" onClick={onDelete} disabled={saving} className="text-[11px] text-red-300 transition hover:text-red-200 disabled:opacity-40">Delete</button>}</div></div></article>; }
+function RouteCard({ route, draft, enabledModels, saving, onChange, onSave }: { route: ModelRoute; draft: Pick<ModelRoute, 'defaultModelId' | 'fallbackGroup'>; enabledModels: ModelDefinition[]; saving: boolean; onChange: (updates: Partial<Pick<ModelRoute, 'defaultModelId' | 'fallbackGroup'>>) => void; onSave: () => void }) { return <article className="rounded-xl border border-border bg-background/60 p-4"><div className="flex items-start justify-between gap-3"><div><h4 className="text-sm font-semibold text-app-primary">{routeLabels[route.routeKey] || route.routeKey}</h4><p className="mt-1 text-[10px] text-gray-600">{route.routeKey}</p></div><button type="button" onClick={onSave} disabled={saving} className="rounded-lg bg-accent/10 px-2.5 py-1.5 text-[10px] font-semibold text-accent-light transition hover:bg-accent/20 disabled:opacity-40">{saving ? 'Saving…' : 'Save route'}</button></div><div className="mt-4 grid gap-3 sm:grid-cols-2"><Field label="Default model"><select value={draft.defaultModelId || ''} onChange={event => onChange({ defaultModelId: event.target.value || undefined })} className={inputClass}><option value="">No explicit model</option>{enabledModels.map(model => <option key={model.id} value={model.id}>{model.displayName} · {model.id}</option>)}</select></Field><Field label="Fallback group"><input value={draft.fallbackGroup || ''} onChange={event => onChange({ fallbackGroup: event.target.value })} placeholder="balanced" className={inputClass} /></Field></div></article>; }
+function HealthRow({ model, saving, onCheck }: { model: ModelDefinition; saving: boolean; onCheck: () => void }) { return <div className="flex flex-col gap-3 rounded-xl border border-border bg-background/60 px-4 py-3 sm:flex-row sm:items-center"><div className="min-w-0 flex-1"><div className="truncate text-xs font-semibold text-app-primary">{model.displayName}</div><div className="mt-1 truncate text-[10px] text-gray-500">{model.provider} · {model.id}{model.lastCheckedAt ? ` · checked ${new Date(model.lastCheckedAt).toLocaleString()}` : ' · not checked yet'}</div></div><span className={cn('w-fit rounded-md px-2 py-1 text-[10px] font-semibold', healthClass[model.healthStatus])}>{model.healthStatus}</span><button type="button" onClick={onCheck} disabled={saving} className="rounded-lg border border-border px-3 py-1.5 text-[11px] text-gray-400 transition hover:text-app-primary disabled:opacity-40">{saving ? 'Checking…' : 'Run check'}</button></div>; }

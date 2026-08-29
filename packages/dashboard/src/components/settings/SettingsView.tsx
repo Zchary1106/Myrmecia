@@ -5,7 +5,6 @@ import { clearApiAuthToken, getApiAuthToken, setApiAuthToken } from '../../lib/a
 import { cn } from '../../lib/utils';
 import { operatorRoleLabel } from '../../lib/permissions';
 import type { WorkspacePreferenceRestoreResult, WorkspaceRestorePlan, WorkspaceSnapshotPreview } from '@myrmecia/shared';
-import { ModelSettings } from './ModelSettings';
 
 function CheckRow({ label, ok, detail }: { label: string; ok: boolean; detail: string }) {
   return (
@@ -150,7 +149,7 @@ function WeChatIntegrationSettings() {
 }
 
 export function SettingsView() {
-  const { health, diagnostics, loadHealth, loadDiagnostics } = useStore();
+  const { health, diagnostics, loadHealth, loadDiagnostics, setActiveView } = useStore();
   const [token, setToken] = useState('');
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -309,7 +308,7 @@ export function SettingsView() {
   };
 
   return (
-    <div className="app-page-shell p-6 space-y-6">
+    <div data-configuration-page data-configuration-context="Runtime and workspace settings" className="app-page-shell p-6 space-y-6">
       <div className="page-heading-row">
         <h2 className="text-xl font-bold">Settings</h2>
         <p className="text-[12px] text-gray-500 mt-0.5">
@@ -317,9 +316,10 @@ export function SettingsView() {
         </p>
       </div>
 
-      <section className="bg-surface border border-border rounded-xl p-5 space-y-4">
+      <section aria-labelledby="general-settings" className="bg-surface border border-border rounded-xl p-5 space-y-4">
         <div>
-          <h3 className="text-sm font-semibold">API token</h3>
+          <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-accent-light">General</div>
+          <h3 id="general-settings" className="mt-2 text-sm font-semibold">API token</h3>
           <p className="text-[11px] text-gray-500 mt-1">
             Used for HTTP Authorization and WebSocket authentication when the server has API_AUTH_TOKEN enabled.
           </p>
@@ -353,11 +353,31 @@ export function SettingsView() {
         )}
       </section>
 
-      <ModelSettings />
+      <section className="rounded-xl border border-border bg-surface p-5">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-accent-light">Model configuration</div>
+            <h3 className="mt-2 text-sm font-semibold">Providers, models and routing</h3>
+            <p className="mt-1 max-w-2xl text-[11px] leading-relaxed text-gray-500">Provider credentials, Copilot sign-in, discovered models, registry health and advanced role routing now live on the dedicated Models page.</p>
+          </div>
+          <button type="button" onClick={() => setActiveView('models')} className="shrink-0 rounded-lg bg-accent px-3 py-2 text-xs font-semibold text-white transition hover:bg-accent-light">Open Models</button>
+        </div>
+      </section>
 
-      <WeChatIntegrationSettings />
+      <section aria-labelledby="integrations-settings" className="space-y-3">
+        <div>
+          <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-accent-light">Integrations</div>
+          <h3 id="integrations-settings" className="mt-1 text-sm font-semibold">Connected services</h3>
+        </div>
+        <WeChatIntegrationSettings />
+      </section>
 
-      <section className="grid lg:grid-cols-2 gap-4">
+      <section aria-labelledby="runtime-settings" className="space-y-3">
+        <div>
+          <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-accent-light">Runtime</div>
+          <h3 id="runtime-settings" className="mt-1 text-sm font-semibold">Deployment and diagnostics</h3>
+        </div>
+      <div className="grid lg:grid-cols-2 gap-4">
         <div className="bg-surface border border-border rounded-xl p-5">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-sm font-semibold">Deployment checks</h3>
@@ -402,12 +422,14 @@ export function SettingsView() {
             <div className="text-xs text-gray-600 py-8 text-center">Run a connection check to load diagnostics.</div>
           )}
         </div>
+      </div>
       </section>
 
-      <section className="bg-surface border border-border rounded-xl p-5 space-y-4">
+      <section aria-labelledby="recovery-settings" className="bg-surface border border-border rounded-xl p-5 space-y-4">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h3 className="text-sm font-semibold">Workspace snapshot</h3>
+            <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-accent-light">Data & recovery</div>
+            <h3 id="recovery-settings" className="mt-2 text-sm font-semibold">Workspace snapshot</h3>
             <p className="text-[11px] text-gray-500 mt-1">
               Export a sanitized operator workspace for handoff, demos, or recovery drills. Import currently previews only and does not write server state.
             </p>
