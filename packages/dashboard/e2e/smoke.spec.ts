@@ -64,8 +64,10 @@ test('workflow catalog separates browsing, runs, and the advanced builder', asyn
 
   await page.getByRole('button', { name: 'Builder', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Visual Template Builder' })).toBeVisible();
-  await page.getByRole('button', { name: /Active runs/ }).click();
-  await expect(page.getByRole('heading', { name: 'Active workflow runs' })).toBeVisible();
+  const activeRuns = page.getByRole('button', { name: /Active workflow runs|Active runs/i });
+  await expect(activeRuns).toBeVisible();
+  await activeRuns.click();
+  await expect(page.getByRole('button', { name: /Active runs/ })).toBeVisible();
 });
 
 test('agent catalog keeps creation advanced and preserves the workspace entry', async ({ page }) => {
@@ -91,9 +93,16 @@ test('skill catalog separates registry, version editor, assignments, and marketp
   await expect(page.getByRole('heading', { name: 'Agent assignments' })).toBeVisible();
 });
 
-test('team composer exposes canvas, contract inspector and versions', async ({ page }) => {
+async function openCanvasFromTeams(page: import('@playwright/test').Page) {
   await page.goto('/');
-  await page.getByTitle('Canvas').click();
+  await page.getByTitle('Teams').click();
+  const openCanvas = page.getByRole('button', { name: /Canvas/ });
+  await expect(openCanvas).toBeVisible();
+  await openCanvas.click();
+}
+
+test('team composer exposes canvas, contract inspector and versions', async ({ page }) => {
+  await openCanvasFromTeams(page);
   await expect(page.getByTestId('team-composer')).toBeVisible();
   await expect(page.getByText('Building blocks')).toBeVisible();
   await expect(page.getByText('Compose your agent team')).toBeVisible();
@@ -104,8 +113,7 @@ test('team composer exposes canvas, contract inspector and versions', async ({ p
 
 test('team composer remains usable when the window is resized', async ({ page }) => {
   await page.setViewportSize({ width: 820, height: 700 });
-  await page.goto('/');
-  await page.getByTitle('Canvas').click();
+  await openCanvasFromTeams(page);
 
   await expect(page.getByTestId('team-composer')).toBeVisible();
   await expect(page.getByText('Building blocks')).toBeVisible();
@@ -118,6 +126,22 @@ test('team composer remains usable when the window is resized', async ({ page })
   await expect(page.getByText('Inspector', { exact: true })).toBeVisible();
 });
 
+test('configuration entry points expose Models, Tools, Costs, and Settings', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Models', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Models & providers', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Tools', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Tools', exact: true })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Registry' })).toBeVisible();
+  await page.getByRole('tab', { name: 'MCP' }).click();
+  await expect(page.getByRole('heading', { name: 'MCP connections' })).toBeVisible();
+  await page.getByRole('button', { name: 'Costs', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Costs', exact: true })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Budgets' })).toBeVisible();
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible();
+});
+
 test('WeChat article remains available as a governed workflow preset', async ({ page }) => {
   await page.goto('/');
   await page.getByTitle('Workflows').click();
@@ -125,4 +149,33 @@ test('WeChat article remains available as a governed workflow preset', async ({ 
   await page.getByRole('button', { name: /WeChat Article/ }).click();
   await expect(page.getByRole('heading', { name: 'WeChat Article', level: 2 })).toBeVisible();
   await expect(page.getByText('Human publish confirmation retained')).toBeVisible();
+});
+
+test('memory presents workspace knowledge before technical graph controls', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Memory' }).click();
+  await expect(page.getByRole('heading', { name: 'Memory', level: 1 })).toBeVisible();
+  await expect(page.getByText('Total knowledge')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Knowledge library' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Knowledge graph' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Workspace knowledge map' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Add knowledge' })).toBeVisible();
+});
+
+test('configuration pages expose their primary workspaces', async ({ page }) => {
+  await page.goto('/');
+  for (const pageName of ['Models', 'Tools', 'Costs', 'Settings']) {
+    await page.getByRole('button', { name: pageName, exact: true }).click();
+    await expect(page.locator('[data-configuration-page]')).toBeVisible();
+  }
+});
+
+test('cost overview renders visual usage charts', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Costs', exact: true }).click();
+  await expect(page.getByRole('img', { name: 'Token and cost trend chart' })).toBeVisible();
+  await expect(page.getByRole('img', { name: 'Input and output token mix' })).toBeVisible();
+  await expect(page.getByText('Usage by model')).toBeVisible();
+  await expect(page.getByText('Recent Task Usage')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Overview' })).toHaveCount(0);
 });

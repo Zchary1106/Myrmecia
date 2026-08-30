@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { MemoryGraphCanvas } from './MemoryGraphCanvas';
 
 type Relation = 'supports' | 'derived_from' | 'contradicts' | 'related_to' | 'part_of' | 'produced_by';
 type GraphNode = { id: string; type: string; content: string; summary?: string; importance: number };
@@ -30,8 +31,15 @@ export function KnowledgeGraphPanel() {
       ]);
       if (!graphResponse.ok || !candidateResponse.ok) throw new Error('Unable to load knowledge graph');
       const next = await graphResponse.json() as Graph;
+      const nodes = [...next.nodes]
+        .sort((left, right) => right.importance - left.importance)
+        .slice(0, 48);
+      const visibleIds = new Set(nodes.map(node => node.id));
       setCandidates(await candidateResponse.json() as Candidate[]);
-      setGraph(next);
+      setGraph({
+        nodes,
+        edges: next.edges.filter(edge => visibleIds.has(edge.sourceId) && visibleIds.has(edge.targetId)),
+      });
       setSourceId(current => current || next.nodes[0]?.id || '');
       setTargetId(current => current || next.nodes[1]?.id || next.nodes[0]?.id || '');
       setError('');
@@ -142,7 +150,7 @@ export function KnowledgeGraphPanel() {
     <section className="mt-5 rounded-xl border border-border bg-surface p-4">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <div className="text-xs font-semibold">Knowledge topology</div>
+          <div className="text-xs font-semibold">Focused knowledge topology · {graph.nodes.length} nodes</div>
           <div className="mt-0.5 text-[10px] text-gray-500">{graph.nodes.length} memories · {graph.edges.length} confirmed relationships</div>
         </div>
         <button type="button" onClick={() => void refresh()} disabled={busy} className="rounded-md border border-border px-2.5 py-1.5 text-[10px] text-gray-400 hover:bg-surface-hover disabled:opacity-40">Refresh</button>
@@ -173,24 +181,7 @@ export function KnowledgeGraphPanel() {
       {graph.nodes.length > 0 && (
         <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1fr)_190px]">
           <div className="min-w-0 overflow-hidden rounded-lg border border-border bg-background">
-            <svg viewBox="0 0 300 300" className="h-64 w-full" role="img" aria-label="Knowledge graph">
-              {graph.edges.map(edge => {
-                const source = positions.get(edge.sourceId);
-                const target = positions.get(edge.targetId);
-                if (!source || !target) return null;
-                return <line key={edge.sourceId + edge.targetId + edge.relation} x1={source.x} y1={source.y} x2={target.x} y2={target.y} stroke="currentColor" className="text-border" strokeWidth={Math.max(1, edge.weight * 2)} />;
-              })}
-              {graph.nodes.map(node => {
-                const point = positions.get(node.id)!;
-                const active = node.id === selectedId;
-                return (
-                  <g key={node.id} role="button" tabIndex={0} aria-label={`Memory: ${node.content}`} onClick={() => setSelectedId(node.id)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') setSelectedId(node.id); }} className="cursor-pointer outline-none focus-visible:stroke-accent-light">
-                    <circle cx={point.x} cy={point.y} r={active ? 22 : 18} className={active ? 'fill-accent stroke-accent-light' : 'fill-surface-hover stroke-border'} strokeWidth="1.5" />
-                    <text x={point.x} y={point.y + 3} textAnchor="middle" className={active ? 'fill-background text-[8px]' : 'fill-gray-300 text-[8px]'}>{node.type.slice(0, 3).toUpperCase()}</text>
-                  </g>
-                );
-              })}
-            </svg>
+<MemoryGraphCanvas nodes={graph.nodes} edges={graph.edges} selectedId={selectedId} onSelect={setSelectedId} />
           </div>
           <div className="rounded-lg border border-border bg-background p-3 text-[10px]">
             <div className="font-semibold text-gray-300">Selected memory</div>

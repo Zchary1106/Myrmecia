@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useMemo, useState, type ComponentType } from 'react';
 import {
-  Activity, Archive, Bot, Boxes, ChevronLeft, ChevronRight, CircleDollarSign, Command, FolderKanban,
-  Gauge, GitBranch, Inbox, LayoutDashboard, ListTodo, Moon, Network, PackageOpen, Puzzle,
+  Activity, Archive, Bot, Boxes, ChevronLeft, ChevronRight, CircleDollarSign, Command,
+  Gauge, GitBranch, Inbox, LayoutDashboard, ListTodo, Moon, PackageOpen, Puzzle,
   Settings, ShieldCheck, Sun, TerminalSquare, Users, Wrench, Workflow,
 } from 'lucide-react';
 import { useStore } from '../../stores/store';
@@ -50,7 +50,6 @@ const moreNav: { label: string; views: NavItem[] }[] = [
     { id: 'memory', label: 'Memory', icon: Archive },
   ] },
   { label: 'Operations', views: [
-    { id: 'orchestrate', label: 'Canvas', icon: Network }, { id: 'board', label: 'Board', icon: FolderKanban },
     { id: 'inbox', label: 'Inbox', icon: Inbox, badge: 'inbox' }, { id: 'console', label: 'Console', icon: TerminalSquare },
     { id: 'timeline', label: 'Timeline', icon: Activity }, { id: 'observability', label: 'Observe', icon: Gauge },
     { id: 'audit', label: 'Audit', icon: ShieldCheck },
@@ -92,7 +91,7 @@ function GlobalNavRail({ collapsed, onToggle }: { collapsed: boolean; onToggle: 
   const canControl = runtimeControlsAllowed(diagnostics);
 
   return (
-    <aside data-testid="global-nav-rail" className={cn('flex h-full flex-none flex-col border-r border-border bg-surface/75 transition-[width] duration-200', collapsed ? 'w-[68px]' : 'w-[232px]')}>
+    <aside data-app-sidebar data-testid="global-nav-rail" className={cn('flex h-full flex-none flex-col border-r border-border bg-surface/75 transition-[width] duration-200', collapsed ? 'w-[68px]' : 'w-[232px]')}>
       <div className={cn('flex h-[68px] items-center border-b border-border px-4', collapsed ? 'justify-center' : 'justify-between')}>
         <button type="button" onClick={() => setActiveView('command')} className="app-focus flex items-center gap-2.5" title="Myrmecia Home">
           <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-accent text-white shadow-lg shadow-accent/20"><GitBranch size={17} strokeWidth={2.2} /></span>
