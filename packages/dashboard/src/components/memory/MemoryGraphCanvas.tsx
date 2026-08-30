@@ -171,7 +171,7 @@ export function MemoryGraphCanvas({ nodes, edges, selectedId, onSelect }: Props)
               const meta = communityMeta[position.community];
               const selected = selectedId === node.id;
               const match = matches(node);
-              return <g key={node.id} role="button" tabIndex={0} aria-label={`Knowledge: ${shortLabel(node)}`} onPointerDown={event => startNodeDrag(event, node.id)} onClick={() => onSelect(node.id)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') onSelect(node.id); }} className="cursor-move outline-none" opacity={match ? 1 : 0.16}>
+              return <g key={node.id} role="button" tabIndex={0} aria-label={`Memory: ${node.content}`} onPointerDown={event => startNodeDrag(event, node.id)} onClick={() => onSelect(node.id)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') onSelect(node.id); }} className="cursor-move outline-none" opacity={match ? 1 : 0.16}>
                 {selected && <circle cx={position.x} cy={position.y} r={position.radius + 8} fill="none" stroke={meta.node} strokeWidth="2" strokeOpacity="0.35" />}
                 <circle cx={position.x} cy={position.y} r={position.radius} fill={meta.node} fillOpacity={selected ? 1 : 0.82} stroke="#fff" strokeWidth={selected ? 3 : 2} filter="url(#node-shadow)" />
                 {(selected || node.importance >= 0.55 || nodes.length < 18) && <text x={position.x} y={position.y + position.radius + 15} textAnchor="middle" fill="#334155" fontSize={selected ? 12 : 10} fontWeight={selected ? 650 : 500} paintOrder="stroke" stroke="#fff" strokeWidth="4" strokeLinejoin="round">{shortLabel(node)}</text>}

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { MemoryGraphCanvas } from './MemoryGraphCanvas';
+import { RelationshipSuggestions } from './RelationshipSuggestions';
 
 type Relation = 'supports' | 'derived_from' | 'contradicts' | 'related_to' | 'part_of' | 'produced_by';
 type GraphNode = { id: string; type: string; content: string; summary?: string; importance: number };
@@ -150,7 +151,7 @@ export function KnowledgeGraphPanel() {
     <section className="mt-5 rounded-xl border border-border bg-surface p-4">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <div className="text-xs font-semibold">Focused knowledge topology · {graph.nodes.length} nodes</div>
+          <div className="text-xs font-semibold">Knowledge topology · {graph.nodes.length} focused nodes</div>
           <div className="mt-0.5 text-[10px] text-gray-500">{graph.nodes.length} memories · {graph.edges.length} confirmed relationships</div>
         </div>
         <button type="button" onClick={() => void refresh()} disabled={busy} className="rounded-md border border-border px-2.5 py-1.5 text-[10px] text-gray-400 hover:bg-surface-hover disabled:opacity-40">Refresh</button>
@@ -177,6 +178,8 @@ export function KnowledgeGraphPanel() {
           </div>
         </div>
       )}
+      <RelationshipSuggestions onChanged={() => void refresh()} />
+
       {!busy && graph.nodes.length === 0 && <div className="mt-3 rounded-lg border border-dashed border-border px-3 py-5 text-center text-xs text-gray-500">Add memories to begin a knowledge graph.</div>}
       {graph.nodes.length > 0 && (
         <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1fr)_190px]">

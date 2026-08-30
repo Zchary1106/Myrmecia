@@ -7,6 +7,7 @@ import {
   type MemoryRelation,
   type MemoryType,
 } from './types.js';
+import { suggestMemoryRelationships, type RelationshipSuggestion } from './relationship-suggester.js';
 
 export interface KnowledgeGraphListOptions {
   workspace?: string;
@@ -20,6 +21,10 @@ export interface CreateKnowledgeEdgeInput {
   relation: MemoryRelation;
   weight?: number;
   workspace?: string;
+}
+
+export interface KnowledgeGraphSuggestionOptions extends KnowledgeGraphListOptions {
+  suggestionLimit?: number;
 }
 
 function asEdge(row: Record<string, unknown>): MemoryEdge {
@@ -74,6 +79,11 @@ export class KnowledgeGraphService {
       .filter(row => MEMORY_RELATIONS.includes(String(row.relation) as MemoryRelation))
       .map(asEdge);
     return { nodes: nodes as MemoryGraph['nodes'], edges };
+  }
+
+  suggest(options: KnowledgeGraphSuggestionOptions = {}): RelationshipSuggestion[] {
+    const graph = this.list({ ...options, limit: Math.min(Math.max(options.limit || 160, 1), 240) });
+    return suggestMemoryRelationships(graph.nodes, graph.edges, options.suggestionLimit);
   }
 
   create(input: CreateKnowledgeEdgeInput): MemoryEdge {

@@ -53,21 +53,14 @@ test('artifact workbench is accessible', async ({ page }) => {
   await expect(page.getByText('No artifacts yet')).toBeVisible();
 });
 
-test('workflow catalog separates browsing, runs, and the advanced builder', async ({ page }) => {
+test('workflow catalog keeps visual canvas as an advanced entry', async ({ page }) => {
   await page.goto('/');
-  await page.getByTitle('Workflows').click();
-
-  await expect(page.getByRole('heading', { name: 'Workflows', exact: true })).toBeVisible();
-  await expect(page.getByRole('region', { name: 'Workflow catalog' })).toBeVisible();
-  await expect(page.getByPlaceholder('Search workflows or stages…')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Create Workflow' })).toBeVisible();
-
-  await page.getByRole('button', { name: 'Builder', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Visual Template Builder' })).toBeVisible();
-  const activeRuns = page.getByRole('button', { name: /Active workflow runs|Active runs/i });
-  await expect(activeRuns).toBeVisible();
-  await activeRuns.click();
-  await expect(page.getByRole('button', { name: /Active runs/ })).toBeVisible();
+  await page.getByRole('button', { name: 'Workflows' }).click();
+  await expect(page.getByText('Visual workflow canvas')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Open visual canvas' })).toBeVisible();
+  await page.getByRole('button', { name: 'Open visual canvas' }).click();
+  await expect(page.getByTestId('team-composer')).toBeVisible();
+  await expect(page.getByText('Building blocks')).toBeVisible();
 });
 
 test('agent catalog keeps creation advanced and preserves the workspace entry', async ({ page }) => {
@@ -137,7 +130,7 @@ test('configuration entry points expose Models, Tools, Costs, and Settings', asy
   await expect(page.getByRole('heading', { name: 'MCP connections' })).toBeVisible();
   await page.getByRole('button', { name: 'Costs', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Costs', exact: true })).toBeVisible();
-  await expect(page.getByRole('tab', { name: 'Budgets' })).toBeVisible();
+  await expect(page.getByRole('img', { name: 'Token and cost trend chart' })).toBeVisible();
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible();
 });
