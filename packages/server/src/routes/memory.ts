@@ -58,6 +58,28 @@ export function createMemoryRoutes(): Router {
     res.json(getKnowledgeGraphService().list({ workspace: workspaceId, types, limit }));
   });
 
+  // Suggestions are computed from explainable workspace evidence. They are
+  // intentionally non-persistent until an operator confirms one.
+  router.get('/graph/suggestions', (req, res) => {
+    const workspaceId = (req as any).tenantContext?.workspaceId || undefined;
+    const limit = req.query.limit ? Number(req.query.limit) : 20;
+    res.json(getKnowledgeGraphService().suggest({ workspace: workspaceId, suggestionLimit: limit }));
+  });
+
+  router.post('/graph/suggestions/confirm', (req, res) => {
+    const { sourceId, targetId, relation, weight } = req.body || {};
+    if (!sourceId || !targetId || !MEMORY_RELATIONS.includes(relation as MemoryRelation)) {
+      return res.status(400).json({ error: { message: 'sourceId, targetId and a supported relation are required' } });
+    }
+    try {
+      const workspaceId = (req as any).tenantContext?.workspaceId || undefined;
+      const edge = getKnowledgeGraphService().create({ sourceId, targetId, relation, weight, workspace: workspaceId });
+      return res.status(201).json(edge);
+    } catch (error) {
+      return res.status(400).json({ error: { message: error instanceof Error ? error.message : 'Unable to confirm memory relationship' } });
+    }
+  });
+
   router.post('/graph/edges', (req, res) => {
     const { sourceId, targetId, relation, weight } = req.body || {};
     if (!sourceId || !targetId || !MEMORY_RELATIONS.includes(relation as MemoryRelation)) {
