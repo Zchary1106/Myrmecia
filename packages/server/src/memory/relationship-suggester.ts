@@ -7,7 +7,6 @@ export interface RelationshipNode {
   importance: number;
   metadata?: Record<string, unknown>;
 }
-
 export interface RelationshipSuggestion {
   sourceId: string;
   targetId: string;
@@ -107,4 +106,3 @@ export function suggestMemoryRelationships(
     .sort((left, right) => right.confidence - left.confidence || left.sourceId.localeCompare(right.sourceId))
     .slice(0, Math.min(Math.max(limit, 1), MAX_CANDIDATES));
 }
-
