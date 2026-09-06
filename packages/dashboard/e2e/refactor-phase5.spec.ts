@@ -1,41 +1,30 @@
-import { test, expect } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 
-/**
- * Phase 4/5 main-path coverage: Team v2 preflight, legacy alias grouping,
- * and Team-driven Content Studio switching (T20).
- */
-
-test('v2 content team shows Contract v2 badge and preflight panel', async ({ page }) => {
+test('core content team shows a clear Team Contract entry', async ({ page }) => {
   await page.goto('/');
-  await page.getByTitle('Teams').click();
-  await page.getByText('Xiaohongshu Team', { exact: true }).click();
+  await page.getByRole('button', { name: 'Teams', exact: true }).click();
 
-  await expect(page.getByTestId('contract-v2-badge')).toBeVisible();
-  await expect(page.getByTestId('team-preflight')).toBeVisible();
-  await expect(page.getByText('v2 role slots', { exact: false })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Teams', level: 1 })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Social Three-Lane Team/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /^Workflow presets/ })).toBeVisible();
 });
 
-test('agent settings groups legacy aliases in a collapsed section', async ({ page }) => {
+test('Agents keeps custom creation secondary to the catalog', async ({ page }) => {
   await page.goto('/');
-  await page.getByTitle('Agents').click();
-  await page.getByTitle('Manage Agents').click();
+  await page.getByRole('button', { name: 'Agents', exact: true }).click();
 
-  const legacySection = page.getByTestId('legacy-aliases');
-  await expect(legacySection).toBeVisible();
-  await legacySection.getByText('Legacy aliases').click();
-  await expect(legacySection.getByText('@wechat-writer', { exact: true })).toBeVisible();
-  await expect(legacySection.getByText('content-creator', { exact: true }).first()).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Agents', level: 1 })).toBeVisible();
+  await expect(page.getByRole('button', { name: /All Agents/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Create Custom Agent' })).toBeHidden();
+  await page.getByRole('button', { name: 'Create Agent' }).click();
+  await expect(page.getByRole('heading', { name: 'Create Custom Agent' })).toBeVisible();
 });
-
-test('content studio switches teams from the studio header', async ({ page }) => {
+test('content publishing remains a governed workflow preset', async ({ page }) => {
   await page.goto('/');
-  await page.getByTitle('Agents').click();
-  await page.getByRole('button', { name: /Content Studio/i }).click();
+  await page.getByRole('button', { name: 'Workflows', exact: true }).click();
+  await page.getByPlaceholder('Search workflows or stages…').fill('WeChat Article');
+  await page.getByRole('button', { name: /WeChat Article/ }).click();
 
-  await expect(page.getByTestId('content-studio')).toBeVisible();
-  await expect(page.getByTestId('content-studio-team')).toHaveValue('social-three-lanes');
-
-  await page.getByTestId('content-studio-team').selectOption('douyin');
-  await expect(page.getByRole('heading', { name: 'Douyin Script & Publish Studio' })).toBeVisible();
-  await expect(page.getByTestId('content-studio-team')).toHaveValue('douyin');
+  await expect(page.getByRole('heading', { name: 'WeChat Article', level: 2 })).toBeVisible();
+  await expect(page.getByText('Human publish confirmation retained')).toBeVisible();
 });

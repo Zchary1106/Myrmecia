@@ -129,7 +129,7 @@ function MainContent() {
 
   const content = (() => {
     switch (activeView) {
-    case 'command':
+case 'command':
       return <HomeView />;
     case 'console':
       return <InteractionConsolePage />;

@@ -12,7 +12,6 @@ function label(node: Node | undefined) {
   const text = (node?.summary || node?.content || 'Unknown memory').replace(/\s+/g, ' ').trim();
   return text.length > 42 ? `${text.slice(0, 42)}…` : text;
 }
-
 export function RelationshipSuggestions({ onChanged }: { onChanged: () => void }) {
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [nodes, setNodes] = useState<Node[]>([]);
@@ -76,4 +75,3 @@ export function RelationshipSuggestions({ onChanged }: { onChanged: () => void }
     </section>
   );
 }
-
