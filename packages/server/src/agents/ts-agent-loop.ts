@@ -584,6 +584,27 @@ export class TsAgentLoop {
       while (numTurns < maxTurns) {
         numTurns++;
 
+        const followUps = messageBus.drain(executionId);
+        if (followUps.length > 0) {
+          const followUpContext = followUps
+            .map(message => message.fromExecution
+              ? `[Agent context] ${message.content}`
+              : `[User follow-up] ${message.content}`)
+            .join('\n');
+          messages.push({
+            role: 'user',
+            content: `New instructions received while you were working:\n${followUpContext}`,
+          });
+          addTaskLog(task.id, 'info', `Applied ${followUps.length} follow-up instruction(s) before model turn ${numTurns}`, agent.id);
+          eventBus.emit('execution:progress', {
+            executionId,
+            taskId: task.id,
+            agentDefId: agent.id,
+            workspaceId: task.workspaceId,
+            progress: getProgressSnapshot(tracker, 'Applied follow-up instructions'),
+          });
+        }
+
         const responseReserve = remainingResponseTokens(inputTokens, outputTokens, limits);
         const promptBudget = Math.max(1, limits.maxExecutionTokens - responseReserve);
         const compaction = compactMessages(messages, promptBudget, { keepRecent: 6, triggerRatio: 0.5 });
@@ -625,8 +646,27 @@ export class TsAgentLoop {
         const completionOptions = {
           onToolCall: executeCopilotToolCall,
           signal: abortController.signal,
-          ...(process.env.AGENT_STREAMING === 'true'
-            ? { onDelta: (delta: string) => eventBus.emit('token:delta', { executionId, taskId: task.id, workspaceId: task.workspaceId, delta }) }
+          ...(process.env.AGENT_STREAMING !== 'false'
+            ? {
+                onDelta: (delta: string) => {
+                  const safeDelta = sanitizeAgentOutput(delta, {
+                    agentId: agent.id,
+                    taskId: task.id,
+                    workspaceId: task.workspaceId,
+                    executionId,
+                    purpose: 'streamed assistant output',
+                  });
+                  if (safeDelta) {
+                    eventBus.emit('token:delta', {
+                      executionId,
+                      taskId: task.id,
+                      agentId: agent.id,
+                      workspaceId: task.workspaceId,
+                      delta: safeDelta,
+                    });
+                  }
+                },
+              }
             : {}),
         };
         const completion = await getModelGateway().completeForModel(selectedModel, completionParams, completionOptions);

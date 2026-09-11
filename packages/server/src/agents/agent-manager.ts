@@ -2,12 +2,24 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { parse as parseYaml } from 'yaml';
 import { createAgent, listAgents, getAgent, updateAgent } from '../db/models/agent.js';
-import { getActiveExecutionCount } from '../db/models/execution.js';
+import { getActiveExecutionCount, reconcileTerminalTaskExecutions } from '../db/models/execution.js';
 import { agentRuntime } from './agent-runtime.js';
 import { domainAgentForRole } from './domain-registry.js';
 import { logger } from '../lib/logger.js';
 import type { AgentDefinition, Task } from '../types.js';
 import { normalizeAgentContract } from '../contracts/team-composer-contracts.js';
+
+export class AgentConcurrencyError extends Error {
+  readonly code = 'AGENT_CONCURRENCY_LIMIT';
+
+  constructor(
+    readonly agentId: string,
+    readonly maxConcurrent: number,
+  ) {
+    super(`Agent ${agentId} at max concurrency (${maxConcurrent})`);
+    this.name = 'AgentConcurrencyError';
+  }
+}
 
 export class AgentManager {
   private registryPath: string;
@@ -19,6 +31,13 @@ export class AgentManager {
   /** Load agents from registry.yaml into DB if not already present */
   async initializeFromRegistry() {
     try {
+      const reconciled = reconcileTerminalTaskExecutions();
+      if (reconciled.length > 0) {
+        logger.warn(
+          { executionIds: reconciled.map(execution => execution.id), count: reconciled.length },
+          'Reconciled terminal tasks with stale running executions',
+        );
+      }
       const content = readFileSync(this.registryPath, 'utf-8');
       const registry = parseYaml(content);
 
@@ -99,10 +118,17 @@ export class AgentManager {
     // Check concurrency
     const active = getActiveExecutionCount(agentId);
     const max = agent.config.maxConcurrent || 1;
-    if (active >= max) throw new Error(`Agent ${agentId} at max concurrency (${max})`);
+    if (active >= max) throw new AgentConcurrencyError(agentId, max);
 
     const result = await agentRuntime.execute(agent, task);
     return result.output;
+  }
+
+  /** Whether an Agent can accept another execution without exceeding its limit. */
+  hasCapacity(agentId: string): boolean {
+    const agent = getAgent(agentId);
+    if (!agent) return false;
+    return getActiveExecutionCount(agentId) < (agent.config.maxConcurrent || 1);
   }
 
   /** Find an available agent for a role (with capacity). When a domainId is given,

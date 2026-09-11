@@ -79,6 +79,14 @@ export class MasterAgent {
     const masterAgent = listAgents().find(a => a.role === 'orchestrator' || a.id === 'master');
     if (!masterAgent) throw new Error('Master agent not found');
 
+    // The parent is being planned by a real Master execution now. Mark it as
+    // such before asking the model so the conversation can identify who owns
+    // the next step instead of indefinitely displaying "Routing".
+    updateTask(parentTask.id, {
+      status: 'running',
+      assigneeId: masterAgent.id,
+      startedAt: parentTask.startedAt || new Date().toISOString(),
+    });
     addTaskLog(parentTask.id, 'info', 'Master Agent analyzing and decomposing task...', 'master');
     eventBus.emit('task:log', { taskId: parentTask.id, agentId: 'master', workspaceId: parentTask.workspaceId, message: 'Decomposing task...' });
 
@@ -122,6 +130,7 @@ Example output:
       ? new Set(options.allowedRoles)
       : null;
 
+    let decompositionOutput = '';
     try {
       // Run the decomposition on a real (standalone) task row so the execution's
       // foreign key (task_executions.task_id -> tasks.id) is satisfied. It is NOT
@@ -142,6 +151,7 @@ Example output:
       });
 
       const result = await agentRuntime.execute(masterAgent, decomposeTask);
+      decompositionOutput = result.output;
 
       // Parse subtasks from output
       const jsonMatch = result.output.match(/\[[\s\S]*\]/);
@@ -226,7 +236,28 @@ Example output:
 
       return createdTasks;
     } catch (err: any) {
-      addTaskLog(parentTask.id, 'error', `Decomposition failed: ${err.message}`, 'master');
+      const failure = err instanceof Error ? err.message : String(err);
+      const needsClarification = Boolean(decompositionOutput) && (
+        failure.startsWith('Failed to parse decomposition output:')
+        || failure === 'Decomposition produced no subtasks'
+      );
+      const output = needsClarification
+        ? decompositionOutput
+        : 'The Master Agent could not create a reliable task plan. Open the technical timeline for the recorded error and retry with a clearer goal.';
+      const error = needsClarification
+        ? 'The Master Agent needs a concrete, actionable goal before it can delegate work.'
+        : `Decomposition failed: ${failure}`;
+      const completedAt = new Date().toISOString();
+
+      updateTask(parentTask.id, { status: 'failed', error, output, completedAt });
+      addTaskLog(parentTask.id, 'error', `Decomposition failed: ${failure}`, 'master');
+      eventBus.emit('task:failed', {
+        taskId: parentTask.id,
+        agentId: masterAgent.id,
+        workspaceId: parentTask.workspaceId,
+        error,
+        output,
+      });
       throw err;
     }
   }

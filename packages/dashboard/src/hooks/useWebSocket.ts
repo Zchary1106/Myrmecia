@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { wsClient } from '../lib/ws';
 import { useStore } from '../stores/store';
 import { api } from '../lib/api';
-import type { ExecutionEventPayload, InboxEventPayload, PipelineEventPayload, QualityLoopEventPayload, TaskEventPayload, WSEvent } from '@myrmecia/shared';
+import type { ExecutionEventPayload, InboxEventPayload, PipelineEventPayload, QualityLoopEventPayload, TaskEventPayload, TokenDeltaPayload, WSEvent } from '@myrmecia/shared';
 
 export function useWebSocket() {
   useEffect(() => {
@@ -85,6 +85,14 @@ export function useWebSocket() {
       if (event.payload.taskId) void refreshTask(event.payload.taskId);
       void store.loadAgents();
     };
+    const onExecutionFinished = (event: WSEvent<ExecutionEventPayload>) => {
+      onExecutionEvent(event);
+      if (event.payload.executionId) store.clearStreamingResponse(event.payload.executionId);
+    };
+    const onTokenDelta = (event: WSEvent<TokenDeltaPayload>) => {
+      const { executionId, delta } = event.payload;
+      if (executionId && delta) store.appendStreamingResponse(executionId, delta);
+    };
     const onPipelineEvent = (_event: WSEvent<PipelineEventPayload>) => {
       void store.loadPipelines();
       refreshObservability();
@@ -129,8 +137,9 @@ export function useWebSocket() {
     wsClient.on('execution:started', onExecutionEvent as (event: WSEvent) => void);
     wsClient.on('execution:progress', onExecutionEvent as (event: WSEvent) => void);
     wsClient.on('execution:message', onExecutionEvent as (event: WSEvent) => void);
-    wsClient.on('execution:done', onExecutionEvent as (event: WSEvent) => void);
-    wsClient.on('execution:failed', onExecutionEvent as (event: WSEvent) => void);
+    wsClient.on('execution:done', onExecutionFinished as (event: WSEvent) => void);
+    wsClient.on('execution:failed', onExecutionFinished as (event: WSEvent) => void);
+    wsClient.on('token:delta', onTokenDelta as (event: WSEvent) => void);
     wsClient.on('pipeline:stage:started', onPipelineEvent as (event: WSEvent) => void);
     wsClient.on('pipeline:stage:done', onPipelineEvent as (event: WSEvent) => void);
     wsClient.on('pipeline:done', onPipelineEvent as (event: WSEvent) => void);
@@ -158,10 +167,11 @@ export function useWebSocket() {
       wsClient.off('task:assigned', onTaskAssigned as (event: WSEvent) => void);
       wsClient.off('agent:status', onAgentStatus);
       wsClient.off('execution:started', onExecutionEvent as (event: WSEvent) => void);
-      wsClient.off('execution:progress', onExecutionEvent as (event: WSEvent) => void);
-      wsClient.off('execution:message', onExecutionEvent as (event: WSEvent) => void);
-      wsClient.off('execution:done', onExecutionEvent as (event: WSEvent) => void);
-      wsClient.off('execution:failed', onExecutionEvent as (event: WSEvent) => void);
+    wsClient.off('execution:progress', onExecutionEvent as (event: WSEvent) => void);
+    wsClient.off('execution:message', onExecutionEvent as (event: WSEvent) => void);
+    wsClient.off('execution:done', onExecutionFinished as (event: WSEvent) => void);
+    wsClient.off('execution:failed', onExecutionFinished as (event: WSEvent) => void);
+    wsClient.off('token:delta', onTokenDelta as (event: WSEvent) => void);
       wsClient.off('pipeline:stage:started', onPipelineEvent as (event: WSEvent) => void);
       wsClient.off('pipeline:stage:done', onPipelineEvent as (event: WSEvent) => void);
       wsClient.off('pipeline:done', onPipelineEvent as (event: WSEvent) => void);

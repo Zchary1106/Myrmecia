@@ -23,7 +23,7 @@ import type {
   ToolExecution,
 } from '@myrmecia/shared';
 
-export type DashboardView = 'command' | 'console' | 'agents' | 'agent-settings' | 'tools' | 'models' | 'skills' | 'artifacts' | 'orchestrator' | 'board' | 'tasks' | 'timeline' | 'inbox' | 'observability' | 'audit' | 'settings' | 'cost' | 'memory' | 'orchestrate' | 'teams' | 'domains';
+export type DashboardView = 'command' | 'session' | 'console' | 'agents' | 'agent-settings' | 'tools' | 'models' | 'skills' | 'artifacts' | 'orchestrator' | 'board' | 'tasks' | 'timeline' | 'inbox' | 'observability' | 'audit' | 'settings' | 'cost' | 'memory' | 'orchestrate' | 'teams' | 'domains';
 
 // Legacy ChatMessage for backward compat
 export interface ChatMessage {
@@ -65,10 +65,13 @@ interface AppStore {
   executions: TaskExecution[];
   activeExecutions: Record<string, TaskExecution>;  // executionId → execution object
   executionMessages: Record<string, ExecutionMessage[]>;  // executionId → messages
+  streamingResponses: Record<string, string>;  // executionId → transient display-safe assistant text
   loadExecutions: () => Promise<void>;
   upsertExecution: (execution: TaskExecution) => void;
   addExecutionMessages: (executionId: string, messages: ExecutionMessage[]) => void;
   loadExecutionMessages: (executionId: string) => Promise<void>;
+  appendStreamingResponse: (executionId: string, delta: string) => void;
+  clearStreamingResponse: (executionId: string) => void;
 
   // Right panel
   rightPanelTab: 'chat' | 'history';
@@ -199,6 +202,7 @@ export const useStore = create<AppStore>((set, get) => ({
   executions: [],
   activeExecutions: {},
   executionMessages: {},
+  streamingResponses: {},
   loadExecutions: async () => {
     try {
       const executions = await api.executions.list();
@@ -238,6 +242,17 @@ export const useStore = create<AppStore>((set, get) => ({
       console.warn('[store] Failed to load execution messages', err);
     }
   },
+  appendStreamingResponse: (executionId, delta) => set((state) => ({
+    streamingResponses: {
+      ...state.streamingResponses,
+      [executionId]: `${state.streamingResponses[executionId] || ''}${delta}`.slice(-32_000),
+    },
+  })),
+  clearStreamingResponse: (executionId) => set((state) => {
+    if (!(executionId in state.streamingResponses)) return state;
+    const { [executionId]: _cleared, ...streamingResponses } = state.streamingResponses;
+    return { streamingResponses };
+  }),
 
   // Right panel
   rightPanelTab: 'chat',

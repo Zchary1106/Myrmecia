@@ -216,13 +216,6 @@ export function createAgentRoutes(taskQueue?: TaskQueue): Router {
       const { prompt, workdir, priority, parentExecutionId } = parseBody(executeAgentSchema, req);
       const workspaceId = workspaceIdFromRequest(req);
 
-      // Check concurrency limit
-      const activeCount = getActiveExecutionCount(agent.id);
-      const maxConcurrent = agent.config.maxConcurrent || 1;
-      if (activeCount >= maxConcurrent) {
-        throw new HttpError(429, 'AGENT_CONCURRENCY_LIMIT', `Agent ${agent.name} is at max concurrency (${maxConcurrent})`);
-      }
-
       let taskId: string;
       if (parentExecutionId) {
         // Fork mode: still async but we fire-and-forget
@@ -300,7 +293,9 @@ export function createAgentRoutes(taskQueue?: TaskQueue): Router {
         taskId,
         metadata: { priority: priority || 'normal', parentExecutionId, promptChars: prompt.length },
       });
-      res.json({ taskId, status: 'started' });
+      // Queueing preserves the Agent's single-workspace safety boundary. The
+      // worker starts it once capacity is free instead of rejecting the request.
+      res.json({ taskId, status: taskQueue ? 'queued' : 'started' });
     } catch (err) {
       sendError(res, err);
     }

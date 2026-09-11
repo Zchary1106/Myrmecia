@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { ArrowLeft } from 'lucide-react';
 import { useStore } from '../../stores/store';
 import { api } from '../../lib/api';
 import { cn } from '../../lib/utils';
@@ -17,6 +18,7 @@ const statusClass: Record<string, string> = {
 
 function messageIcon(type: ExecutionMessage['type']) {
   if (type === 'user_input') return '👤';
+  if (type === 'user_follow_up') return '↪';
   if (type === 'agent_text') return '💬';
   if (type === 'tool_use') return '🔧';
   if (type === 'tool_result') return '📎';
@@ -106,6 +108,7 @@ export function ExecutionTimeline() {
     tasks, executions, agents, executionMessages,
     selectedTaskId, setSelectedTaskId, qualityLoopAttempts,
     loadTasks, loadAgents, loadExecutions, loadExecutionMessages, loadQualityLoopAttempts,
+    setActiveView,
   } = useStore();
   const [selectedExecutionId, setSelectedExecutionId] = useState<string | null>(null);
   const [selectedTrace, setSelectedTrace] = useState<RunTrace | null>(null);
@@ -211,15 +214,24 @@ export function ExecutionTimeline() {
           <div>
             <h2 className="text-xl font-bold">Execution Timeline</h2>
             <p className="text-[12px] text-gray-500 mt-0.5">
-              Follow tasks, agent executions, and runtime messages in one trace.
+              Technical details for task runs, tools, traces, and runtime events.
             </p>
           </div>
-          <button
-            onClick={() => refreshSnapshot()}
-            className="px-3 py-1.5 rounded-lg bg-surface-hover text-[11px] text-gray-400 hover:text-white transition"
-          >
-            Refresh
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setActiveView('session')}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-[11px] text-gray-400 hover:bg-surface-hover hover:text-white transition"
+            >
+              <ArrowLeft size={13} /> Back to task conversation
+            </button>
+            <button
+              onClick={() => refreshSnapshot()}
+              className="px-3 py-1.5 rounded-lg bg-surface-hover text-[11px] text-gray-400 hover:text-white transition"
+            >
+              Refresh
+            </button>
+          </div>
         </div>
 
         {error && (

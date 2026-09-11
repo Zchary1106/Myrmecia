@@ -84,6 +84,51 @@ export function listExecutions(filter?: {
   return db.all(sql, ...params).map(rowToExecution);
 }
 
+/**
+ * Reconcile executions which were left running after their task reached a
+ * terminal state. This can happen if a process is interrupted between
+ * completing a task and finalizing its execution record.
+ *
+ * These executions must not consume an Agent's concurrency slot. The source
+ * task is authoritative: a successful task yields a done execution, while a
+ * failed or cancelled task yields the matching execution state.
+ */
+export function reconcileTerminalTaskExecutions(agentDefId?: string): TaskExecution[] {
+  const db = getDb();
+  const params: string[] = [];
+  const agentClause = agentDefId ? ' AND executions.agent_def_id = ?' : '';
+  if (agentDefId) params.push(agentDefId);
+
+  const staleRows = db.all<any>(
+    `SELECT executions.*, tasks.status AS task_status
+       FROM task_executions AS executions
+       INNER JOIN tasks ON tasks.id = executions.task_id
+      WHERE executions.status = 'running'
+        AND tasks.status IN ('done', 'failed', 'cancelled')${agentClause}`,
+    ...params,
+  );
+
+  if (staleRows.length === 0) return [];
+
+  const reconciledAt = new Date().toISOString();
+  return db.transaction(() => staleRows.map(row => {
+    const status: ExecutionStatus = row.task_status === 'done'
+      ? 'done'
+      : row.task_status === 'cancelled'
+        ? 'cancelled'
+        : 'failed';
+    db.run(
+      `UPDATE task_executions
+          SET status = ?, completed_at = COALESCE(completed_at, ?)
+        WHERE id = ?`,
+      status,
+      reconciledAt,
+      row.id,
+    );
+    return getExecution(row.id)!;
+  }));
+}
+
 export function updateExecution(id: string, updates: Partial<{
   status: ExecutionStatus;
   progress: AgentProgress;
@@ -176,6 +221,9 @@ export function listExecutionMessages(executionId: string, opts?: {
 
 // Active executions for an agent (running count)
 export function getActiveExecutionCount(agentDefId: string): number {
+  // Heal crash residue before reporting capacity. Without this, a terminal
+  // task can permanently occupy an Agent's only execution slot.
+  reconcileTerminalTaskExecutions(agentDefId);
   const db = getDb();
   const row = db.get(
     'SELECT COUNT(*) as count FROM task_executions WHERE agent_def_id = ? AND status = ?',

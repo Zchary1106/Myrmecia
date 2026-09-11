@@ -2,7 +2,7 @@ import { Queue, Worker, Job, QueueEvents } from 'bullmq';
 import IORedis from 'ioredis';
 import { eventBus } from '../events/event-bus.js';
 import { createTask, getTask, updateTask, addTaskLog, listTasks, listDependents } from '../db/models/task.js';
-import { AgentManager } from '../agents/agent-manager.js';
+import { AgentConcurrencyError, AgentManager } from '../agents/agent-manager.js';
 import { metrics } from '../observability/telemetry.js';
 import { logger } from '../lib/logger.js';
 import type { ReasoningEffort, Task, TaskMode, Priority } from '../types.js';
@@ -237,15 +237,54 @@ export class TaskQueue {
       agentId = agent.id;
     }
 
+    if (!this.hasAgentCapacity(agentId)) {
+      await this.deferForAgentCapacity(taskId, agentId);
+      return;
+    }
+
     updateTask(taskId, { status: 'assigned', assigneeId: agentId });
     eventBus.emit('task:assigned', { taskId, agentId, workspaceId: getTask(taskId)?.workspaceId });
 
     try {
       await this.agentManager.executeTask(agentId, getTask(taskId)!);
     } catch (err: any) {
+      if (err instanceof AgentConcurrencyError) {
+        await this.deferForAgentCapacity(taskId, agentId);
+        return;
+      }
       this.recordExecutionFailure(taskId, err, job);
       throw err;
     }
+  }
+
+  /**
+   * Concurrency is backpressure, not a task failure. Preserve the assignment
+   * and wait for the selected Agent to emit a completion event before retrying.
+   */
+  private async deferForAgentCapacity(taskId: string, agentId: string): Promise<void> {
+    const current = getTask(taskId);
+    if (!current || ['done', 'failed', 'cancelled'].includes(current.status)) return;
+
+    updateTask(taskId, { status: 'queued', assigneeId: agentId });
+    addTaskLog(taskId, 'info', `Waiting for ${agentId} capacity; task remains queued`, 'system');
+
+    if (this.queue) {
+      await this.queue.add('execute-task', { taskId }, {
+        delay: 10_000,
+        priority: PRIORITY_MAP[current.priority] || 3,
+      });
+    }
+  }
+
+  /**
+   * AgentManager owns capacity accounting. Keep the queue compatible with
+   * narrow test doubles and legacy adapters that only implement executeTask.
+   */
+  private hasAgentCapacity(agentId: string): boolean {
+    const manager = this.agentManager as AgentManager & {
+      hasCapacity?: (id: string) => boolean;
+    };
+    return typeof manager.hasCapacity === 'function' ? manager.hasCapacity(agentId) : true;
   }
 
   private recordExecutionFailure(taskId: string, err: any, job?: Job) {
@@ -304,6 +343,11 @@ export class TaskQueue {
       return;
     }
 
+    if (!this.hasAgentCapacity(agentId)) {
+      await this.deferForAgentCapacity(task.id, agentId);
+      return;
+    }
+
     updateTask(task.id, { status: 'assigned', assigneeId: agentId });
     eventBus.emit('task:assigned', { taskId: task.id, agentId, workspaceId: task.workspaceId });
 
@@ -311,6 +355,10 @@ export class TaskQueue {
     this.agentManager.executeTask(agentId, getTask(task.id)!).catch(err => {
       logger.error({ taskId: task.id, err: err.message }, 'Task execution failed');
       const current = getTask(task.id)!;
+      if (err instanceof AgentConcurrencyError) {
+        void this.deferForAgentCapacity(task.id, agentId);
+        return;
+      }
       const interruption = interruptedReason(err);
       if (!isPipelinePublisherTask(current) && current.retryCount < current.maxRetries) {
         updateTask(task.id, { status: 'pending', retryCount: current.retryCount + 1 });

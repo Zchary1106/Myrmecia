@@ -7,6 +7,7 @@ import { api, type TeamDTO } from '../lib/api';
 import { AgentPet } from '../components/agents/AgentPet';
 import { AgentWorkbench } from '../components/agents/AgentWorkbench';
 import { AgentSetupWizard } from '../components/agents/AgentSetupWizard';
+import { ExternalAgentsPanel } from '../components/agents/ExternalAgentsPanel';
 import { AuditDrawer } from '../components/audit/AuditDrawer';
 import { Bot, Play, Plus, Search, Sparkles, Wrench } from 'lucide-react';
 
@@ -152,6 +153,7 @@ export function AgentsPage() {
   const [isBuilderOpen, setIsBuilderOpen] = useState(false);
   const [catalogView, setCatalogView] = useState<'all' | 'working' | 'custom' | 'legacy'>('all');
   const [isWizardOpen, setIsWizardOpen] = useState(false);
+  const [isExternalAgentsOpen, setIsExternalAgentsOpen] = useState(false);
   const [editingAgentId, setEditingAgentId] = useState<string | null>(null);
   const [workbenchAgentId, setWorkbenchAgentId] = useState<string | null>(null);
   const [form, setForm] = useState<AgentFormState>(emptyForm);
@@ -319,6 +321,13 @@ export function AgentsPage() {
             <AuditDrawer targetType="agent" label="Audit" />
             <button type="button" onClick={() => setActiveView('agent-settings')} className="app-focus rounded-xl border border-border bg-surface px-4 py-2.5 text-xs font-semibold text-app-secondary hover:border-accent/30 hover:text-app-primary">Open Agent workspace</button>
             <button
+              type="button"
+              onClick={() => setIsExternalAgentsOpen(true)}
+              className="app-focus rounded-xl border border-border bg-surface px-4 py-2.5 text-xs font-semibold text-app-secondary hover:border-accent/30 hover:text-app-primary"
+            >
+              External Agents
+            </button>
+            <button
               onClick={() => setIsWizardOpen(true)}
               className="app-focus rounded-xl border border-border bg-surface px-4 py-2.5 text-xs font-semibold text-app-secondary hover:border-accent/30 hover:text-app-primary"
             >
@@ -335,6 +344,8 @@ export function AgentsPage() {
             </button>
           </div>
       </div>
+
+      {isExternalAgentsOpen && <ExternalAgentsPanel onClose={() => setIsExternalAgentsOpen(false)} />}
 
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         <Metric icon={<Bot size={17} />} label="Stable Agents" value={stableAgents.length} />

@@ -43,6 +43,11 @@ import type {
   ExecutionArtifact,
   ArtifactContract,
   ExecutionContext,
+  ExternalAgent,
+  ExternalAgentHealth,
+  ExternalAgentInvocationContext,
+  ExternalAgentRun,
+  ExternalAgentSchedule,
   TaskCheckpoint,
   TeamTemplateVersion,
   WorkflowEdgeContract,
@@ -74,6 +79,7 @@ async function request<T>(path: string, opts?: RequestInit): Promise<T> {
         const err = await res.json().catch(() => ({ error: { message: res.statusText } }));
         throw new Error(err.error?.message || res.statusText);
       }
+      if (res.status === 204) return undefined as T;
       return await res.json();
     } catch (err) {
       if (attempt < maxRetries) {
@@ -162,6 +168,42 @@ export const api = {
     // Legacy
     start: (id: string) => request<{ success: boolean; message: string }>(`/agents/${id}/start`, { method: 'POST' }),
     stop: (id: string) => request<{ success: boolean; message: string }>(`/agents/${id}/stop`, { method: 'POST' }),
+  },
+  externalAgents: {
+    list: (params?: { status?: string }) =>
+      request<ExternalAgent[]>(`/external-agents${params ? '?' + new URLSearchParams(params) : ''}`),
+    create: (data: {
+      name: string;
+      description?: string;
+      adapter: ExternalAgent['adapter'];
+      capabilities?: string[];
+      allowedTools?: string[];
+      defaultModelId?: string;
+    }) => request<ExternalAgent>('/external-agents', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id: string, data: Partial<{
+      name: string;
+      description: string;
+      adapter: ExternalAgent['adapter'];
+      status: ExternalAgent['status'];
+      capabilities: string[];
+      allowedTools: string[];
+      defaultModelId: string;
+    }>) => request<ExternalAgent>(`/external-agents/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(data) }),
+    remove: (id: string) => request<void>(`/external-agents/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    health: (id: string) => request<ExternalAgentHealth>(`/external-agents/${encodeURIComponent(id)}/health`, { method: 'POST' }),
+    runs: (id: string, limit?: number) =>
+      request<ExternalAgentRun[]>(`/external-agents/${encodeURIComponent(id)}/runs${limit ? `?limit=${limit}` : ''}`),
+    run: (id: string, invocation: ExternalAgentInvocationContext) =>
+      request<ExternalAgentRun>(`/external-agents/${encodeURIComponent(id)}/runs`, { method: 'POST', body: JSON.stringify({ invocation }) }),
+  },
+  externalAgentSchedules: {
+    list: (params?: { externalAgentId?: string; enabled?: boolean }) =>
+      request<ExternalAgentSchedule[]>(`/external-agent-schedules${params ? '?' + new URLSearchParams(Object.entries(params).filter(([, value]) => value !== undefined).map(([key, value]) => [key, String(value)])) : ''}`),
+    create: (data: Omit<ExternalAgentSchedule, 'id' | 'workspaceId' | 'createdAt' | 'updatedAt' | 'lastRunAt' | 'nextRunAt' | 'enabled'>) =>
+      request<ExternalAgentSchedule>('/external-agent-schedules', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id: string, data: Partial<Pick<ExternalAgentSchedule, 'enabled' | 'cron' | 'runAt' | 'timezone' | 'eventType' | 'invocation'>>) =>
+      request<ExternalAgentSchedule>(`/external-agent-schedules/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(data) }),
+    remove: (id: string) => request<void>(`/external-agent-schedules/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   },
   tools: {
     list: (params?: { enabled?: string; category?: string }) =>

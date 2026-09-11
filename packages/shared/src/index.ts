@@ -540,7 +540,7 @@ export interface GitHubConnectionStatus {
 
 export type ModelCostType = 'exact' | 'estimated' | 'subscription' | 'unavailable';
 
-export type ExecutionMessageType = 'user_input' | 'agent_text' | 'tool_use' | 'tool_result' | 'progress' | 'error';
+export type ExecutionMessageType = 'user_input' | 'user_follow_up' | 'agent_text' | 'tool_use' | 'tool_result' | 'progress' | 'error';
 
 export interface ExecutionMessage {
   id: number;
@@ -1117,6 +1117,15 @@ export interface ExecutionEventPayload {
   error?: string;
 }
 
+/** Safe, displayable assistant text emitted while an execution is generating. */
+export interface TokenDeltaPayload {
+  executionId: string;
+  taskId?: string;
+  agentId?: string;
+  workspaceId?: string;
+  delta: string;
+}
+
 export interface InboxEventPayload {
   inboxEntryId: string;
   entry?: InboxEntry;
@@ -1196,4 +1205,137 @@ export interface ExecutionArtifact {
   downloadUrl: string;
   createdAt: string;
   updatedAt: string;
+}
+
+// ---------- External Agent Control Plane ----------
+
+/**
+ * An external Agent is an independently hosted execution surface managed by
+ * Myrmecia. MCP servers remain tools; they are intentionally not represented
+ * by this contract.
+ */
+export const EXTERNAL_AGENT_ADAPTER_KINDS = ['local_cli', 'http'] as const;
+export type ExternalAgentAdapterKind = typeof EXTERNAL_AGENT_ADAPTER_KINDS[number];
+
+export const EXTERNAL_AGENT_STATUSES = ['draft', 'active', 'degraded', 'disabled'] as const;
+export type ExternalAgentStatus = typeof EXTERNAL_AGENT_STATUSES[number];
+
+export const EXTERNAL_AGENT_RUN_STATUSES = [
+  'queued', 'running', 'waiting_for_callback', 'succeeded', 'failed', 'cancelled', 'timed_out',
+] as const;
+export type ExternalAgentRunStatus = typeof EXTERNAL_AGENT_RUN_STATUSES[number];
+
+export const EXTERNAL_AGENT_TRIGGER_TYPES = ['manual', 'cron', 'once', 'webhook', 'task_event'] as const;
+export type ExternalAgentTriggerType = typeof EXTERNAL_AGENT_TRIGGER_TYPES[number];
+
+/** A provider key only. Raw API keys and command-line secrets are never part of this contract. */
+export interface ExternalAgentCredentialRef {
+  provider: 'env' | 'vault' | 'aws_secrets_manager';
+  key: string;
+}
+
+export interface LocalCliAgentConfig {
+  kind: 'local_cli';
+  /** Supported profiles map to a server-owned command template. */
+  profile: 'codex' | 'claude_code' | 'gemini_cli' | 'opencode' | 'custom_profile';
+  profileId?: string;
+  allowedWorkspaceRoots?: string[];
+}
+
+export interface HttpAgentConfig {
+  kind: 'http';
+  endpoint: string;
+  credentialRef?: ExternalAgentCredentialRef;
+  callbackUrl?: string;
+  allowedHosts?: string[];
+}
+
+export type ExternalAgentConfig = LocalCliAgentConfig | HttpAgentConfig;
+
+export interface ExternalAgent {
+  id: string;
+  workspaceId?: string;
+  name: string;
+  description?: string;
+  adapter: ExternalAgentConfig;
+  status: ExternalAgentStatus;
+  capabilities: string[];
+  allowedTools: string[];
+  defaultModelId?: string;
+  lastHealthCheckAt?: string;
+  lastHealthStatus?: 'unknown' | 'healthy' | 'degraded' | 'unreachable';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ExternalAgentInvocationContext {
+  taskId?: string;
+  parentTaskId?: string;
+  executionContextId?: string;
+  workspaceId?: string;
+  workdir?: string;
+  objective: string;
+  constraints: string[];
+  provider?: string;
+  modelId?: string;
+  reasoningEffort?: string;
+  contextLength?: number;
+  artifactIds?: string[];
+}
+
+export interface ExternalAgentRun {
+  id: string;
+  externalAgentId: string;
+  taskId?: string;
+  workspaceId?: string;
+  triggerType: ExternalAgentTriggerType;
+  status: ExternalAgentRunStatus;
+  invocation: ExternalAgentInvocationContext;
+  outputSummary?: string;
+  error?: string;
+  artifactIds: string[];
+  startedAt?: string;
+  completedAt?: string;
+  createdAt: string;
+}
+
+export interface ExternalAgentSchedule {
+  id: string;
+  externalAgentId: string;
+  workspaceId?: string;
+  triggerType: Extract<ExternalAgentTriggerType, 'cron' | 'once' | 'webhook' | 'task_event'>;
+  cron?: string;
+  runAt?: string;
+  timezone?: string;
+  webhookSecretRef?: ExternalAgentCredentialRef;
+  eventType?: string;
+  invocation: Omit<ExternalAgentInvocationContext, 'taskId' | 'parentTaskId' | 'executionContextId'>;
+  enabled: boolean;
+  lastRunAt?: string;
+  nextRunAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ExternalAgentHealth {
+  status: 'healthy' | 'degraded' | 'unreachable';
+  checkedAt: string;
+  latencyMs?: number;
+  detail?: string;
+}
+
+export interface ExternalAgentAdapterResult {
+  status: Extract<ExternalAgentRunStatus, 'succeeded' | 'failed' | 'cancelled' | 'timed_out' | 'waiting_for_callback'>;
+  outputSummary?: string;
+  artifactIds?: string[];
+  externalRunId?: string;
+  error?: string;
+}
+
+export interface ExternalAgentAdapter {
+  readonly kind: ExternalAgentAdapterKind;
+  validate(agent: ExternalAgent): Promise<void>;
+  healthCheck(agent: ExternalAgent): Promise<ExternalAgentHealth>;
+  execute(agent: ExternalAgent, invocation: ExternalAgentInvocationContext): Promise<ExternalAgentAdapterResult>;
+  cancel?(agent: ExternalAgent, run: ExternalAgentRun): Promise<void>;
 }

@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState, type FormEvent, type InputHTMLAttributes, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent, type InputHTMLAttributes, type ReactNode } from 'react';
 import { ArrowUpRight, AtSign, Check, ChevronDown, ChevronRight, CircleDot, Clock3, FolderOpen, GitBranch, Inbox, Layers3, Paperclip, Plus, Sparkles, Users, WandSparkles, X } from 'lucide-react';
 import { api, type TeamDTO } from '../../lib/api';
 import { useStore } from '../../stores/store';
 import { cn } from '../../lib/utils';
 import { WorkLauncher, type LaunchMode } from '../common/WorkLauncher';
-import type { ProviderModelOption } from '@myrmecia/shared';
+import { structuredResultSummary } from '../common/StructuredTaskResult';
+import type { AgentSummary, ProviderModelOption, Task } from '@myrmecia/shared';
 
 const starterPrompts = [
   { label: 'Fix a GitHub issue', text: 'Inspect this GitHub issue, reproduce the problem, and prepare a focused fix.' },
@@ -14,6 +15,7 @@ const starterPrompts = [
 
 const WORKSPACE_STORAGE_KEY = 'myrmecia.workspace-config';
 const MODEL_PREFERENCES_STORAGE_KEY = 'myrmecia.model-preferences';
+const CURRENT_TASK_STORAGE_KEY = 'myrmecia.home-current-task';
 type WorkspaceSource = 'local' | 'remote';
 type WorkspaceConfig = { source: WorkspaceSource; path: string; name: string; repository?: string; branch?: string };
 type ReasoningChoice = 'auto' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
@@ -54,18 +56,112 @@ function StatusDot({ status }: { status: string }) {
   );
 }
 
+function taskStatusLabel(status: Task['status']): string {
+  const labels: Record<Task['status'], string> = {
+    pending: 'Preparing',
+    queued: 'Routing',
+    assigned: 'Assigned',
+    running: 'In progress',
+    waiting_for_tool: 'Waiting for a tool',
+    review: 'In review',
+    done: 'Completed',
+    failed: 'Needs attention',
+    cancelled: 'Cancelled',
+  };
+  return labels[status];
+}
+
+function taskActivityLabel(task: Task, agent?: AgentSummary): string {
+  if (task.error) return 'The task needs your attention before it can continue.';
+  if (task.output) return 'A result is ready for you to review.';
+  if (agent) {
+    if (task.status === 'assigned') return `${agent.name} has accepted the task.`;
+    if (task.status === 'running') return `${agent.name} is working on the next step.`;
+    if (task.status === 'waiting_for_tool') return `${agent.name} is waiting for a required tool.`;
+    if (task.status === 'review') return `${agent.name} has sent the work into review.`;
+  }
+  const labels: Partial<Record<Task['status'], string>> = {
+    pending: 'Master Agent is preparing the task.',
+    queued: 'Master Agent is selecting the right specialist.',
+    assigned: 'The assigned Agent is preparing the first step.',
+    running: 'The Agent is working on the next step.',
+    waiting_for_tool: 'The task is waiting for a required tool.',
+    review: 'The work is being reviewed before completion.',
+    done: 'The completed result is ready below.',
+    failed: 'The task needs your attention before it can continue.',
+    cancelled: 'This task was cancelled.',
+  };
+  return labels[task.status] || 'Task status is updating.';
+}
+
+function taskAssigneeLabel(task: Task, agent?: AgentSummary): string {
+  if (agent) return `${agent.name} · ${agent.role}`;
+  if (['pending', 'queued'].includes(task.status)) return 'Master Agent · choosing a specialist';
+  return 'Master Agent · coordinating execution';
+}
+
+function resultExcerpt(value: string, limit = 520): string {
+  const compact = value.replace(/\s+/g, ' ').trim();
+  return compact.length > limit ? `${compact.slice(0, limit).trimEnd()}…` : compact;
+}
+
+function ResultSummary({ value, onSeeMore }: { value: string; onSeeMore: () => void }) {
+  const summaryRef = useRef<HTMLParagraphElement>(null);
+  const [isOverflowing, setIsOverflowing] = useState(false);
+
+  useEffect(() => {
+    const element = summaryRef.current;
+    if (!element) return;
+
+    const measure = () => setIsOverflowing(element.scrollWidth > element.clientWidth + 1);
+    measure();
+    const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(measure);
+    observer?.observe(element);
+    window.addEventListener('resize', measure);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', measure);
+    };
+  }, [value]);
+
+  return (
+    <>
+      <p ref={summaryRef} title={value} className="min-w-0 flex-1 truncate text-xs text-app-secondary">{value}</p>
+      {isOverflowing && (
+        <button type="button" onClick={onSeeMore} className="app-focus shrink-0 text-[11px] font-medium text-accent-light transition hover:text-app-primary">
+          See more
+        </button>
+      )}
+    </>
+  );
+}
+
+function isDescendantTask(candidate: Task, rootTaskId: string, tasksById: Map<string, Task>): boolean {
+  const visited = new Set<string>();
+  let parentTaskId = candidate.parentTaskId;
+  while (parentTaskId && !visited.has(parentTaskId)) {
+    if (parentTaskId === rootTaskId) return true;
+    visited.add(parentTaskId);
+    parentTaskId = tasksById.get(parentTaskId)?.parentTaskId;
+  }
+  return false;
+}
+
 export function HomeView() {
   const { agents, tasks, pipelines, templates, inboxEntries, health, models, loadModels, loadTasks, setActiveView, setSelectedTaskId } = useStore();
   const [input, setInput] = useState('');
   const [showLauncher, setShowLauncher] = useState(false);
   const [launcherMode, setLauncherMode] = useState<LaunchMode>('master');
-  const [launcherTeamId, setLauncherTeamId] = useState('');
   const [launcherTemplateId, setLauncherTemplateId] = useState('');
   const [launchBusy, setLaunchBusy] = useState(false);
   const [launchMessage, setLaunchMessage] = useState<string | null>(null);
   const [launchError, setLaunchError] = useState<string | null>(null);
+  const [focusedTask, setFocusedTask] = useState<Task | null>(null);
+  const [focusedTaskId, setFocusedTaskId] = useState<string | null>(null);
+  const [focusedRequest, setFocusedRequest] = useState('');
   const [teams, setTeams] = useState<TeamDTO[]>([]);
   const [teamPickerOpen, setTeamPickerOpen] = useState(false);
+  const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
   const [workspace, setWorkspace] = useState<WorkspaceConfig | null>(null);
   const [workspacePickerOpen, setWorkspacePickerOpen] = useState(false);
   const [workspaceSource, setWorkspaceSource] = useState<WorkspaceSource>('local');
@@ -82,8 +178,13 @@ export function HomeView() {
   const [providerModels, setProviderModels] = useState<ProviderModelOption[] | null>(null);
   const [providerName, setProviderName] = useState('');
   const [providerSource, setProviderSource] = useState<'provider' | 'registry'>('registry');
+  const taskInputRef = useRef<HTMLTextAreaElement>(null);
 
   const enabledModels = useMemo(() => models.filter(model => model.enabled && model.id !== 'auto'), [models]);
+  const selectedTeam = useMemo(
+    () => selectedTeamId ? teams.find(team => team.id === selectedTeamId) : undefined,
+    [selectedTeamId, teams],
+  );
   const availableModels = providerModels || enabledModels.map(model => ({
     id: model.id,
     name: model.displayName,
@@ -112,6 +213,16 @@ export function HomeView() {
       // localStorage may be unavailable in restricted browser contexts.
     } finally {
       setModelPreferencesLoaded(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(window.localStorage.getItem(CURRENT_TASK_STORAGE_KEY) || 'null') as { taskId?: string; request?: string } | null;
+      if (saved?.taskId) setFocusedTaskId(saved.taskId);
+      if (saved?.request) setFocusedRequest(saved.request);
+    } catch {
+      // The task panel remains session-only when browser storage is unavailable.
     }
   }, []);
 
@@ -161,6 +272,38 @@ export function HomeView() {
     () => tasks.filter(task => !['running', 'assigned', 'queued'].includes(task.status)).slice(0, 4),
     [tasks],
   );
+  const currentTask = useMemo(() => {
+    const taskId = focusedTaskId || focusedTask?.id;
+    return taskId ? tasks.find(task => task.id === taskId) || focusedTask || null : null;
+  }, [focusedTask, focusedTaskId, tasks]);
+  const currentExecutionTask = useMemo(() => {
+    if (!currentTask) return null;
+    const tasksById = new Map(tasks.map(task => [task.id, task]));
+    const descendants = tasks.filter(task => isDescendantTask(task, currentTask.id, tasksById));
+    const activeStatuses: Task['status'][] = ['running', 'waiting_for_tool', 'review', 'assigned', 'queued', 'pending'];
+
+    for (const status of activeStatuses) {
+      const activeTask = descendants.find(task => task.status === status);
+      if (activeTask) return activeTask;
+    }
+
+    return descendants
+      .filter(task => task.output || task.error)
+      .sort((left, right) => {
+        const leftTime = new Date(left.completedAt || left.startedAt || left.createdAt).getTime();
+        const rightTime = new Date(right.completedAt || right.startedAt || right.createdAt).getTime();
+        return rightTime - leftTime;
+      })[0] || currentTask;
+  }, [currentTask, tasks]);
+  const currentAgent = currentExecutionTask?.assigneeId ? agents.find(agent => agent.id === currentExecutionTask.assigneeId) : undefined;
+  const currentTaskActivity = currentExecutionTask || currentTask;
+  const currentTaskSummary = currentTaskActivity
+    ? currentTaskActivity.error
+      ? resultExcerpt(currentTaskActivity.error, 280)
+      : currentTaskActivity.output
+        ? structuredResultSummary(currentTaskActivity.output) || resultExcerpt(currentTaskActivity.output, 280)
+        : taskActivityLabel(currentTaskActivity, currentAgent)
+    : '';
   const greeting = timeBasedGreeting();
 
   useEffect(() => {
@@ -271,20 +414,36 @@ export function HomeView() {
     setLaunchMessage(null);
     setLaunchError(null);
     try {
-      const result = await api.supervisor.dispatch(goal, {
+      const preferences = {
         modelId: modelId === 'auto' ? undefined : modelId,
         reasoningEffort: reasoningEffort === 'auto' ? undefined : reasoningEffort,
         contextLength: contextLength === 'auto' ? undefined : Number(contextLength),
-        workspacePath: workspace?.path || undefined,
-        workspaceMode: Boolean(workspace?.path),
-      });
+      };
+      const task = selectedTeam
+        ? await api.teams.dispatch(selectedTeam.id, goal, workspace?.path, preferences)
+          .then(async ({ run }) => run.parentTaskId ? api.tasks.get(run.parentTaskId) : undefined)
+        : (await api.supervisor.dispatch(goal, {
+            ...preferences,
+            workspacePath: workspace?.path || undefined,
+            workspaceMode: Boolean(workspace?.path),
+          })).tasks[0];
       await loadTasks();
-      const task = result.tasks[0];
       if (task) {
         setSelectedTaskId(task.id);
-        setActiveView('timeline');
+        setFocusedTask(task);
+        setFocusedTaskId(task.id);
+        setFocusedRequest(goal);
+        try {
+          window.localStorage.setItem(CURRENT_TASK_STORAGE_KEY, JSON.stringify({ taskId: task.id, request: goal }));
+        } catch {
+          // The task is still available for the current session when storage is unavailable.
+        }
+        setInput('');
+        setSelectedTeamId(null);
+        setLaunchMessage(null);
+        setActiveView('session');
       } else {
-        setLaunchMessage('Agent 已处理这个目标。');
+        setLaunchMessage(selectedTeam ? `${selectedTeam.name} 已开始处理这个目标。` : 'Agent 已处理这个目标。');
       }
     } catch (error) {
       setLaunchError(error instanceof Error ? error.message : 'Unable to start the Agent task.');
@@ -293,25 +452,22 @@ export function HomeView() {
     }
   };
 
-  const openTeamLauncher = (teamId: string) => {
-    setInput('');
-    setLauncherMode('team');
-    setLauncherTeamId(teamId);
-    setLauncherTemplateId('');
+  const selectTeam = (teamId: string) => {
+    setSelectedTeamId(teamId);
     setTeamPickerOpen(false);
-    setShowLauncher(true);
+    requestAnimationFrame(() => taskInputRef.current?.focus());
   };
 
   const openWorkflowLauncher = (templateId = '') => {
     setLauncherMode('pipeline');
-    setLauncherTeamId('');
     setLauncherTemplateId(templateId);
+    setTeamPickerOpen(false);
     setShowLauncher(true);
   };
 
   const openTaskRun = (taskId: string) => {
     setSelectedTaskId(taskId);
-    setActiveView('timeline');
+    setActiveView('session');
   };
 
   return (
@@ -332,6 +488,7 @@ export function HomeView() {
         <h2 className="mt-10 text-lg font-semibold tracking-[-0.025em] text-app-primary">What should your team work on?</h2>
         <form onSubmit={event => void submit(event)} className="home-command-card relative mt-4 p-3 text-left transition focus-within:shadow-[0_24px_80px_rgb(91_84_220_/_0.16)] sm:p-4">
           <textarea
+            ref={taskInputRef}
             value={input}
             onChange={event => setInput(event.target.value)}
             onKeyDown={event => {
@@ -339,7 +496,7 @@ export function HomeView() {
             }}
             rows={3}
             aria-label="Describe work for your Agent Team"
-            placeholder="Describe a goal, a bug, or a piece of content to create..."
+            placeholder={selectedTeam ? `Describe work for ${selectedTeam.name}...` : 'Describe a goal, a bug, or a piece of content to create...'}
             className="min-h-[112px] w-full resize-none bg-transparent px-3 py-4 text-sm leading-6 text-app-primary outline-none placeholder:text-app-muted"
           />
           <div className="flex flex-wrap items-end justify-between gap-3 px-1 pb-1">
@@ -347,9 +504,41 @@ export function HomeView() {
               <button type="button" onClick={() => openWorkflowLauncher()} className="home-tool-button app-focus" aria-label="Choose workflow" title="Choose workflow">
                 <Paperclip size={15} />
               </button>
-              <button type="button" onClick={() => setTeamPickerOpen(current => !current)} className="home-tool-button app-focus" aria-label="Choose a Team" title="Choose a Team">
-                <AtSign size={15} />
-              </button>
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setTeamPickerOpen(current => !current)}
+                  className={cn('home-tool-button app-focus', teamPickerOpen && 'border-accent/50 bg-accent/10 text-accent-light')}
+                  aria-label="Choose a Team"
+                  aria-expanded={teamPickerOpen}
+                  aria-controls="team-picker"
+                  title="Choose a Team"
+                >
+                  <AtSign size={15} />
+                </button>
+                {teamPickerOpen && (
+                  <div id="team-picker" role="dialog" aria-label="Choose a Team" className="absolute bottom-full left-0 z-30 mb-2 w-[min(360px,calc(100vw-2rem))] rounded-2xl border border-border bg-surface p-2 text-left shadow-2xl">
+                    <div className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-app-muted">Choose a Team</div>
+                    {teams.length > 0 ? teams.slice(0, 6).map(team => (
+                      <button key={team.id} type="button" onClick={() => selectTeam(team.id)} className="app-focus flex w-full items-center gap-2 rounded-xl px-2 py-2.5 text-left transition hover:bg-surface-hover">
+                        <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-accent/10 text-accent-light"><Users size={14} /></span>
+                        <span className="min-w-0 flex-1"><span className="block truncate text-xs text-app-primary">{team.name}</span><span className="block truncate text-[10px] text-app-muted">{team.blurb || `${team.members.length} members`}</span></span>
+                        <ChevronRight size={14} className="text-app-muted" />
+                      </button>
+                    )) : <div className="px-2 py-4 text-xs text-app-muted">No Teams available yet.</div>}
+                    <button type="button" onClick={() => setActiveView('teams')} className="app-focus mt-1 w-full rounded-xl px-2 py-2 text-left text-[11px] text-accent-light transition hover:bg-accent/10">Manage Teams</button>
+                  </div>
+                )}
+              </div>
+              {selectedTeam && (
+                <span className="inline-flex max-w-[220px] items-center gap-1.5 rounded-lg border border-accent/30 bg-accent/10 px-2.5 py-1.5 text-[11px] font-medium text-accent-light">
+                  <AtSign size={13} className="shrink-0" />
+                  <span className="truncate">{selectedTeam.name}</span>
+                  <button type="button" onClick={() => setSelectedTeamId(null)} className="app-focus -mr-1 rounded p-0.5 text-accent-light/75 transition hover:bg-accent/15 hover:text-app-primary" aria-label={`Clear selected team ${selectedTeam.name}`} title="Clear selected team">
+                    <X size={12} />
+                  </button>
+                </span>
+              )}
               <button
                 type="button"
                 onClick={openWorkspacePicker}
@@ -412,7 +601,7 @@ export function HomeView() {
               </div>
             </div>
             <button type="submit" disabled={!input.trim() || launchBusy} className="home-primary-button app-focus inline-flex items-center gap-2 rounded-xl px-5 py-3 text-xs font-semibold text-white transition duration-200 hover:-translate-y-0.5 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-40">
-              {launchBusy ? 'Starting…' : workspace ? 'Start in workspace' : 'Start with Agent'} <ArrowUpRight size={14} />
+              {launchBusy ? 'Sending…' : selectedTeam ? `Send to ${selectedTeam.name}` : 'Send to Master Agent'} <ArrowUpRight size={14} />
             </button>
           </div>
           {workspace && <div className="truncate px-2 pt-2 text-[10px] text-app-muted">Working in {workspace.name}</div>}
@@ -457,6 +646,49 @@ export function HomeView() {
 
         {launchMessage && <p className="mt-3 text-center text-[11px] text-emerald-500">{launchMessage}</p>}
 
+        {currentTask && currentTaskActivity && (
+          <section aria-label="Current task" className="app-panel mt-4 overflow-hidden border-accent/20 bg-[linear-gradient(135deg,rgb(var(--color-accent)/.08),transparent_44%),var(--app-panel)]">
+            <div className="flex flex-col gap-3 px-5 py-4 sm:px-6">
+              <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
+                <div className="min-w-0">
+                  <div className="text-[10px] font-semibold tracking-[0.15em] text-accent-light">CURRENT REQUEST</div>
+                  <h2 className="mt-1.5 max-w-[720px] text-pretty text-base font-semibold leading-6 tracking-[-0.02em] text-app-primary sm:text-lg">
+                    {focusedRequest || currentTask.description || currentTask.title}
+                  </h2>
+                </div>
+                <span className={cn(
+                  'inline-flex w-fit shrink-0 items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-medium',
+                  currentTaskActivity.status === 'done' ? 'border-emerald-400/25 bg-emerald-400/[0.08] text-emerald-500' :
+                  currentTaskActivity.status === 'failed' || currentTaskActivity.status === 'cancelled' ? 'border-red-400/25 bg-red-400/[0.08] text-red-500' :
+                  'border-accent/25 bg-accent/[0.08] text-accent-light',
+                )}>
+                  <StatusDot status={currentTaskActivity.status} />
+                  {taskStatusLabel(currentTaskActivity.status)}
+                </span>
+              </div>
+
+              <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1.5 text-[11px] text-app-secondary">
+                <span className="font-medium text-app-primary">Master Agent</span>
+                <ChevronRight size={13} className="text-app-muted" aria-hidden="true" />
+                <span className="min-w-0 truncate font-medium text-app-primary">{taskAssigneeLabel(currentTaskActivity, currentAgent)}</span>
+                <span className="hidden text-app-muted sm:inline">·</span>
+                <span className="min-w-0 truncate text-app-muted">{taskActivityLabel(currentTaskActivity, currentAgent)}</span>
+              </div>
+
+              <div className={cn(
+                'flex min-w-0 items-center gap-3 rounded-xl border px-3.5 py-2.5',
+                currentTaskActivity.error ? 'border-red-400/20 bg-red-400/[0.05]' : currentTaskActivity.output ? 'border-emerald-400/20 bg-emerald-400/[0.045]' : 'border-border/80 bg-background/40',
+              )}>
+                <div className={cn('shrink-0 text-[10px] font-semibold uppercase tracking-[0.12em]', currentTaskActivity.error ? 'text-red-500' : currentTaskActivity.output ? 'text-emerald-500' : 'text-app-muted')}>
+                  {currentTaskActivity.error ? 'Issue' : currentTaskActivity.output ? 'Result' : 'Activity'}
+                </div>
+                <ResultSummary value={currentTaskSummary} onSeeMore={() => openTaskRun(currentTask.id)} />
+              </div>
+
+            </div>
+          </section>
+        )}
+
         <div className="home-quick-scroll relative mt-5 flex flex-nowrap gap-2 overflow-x-auto pb-2 md:justify-center">
           {starterPrompts.map(prompt => (
             <button key={prompt.label} type="button" onClick={() => { setInput(prompt.text); setLaunchMessage(null); setLaunchError(null); }} className="home-quick-action app-focus shrink-0">
@@ -471,19 +703,6 @@ export function HomeView() {
               <GitBranch size={13} /> <span className="truncate">{template.name}</span>
             </button>
           ))}
-          {teamPickerOpen && (
-            <div className="absolute left-0 top-full z-20 mt-2 w-[min(360px,calc(100vw-2rem))] rounded-2xl border border-border bg-surface p-2 text-left shadow-2xl">
-              <div className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-app-muted">Choose a Team</div>
-              {teams.length > 0 ? teams.slice(0, 6).map(team => (
-                <button key={team.id} type="button" onClick={() => openTeamLauncher(team.id)} className="app-focus flex w-full items-center gap-2 rounded-xl px-2 py-2.5 text-left transition hover:bg-surface-hover">
-                  <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-accent/10 text-accent-light"><Users size={14} /></span>
-                  <span className="min-w-0 flex-1"><span className="block truncate text-xs text-app-primary">{team.name}</span><span className="block truncate text-[10px] text-app-muted">{team.blurb || `${team.members.length} members`}</span></span>
-                  <ChevronRight size={14} className="text-app-muted" />
-                </button>
-              )) : <div className="px-2 py-4 text-xs text-app-muted">No Teams available yet.</div>}
-              <button type="button" onClick={() => setActiveView('teams')} className="app-focus mt-1 w-full rounded-xl px-2 py-2 text-left text-[11px] text-accent-light transition hover:bg-accent/10">Manage Teams</button>
-            </div>
-          )}
         </div>
       </section>
 
@@ -500,7 +719,7 @@ export function HomeView() {
             <button key={task.id} type="button" onClick={() => openTaskRun(task.id)} className="app-focus flex w-full items-center gap-3 border-t border-border px-4 py-3.5 text-left transition hover:bg-surface-hover">
               <StatusDot status={task.status} />
               <span className="min-w-0 flex-1 truncate text-sm text-app-primary">{task.title}</span>
-              <span className="hidden text-[10px] text-app-muted sm:inline">{task.mode}</span>
+              <span className="hidden max-w-[160px] truncate text-[10px] text-app-muted sm:inline">{taskAssigneeLabel(task, agents.find(agent => agent.id === task.assigneeId))}</span>
               <ChevronRight size={14} className="text-app-muted" />
             </button>
           )) : (
@@ -528,7 +747,7 @@ export function HomeView() {
           <button key={task.id} type="button" onClick={() => openTaskRun(task.id)} className="app-focus flex w-full items-center gap-3 border-t border-border px-4 py-3 text-left transition hover:bg-surface-hover">
             <StatusDot status={task.status} />
             <span className="min-w-0 flex-1 truncate text-sm text-app-primary">{task.title}</span>
-            <span className="text-[10px] capitalize text-app-muted">{task.status}</span>
+            <span className="text-[10px] text-app-muted">{taskStatusLabel(task.status)}</span>
             <ChevronRight size={14} className="text-app-muted" />
           </button>
         )) : <EmptyRow icon={<Clock3 size={17} />} text="No history yet" detail="Completed and failed work will appear here." />}
@@ -539,7 +758,6 @@ export function HomeView() {
         <WorkLauncher
           initialInput={input}
           initialMode={launcherMode}
-          initialTeamId={launcherTeamId}
           initialTemplateId={launcherTemplateId}
           initialWorkspacePath={workspace?.path || ''}
           initialModelId={modelId}

@@ -23,6 +23,8 @@ import { createDomainRoutes } from './routes/domains.js';
 import { NotifierService } from './notifications/notifier.js';
 import { createTaskRoutes } from './routes/tasks.js';
 import { createAgentRoutes } from './routes/agents.js';
+import { createExternalAgentRoutes } from './routes/external-agents.js';
+import { createExternalAgentScheduleRoutes } from './routes/external-agent-schedules.js';
 import { createPipelineRoutes } from './routes/pipelines.js';
 import { createTemplateRoutes } from './routes/templates.js';
 import { createSystemRoutes } from './routes/system.js';
@@ -107,6 +109,7 @@ import { agentRuntime } from './agents/agent-runtime.js';
 import { eventBus } from './events/event-bus.js';
 import { createSocialWorkflowRoutes } from './routes/social-workflow.js';
 import { SocialMonitorWorker } from './workers/social-monitor.js';
+import { ExternalAgentScheduleWorker, ExternalAgentTaskEventWorker } from './workers/external-agent-scheduler.js';
 import { GitHubFixService } from './github/github-fix-service.js';
 import { createGitHubFixRoutes } from './routes/github-fixes.js';
 import { createWorkspaceSourceRoutes } from './routes/workspace-sources.js';
@@ -224,6 +227,8 @@ async function main() {
   logger.info('Initializing task queue...');
   const taskQueue = new TaskQueue(agentManager);
   const socialMonitorWorker = new SocialMonitorWorker(taskQueue, agentManager);
+  const externalAgentScheduleWorker = new ExternalAgentScheduleWorker();
+  const externalAgentTaskEventWorker = new ExternalAgentTaskEventWorker();
 
   // Initialize pipeline engine
   const pipelineEngine = new PipelineEngine(taskQueue, agentManager);
@@ -271,6 +276,8 @@ async function main() {
   }
 
   socialMonitorWorker.start();
+  externalAgentScheduleWorker.start();
+  externalAgentTaskEventWorker.start();
 
   // Initialize notification service
   new NotifierService();
@@ -343,6 +350,8 @@ async function main() {
   // API v1 Routes (canonical)
   app.use('/api/v1/tasks', createTaskRoutes(taskQueue));
   app.use('/api/v1/agents', createAgentRoutes(taskQueue));
+  app.use('/api/v1/external-agents', createExternalAgentRoutes());
+  app.use('/api/v1/external-agent-schedules', createExternalAgentScheduleRoutes());
   app.use('/api/v1/tools', createToolRoutes());
   app.use('/api/v1/models', createModelRoutes());
   app.use('/api/v1/skills', createSkillRoutes());
@@ -445,6 +454,8 @@ async function main() {
     const { shutdownTelemetry } = await import('./observability/telemetry.js');
     await shutdownTelemetry();
     clearInterval(workspaceCleanupTimer);
+    externalAgentScheduleWorker.stop();
+    externalAgentTaskEventWorker.stop();
     await workerPool.shutdown();
     await pubsub.shutdown();
     await taskQueue.shutdown();
