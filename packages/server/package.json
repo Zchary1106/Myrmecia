@@ -30,6 +30,7 @@
     "better-sqlite3": "^11.7.0",
     "bullmq": "^5.34.0",
     "cors": "^2.8.5",
+    "cron-parser": "^5.4.0",
     "express": "^5.0.1",
     "express-rate-limit": "^8.5.2",
     "helmet": "^8.1.0",

@@ -169,7 +169,7 @@ export function MemoryPage() {
   ];
 
   return (
-    <div className="page-shell space-y-6">
+    <div className="app-page-shell min-w-0 space-y-6 p-5 sm:p-6">
       <header className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
         <div>
           <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-accent">Workspace knowledge</div>
@@ -189,7 +189,7 @@ export function MemoryPage() {
 
       {error && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
 
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4" aria-label="Memory summary">
+      <section className="grid min-w-0 gap-4 sm:grid-cols-2 2xl:grid-cols-4" aria-label="Memory summary">
         <SummaryCard label="Total knowledge" value={stats?.total ?? items.length} helper="Available across this workspace" icon={Database} tone="violet" />
         <SummaryCard label="Short-term" value={workingCount} helper="Current task context" icon={Clock3} tone="purple" />
         <SummaryCard label="Long-term" value={longTermCount} helper="Facts, experiences, and procedures" icon={BookOpen} tone="green" />
@@ -201,7 +201,7 @@ export function MemoryPage() {
       </nav>
 
       {view === 'graph' ? (
-        <section className="surface-panel overflow-hidden p-5">
+        <section className="app-panel overflow-hidden p-5">
           <div className="mb-5 flex items-start justify-between gap-4"><div><h2 className="text-lg font-semibold text-app-primary">Workspace knowledge map</h2><p className="mt-1 max-w-2xl text-sm text-app-muted">A focused view of the most important knowledge and its relationships. Open Knowledge library when you need the full record list.</p></div><Network size={20} className="text-accent" /></div>
           <KnowledgeGraphPanel />
         </section>
@@ -215,7 +215,7 @@ export function MemoryPage() {
               <div className="ml-auto flex items-center gap-2 text-xs text-app-muted"><SlidersHorizontal size={14} /> {displayed.length} results</div>
             </div>
 
-            <div className="surface-panel overflow-hidden">
+            <div className="app-panel overflow-hidden">
               <div className="hidden grid-cols-[minmax(15rem,2fr)_1fr_1fr_7rem_7rem_2rem] gap-4 border-b border-app bg-app-subtle px-5 py-3 text-[11px] font-semibold uppercase tracking-[0.08em] text-app-muted lg:grid"><span>Knowledge</span><span>Agent</span><span>Source</span><span>Type</span><span>Updated</span><span /></div>
               {displayed.map(item => (
                 <article key={item.id} onClick={() => setSelected(item)} className={cn('grid cursor-pointer gap-3 border-b border-app px-5 py-4 transition-colors last:border-b-0 hover:bg-app-subtle lg:grid-cols-[minmax(15rem,2fr)_1fr_1fr_7rem_7rem_2rem] lg:items-center lg:gap-4', selected?.id === item.id && 'bg-accent/[0.045]')}>
@@ -231,7 +231,7 @@ export function MemoryPage() {
           </section>
 
           {selected && (
-            <aside className="surface-panel h-fit overflow-hidden xl:sticky xl:top-5" aria-label="Memory details">
+            <aside className="app-panel h-fit overflow-hidden xl:sticky xl:top-5" aria-label="Memory details">
               <div className="flex items-center justify-between border-b border-app px-5 py-4"><h2 className="text-sm font-semibold text-app-primary">Knowledge details</h2><button type="button" onClick={() => setSelected(null)} className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-app-muted transition hover:bg-app-hover hover:text-app-primary" aria-label="Close memory details"><X size={15} /></button></div>
               <div className="space-y-5 p-5">
                 <div><div className="flex items-start justify-between gap-3"><h3 className="text-base font-semibold leading-snug text-app-primary">{titleOf(selected)}</h3><span className={cn('rounded-md px-2 py-1 text-[10px] font-medium', typeStyles[selected.type])}>{typeLabels[selected.type] || selected.type}</span></div><p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-app-secondary">{selected.content}</p></div>
@@ -261,7 +261,7 @@ export function MemoryPage() {
 
 function SummaryCard({ label, value, helper, icon: Icon, tone }: { label: string; value: number; helper: string; icon: typeof Database; tone: 'violet' | 'purple' | 'green' | 'blue' }) {
   const toneClass = { violet: 'bg-indigo-50 text-indigo-600', purple: 'bg-violet-50 text-violet-600', green: 'bg-emerald-50 text-emerald-600', blue: 'bg-blue-50 text-blue-600' }[tone];
-  return <article className="surface-panel p-5"><div className="flex items-start justify-between"><div><p className="text-xs font-medium text-app-muted">{label}</p><p className="mt-3 text-2xl font-semibold tabular-nums tracking-tight text-app-primary">{value.toLocaleString()}</p></div><span className={cn('rounded-xl p-2.5', toneClass)}><Icon size={18} /></span></div><p className="mt-4 text-xs text-app-muted">{helper}</p></article>;
+  return <article className="app-panel min-w-0 p-5"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="text-xs font-medium text-app-muted">{label}</p><p className="mt-3 text-2xl font-semibold tabular-nums tracking-tight text-app-primary">{value.toLocaleString()}</p></div><span className={cn('shrink-0 rounded-xl p-2.5', toneClass)}><Icon size={18} /></span></div><p className="mt-4 text-xs text-app-muted">{helper}</p></article>;
 }
 
 function FilterSelect({ label, value, onChange, options, labels }: { label: string; value: string; onChange: (value: string) => void; options: string[]; labels?: Record<string, string> }) {

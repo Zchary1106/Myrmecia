@@ -455,6 +455,71 @@ function applyModuleSchemas(db: DbDriver) {
   expires_at TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );`,
+    // External Agent control plane
+    `CREATE TABLE IF NOT EXISTS external_agents (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  adapter_kind TEXT NOT NULL CHECK(adapter_kind IN ('local_cli', 'http')),
+  adapter_config TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft', 'active', 'degraded', 'disabled')),
+  capabilities TEXT NOT NULL DEFAULT '[]',
+  allowed_tools TEXT NOT NULL DEFAULT '[]',
+  default_model_id TEXT,
+  last_health_check_at TEXT,
+  last_health_status TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(workspace_id, name)
+);
+CREATE INDEX IF NOT EXISTS idx_external_agents_workspace_status
+  ON external_agents(workspace_id, status);
+
+CREATE TABLE IF NOT EXISTS external_agent_runs (
+  id TEXT PRIMARY KEY,
+  external_agent_id TEXT NOT NULL,
+  task_id TEXT,
+  workspace_id TEXT NOT NULL,
+  trigger_type TEXT NOT NULL CHECK(trigger_type IN ('manual', 'cron', 'once', 'webhook', 'task_event')),
+  status TEXT NOT NULL CHECK(status IN ('queued', 'running', 'waiting_for_callback', 'succeeded', 'failed', 'cancelled', 'timed_out')),
+  invocation TEXT NOT NULL,
+  output_summary TEXT,
+  error TEXT,
+  artifact_ids TEXT NOT NULL DEFAULT '[]',
+  started_at TEXT,
+  completed_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY(external_agent_id) REFERENCES external_agents(id)
+);
+CREATE INDEX IF NOT EXISTS idx_external_agent_runs_agent_created
+  ON external_agent_runs(external_agent_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_external_agent_runs_workspace_status
+  ON external_agent_runs(workspace_id, status);
+
+CREATE TABLE IF NOT EXISTS external_agent_schedules (
+  id TEXT PRIMARY KEY,
+  external_agent_id TEXT NOT NULL,
+  workspace_id TEXT NOT NULL,
+  trigger_type TEXT NOT NULL CHECK(trigger_type IN ('cron', 'once', 'webhook', 'task_event')),
+  cron TEXT,
+  run_at TEXT,
+  timezone TEXT,
+  webhook_secret_ref TEXT,
+  event_type TEXT,
+  invocation TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  last_run_at TEXT,
+  next_run_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY(external_agent_id) REFERENCES external_agents(id)
+);
+CREATE INDEX IF NOT EXISTS idx_external_agent_schedules_due
+  ON external_agent_schedules(workspace_id, enabled, next_run_at);
+CREATE INDEX IF NOT EXISTS idx_external_agent_schedules_agent
+  ON external_agent_schedules(external_agent_id)
+;`,
   ];
 
   for (const sql of schemas) {

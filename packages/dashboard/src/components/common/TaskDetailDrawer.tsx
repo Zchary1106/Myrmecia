@@ -32,6 +32,7 @@ const qualityClass: Record<QualityLoopAttempt['status'], string> = {
 
 function messageIcon(type: ExecutionMessage['type']) {
   if (type === 'user_input') return '👤';
+  if (type === 'user_follow_up') return '↪';
   if (type === 'agent_text') return '💬';
   if (type === 'tool_use') return '🔧';
   if (type === 'tool_result') return '📎';

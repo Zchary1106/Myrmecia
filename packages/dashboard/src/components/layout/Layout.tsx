@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useMemo, useState, type ComponentType } from
 import {
   Activity, Archive, Bot, Boxes, ChevronLeft, ChevronRight, CircleDollarSign, Command,
   Gauge, GitBranch, Inbox, LayoutDashboard, ListTodo, Moon, PackageOpen, Puzzle,
-  Settings, ShieldCheck, Sun, TerminalSquare, Users, Wrench, Workflow,
+  MessageSquareText, Settings, ShieldCheck, Sun, TerminalSquare, Users, Wrench, Workflow,
 } from 'lucide-react';
 import { useStore } from '../../stores/store';
 import type { DashboardView } from '../../stores/store';
@@ -17,6 +17,7 @@ import { AppErrorBoundary } from '../common/AppErrorBoundary';
 const OrchestratorView = lazy(() => import('../orchestrator/OrchestratorView').then(m => ({ default: m.OrchestratorView })));
 const OrchestrationBoard = lazy(() => import('../orchestrator/OrchestrationBoard').then(m => ({ default: m.OrchestrationBoard })));
 const InteractionConsolePage = lazy(() => import('../../pages/InteractionConsole').then(m => ({ default: m.InteractionConsolePage })));
+const TaskSession = lazy(() => import('../session/TaskSession').then(m => ({ default: m.TaskSession })));
 const ExecutionTimeline = lazy(() => import('../timeline/ExecutionTimeline').then(m => ({ default: m.ExecutionTimeline })));
 const InboxView = lazy(() => import('../inbox/InboxView').then(m => ({ default: m.InboxView })));
 const ObservabilityView = lazy(() => import('../observability/ObservabilityView').then(m => ({ default: m.ObservabilityView })));
@@ -38,6 +39,7 @@ type NavItem = { id: DashboardView; label: string; icon: ComponentType<{ size?: 
 
 const primaryNav: NavItem[] = [
   { id: 'command', label: 'Home', icon: LayoutDashboard, badge: 'notifications' },
+  { id: 'session', label: 'Task session', icon: MessageSquareText },
   { id: 'teams', label: 'Teams', icon: Users },
   { id: 'orchestrator', label: 'Workflows', icon: Workflow },
   { id: 'artifacts', label: 'Artifacts', icon: PackageOpen },
@@ -50,7 +52,8 @@ const moreNav: { label: string; views: NavItem[] }[] = [
     { id: 'memory', label: 'Memory', icon: Archive },
   ] },
   { label: 'Operations', views: [
-    { id: 'inbox', label: 'Inbox', icon: Inbox, badge: 'inbox' }, { id: 'console', label: 'Console', icon: TerminalSquare },
+    { id: 'inbox', label: 'Inbox', icon: Inbox, badge: 'inbox' },
+    { id: 'console', label: 'Console', icon: TerminalSquare },
     { id: 'timeline', label: 'Timeline', icon: Activity }, { id: 'observability', label: 'Observe', icon: Gauge },
     { id: 'audit', label: 'Audit', icon: ShieldCheck },
   ] },
@@ -63,7 +66,7 @@ const moreNav: { label: string; views: NavItem[] }[] = [
 const viewTitles: Partial<Record<DashboardView, string>> = {
   command: 'Home', teams: 'Teams', orchestrator: 'Workflows', artifacts: 'Artifacts', tasks: 'Work queue',
   agents: 'Agents', skills: 'Skills', domains: 'Domains', memory: 'Memory', settings: 'Settings', models: 'Models',
-  tools: 'Tools', cost: 'Costs', console: 'Console', timeline: 'Timeline', observability: 'Observability',
+  tools: 'Tools', cost: 'Costs', session: 'Task session', console: 'Console', timeline: 'Timeline', observability: 'Observability',
   audit: 'Audit log', inbox: 'Inbox', orchestrate: 'Team canvas', board: 'Board',
 };
 
@@ -133,6 +136,8 @@ case 'command':
       return <HomeView />;
     case 'console':
       return <InteractionConsolePage />;
+    case 'session':
+      return <TaskSession />;
     case 'agents':
       return <AgentsPage />;
     case 'agent-settings':

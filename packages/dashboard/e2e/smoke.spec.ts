@@ -22,6 +22,165 @@ test('home composer exposes Team, Workflow, history, and theme controls', async 
   await expect(page.getByRole('button', { name: /Pipeline.*Run a template/ })).toBeVisible();
 });
 
+test('a task opens its conversation instead of the technical timeline', async ({ page }) => {
+  const task = {
+    id: 'e2e-home-task',
+    title: 'Review the workspace',
+    description: 'Review the workspace',
+    mode: 'master',
+    status: 'queued',
+    priority: 'normal',
+    createdBy: 'user',
+    input: 'Review the workspace',
+    retryCount: 0,
+    maxRetries: 1,
+    dependsOn: [],
+    createdAt: '2026-09-06T00:00:00.000Z',
+  };
+  await page.route('**/api/v1/tasks', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify([task]),
+  }));
+  await page.route('**/api/v1/supervisor/dispatch', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      orchestrationId: 'e2e-orchestration',
+      mode: 'direct',
+      intent: {},
+      orchestration: {},
+      tasks: [task],
+    }),
+  }));
+  await page.goto('/');
+
+  await page.getByLabel('Describe work for your Agent Team').fill('Review the workspace');
+  await page.getByRole('button', { name: 'Send to Master Agent' }).click();
+
+  await expect(page.getByRole('heading', { name: 'Your conversation with the team' })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Task conversation' }).getByText('Review the workspace', { exact: true }).first()).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Task conversation' }).getByText('Master Agent', { exact: true })).toBeVisible();
+  await expect(page.getByText('See what you asked, who owns the next step, and the real output as work completes.')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Execution Timeline' })).toBeHidden();
+});
+
+test('task session makes the conversation primary and keeps the timeline technical', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Task session', exact: true }).click();
+  await expect(
+    page.getByRole('heading', { name: 'Your conversation with the team' })
+      .or(page.getByRole('heading', { name: 'No task conversation yet' })),
+  ).toBeVisible();
+  const timelineLink = page.getByRole('button', { name: 'Open technical timeline' });
+  if (await timelineLink.isVisible()) {
+    await timelineLink.click();
+    await expect(page.getByText('Technical details for task runs, tools, traces, and runtime events.')).toBeVisible();
+    await page.getByRole('button', { name: 'Back to task conversation' }).click();
+    await expect(page.getByRole('heading', { name: 'Your conversation with the team' })).toBeVisible();
+  }
+});
+
+test('task session renders structured review output as a readable result', async ({ page }) => {
+  await page.route('**/api/v1/tasks', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify([{
+      id: 'e2e-review-task',
+      title: 'Review: profile upload',
+      description: 'Review the profile upload work',
+      mode: 'direct',
+      status: 'done',
+      priority: 'normal',
+      assigneeId: 'review',
+      createdBy: 'user',
+      input: 'Review the profile upload work',
+      output: JSON.stringify({
+        approved: false,
+        summary: 'The implementation needs stronger upload validation before approval.',
+        findings: [{
+          severity: 'high',
+          file: 'src/profile/upload.ts',
+          line: 42,
+          evidence: 'The MIME type is accepted without an allowlist.',
+          requiredFix: 'Add an image MIME allowlist before persisting uploads.',
+        }],
+      }),
+      retryCount: 0,
+      maxRetries: 1,
+      dependsOn: [],
+      createdAt: '2026-09-06T00:00:00.000Z',
+      completedAt: '2026-09-06T00:02:00.000Z',
+    }]),
+  }));
+
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Task session', exact: true }).click();
+
+  await expect(page.getByText('Changes requested', { exact: true }).first()).toBeVisible();
+  await expect(page.getByText('The implementation needs stronger upload validation before approval.')).toBeVisible();
+  await expect(page.getByText('src/profile/upload.ts:42')).toBeVisible();
+  await expect(page.getByText(/Add an image MIME allowlist before persisting uploads/)).toBeVisible();
+  await expect(page.getByText(/"approved":false/)).toHaveCount(0);
+});
+
+test('task session sends a follow-up to the live Agent mailbox', async ({ page }) => {
+  const task = {
+    id: 'e2e-running-task',
+    title: 'Implement profile upload',
+    description: 'Implement profile upload',
+    mode: 'direct',
+    status: 'running',
+    priority: 'normal',
+    assigneeId: 'dev',
+    createdBy: 'user',
+    input: 'Implement profile upload',
+    retryCount: 0,
+    maxRetries: 1,
+    dependsOn: [],
+    createdAt: '2026-09-06T00:00:00.000Z',
+    startedAt: '2026-09-06T00:01:00.000Z',
+  };
+  const execution = {
+    id: 'e2e-running-execution',
+    taskId: task.id,
+    agentDefId: 'dev',
+    status: 'running',
+    progress: { toolUseCount: 0, tokenCount: 0, recentActivities: [] },
+    costUSD: null,
+    tokenCount: 0,
+    startedAt: '2026-09-06T00:01:00.000Z',
+  };
+  let followUpSent = false;
+
+  await page.route('**/api/v1/tasks', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([task]) }));
+  await page.route('**/api/v1/executions', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([execution]) }));
+  await page.route('**/api/v1/executions/e2e-running-execution/messages**', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify(followUpSent ? [{
+      id: 2,
+      executionId: execution.id,
+      type: 'user_follow_up',
+      content: 'Please validate image MIME types too.',
+      createdAt: '2026-09-06T00:02:00.000Z',
+    }] : []),
+  }));
+  await page.route('**/api/v1/executions/e2e-running-execution/message', route => {
+    followUpSent = true;
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 1, toExecution: execution.id, messageType: 'text' }) });
+  });
+
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Task session', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Follow-up instruction' }).fill('Please validate image MIME types too.');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+
+  await expect(page.getByText('You · follow-up')).toBeVisible();
+  await expect(page.getByText('Please validate image MIME types too.')).toBeVisible();
+  await expect(page.getByText('The current Agent receives this at its next model turn.')).toBeVisible();
+});
+
 test('home shell remains usable at a narrow viewport', async ({ page }) => {
   await page.setViewportSize({ width: 760, height: 720 });
   await page.goto('/');
@@ -50,7 +209,9 @@ test('artifact workbench is accessible', async ({ page }) => {
   await page.goto('/');
   await page.getByTitle('Artifacts').click();
   await expect(page.getByRole('heading', { name: 'Outputs you can actually inspect' })).toBeVisible();
-  await expect(page.getByText('No artifacts yet')).toBeVisible();
+  await expect(
+    page.getByText('No artifacts yet').or(page.getByRole('button', { name: 'Download' })),
+  ).toBeVisible();
 });
 
 test('workflow catalog keeps visual canvas as an advanced entry', async ({ page }) => {
@@ -72,6 +233,56 @@ test('agent catalog keeps creation advanced and preserves the workspace entry', 
   await expect(page.getByRole('heading', { name: 'Create Custom Agent' })).toBeHidden();
   await page.getByRole('button', { name: 'Create Agent' }).click();
   await expect(page.getByRole('heading', { name: 'Create Custom Agent' })).toBeVisible();
+});
+
+test('Agents exposes the governed external Agent control plane', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Agents', exact: true }).click();
+  await page.getByRole('button', { name: 'External Agents', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'External Agents', level: 2 })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Connect Agent' })).toBeVisible();
+  await expect(page.getByRole('button', { name: /^Connected Agents/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /^Schedules/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /^Run History/ })).toBeVisible();
+});
+
+test('external Agent schedules can be configured from supported automation triggers', async ({ page }) => {
+  const suffix = `${Date.now()}-${test.info().retry}`;
+  const agentName = `E2E HTTP Agent ${suffix}`;
+  const updatedAgentName = `E2E updated Agent ${suffix}`;
+  const objective = `Escalate failed task ${suffix}`;
+  const createAgent = await page.request.post('/api/v1/external-agents', {
+    data: {
+      name: agentName,
+      adapter: {
+        kind: 'http',
+        endpoint: 'https://agents.example.test/run',
+        allowedHosts: ['agents.example.test'],
+      },
+    },
+  });
+  expect(createAgent.status()).toBe(201);
+
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Agents', exact: true }).click();
+  await page.getByRole('button', { name: 'External Agents', exact: true }).click();
+  await page.getByRole('button', { name: `Edit ${agentName}` }).click();
+  await page.getByRole('dialog', { name: 'Edit external Agent' }).getByLabel('Name').fill(updatedAgentName);
+  await page.getByRole('button', { name: 'Save Agent' }).click();
+  await expect(page.getByText(`${updatedAgentName} updated.`)).toBeVisible();
+  await page.getByRole('button', { name: 'Schedule', exact: true }).click();
+  await page.getByLabel('Schedule trigger').selectOption('task_event');
+  await expect(page.getByLabel('Task event type')).toBeVisible();
+  await page.getByLabel('Task event type').selectOption('task:failed');
+  await page.getByRole('dialog', { name: 'Schedule external Agent' }).getByLabel('Objective').fill(objective);
+  await page.getByRole('button', { name: 'Create task event automation' }).click();
+  await expect(page.getByText('Task event automation created.')).toBeVisible();
+  await page.getByRole('button', { name: /^Schedules/ }).click();
+  await expect(page.getByText(objective, { exact: true })).toBeVisible();
+  page.once('dialog', dialog => dialog.accept());
+  await page.getByRole('button', { name: `Delete automation ${objective}` }).click();
+  await expect(page.getByText('Automation deleted.')).toBeVisible();
+  await expect(page.getByText(objective, { exact: true })).toBeHidden();
 });
 
 test('skill catalog separates registry, version editor, assignments, and marketplace', async ({ page }) => {

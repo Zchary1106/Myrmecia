@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import type { Router as ExpressRouter } from 'express';
-import { getExecution, listExecutions, listExecutionMessages, updateExecution } from '../db/models/execution.js';
+import { addExecutionMessage, getExecution, listExecutions, listExecutionMessages, updateExecution } from '../db/models/execution.js';
 import { listLedgerEntries } from '../db/models/execution-ledger.js';
 import { addTaskLog, getTask, updateTask } from '../db/models/task.js';
 import { agentRuntime } from '../agents/agent-runtime.js';
@@ -86,12 +86,26 @@ router.post('/:id/cancel', (req, res) => {
 router.post('/:id/message', (req, res) => {
   const execution = getAccessibleExecution(req, req.params.id);
   if (!execution) return res.status(404).json({ error: { message: 'Execution not found' } });
+  if (execution.status !== 'running') return res.status(409).json({ error: { message: 'Execution is no longer accepting follow-up instructions' } });
 
   const { content, messageType = 'text' } = req.body;
-  if (!content) return res.status(400).json({ error: { message: 'content is required' } });
+  const followUp = typeof content === 'string' ? content.trim() : '';
+  if (!followUp) return res.status(400).json({ error: { message: 'content is required' } });
 
-  const msg = messageBus.send(null, execution.id, messageType, content);
-  res.json(msg);
+  const msg = messageBus.send(null, execution.id, messageType, followUp);
+  const conversationMessage = addExecutionMessage({
+    executionId: execution.id,
+    type: 'user_follow_up',
+    content: followUp,
+  });
+  eventBus.emit('execution:message', {
+    executionId: execution.id,
+    taskId: execution.taskId,
+    workspaceId: executionWorkspaceId(execution),
+    type: 'user_follow_up',
+    content: followUp,
+  });
+  res.json({ ...msg, conversationMessage });
 });
 
 // GET /api/executions/:id/agent-messages — get inter-agent messages
