@@ -22,19 +22,19 @@
     <g class="xaxis" transform="translate(0,423.33333333333337)">
       <path class="domain" stroke="#000000" d="M0,0.5H700" fill="none" filter="url(#xkcdify)"/>
       <g font-size="16" fill="none" text-anchor="middle"><g class="tick" transform="translate(0.00,0)">
-          <text fill="#000000" y="9" dy="0.71em" text-anchor="start">Jul 04</text>
+          <text fill="#000000" y="9" dy="0.71em" text-anchor="start">Jul 2026</text>
         </g>
         <g class="tick" transform="translate(175.00,0)">
-          <text fill="#000000" y="9" dy="0.71em" text-anchor="middle">Jul 08</text>
+          <text fill="#000000" y="9" dy="0.71em" text-anchor="middle">Jul 2026</text>
         </g>
         <g class="tick" transform="translate(350.00,0)">
-          <text fill="#000000" y="9" dy="0.71em" text-anchor="middle">Jul 12</text>
+          <text fill="#000000" y="9" dy="0.71em" text-anchor="middle">Aug 2026</text>
         </g>
         <g class="tick" transform="translate(525.00,0)">
-          <text fill="#000000" y="9" dy="0.71em" text-anchor="middle">Jul 16</text>
+          <text fill="#000000" y="9" dy="0.71em" text-anchor="middle">Sep 2026</text>
         </g>
         <g class="tick" transform="translate(700.00,0)">
-          <text fill="#000000" y="9" dy="0.71em" text-anchor="end">Jul 20</text>
+          <text fill="#000000" y="9" dy="0.71em" text-anchor="end">Oct 2026</text>
         </g></g>
     </g>
     <g class="yaxis">
@@ -43,24 +43,32 @@
           <line stroke="#000000" x2="-1"/>
           <text fill="#000000" x="-7" dy="0.32em" text-anchor="end"> </text>
         </g>
-        <g class="tick" transform="translate(0,317.50)">
+        <g class="tick" transform="translate(0,352.78)">
           <line stroke="#000000" x2="-1"/>
           <text fill="#000000" x="-7" dy="0.32em" text-anchor="end">0.5</text>
         </g>
-        <g class="tick" transform="translate(0,211.67)">
+        <g class="tick" transform="translate(0,282.22)">
           <line stroke="#000000" x2="-1"/>
           <text fill="#000000" x="-7" dy="0.32em" text-anchor="end">1</text>
         </g>
-        <g class="tick" transform="translate(0,105.83)">
+        <g class="tick" transform="translate(0,211.67)">
           <line stroke="#000000" x2="-1"/>
           <text fill="#000000" x="-7" dy="0.32em" text-anchor="end">1.5</text>
         </g>
-        <g class="tick" transform="translate(0,0.00)">
+        <g class="tick" transform="translate(0,141.11)">
           <line stroke="#000000" x2="-1"/>
           <text fill="#000000" x="-7" dy="0.32em" text-anchor="end">2</text>
+        </g>
+        <g class="tick" transform="translate(0,70.56)">
+          <line stroke="#000000" x2="-1"/>
+          <text fill="#000000" x="-7" dy="0.32em" text-anchor="end">2.5</text>
+        </g>
+        <g class="tick" transform="translate(0,0.00)">
+          <line stroke="#000000" x2="-1"/>
+          <text fill="#000000" x="-7" dy="0.32em" text-anchor="end">3</text>
         </g></g>
     </g>
-    <path class="xkcd-chart-xyline" d="M 0.00 211.67 C 116.67 176.39, 583.33 35.28, 700.00 0.00" fill="none" stroke="#dd4528" filter="url(#xkcdify)"/>
+    <path class="xkcd-chart-xyline" d="M 0.00 282.22 C 19.67 258.70, 1.33 188.15, 118.00 141.11 C 234.66 94.07, 603.00 23.52, 700.00 0.00" fill="none" stroke="#dd4528" filter="url(#xkcdify)"/>
     <svg>
       <svg>
         <rect x="8" y="5" width="178.50" height="32" rx="5" ry="5" fill="#ffffff" fill-opacity="0.85" stroke="#000000" stroke-width="2" filter="url(#xkcdify)"/>
