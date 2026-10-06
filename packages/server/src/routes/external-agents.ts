@@ -5,6 +5,7 @@ import {
   createExternalAgent,
   deleteExternalAgent,
   getExternalAgent,
+  getExternalAgentRun,
   listExternalAgentRuns,
   listExternalAgents,
   updateExternalAgent,
@@ -194,6 +195,46 @@ export function createExternalAgentRoutes(): Router {
       const result = await runtime.run(req.params.id, workspace(req), invocation(req.body?.invocation), 'manual');
       return res.status(201).json(result);
     } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  router.post('/:id/runs/:runId/cancel', async (req, res) => {
+    try {
+      requireOperatorRole(req, 'external-agent.cancel', ['admin', 'operator']);
+      const run = getExternalAgentRun(req.params.runId, workspace(req));
+      if (!run || run.externalAgentId !== req.params.id) throw new HttpError(404, 'NOT_FOUND', 'External Agent run not found');
+      if (run.status !== 'running') throw new HttpError(409, 'RUN_SETTLED', 'This run is not locally running');
+      return res.json(await runtime.cancel(run.id, workspace(req)));
+    } catch (error) {
+      if (error instanceof Error && /unsupported/.test(error.message)) {
+        return sendError(res, new HttpError(501, 'CANCEL_UNSUPPORTED', error.message));
+      }
+      sendError(res, error);
+    }
+  });
+
+  router.post('/:id/runs/:runId/result', async (req, res) => {
+    try {
+      requireOperatorRole(req, 'external-agent.result', ['admin', 'operator']);
+      const run = getExternalAgentRun(req.params.runId, workspace(req));
+      if (!run || run.externalAgentId !== req.params.id) throw new HttpError(404, 'NOT_FOUND', 'External Agent run not found');
+      const body = req.body || {};
+      if (!['succeeded', 'failed', 'cancelled', 'timed_out'].includes(body.status)
+        || (body.outputSummary !== undefined && typeof body.outputSummary !== 'string')
+        || (body.error !== undefined && typeof body.error !== 'string')
+        || (body.externalRunId !== undefined && typeof body.externalRunId !== 'string')) {
+        invalidInput('Invalid callback result');
+      }
+      const artifactIds = body.artifactIds === undefined ? [] : stringArray(body.artifactIds, 'artifactIds');
+      return res.json(await runtime.completeCallback(run.id, workspace(req), {
+        status: body.status, outputSummary: body.outputSummary, error: body.error,
+        externalRunId: body.externalRunId, artifactIds,
+      }));
+    } catch (error) {
+      if (error instanceof Error && /already settled|not waiting|identifier does not match|usable output/.test(error.message)) {
+        return sendError(res, new HttpError(409, 'CALLBACK_CONFLICT', error.message));
+      }
       sendError(res, error);
     }
   });

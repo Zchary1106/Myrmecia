@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { api } from '../lib/api';
+import { mergeExecutionMessages, readExecutionMessagePages } from '../lib/execution-messages';
 import type {
   AgentSummary,
   ExecutionMessage,
@@ -65,6 +66,7 @@ interface AppStore {
   executions: TaskExecution[];
   activeExecutions: Record<string, TaskExecution>;  // executionId → execution object
   executionMessages: Record<string, ExecutionMessage[]>;  // executionId → messages
+  executionMessageCursors: Record<string, number>; // REST replay cursor, not latest WS arrival
   streamingResponses: Record<string, string>;  // executionId → transient display-safe assistant text
   loadExecutions: () => Promise<void>;
   upsertExecution: (execution: TaskExecution) => void;
@@ -202,6 +204,7 @@ export const useStore = create<AppStore>((set, get) => ({
   executions: [],
   activeExecutions: {},
   executionMessages: {},
+  executionMessageCursors: {},
   streamingResponses: {},
   loadExecutions: async () => {
     try {
@@ -225,19 +228,26 @@ export const useStore = create<AppStore>((set, get) => ({
     executionMessages: {
       ...state.executionMessages,
       [executionId]: [
-        ...(state.executionMessages[executionId] || []),
-        ...messages.filter(m => !(state.executionMessages[executionId] || []).find(e => e.id === m.id)),
+        ...mergeExecutionMessages(state.executionMessages[executionId] || [], messages),
       ],
     },
   })),
   loadExecutionMessages: async (executionId) => {
     try {
-      const existing = get().executionMessages[executionId] || [];
-      const lastId = existing.length > 0 ? existing[existing.length - 1].id : undefined;
-      const messages = await api.executions.messages(executionId, lastId);
-      if (messages.length > 0) {
-        get().addExecutionMessages(executionId, messages);
-      }
+      await readExecutionMessagePages(
+        cursor => api.executions.messages(executionId, cursor),
+        get().executionMessageCursors[executionId],
+        (messages, cursor) => set(state => ({
+          executionMessages: {
+            ...state.executionMessages,
+            [executionId]: mergeExecutionMessages(state.executionMessages[executionId] || [], messages),
+          },
+          executionMessageCursors: {
+            ...state.executionMessageCursors,
+            [executionId]: Math.max(state.executionMessageCursors[executionId] || 0, cursor),
+          },
+        })),
+      );
     } catch (err) {
       console.warn('[store] Failed to load execution messages', err);
     }
@@ -245,7 +255,7 @@ export const useStore = create<AppStore>((set, get) => ({
   appendStreamingResponse: (executionId, delta) => set((state) => ({
     streamingResponses: {
       ...state.streamingResponses,
-      [executionId]: `${state.streamingResponses[executionId] || ''}${delta}`.slice(-32_000),
+      [executionId]: `${state.streamingResponses[executionId] || ''}${delta}`,
     },
   })),
   clearStreamingResponse: (executionId) => set((state) => {

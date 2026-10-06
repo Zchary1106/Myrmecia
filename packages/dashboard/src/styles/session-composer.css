@@ -1,0 +1,121 @@
+/* One material frame, with editing and tools on separate rows. */
+.glass-chat .agent-composer {
+  border: 1px solid rgb(var(--color-border) / .5);
+  border-radius: 22px;
+  padding: 8px;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / var(--glass-light)),
+    0 6px 22px -12px rgb(26 61 108 / .2);
+}
+
+.glass-chat .agent-composer:focus-within {
+  border-color: rgb(var(--glass-action) / .6);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / var(--glass-light)),
+    0 6px 24px -12px rgb(var(--glass-action) / .18);
+}
+
+.glass-chat .agent-composer::before { opacity: .12; }
+.glass-chat .agent-composer::after { padding: 1px; opacity: .35; }
+
+.glass-chat .agent-composer .session-composer-input {
+  display: block;
+  width: 100%;
+  min-height: 52px;
+  max-height: 160px;
+  padding: 10px 12px;
+  resize: none;
+  overflow-y: auto;
+  border: 0;
+  border-radius: 0;
+  outline: none;
+  box-shadow: none;
+  background: transparent;
+  color: var(--app-primary);
+  font: inherit;
+  font-size: 14px;
+  line-height: 22px;
+}
+
+.session-composer-input::placeholder { color: var(--app-muted); }
+.session-composer-input:disabled { cursor: not-allowed; opacity: .7; }
+.session-composer-toolbar,
+.session-composer-tools,
+.session-composer-actions,
+.session-composer-destination {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.session-composer-toolbar { gap: 12px; padding: 4px 4px 2px; }
+.session-composer-tools { gap: 2px; flex-shrink: 0; }
+.session-composer-actions { flex: 1; gap: 12px; justify-content: flex-end; }
+
+.session-composer-tool {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 6px 8px;
+  border-radius: 9px;
+  color: var(--app-secondary);
+  font-size: 11px;
+  transition: background-color 160ms ease, color 160ms ease;
+}
+
+.session-composer-tool:hover { background: rgb(var(--color-surface-hover) / .7); color: var(--app-primary); }
+.session-composer-tool:disabled { opacity: .45; cursor: not-allowed; }
+.session-composer-info { width: 28px; padding-inline: 6px; color: var(--app-muted); }
+.session-composer-tool[aria-expanded='true'] { background: rgb(var(--color-surface-hover)); }
+
+.session-composer-destination { gap: 6px; font-size: 11px; color: var(--app-secondary); }
+.session-composer-destination > svg { flex-shrink: 0; color: var(--app-muted); }
+.session-composer-delivery { flex-shrink: 0; color: var(--app-muted); font-size: 10px; }
+.session-composer-delivery::before { content: '·'; margin-right: 6px; }
+.session-composer-keyboard { flex-shrink: 0; color: var(--app-muted); font-size: 10px; white-space: nowrap; }
+.session-composer-keyboard kbd { font-family: inherit; }
+
+.session-composer-send {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  border-radius: 11px;
+  color: white;
+}
+
+.session-composer-send:disabled {
+  background: rgb(var(--color-surface-hover));
+  color: var(--app-muted);
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+.session-document-list { padding: 4px 8px 8px; }
+.session-knowledge-help {
+  margin: 8px 8px 2px;
+  padding: 10px 0 2px;
+  border-top: 1px solid rgb(var(--color-border) / .45);
+  color: var(--app-muted);
+  font-size: 11px;
+  line-height: 1.65;
+}
+.session-knowledge-help > p + p { margin-top: 4px; }
+
+@media (max-width: 1023px) {
+  .session-composer-keyboard { display: none; }
+}
+
+@media (max-width: 479px) {
+  .session-composer-toolbar, .session-composer-actions { gap: 8px; }
+  .session-composer-delivery { display: none; }
+  .session-composer-destination { flex: 1; justify-content: flex-end; }
+  .session-composer-info { min-height: 32px; }
+}
+
+@media (prefers-contrast: more), (forced-colors: active) {
+  .glass-chat .agent-composer:focus-within { outline: 2px solid Highlight; outline-offset: 2px; }
+  .session-composer-send:disabled { border: 1px solid GrayText; }
+}

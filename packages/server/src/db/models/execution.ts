@@ -1,6 +1,8 @@
 import { getDb } from '../database.js';
 import { v4 as uuid } from 'uuid';
 import type { TaskExecution, ExecutionStatus, AgentProgress, ExecutionMessage, ExecutionMessageType } from '../../types.js';
+import type { AgentRunState } from '@myrmecia/shared';
+import { AGENT_RUN_PHASE_LABELS, AGENT_STOP_REASON_LABELS } from '@myrmecia/shared';
 
 const DEFAULT_PROGRESS: AgentProgress = {
   toolUseCount: 0,
@@ -16,6 +18,7 @@ function rowToExecution(row: any): TaskExecution {
     agentDefId: row.agent_def_id,
     skillVersionId: row.skill_version_id || undefined,
     status: row.status,
+    runState: parseRunState(row.run_state),
     progress: JSON.parse(row.progress),
     costUSD: costType === 'subscription' || costType === 'unavailable' || row.cost_usd == null
       ? null
@@ -37,6 +40,20 @@ function rowToExecution(row: any): TaskExecution {
     startedAt: row.started_at,
     completedAt: row.completed_at || undefined,
   };
+}
+
+function parseRunState(value: unknown): AgentRunState | undefined {
+  if (!value) return undefined;
+  try {
+    const state = typeof value === 'string' ? JSON.parse(value) : value;
+    if (state?.schemaVersion !== 1
+      || typeof state.phase !== 'string' || !Object.hasOwn(AGENT_RUN_PHASE_LABELS, state.phase)
+      || !['pending', 'accepted', 'rejected'].includes(state.acceptance)
+      || ![state.turn, state.toolCallCount].every(value => Number.isSafeInteger(value) && value >= 0)
+      || typeof state.updatedAt !== 'string'
+      || (state.stopReason !== undefined && !Object.hasOwn(AGENT_STOP_REASON_LABELS, state.stopReason))) return undefined;
+    return state;
+  } catch { return undefined; }
 }
 
 export function createExecution(data: {
@@ -146,12 +163,14 @@ export function updateExecution(id: string, updates: Partial<{
   modelTier: string;
   modelRouteSource: string;
   modelRouteReason: string;
+  runState: AgentRunState;
 }>): TaskExecution | undefined {
   const db = getDb();
   const sets: string[] = [];
   const params: any[] = [];
 
   if (updates.status !== undefined) { sets.push('status = ?'); params.push(updates.status); }
+  if (updates.runState !== undefined) { sets.push('run_state = ?'); params.push(JSON.stringify(updates.runState)); }
   if (updates.progress !== undefined) { sets.push('progress = ?'); params.push(JSON.stringify(updates.progress)); }
   if (updates.costUSD !== undefined) { sets.push('cost_usd = ?'); params.push(updates.costUSD); }
   if (updates.costType !== undefined) { sets.push('cost_type = ?'); params.push(updates.costType); }

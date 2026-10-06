@@ -141,24 +141,25 @@ export function DomainsPage() {
   };
 
   return (
-    <div className="p-6 max-w-6xl mx-auto">
-      <header className="flex items-center justify-between mb-5">
+    <div className="ui-page">
+      <header className="ui-page-heading">
         <div>
-          <h2 className="text-2xl font-bold flex items-center gap-2">📘 Domains</h2>
-          <p className="text-sm text-gray-500 mt-1">
+          <div className="ui-eyebrow">Domain knowledge</div>
+          <h1 className="ui-page-title">Domains</h1>
+          <p className="ui-page-description">
             领域定制包 — 给 agent 装上你的行业人设与知识库。平台只附一个示例，其余由你定制。
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <button
             onClick={() => setShowWizard(true)}
-            className="px-3 py-2 text-sm rounded-lg border border-border bg-surface hover:bg-surface-hover text-gray-300"
+            className="ui-button"
           >
             ❓ 引导
           </button>
           <button
             onClick={() => setEditing({ ...emptyForm })}
-            className="px-4 py-2 text-sm rounded-lg bg-accent hover:bg-accent/90 text-white font-medium"
+            className="ui-button-primary"
           >
             ＋ 新建领域
           </button>
@@ -166,13 +167,13 @@ export function DomainsPage() {
       </header>
 
       {error && (
-        <div className="mb-4 px-4 py-2.5 rounded-lg bg-red-500/10 border border-red-500/30 text-red-300 text-sm flex justify-between">
+        <div className="flex justify-between rounded-xl border border-red-500/25 bg-red-500/[0.08] px-4 py-2.5 text-sm text-red-500">
           <span>{error}</span>
-          <button onClick={() => setError('')} className="text-red-400 hover:text-red-200">✕</button>
+          <button onClick={() => setError('')} className="ui-button-quiet text-red-500" aria-label="Dismiss error">✕</button>
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className={cn('grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3', domains.length <= 1 && 'max-w-5xl xl:grid-cols-2')}>
         {domains.map(d => (
           <DomainCard
             key={d.id}
@@ -186,7 +187,7 @@ export function DomainsPage() {
         ))}
         <button
           onClick={() => (example ? copyFrom(example) : setEditing({ ...emptyForm }))}
-          className="min-h-[150px] rounded-xl border border-dashed border-border hover:border-accent text-gray-500 hover:text-accent-light grid place-items-center transition-colors"
+          className="app-focus grid min-h-[190px] place-items-center rounded-2xl border border-dashed border-border/80 bg-background/35 text-app-muted transition duration-200 hover:-translate-y-px hover:border-accent/45 hover:bg-accent/[0.035] hover:text-accent-light"
         >
           <div className="text-center">
             <div className="text-3xl mb-1">＋</div>
@@ -217,7 +218,7 @@ export function DomainsPage() {
       {showWizard && <FirstRunWizard onClose={finishWizard} hasExample={!!example} />}
 
       {toast && (
-        <div className="fixed bottom-6 right-6 px-4 py-2.5 rounded-lg bg-emerald-500/15 border border-emerald-500/40 text-emerald-200 text-sm shadow-lg">
+        <div className="message-enter fixed bottom-6 right-6 z-40 rounded-xl border border-emerald-500/25 bg-surface px-4 py-2.5 text-sm text-emerald-500 shadow-lg">
           {toast}
         </div>
       )}
@@ -232,61 +233,61 @@ function DomainCard({ domain, usage, onEdit, onCopy, onDelete, onUpload }: {
 }) {
   const docCount = domain.documents?.length ?? domain.knowledgeIds.length;
   return (
-    <div className="rounded-xl border border-border bg-surface p-4 hover:border-border transition-colors relative">
+    <article className="ui-panel-interactive relative min-h-[190px] p-5">
       <span className={cn(
-        'absolute top-3 right-3 text-[10px] px-2 py-0.5 rounded-full',
+        'absolute right-4 top-4 rounded-lg border px-2 py-1 text-[9px] font-semibold',
         domain.builtin
-          ? 'text-amber-300 bg-amber-500/10 border border-amber-500/30'
-          : 'text-emerald-300 bg-emerald-500/10 border border-emerald-500/30',
+          ? 'border-amber-500/20 bg-amber-500/[0.08] text-amber-500'
+          : 'border-emerald-500/20 bg-emerald-500/[0.08] text-emerald-500',
       )}>
         {domain.builtin ? '示例' : '自定义'}
       </span>
       <div className="flex items-center gap-2.5">
-        <div className="w-9 h-9 rounded-lg grid place-items-center text-lg bg-surface-hover border border-border">
+        <div className="grid h-10 w-10 place-items-center rounded-xl border border-border/70 bg-background/65 text-lg">
           {domain.emoji}
         </div>
-        <div>
-          <div className="font-semibold text-sm">{domain.name}</div>
-          <div className="text-[11px] text-gray-500 font-mono">{domain.id}</div>
+        <div className="min-w-0 pr-14">
+          <h2 className="truncate text-sm font-semibold text-app-primary">{domain.name}</h2>
+          <div className="truncate font-mono text-[10px] text-app-muted">{domain.id}</div>
         </div>
       </div>
-      <p className="text-[12.5px] text-gray-400 mt-2.5 line-clamp-2 min-h-[34px]">
+      <p className="mt-3 min-h-[40px] line-clamp-2 text-xs leading-5 text-app-secondary">
         {domain.persona || '（未填写人设）'}
       </p>
-      <div className="flex flex-wrap gap-1.5 mt-3">
-        <span className="text-[11px] text-cyan-300 bg-cyan-500/5 border border-cyan-500/30 rounded-full px-2 py-0.5">
+      <div className="mt-3 flex flex-wrap gap-1.5">
+        <span className="ui-chip border-accent/20 bg-accent/[0.06] text-accent-light">
           📄 {docCount} 知识库
         </span>
         {domain.agentIds.slice(0, 3).map(a => (
-          <span key={a} className="text-[11px] text-accent-light bg-accent/5 border border-accent/30 rounded-full px-2 py-0.5">
+          <span key={a} className="ui-chip">
             🤖 {a}
           </span>
         ))}
         {domain.disclaimer && (
-          <span className="text-[11px] text-gray-400 bg-surface-hover border border-border rounded-full px-2 py-0.5">
+          <span className="ui-chip">
             ⚠ 免责声明
           </span>
         )}
         {domain.retrieval.enabled && (
-          <span className="text-[11px] text-gray-400 bg-surface-hover border border-border rounded-full px-2 py-0.5">
+          <span className="ui-chip">
             🔎 topK {domain.retrieval.topK}
           </span>
         )}
       </div>
       {usage && usage.taskCount > 0 && (
-        <div className="flex items-center gap-3 mt-3 pt-3 border-t border-border text-[11px] text-gray-400">
+        <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-border/70 pt-3 text-[10px] text-app-muted">
           <span title="该领域累计花费">💰 {usage.costUSD == null ? 'N/A' : `$${usage.costUSD.toFixed(3)}`}</span>
           <span title="任务数">📋 {usage.taskCount} 任务</span>
           <span title="累计 tokens">🔢 {formatTokens(usage.tokens)} tokens</span>
         </div>
       )}
-      <div className="flex gap-2 mt-3.5 text-xs">
-        <button onClick={onEdit} className="px-2.5 py-1.5 rounded-lg bg-surface-hover hover:bg-accent/15 hover:text-accent-light text-gray-300">编辑</button>
-        <button onClick={onUpload} className="px-2.5 py-1.5 rounded-lg bg-surface-hover hover:bg-cyan-500/15 hover:text-cyan-300 text-gray-300">＋ 知识库</button>
-        <button onClick={onCopy} className="px-2.5 py-1.5 rounded-lg bg-surface-hover hover:bg-surface text-gray-300">复制</button>
-        <button onClick={onDelete} className="px-2.5 py-1.5 rounded-lg bg-surface-hover hover:bg-red-500/15 hover:text-red-300 text-gray-400 ml-auto">删除</button>
+      <div className="mt-4 flex flex-wrap gap-1.5">
+        <button onClick={onEdit} className="ui-button-quiet">编辑</button>
+        <button onClick={onUpload} className="ui-button-quiet">＋ 知识库</button>
+        <button onClick={onCopy} className="ui-button-quiet">复制</button>
+        <button onClick={onDelete} className="ui-button-quiet ml-auto hover:bg-red-500/[0.08] hover:text-red-500">删除</button>
       </div>
-    </div>
+    </article>
   );
 }
 
@@ -303,7 +304,7 @@ function DomainEditor({ form, setForm, agents, busy, onSave, onCancel }: {
 
   return (
     <Modal onClose={onCancel} title={form.id ? '编辑领域' : '新建领域'} wide>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
         <div className="space-y-3">
           <Field label="领域名称">
             <input className={inputCls} value={form.name} onChange={e => set('name', e.target.value)} placeholder="如：合同审查助手" />
@@ -335,45 +336,45 @@ function DomainEditor({ form, setForm, agents, busy, onSave, onCancel }: {
           </Field>
           <Field label="启用的 Agent">
             <div className="flex flex-wrap gap-1.5">
-              {agents.length === 0 && <span className="text-xs text-gray-500">无可用 agent</span>}
+              {agents.length === 0 && <span className="text-xs text-app-muted">无可用 agent</span>}
               {agents.map(a => (
-                <button key={a.id} onClick={() => toggleAgent(a.id)}
+                <button type="button" key={a.id} onClick={() => toggleAgent(a.id)}
                   className={cn(
-                    'text-xs px-2.5 py-1 rounded-full border transition-colors',
+                    'app-focus rounded-lg border px-2.5 py-1.5 text-xs transition',
                     form.agentIds.includes(a.id)
-                      ? 'bg-accent/15 text-accent-light border-accent/40'
-                      : 'bg-surface-hover text-gray-400 border-border hover:text-gray-200',
+                      ? 'border-accent/35 bg-accent/[0.09] text-accent-light'
+                      : 'border-border/70 bg-background/55 text-app-secondary hover:border-accent/25 hover:bg-surface-hover hover:text-app-primary',
                   )}>
                   {a.emoji || '🤖'} {a.id}
                 </button>
               ))}
             </div>
           </Field>
-          <div className="flex items-center gap-4 pt-1">
-            <label className="flex items-center gap-2 text-xs text-gray-400 cursor-pointer">
+          <div className="flex flex-wrap items-center gap-4 pt-1">
+            <label className="flex cursor-pointer items-center gap-2 text-xs text-app-secondary">
               <input type="checkbox" checked={form.retrievalEnabled} onChange={e => set('retrievalEnabled', e.target.checked)} />
               检索增强（自动注入知识库）
             </label>
-            <label className="flex items-center gap-1.5 text-xs text-gray-400">
+            <label className="flex items-center gap-1.5 text-xs text-app-secondary">
               topK
               <input type="number" min={1} max={20} value={form.topK} onChange={e => set('topK', Number(e.target.value))}
-                className="w-14 bg-background border border-border rounded px-2 py-1" />
+                className="ui-field w-16 px-2 py-1.5 text-xs" />
             </label>
-            <label className="flex items-center gap-1.5 text-xs text-gray-400">
+            <label className="flex items-center gap-1.5 text-xs text-app-secondary">
               minScore
               <input type="number" min={0} max={1} step={0.05} value={form.minScore} onChange={e => set('minScore', Number(e.target.value))}
-                className="w-16 bg-background border border-border rounded px-2 py-1" />
+                className="ui-field w-20 px-2 py-1.5 text-xs" />
             </label>
           </div>
         </div>
       </div>
 
-      <div className="flex gap-2 mt-5">
+      <div className="mt-6 flex gap-2">
         <button onClick={onSave} disabled={busy}
-          className="px-4 py-2 text-sm rounded-lg bg-accent hover:bg-accent/90 text-white font-medium disabled:opacity-50">
+          className="ui-button-primary">
           {busy ? '保存中…' : '保存领域'}
         </button>
-        <button onClick={onCancel} className="px-4 py-2 text-sm rounded-lg border border-border bg-surface hover:bg-surface-hover text-gray-300">
+        <button onClick={onCancel} className="ui-button">
           取消
         </button>
       </div>
@@ -404,7 +405,7 @@ function KnowledgeUpload({ domain, onClose, onDone }: {
 
   return (
     <Modal onClose={onClose} title={`上传知识库 → ${domain.emoji} ${domain.name}`}>
-      <p className="text-xs text-gray-500 mb-3">
+      <p className="mb-4 text-xs leading-5 text-app-muted">
         粘贴文档内容（法规、手册、规范、FAQ…）。系统会自动分块、向量化，并绑定到该领域，执行时检索注入。
       </p>
       {err && <div className="mb-3 px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/30 text-red-300 text-xs">{err}</div>}
@@ -415,12 +416,12 @@ function KnowledgeUpload({ domain, onClose, onDone }: {
         <textarea className={cn(inputCls, 'min-h-[200px] font-mono text-xs')} value={content} onChange={e => setContent(e.target.value)}
           placeholder="在此粘贴文档全文…" />
       </Field>
-      <div className="flex gap-2 mt-4">
+      <div className="mt-5 flex gap-2">
         <button onClick={upload} disabled={busy}
-          className="px-4 py-2 text-sm rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-medium disabled:opacity-50">
+          className="ui-button-primary">
           {busy ? '上传中…' : '上传并绑定'}
         </button>
-        <button onClick={onClose} className="px-4 py-2 text-sm rounded-lg border border-border bg-surface hover:bg-surface-hover text-gray-300">
+        <button onClick={onClose} className="ui-button">
           取消
         </button>
       </div>
@@ -463,7 +464,7 @@ function FirstRunWizard({ onClose, hasExample }: { onClose: (seed?: { name: stri
       <div className="text-center px-2 py-1">
         <div className="text-5xl mb-3">{s.emoji}</div>
         <h3 className="text-xl font-bold mb-2">{s.title}</h3>
-        <p className="text-sm text-gray-400 leading-relaxed max-w-md mx-auto">{s.body}</p>
+        <p className="mx-auto max-w-md text-sm leading-relaxed text-app-secondary">{s.body}</p>
 
         {last && (
           <div className="mt-5 space-y-2.5 text-left max-w-md mx-auto">
@@ -481,25 +482,25 @@ function FirstRunWizard({ onClose, hasExample }: { onClose: (seed?: { name: stri
 
         <div className="flex gap-2 justify-center mt-5">
           {step > 0 && (
-            <button onClick={() => setStep(step - 1)} className="px-4 py-2 text-sm rounded-lg border border-border bg-surface hover:bg-surface-hover text-gray-300">
+            <button onClick={() => setStep(step - 1)} className="ui-button">
               上一步
             </button>
           )}
           {!last ? (
             <>
-              <button onClick={() => onClose()} className="px-4 py-2 text-sm rounded-lg text-gray-500 hover:text-gray-300">跳过</button>
-              <button onClick={() => setStep(step + 1)} className="px-5 py-2 text-sm rounded-lg bg-accent hover:bg-accent/90 text-white font-medium">
+              <button onClick={() => onClose()} className="ui-button-quiet">跳过</button>
+              <button onClick={() => setStep(step + 1)} className="ui-button-primary">
                 下一步
               </button>
             </>
           ) : (
             <>
-              <button onClick={() => onClose()} className="px-4 py-2 text-sm rounded-lg border border-border bg-surface hover:bg-surface-hover text-gray-300">
+              <button onClick={() => onClose()} className="ui-button">
                 稍后再说
               </button>
               <button
                 onClick={() => onClose(name.trim() && persona.trim() ? { name: name.trim(), persona: persona.trim() } : undefined)}
-                className="px-5 py-2 text-sm rounded-lg bg-accent hover:bg-accent/90 text-white font-medium">
+                className="ui-button-primary">
                 {name.trim() ? '创建领域' : (hasExample ? '去看示例' : '开始')}
               </button>
             </>
@@ -518,12 +519,12 @@ function formatTokens(n: number): string {
   return String(n);
 }
 
-const inputCls = 'w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-gray-200 placeholder:text-gray-600 focus:border-accent focus:outline-none';
+const inputCls = 'ui-field';
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <label className="block text-xs text-gray-400 font-medium mb-1.5">{label}</label>
+      <label className="ui-label">{label}</label>
       {children}
     </div>
   );
@@ -533,15 +534,15 @@ function Modal({ title, children, onClose, wide, bare }: {
   title: string; children: React.ReactNode; onClose: () => void; wide?: boolean; bare?: boolean;
 }) {
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 backdrop-blur-sm p-4" onClick={onClose}>
+    <div className="ui-dialog-backdrop" onClick={onClose}>
       <div
-        className={cn('w-full bg-surface border border-border rounded-2xl shadow-2xl p-5 max-h-[90vh] overflow-y-auto', wide ? 'max-w-3xl' : 'max-w-lg')}
+        className={cn('ui-dialog', wide ? 'max-w-3xl' : 'max-w-lg')}
         onClick={e => e.stopPropagation()}
       >
         {!bare && (
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-bold">{title}</h3>
-            <button onClick={onClose} className="text-gray-500 hover:text-gray-200 text-lg">✕</button>
+            <h3 className="text-lg font-semibold tracking-[-0.02em] text-app-primary">{title}</h3>
+            <button onClick={onClose} className="ui-button-quiet h-8 w-8 px-0 text-lg" aria-label="Close dialog">✕</button>
           </div>
         )}
         {children}

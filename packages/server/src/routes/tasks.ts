@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { existsSync, statSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
-import { listTasks, getTask, updateTask, deleteTask, getTaskLogs } from '../db/models/task.js';
+import { createTask, listTasks, getTask, updateTask, deleteTask, getTaskLogs } from '../db/models/task.js';
 import { listQualityLoopAttempts } from '../db/models/quality-loop.js';
 import { createOperatorAction } from '../db/models/operator-action.js';
 import { TaskQueue } from '../queue/task-queue.js';
@@ -11,8 +11,14 @@ import { requestCanAccessWorkspace, workspaceIdFromRequest } from '../auth/tenan
 import type { Task } from '../types.js';
 import { getModel } from '../models/model-registry.js';
 import { getLatestTaskCheckpoint, listTaskCheckpoints } from '../db/models/execution-context.js';
-import { checkpointExecutionContext, loadExecutionContext, persistExecutionContext } from '../agents/execution-context.js';
+import { checkpointExecutionContext, loadExecutionContext, persistExecutionContext, persistInheritedExecutionContext } from '../agents/execution-context.js';
 import { listAgents } from '../db/models/agent.js';
+import { continuationInput } from '../agents/task-continuation.js';
+import { listExecutions } from '../db/models/execution.js';
+import { isWaitingForAgentInput } from '@myrmecia/shared';
+import { getExternalAgent, getExternalAgentRunForExecution } from '../db/models/external-agent.js';
+import { getExternalAgentRuntime } from '../agents/external-agent-runtime.js';
+import { eventBus } from '../events/event-bus.js';
 
 const taskStatusSchema = z.enum(['pending', 'queued', 'assigned', 'running', 'waiting_for_tool', 'review', 'done', 'failed', 'cancelled']);
 const taskModeSchema = z.enum(['master', 'direct', 'pipeline']);
@@ -83,6 +89,116 @@ function getAccessibleTask(req: any, taskId: string): Task {
 
 export function createTaskRoutes(taskQueue: TaskQueue): Router {
   const router = Router();
+  const continuing = new Set<string>();
+
+  // New execution within an existing conversation; never reopen a terminal task.
+  router.post('/:id/continue', async (req, res) => {
+    let lockedRoot: string | undefined;
+    try {
+      const actor = requireOperatorRole(req, 'task.continue', ['admin', 'operator']);
+      const { content } = parseBody(z.object({ content: z.string().trim().min(1).max(8_000) }), req);
+      let root = getAccessibleTask(req, req.params.id);
+      const visited = new Set<string>();
+      while (root.parentTaskId) {
+        if (visited.has(root.id)) throw new HttpError(409, 'INVALID_SESSION', 'Task ancestry contains a cycle');
+        visited.add(root.id);
+        root = getAccessibleTask(req, root.parentTaskId);
+      }
+      if (continuing.has(root.id)) throw new HttpError(409, 'SESSION_BUSY', 'A follow-up is already being scheduled');
+      continuing.add(root.id);
+      lockedRoot = root.id;
+      const family: Task[] = [root];
+      const pending = [root.id];
+      const known = new Set(pending);
+      while (pending.length) {
+        for (const child of listTasks({ parentTaskId: pending.shift()!, workspaceId: root.workspaceId })) {
+          if (known.has(child.id)) continue;
+          known.add(child.id);
+          family.push(child);
+          pending.push(child.id);
+        }
+      }
+      if (family.some(task => !['done', 'failed', 'cancelled'].includes(task.status)
+        && !isWaitingForAgentInput(task, listExecutions({ taskId: task.id, workspaceId: task.workspaceId })))) {
+        throw new HttpError(409, 'SESSION_BUSY', 'This conversation still has active work. Send an instruction to the running Agent or wait until it settles.');
+      }
+      const turns = family.filter(task => task.id === root.id || task.createdBy === 'user')
+        .sort((a, b) => Date.parse(a.completedAt || a.createdAt) - Date.parse(b.completedAt || b.createdAt));
+      const previous = turns[turns.length - 1] || root;
+      const context = loadExecutionContext(previous);
+      const previousExecution = listExecutions({ taskId: previous.id, workspaceId: root.workspaceId, limit: 1 })[0];
+      const externalRun = previousExecution
+        ? getExternalAgentRunForExecution(previousExecution.id, root.workspaceId || 'default') : undefined;
+      if (externalRun) {
+        const externalAgent = getExternalAgent(externalRun.externalAgentId, root.workspaceId || 'default');
+        if (!externalAgent || externalAgent.status === 'disabled') {
+          throw new HttpError(409, 'AGENT_UNAVAILABLE', 'The original external Agent is unavailable; select a new Agent explicitly');
+        }
+        const workdir = validateWorkspacePath(context.workdir || context.workspacePath);
+        const task = createTask({
+          title: content.slice(0, 80), description: content,
+          input: continuationInput(root, turns, content, context),
+          mode: 'direct', parentTaskId: root.id, createdBy: 'user', maxRetries: 0,
+          priority: previous.priority, workspaceId: root.workspaceId, workdir,
+          workspacePath: workdir, modelId: context.modelId, reasoningEffort: context.reasoningEffort,
+          contextLength: context.contextLength, domainId: previous.domainId,
+        });
+        persistInheritedExecutionContext(context, task);
+        createOperatorAction({
+          action: 'task.continue', actor, targetType: 'task', targetId: task.id, taskId: task.id,
+          metadata: { sessionRootTaskId: root.id, previousTaskId: previous.id, externalAgentId: externalAgent.id },
+        });
+        // The new message authorizes a new invocation, not reopening the old
+        // remote job or silently routing the user's message to Master instead.
+        void getExternalAgentRuntime().run(externalAgent.id, root.workspaceId || 'default', {
+          taskId: task.id, parentTaskId: root.id, workspaceId: root.workspaceId || 'default',
+          objective: task.input, constraints: context.constraints,
+          workdir, modelId: context.modelId, provider: context.provider,
+          reasoningEffort: context.reasoningEffort, contextLength: context.contextLength,
+        }, 'manual').catch(error => {
+          if (['done', 'failed', 'cancelled'].includes(getTask(task.id)?.status || '')) return;
+          const failed = updateTask(task.id, {
+            status: 'failed', error: error instanceof Error ? error.message : String(error),
+            completedAt: new Date().toISOString(),
+          });
+          eventBus.emit('task:updated', { taskId: task.id, task: failed, workspaceId: root.workspaceId });
+        });
+        return res.status(201).json(getTask(task.id));
+      }
+      const availableAgents = listAgents();
+      const agent = availableAgents.find(agent => agent.id === previous.assigneeId)
+        || availableAgents.find(agent => agent.id === 'master' || agent.role === 'orchestrator');
+      if (!agent) throw new HttpError(409, 'AGENT_UNAVAILABLE', 'No Agent is available to continue this conversation');
+      const workdir = validateWorkspacePath(context.workdir || context.workspacePath);
+      const task = await taskQueue.enqueue({
+        title: content.slice(0, 80),
+        description: content,
+        input: continuationInput(root, turns, content, context),
+        mode: 'direct',
+        assigneeId: agent.id,
+        parentTaskId: root.id,
+        inheritContextFromTaskId: previous.id,
+        createdBy: 'user',
+        priority: previous.priority,
+        workspaceId: root.workspaceId,
+        workdir,
+        workspacePath: workdir,
+        modelId: validateModelId(context.modelId),
+        reasoningEffort: context.reasoningEffort,
+        contextLength: context.contextLength,
+        domainId: previous.domainId,
+      });
+      createOperatorAction({
+        action: 'task.continue', actor, targetType: 'task', targetId: task.id, taskId: task.id,
+        metadata: { sessionRootTaskId: root.id, previousTaskId: previous.id },
+      });
+      res.status(201).json(task);
+    } catch (error) {
+      sendError(res, error);
+    } finally {
+      if (lockedRoot) continuing.delete(lockedRoot);
+    }
+  });
 
   // Create task
   router.post('/', async (req, res) => {

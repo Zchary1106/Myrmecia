@@ -3,13 +3,18 @@ import { getApiAuthToken } from './auth';
 
 type EventHandler = (event: WSEvent) => void;
 
-class WSClient {
+export class WSClient {
   private ws: WebSocket | null = null;
   private handlers = new Map<string, Set<EventHandler>>();
   private channels = new Set<string>();
   private reconnectTimer: number | null = null;
+  private shouldReconnect = false;
+  private connectedHandlers = new Set<() => void>();
 
   connect() {
+    this.shouldReconnect = true;
+    if (this.reconnectTimer !== null) window.clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
     if (this.ws?.readyState === WebSocket.OPEN || this.ws?.readyState === WebSocket.CONNECTING) {
       return;
     }
@@ -19,16 +24,20 @@ class WSClient {
     const url = `${protocol}//${window.location.host}/ws${token ? `?token=${encodeURIComponent(token)}` : ''}`;
 
     this.ws = new WebSocket(url);
+    const socket = this.ws;
 
     this.ws.onopen = () => {
+      if (this.ws !== socket || !this.shouldReconnect) return;
       console.log('[WS] Connected');
       // Re-subscribe
       for (const ch of this.channels) {
         this.sendCommand({ type: 'subscribe', channel: ch });
       }
+      for (const handler of this.connectedHandlers) handler();
     };
 
     this.ws.onmessage = (e) => {
+      if (this.ws !== socket || !this.shouldReconnect) return;
       try {
         const event = JSON.parse(e.data);
         if (!event?.type) {
@@ -51,9 +60,15 @@ class WSClient {
     };
 
     this.ws.onclose = () => {
+      if (this.ws !== socket || !this.shouldReconnect) return;
       console.log('[WS] Disconnected, reconnecting...');
       this.reconnectTimer = window.setTimeout(() => this.connect(), 2000);
     };
+  }
+
+  onConnected(handler: () => void): () => void {
+    this.connectedHandlers.add(handler);
+    return () => { this.connectedHandlers.delete(handler); };
   }
 
   subscribe(channel: string) {
@@ -80,6 +95,7 @@ class WSClient {
   }
 
   disconnect() {
+    this.shouldReconnect = false;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
     this.ws?.close();

@@ -158,28 +158,6 @@ export function KnowledgeGraphPanel() {
       </div>
 
       {error && <div className="mt-3 rounded-md border border-red-500/30 bg-red-500/10 px-2.5 py-2 text-[10px] text-red-300">{error}</div>}
-      {candidates.length > 0 && (
-        <div className="mt-3 rounded-lg border border-amber-500/20 bg-amber-500/5 p-3">
-          <div className="text-[10px] font-semibold uppercase tracking-wide text-amber-300">Pending evidence ({candidates.length})</div>
-          <div className="mt-2 max-h-40 space-y-2 overflow-auto">
-            {candidates.map(candidate => (
-              <div key={candidate.item.id} className="flex items-start justify-between gap-3 rounded-md border border-border bg-background px-2.5 py-2">
-                <div className="min-w-0">
-                  <div className="truncate text-[10px] text-gray-300">{candidate.item.content}</div>
-                  <div className="mt-0.5 text-[9px] text-gray-600">{candidate.evidenceKind || 'evidence'}{candidate.taskId ? ' · task ' + candidate.taskId : ''}</div>
-                  {typeof candidate.item.metadata?.previewUrl === 'string' && <a href={candidate.item.metadata.previewUrl} target="_blank" rel="noreferrer" className="mt-1 inline-block text-[9px] text-accent-light hover:underline">View original evidence</a>}
-                </div>
-                <div className="flex flex-none gap-2">
-                  <button type="button" aria-label={`Confirm ${candidate.item.content}`} onClick={() => void decideCandidate(candidate.item.id, true)} disabled={busy} className="text-[9px] text-emerald-300 hover:underline">Confirm</button>
-                  <button type="button" aria-label={`Reject ${candidate.item.content}`} onClick={() => void decideCandidate(candidate.item.id, false)} disabled={busy} className="text-[9px] text-red-300 hover:underline">Reject</button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-      <RelationshipSuggestions onChanged={() => void refresh()} />
-
       {!busy && graph.nodes.length === 0 && <div className="mt-3 rounded-lg border border-dashed border-border px-3 py-5 text-center text-xs text-gray-500">Add memories to begin a knowledge graph.</div>}
       {graph.nodes.length > 0 && (
         <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1fr)_190px]">
@@ -230,6 +208,36 @@ export function KnowledgeGraphPanel() {
           <button type="button" onClick={() => void createEdge()} disabled={busy} className="rounded-lg bg-accent/15 px-3 py-2 text-xs font-semibold text-accent-light hover:bg-accent/25 disabled:opacity-40">Link memories</button>
         </div>
       )}
+
+      <div className="mt-4 grid gap-3 xl:grid-cols-2">
+        {candidates.length > 0 && (
+          <details className="knowledge-review-panel group rounded-xl border border-border bg-background/55">
+            <summary className="app-focus flex cursor-pointer list-none items-center justify-between gap-3 rounded-xl px-3.5 py-3 text-left">
+              <div>
+                <div className="text-xs font-semibold text-app-primary">Pending evidence</div>
+                <div className="mt-0.5 text-[10px] text-app-muted">{candidates.length} items waiting for review</div>
+              </div>
+              <span className="rounded-full bg-amber-500/10 px-2 py-1 text-[10px] font-semibold text-amber-600">{candidates.length}</span>
+            </summary>
+            <div className="max-h-64 space-y-2 overflow-auto border-t border-border p-3">
+              {candidates.map(candidate => (
+                <div key={candidate.item.id} className="flex items-start justify-between gap-3 rounded-lg border border-border/80 bg-surface px-3 py-2.5">
+                  <div className="min-w-0">
+                    <div className="truncate text-[11px] text-app-secondary">{candidate.item.content}</div>
+                    <div className="mt-0.5 text-[9px] text-app-muted">{candidate.evidenceKind || 'evidence'}{candidate.taskId ? ' · task ' + candidate.taskId : ''}</div>
+                    {typeof candidate.item.metadata?.previewUrl === 'string' && <a href={candidate.item.metadata.previewUrl} target="_blank" rel="noreferrer" className="mt-1 inline-block text-[9px] text-accent-light hover:underline">View original evidence</a>}
+                  </div>
+                  <div className="flex flex-none gap-2">
+                    <button type="button" aria-label={`Confirm ${candidate.item.content}`} onClick={() => void decideCandidate(candidate.item.id, true)} disabled={busy} className="text-[10px] font-medium text-emerald-600 hover:underline">Confirm</button>
+                    <button type="button" aria-label={`Reject ${candidate.item.content}`} onClick={() => void decideCandidate(candidate.item.id, false)} disabled={busy} className="text-[10px] font-medium text-red-500 hover:underline">Reject</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </details>
+        )}
+        <RelationshipSuggestions onChanged={() => void refresh()} />
+      </div>
     </section>
   );
 }

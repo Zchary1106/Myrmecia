@@ -18,6 +18,15 @@ const scenario: HarnessScenario = {
 };
 
 describe('harness eval', () => {
+  it('does not mistake convincing prose for completion or verified evidence', () => {
+    const outcome = { output: 'The plan is complete', stopReason: 'max_turns' as const,
+      costUSD: 0, durationMs: 1, toolCalls: 1, numTurns: 1, humanInterventions: 0 };
+    expect(scoreScenario(scenario, outcome).passed).toBe(false);
+    expect(scoreScenario({ ...scenario, requiredEvidenceIds: ['test-report'] }, { ...outcome, stopReason: 'completed' }).passed).toBe(false);
+    expect(scoreScenario({ ...scenario, requiredEvidenceIds: ['test-report'] }, {
+      ...outcome, stopReason: 'completed', evidenceIds: ['test-report'],
+    }).passed).toBe(true);
+  });
   it('scores a passing outcome', () => {
     const result = scoreScenario(scenario, {
       output: 'Here is the plan.', costUSD: 0.02, durationMs: 800, toolCalls: 1, numTurns: 2, humanInterventions: 0,

@@ -907,3 +907,54 @@ ALTER TABLE team_definitions ADD COLUMN roles JSON NOT NULL DEFAULT '[]';
 ALTER TABLE team_definitions ADD COLUMN policy JSON NOT NULL DEFAULT '{}';
 ALTER TABLE team_definitions ADD COLUMN domain_ids JSON NOT NULL DEFAULT '[]';
 ALTER TABLE team_definitions ADD COLUMN contract_version INTEGER NOT NULL DEFAULT 1;
+
+-- Migration: 202610060001_agent_run_state
+ALTER TABLE task_executions ADD COLUMN run_state JSON;
+
+-- Migration: 202610060002_agent_loop_checkpoints
+CREATE TABLE IF NOT EXISTS agent_loop_checkpoints (
+  execution_id TEXT PRIMARY KEY REFERENCES task_executions(id) ON DELETE CASCADE,
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  workspace_id TEXT NOT NULL,
+  fingerprint TEXT NOT NULL,
+  snapshot JSON NOT NULL,
+  resumable INTEGER NOT NULL DEFAULT 1,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_agent_loop_checkpoints_task
+  ON agent_loop_checkpoints(task_id, updated_at);
+
+-- Migration: 202610060003_tool_invocation_journal
+CREATE TABLE IF NOT EXISTS agent_tool_invocations (
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  tool_id TEXT NOT NULL,
+  input_hash TEXT NOT NULL,
+  execution_id TEXT NOT NULL REFERENCES task_executions(id) ON DELETE CASCADE,
+  outcome TEXT NOT NULL CHECK(outcome IN ('running', 'done', 'unknown')),
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (task_id, tool_id, input_hash)
+);
+
+-- Migration: 202610060004_external_agent_run_state
+-- Module-owned tables normally initialize after main-schema migrations.
+-- Create this prerequisite idempotently for fresh databases before ALTER.
+CREATE TABLE IF NOT EXISTS external_agent_runs (
+  id TEXT PRIMARY KEY,
+  external_agent_id TEXT NOT NULL REFERENCES external_agents(id),
+  task_id TEXT,
+  workspace_id TEXT NOT NULL,
+  trigger_type TEXT NOT NULL CHECK(trigger_type IN ('manual','cron','once','webhook','task_event')),
+  status TEXT NOT NULL CHECK(status IN ('queued','running','waiting_for_callback','succeeded','failed','cancelled','timed_out')),
+  invocation TEXT NOT NULL,
+  output_summary TEXT,
+  error TEXT,
+  artifact_ids TEXT NOT NULL DEFAULT '[]',
+  started_at TEXT,
+  completed_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+ALTER TABLE external_agent_runs ADD COLUMN run_state JSON;
+
+-- Migration: 202610060005_external_execution_bridge
+ALTER TABLE external_agent_runs ADD COLUMN execution_id TEXT REFERENCES task_executions(id);
+ALTER TABLE external_agent_runs ADD COLUMN external_run_id TEXT;

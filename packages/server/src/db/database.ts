@@ -345,6 +345,20 @@ function initSchema(db: DbDriver) {
 function applyModuleSchemas(db: DbDriver) {
   // All module schemas use CREATE TABLE IF NOT EXISTS — safe to re-run
   const schemas = [
+    `CREATE TABLE IF NOT EXISTS conversation_lifecycle (
+      workspace_id TEXT NOT NULL, conversation_id TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('archived', 'deleted')),
+      updated_at TEXT NOT NULL, PRIMARY KEY(workspace_id, conversation_id)
+    );`,
+    `CREATE TABLE IF NOT EXISTS session_documents (
+      id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, session_key TEXT NOT NULL,
+      name TEXT NOT NULL, size_bytes INTEGER NOT NULL, passage_count INTEGER NOT NULL,
+      passages TEXT NOT NULL, original BLOB NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_session_documents_scope ON session_documents(workspace_id, session_key);
+    CREATE TABLE IF NOT EXISTS private_document_sessions (
+      workspace_id TEXT NOT NULL, session_key TEXT NOT NULL, PRIMARY KEY(workspace_id, session_key)
+    );`,
     // Multi-tenancy
     `CREATE TABLE IF NOT EXISTS organizations (id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);
      CREATE TABLE IF NOT EXISTS workspaces (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, name TEXT NOT NULL, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);

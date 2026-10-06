@@ -288,6 +288,8 @@ export interface LogEntry {
 
 export type ExecutionStatus = 'running' | 'done' | 'failed' | 'cancelled';
 
+export * from './agent-run.js';
+
 export interface ToolActivity {
   toolName: string;
   input: Record<string, unknown>;
@@ -480,6 +482,8 @@ export interface TaskExecution {
   agentDefId: string;
   skillVersionId?: string;
   status: ExecutionStatus;
+  /** Absent on legacy runs; do not infer validation or acceptance for them. */
+  runState?: import('./agent-run.js').AgentRunState;
   progress: AgentProgress;
   costUSD: number | null;
   costType?: ModelCostType;
@@ -562,6 +566,8 @@ export interface AgentMessage {
   consumed: boolean;
   createdAt: string;
 }
+
+export { conversationDeletionPolicy } from './conversation-policy.js';
 
 export type PipelineStatus = 'running' | 'paused' | 'blocked' | 'done' | 'failed' | 'awaiting_retry';
 
@@ -1269,6 +1275,7 @@ export interface ExternalAgent {
 }
 
 export interface ExternalAgentInvocationContext {
+  runId?: string;
   taskId?: string;
   parentTaskId?: string;
   executionContextId?: string;
@@ -1290,6 +1297,9 @@ export interface ExternalAgentRun {
   workspaceId?: string;
   triggerType: ExternalAgentTriggerType;
   status: ExternalAgentRunStatus;
+  runState?: import('./agent-run.js').AgentRunState;
+  executionId?: string;
+  externalRunId?: string;
   invocation: ExternalAgentInvocationContext;
   outputSummary?: string;
   error?: string;
@@ -1334,8 +1344,11 @@ export interface ExternalAgentAdapterResult {
 
 export interface ExternalAgentAdapter {
   readonly kind: ExternalAgentAdapterKind;
+  /** Cancellation only controls the local process/transport, not remote effects. */
+  readonly supportsCancellation?: boolean;
   validate(agent: ExternalAgent): Promise<void>;
   healthCheck(agent: ExternalAgent): Promise<ExternalAgentHealth>;
-  execute(agent: ExternalAgent, invocation: ExternalAgentInvocationContext): Promise<ExternalAgentAdapterResult>;
+  execute(agent: ExternalAgent, invocation: ExternalAgentInvocationContext, options?: { signal?: AbortSignal }): Promise<ExternalAgentAdapterResult>;
   cancel?(agent: ExternalAgent, run: ExternalAgentRun): Promise<void>;
 }
+export { isPublicationRequest } from './delivery-intent.js';

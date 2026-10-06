@@ -118,10 +118,44 @@ async function uploadWorkspaceFile(path: string, filePath: string, file: Blob): 
   }
 }
 
+export interface SessionDocument {
+  id: string;
+  name: string;
+  sizeBytes: number;
+  passageCount: number;
+  createdAt: string;
+}
+
 export const api = {
   /** Generic GET for any path (relative to /api/v1 if starts with /, or absolute) */
   get: <T = any>(path: string) => request<T>(path.startsWith('/api/') ? path.replace('/api/v1', '') : path),
+  conversations: {
+    list: () => request<Array<{ id: string; status: 'archived' | 'deleted'; updatedAt: string; taskIds?: string[] }>>('/conversations'),
+    manage: (taskIds: string[], action: 'archive' | 'restore' | 'delete', confirm = false, stopWorkflow = false) =>
+      request<{ states: Array<{ id: string; status: 'archived' | 'deleted'; updatedAt: string; taskIds?: string[] }>; affectedConversationIds: string[] }>(
+        '/conversations/manage', { method: 'POST', body: JSON.stringify({ taskIds, action, confirm, stopWorkflow }) },
+      ),
+  },
   tasks: {
+    documents: (id: string) => request<SessionDocument[]>(`/tasks/${id}/documents`),
+    document: (taskId: string, id: string) =>
+      request<{ id: string; name: string; passages: { locator: string; text: string }[] }>(`/tasks/${taskId}/documents/${id}`),
+    uploadDocument: async (taskId: string, file: File): Promise<SessionDocument> => {
+      const token = getApiAuthToken();
+      const res = await fetch(`${BASE}/tasks/${taskId}/documents`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/octet-stream', 'X-Document-Name': encodeURIComponent(file.name),
+          ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: file,
+      });
+      if (!res.ok) {
+        const error = await res.json().catch(() => null);
+        throw new Error(error?.error?.message || `Upload failed (${res.status}); maximum file size is 5 MB`);
+      }
+      return res.json();
+    },
+    removeDocument: (taskId: string, id: string) =>
+      request(`/tasks/${taskId}/documents/${id}`, { method: 'DELETE', body: JSON.stringify({ confirm: true }) }),
     list: (params?: Record<string, string>) =>
       request<Task[]>(`/tasks${params ? '?' + new URLSearchParams(params) : ''}`),
     get: (id: string) => request<Task>(`/tasks/${id}`),
@@ -131,6 +165,8 @@ export const api = {
     cancel: (id: string, confirmed = false) =>
       request<Task>(`/tasks/${id}/cancel`, { method: 'POST', body: JSON.stringify({ confirm: confirmed }) }),
     retry: (id: string) => request<Task>(`/tasks/${id}/retry`, { method: 'POST' }),
+    continue: (id: string, content: string) =>
+      request<Task>(`/tasks/${id}/continue`, { method: 'POST', body: JSON.stringify({ content }) }),
     delete: (id: string, confirmed = false) =>
       request<{ success: boolean }>(`/tasks/${id}`, { method: 'DELETE', body: JSON.stringify({ confirm: confirmed }) }),
     logs: (id: string) => request<LogEntry[]>(`/tasks/${id}/logs`),
@@ -217,8 +253,11 @@ export const api = {
       request<ToolPermission>(`/tools/${toolId}/permissions/${agentId}`, { method: 'PUT', body: JSON.stringify(data) }),
   },
   mcp: {
-    servers: () => request<Array<{ name: string; connected: boolean; toolCount: number }>>('/mcp/servers'),
+    servers: () => request<Array<{ name: string; connected: boolean; toolCount: number; error?: string; managed?: boolean }>>('/mcp/servers'),
+    reconnect: (name: string) => request<{ name: string; connected: boolean }>(`/mcp/servers/${encodeURIComponent(name)}/reconnect`, { method: 'POST' }),
     tools: () => request<Array<{ server: string; name: string; qualifiedName: string }>>('/mcp/tools'),
+    xiaohongshuStatus: () => request<{ authenticated: boolean; state: 'logged_in' | 'login_required' | 'unavailable'; checkedAt: string }>('/mcp/xiaohongshu/status'),
+    xiaohongshuLogin: () => request<{ authenticated: boolean; image?: string; expiresAt?: string }>('/mcp/xiaohongshu/login', { method: 'POST' }),
   },
   models: {
     list: (params?: { enabled?: string }) =>
@@ -317,6 +356,8 @@ export const api = {
       request<ExecutionMessage[]>(`/executions/${id}/messages${afterId ? `?afterId=${afterId}` : ''}`),
     trace: (id: string) => request<RunTrace | null>(`/executions/${id}/trace`),
     cancel: (id: string) => request<{ ok: boolean }>(`/executions/${id}/cancel`, { method: 'POST' }),
+    review: (id: string, decision: 'accepted' | 'rejected', note?: string) =>
+      request<TaskExecution>(`/executions/${id}/acceptance`, { method: 'POST', body: JSON.stringify({ decision, note }) }),
     sendMessage: (id: string, content: string, messageType = 'text') =>
       request<unknown>(`/executions/${id}/message`, { method: 'POST', body: JSON.stringify({ content, messageType }) }),
   },

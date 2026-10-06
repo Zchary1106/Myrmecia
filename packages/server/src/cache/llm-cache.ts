@@ -1,6 +1,7 @@
 import { createHash } from 'crypto';
 
 export interface CacheKey {
+  workspaceId?: string;
   model: string;
   system: string;
   prompt: string;
@@ -35,7 +36,7 @@ export class LLMCache {
   }
 
   private hash(key: CacheKey): string {
-    const raw = `${key.model}\x00${key.system}\x00${key.prompt}`;
+    const raw = `${key.workspaceId || 'default'}\x00${key.model}\x00${key.system}\x00${key.prompt}`;
     return createHash('sha256').update(raw).digest('hex');
   }
 

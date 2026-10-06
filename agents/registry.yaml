@@ -460,7 +460,8 @@ agents:
       maxToolCalls: 16
       maxWallClockMs: 900000
     capabilities: [xiaohongshu, rednote, social-media, chinese-content, lifestyle, web-research, hashtag-planning, image-generation]
-    allowed_tools: [web.search, web.fetch, content.hashtag_plan, image.generate_svg, image.generate_cards, image.generate_comfyui]
+    # Read-only MCP access; publishing, comments, likes and cookie mutations are not granted.
+    allowed_tools: [web.search, web.fetch, content.hashtag_plan, image.generate_svg, image.generate_cards, image.generate_comfyui, mcp__xiaohongshu__check_login_status, mcp__xiaohongshu__search_feeds, mcp__xiaohongshu__get_feed_detail]
     triggers: [小红书, 笔记, 种草, 小红书文案, rednote]
 
   - id: xiaohongshu-visual-designer

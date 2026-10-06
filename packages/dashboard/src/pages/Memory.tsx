@@ -189,7 +189,7 @@ export function MemoryPage() {
 
       {error && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
 
-      <section className="grid min-w-0 gap-4 sm:grid-cols-2 2xl:grid-cols-4" aria-label="Memory summary">
+      <section className="grid min-w-0 grid-cols-2 gap-3 sm:gap-4 2xl:grid-cols-4" aria-label="Memory summary">
         <SummaryCard label="Total knowledge" value={stats?.total ?? items.length} helper="Available across this workspace" icon={Database} tone="violet" />
         <SummaryCard label="Short-term" value={workingCount} helper="Current task context" icon={Clock3} tone="purple" />
         <SummaryCard label="Long-term" value={longTermCount} helper="Facts, experiences, and procedures" icon={BookOpen} tone="green" />
@@ -261,7 +261,7 @@ export function MemoryPage() {
 
 function SummaryCard({ label, value, helper, icon: Icon, tone }: { label: string; value: number; helper: string; icon: typeof Database; tone: 'violet' | 'purple' | 'green' | 'blue' }) {
   const toneClass = { violet: 'bg-indigo-50 text-indigo-600', purple: 'bg-violet-50 text-violet-600', green: 'bg-emerald-50 text-emerald-600', blue: 'bg-blue-50 text-blue-600' }[tone];
-  return <article className="app-panel min-w-0 p-5"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="text-xs font-medium text-app-muted">{label}</p><p className="mt-3 text-2xl font-semibold tabular-nums tracking-tight text-app-primary">{value.toLocaleString()}</p></div><span className={cn('shrink-0 rounded-xl p-2.5', toneClass)}><Icon size={18} /></span></div><p className="mt-4 text-xs text-app-muted">{helper}</p></article>;
+  return <article className="app-panel min-w-0 p-4 sm:p-5"><div className="flex items-start justify-between gap-2 sm:gap-3"><div className="min-w-0"><p className="truncate text-[11px] font-medium text-app-muted sm:text-xs">{label}</p><p className="mt-2 text-xl font-semibold tabular-nums tracking-tight text-app-primary sm:mt-3 sm:text-2xl">{value.toLocaleString()}</p></div><span className={cn('shrink-0 rounded-xl p-2 sm:p-2.5', toneClass)}><Icon size={18} /></span></div><p className="mt-3 line-clamp-2 text-[10px] leading-4 text-app-muted sm:mt-4 sm:text-xs">{helper}</p></article>;
 }
 
 function FilterSelect({ label, value, onChange, options, labels }: { label: string; value: string; onChange: (value: string) => void; options: string[]; labels?: Record<string, string> }) {

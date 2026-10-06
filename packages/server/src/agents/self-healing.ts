@@ -5,6 +5,7 @@ import { agentRuntime } from '../agents/agent-runtime.js';
 import { eventBus } from '../events/event-bus.js';
 import { createNotification } from '../db/models/notification.js';
 import type { Task } from '../types.js';
+import { queueOwnsRetry, taskMayHaveSideEffects } from './retry-ownership.js';
 
 /**
  * Self-Healing Engine
@@ -28,7 +29,11 @@ export class SelfHealingEngine {
     if (!task) return;
 
     // Don't self-heal already-cancelled tasks.
-    if (task.status === 'cancelled') return;
+    if (task.status !== 'failed') return;
+    if (queueOwnsRetry(task.id)) return;
+    if (taskMayHaveSideEffects(task.id)) {
+      return this.escalateToSupervisor(task, error, 'A write-capable tool was attempted. Verify its outcome before retrying.');
+    }
 
     // Don't self-heal tasks that are part of a decomposition: coordination
     // parents (tasks that own subtasks) are settled by MasterAgent.monitorSubtasks,
@@ -44,6 +49,15 @@ export class SelfHealingEngine {
     if (isNonRetryableExecutionError(error)) {
       addTaskLog(taskId, 'warn', `Self-healing skipped automatic retries for deterministic failure: ${error}`, 'self-healing');
       return this.escalateToSupervisor(task, error, 'Automatic retries were skipped because the failure needs configuration or context changes.');
+    }
+
+    if (task.retryCount >= task.maxRetries) {
+      return this.escalateToSupervisor(task, error, `Automatic retry limit reached (${task.retryCount}/${task.maxRetries}).`);
+    }
+    // A second timeout with a reduced research budget is not a reason to run
+    // the same expensive search again with another agent or fresh context.
+    if (isExecutionTimeout(error) && task.retryCount >= 1) {
+      return this.escalateToSupervisor(task, error, 'The reduced-budget retry also timed out. Collected evidence is preserved for review.');
     }
 
     const healingLevel = this.getHealingLevel(task);
@@ -74,7 +88,9 @@ export class SelfHealingEngine {
     const enhancedInput = `${task.input}
 
 IMPORTANT: A previous attempt failed with this error: ${error}
-Please avoid this error and try a different approach. Be more careful and methodical.`;
+${isExecutionTimeout(error)
+  ? 'Reuse previously collected evidence. Perform at most two missing searches, then produce a partial answer with explicit evidence gaps. Do not restart the full research.'
+  : 'Please avoid this error and try a different approach. Be more careful and methodical.'}`;
 
     updateTask(task.id, {
       status: 'pending',
@@ -159,9 +175,9 @@ Please avoid this error and try a different approach. Be more careful and method
 
   /** Level 5: Give up and notify the supervisor */
   private async escalateToSupervisor(task: Task, error: string, recoveryNote?: string) {
-    addTaskLog(task.id, 'error', 'Level 5: Escalating to supervisor — all auto-recovery attempts exhausted', 'self-healing');
+    addTaskLog(task.id, 'error', recoveryNote || 'Automatic recovery stopped; human review is required.', 'self-healing');
 
-    updateTask(task.id, { status: 'failed', error: `Self-healing exhausted. Last error: ${error}` });
+    updateTask(task.id, { status: 'failed', error, completedAt: new Date().toISOString() });
 
     const notif = createNotification({
       type: 'needs_input',
@@ -176,6 +192,10 @@ Please avoid this error and try a different approach. Be more careful and method
 
 export function isNonRetryableExecutionError(error: string): boolean {
   return [
+    /AGENT_(?:MAX_TURNS|MODEL_TRUNCATED|MODEL_BLOCKED|EMPTY_OUTPUT|STOPPED)/i,
+    /TOOL_REPLAY_BLOCKED|RECOVERY_REQUIRES_REVIEW/i,
+    /(?:exceeded.*(?:monthly|quota)|insufficient_quota|quota.*(?:exceeded|exhausted)|billing.*(?:limit|disabled)|payment required)/i,
+    /(?:invalid api key|incorrect api key|unauthorized|forbidden|permission denied)/i,
     /exceeded token budget/i,
     /exceeded max output length/i,
     /approval required/i,
@@ -183,4 +203,8 @@ export function isNonRetryableExecutionError(error: string): boolean {
     /dangerous shell command/i,
     /authentication.+(?:missing|required|unavailable)/i,
   ].some(pattern => pattern.test(error || ''));
+}
+
+function isExecutionTimeout(error: string): boolean {
+  return /EXECUTION_(?:IDLE|WALL)_TIMEOUT|Timeout after \d+ms waiting for session\.idle/i.test(error);
 }

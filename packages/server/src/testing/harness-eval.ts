@@ -10,6 +10,7 @@
  * real model/runtime combination.
  */
 import { Router } from 'express';
+import type { AgentStopReason } from '@myrmecia/shared';
 
 export interface HarnessScenario {
   id: string;
@@ -22,9 +23,13 @@ export interface HarnessScenario {
   maxCostUSD?: number;
   /** Optional wall-clock ceiling (ms). Exceeding it fails the scenario. */
   maxDurationMs?: number;
+  expectedStopReason?: AgentStopReason;
+  requiredEvidenceIds?: string[];
 }
 
 export interface HarnessRunOutcome {
+  stopReason?: AgentStopReason;
+  evidenceIds?: string[];
   output: string;
   costUSD: number;
   durationMs: number;
@@ -109,6 +114,15 @@ export const HARNESS_SCENARIOS: HarnessScenario[] = [
 export function scoreScenario(scenario: HarnessScenario, outcome: HarnessRunOutcome): HarnessScenarioResult {
   const failures: string[] = [];
   if (outcome.error) failures.push(`error: ${outcome.error}`);
+  if (scenario.expectedStopReason && outcome.stopReason !== scenario.expectedStopReason) {
+    failures.push(`stop reason ${outcome.stopReason || 'unknown'} does not match ${scenario.expectedStopReason}`);
+  } else if (!scenario.expectedStopReason && outcome.stopReason && outcome.stopReason !== 'completed') {
+    failures.push(`run did not complete: ${outcome.stopReason}`);
+  }
+  if (!outcome.output.trim() && !outcome.evidenceIds?.length) failures.push('no output or evidence');
+  for (const id of scenario.requiredEvidenceIds || []) {
+    if (!outcome.evidenceIds?.includes(id)) failures.push(`missing evidence: ${id}`);
+  }
   const lower = (outcome.output || '').toLowerCase();
   for (const needle of scenario.expectSubstrings || []) {
     if (!lower.includes(needle.toLowerCase())) failures.push(`missing expected text: "${needle}"`);

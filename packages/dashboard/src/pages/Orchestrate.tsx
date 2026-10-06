@@ -438,31 +438,31 @@ export function OrchestratePage() {
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-background" data-testid="team-composer">
-      <header className="border-b border-border bg-surface/95 px-3 py-3 backdrop-blur lg:px-5">
+      <header className="border-b border-border/70 bg-surface/88 px-3 py-3 backdrop-blur-xl lg:px-5">
         <div className="flex flex-wrap items-center gap-2">
-          <button type="button" onClick={() => setPaletteOpen(value => !value)} className="rounded-lg border border-border px-2.5 py-2 text-xs hover:bg-surface-hover" title="Toggle palette">☰</button>
+          <button type="button" onClick={() => setPaletteOpen(value => !value)} className="ui-button h-9 w-9 px-0" title="Toggle palette">☰</button>
           <select value={wfId || ''} onChange={event => event.target.value ? void loadWorkflow(event.target.value) : newWorkflow()}
-            className="min-w-0 flex-1 rounded-lg border border-border bg-background px-3 py-2 text-xs outline-none sm:max-w-56">
+            className="ui-field min-w-0 flex-1 py-2 text-xs sm:max-w-56">
             <option value="">New workflow</option>
             {workflows.map(workflow => <option key={workflow.id} value={workflow.id}>{workflow.name} · {workflow.status}</option>)}
           </select>
           <input value={name} onChange={event => setName(event.target.value)} aria-label="Workflow name"
-            className="min-w-[12rem] flex-[2] rounded-lg border border-border bg-background px-3 py-2 text-sm font-semibold outline-none focus:border-accent" />
+            className="ui-field min-w-[12rem] flex-[2] py-2 text-sm font-semibold" />
           <StatusBadge status={run?.status || 'draft'} />
-          <button type="button" onClick={() => void save()} disabled={!!busy || nodes.length === 0} className="rounded-lg border border-border px-3 py-2 text-xs hover:bg-surface-hover disabled:opacity-40">{busy === 'save' ? 'Saving…' : 'Save'}</button>
-          <button type="button" onClick={() => void doRun(false)} disabled={!!busy || nodes.length === 0} className="rounded-lg bg-accent px-3 py-2 text-xs font-semibold text-white disabled:opacity-40">{busy === 'run' ? 'Starting…' : 'Run'}</button>
-          <button type="button" onClick={() => void doRun(true)} disabled={!!busy || !wfId} className="rounded-lg border border-border px-3 py-2 text-xs hover:bg-surface-hover disabled:opacity-40">Replay</button>
-          {run?.status === 'running' || run?.status === 'waiting' ? <button type="button" onClick={() => void cancel()} className="rounded-lg border border-red-500/30 px-3 py-2 text-xs text-red-300">Cancel</button> : null}
-          <button type="button" onClick={() => setTemplateOpen(value => !value)} className={cn('rounded-lg border px-3 py-2 text-xs', templateOpen ? 'border-accent bg-accent/10 text-accent-light' : 'border-border')}>Versions</button>
-          <button type="button" onClick={() => setInspectorOpen(value => !value)} className="rounded-lg border border-border px-2.5 py-2 text-xs" title="Toggle inspector">◫</button>
+          <button type="button" onClick={() => void save()} disabled={!!busy || nodes.length === 0} className="ui-button">{busy === 'save' ? 'Saving…' : 'Save'}</button>
+          <button type="button" onClick={() => void doRun(false)} disabled={!!busy || nodes.length === 0} className="ui-button-primary">{busy === 'run' ? 'Starting…' : 'Run'}</button>
+          <button type="button" onClick={() => void doRun(true)} disabled={!!busy || !wfId} className="ui-button">Replay</button>
+          {run?.status === 'running' || run?.status === 'waiting' ? <button type="button" onClick={() => void cancel()} className="ui-button border-red-500/25 text-red-500 hover:bg-red-500/[0.08]">Cancel</button> : null}
+          <button type="button" onClick={() => setTemplateOpen(value => !value)} className={cn('ui-button', templateOpen && 'border-accent/35 bg-accent/[0.08] text-accent-light')}>Versions</button>
+          <button type="button" onClick={() => setInspectorOpen(value => !value)} className="ui-button h-9 w-9 px-0" title="Toggle inspector">◫</button>
         </div>
         <div className="mt-2 flex flex-wrap items-center gap-2">
           <input value={input} onChange={event => setInput(event.target.value)} placeholder="Workflow goal / runtime input" aria-label="Workflow goal"
-            className="min-w-[16rem] flex-1 rounded-lg border border-border bg-background px-3 py-2 text-xs outline-none focus:border-accent" />
-          <span className="text-[10px] text-gray-600">{nodes.length} nodes · {edges.length} edges · {artifacts.length} artifacts</span>
+            className="ui-field min-w-[16rem] flex-1 py-2 text-xs" />
+          <span className="text-[10px] text-app-muted">{nodes.length} nodes · {edges.length} edges · {artifacts.length} artifacts</span>
         </div>
         {error && <div role="alert" className="mt-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">{error}</div>}
-        {notice && <div className="mt-2 rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-xs text-emerald-300">{notice}</div>}
+        {notice && <div className="ui-notice message-enter mt-2">{notice}</div>}
       </header>
 
       {templateOpen && (
@@ -476,29 +476,29 @@ export function OrchestratePage() {
 
       <div className="relative flex min-h-0 flex-1 overflow-hidden">
         {paletteOpen && (
-          <aside className="absolute inset-y-0 left-0 z-30 w-[min(19rem,88vw)] overflow-y-auto border-r border-border bg-surface p-3 shadow-2xl xl:static xl:z-auto xl:w-64 xl:shrink-0 xl:shadow-none">
+          <aside className="absolute inset-y-0 left-0 z-30 w-[min(19rem,88vw)] overflow-y-auto border-r border-border/70 bg-surface/95 p-3 shadow-2xl backdrop-blur-xl xl:static xl:z-auto xl:w-64 xl:shrink-0 xl:bg-surface/65 xl:shadow-none">
             <div className="mb-3 flex items-center justify-between">
-              <div><div className="text-xs font-semibold">Building blocks</div><div className="text-[10px] text-gray-600">Drag onto the canvas</div></div>
-              <button type="button" onClick={() => setPaletteOpen(false)} className="text-gray-500 xl:hidden">✕</button>
+              <div><div className="text-xs font-semibold">Building blocks</div><div className="text-[10px] text-app-muted">Drag onto the canvas</div></div>
+              <button type="button" onClick={() => setPaletteOpen(false)} className="text-app-muted xl:hidden">✕</button>
             </div>
             <div className="grid grid-cols-2 gap-2">
               {nodeKinds.map(item => (
                 <button key={item.kind} type="button" draggable onDragStart={event => event.dataTransfer.setData('nodeKind', item.kind)} onClick={() => addNode(item.kind)}
-                  className="rounded-xl border border-border bg-background p-2 text-left hover:border-accent/50 hover:bg-surface-hover">
-                  <div className="text-base text-accent-light">{item.icon}</div><div className="mt-1 text-[11px] font-semibold">{item.label}</div><div className="mt-0.5 text-[9px] leading-snug text-gray-600">{item.description}</div>
+                  className="ui-panel-interactive p-2 text-left">
+                  <div className="text-base text-accent-light">{item.icon}</div><div className="mt-1 text-[11px] font-semibold">{item.label}</div><div className="mt-0.5 text-[9px] leading-snug text-app-muted">{item.description}</div>
                 </button>
               ))}
             </div>
-            <div className="mb-2 mt-5 text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-600">Agents</div>
+            <div className="mb-2 mt-5 text-[10px] font-semibold uppercase tracking-[0.16em] text-app-muted">Agents</div>
             <div className="space-y-1.5">
               {agents.map(agent => (
                 <button key={agent.id} type="button" draggable onDragStart={event => event.dataTransfer.setData('agentId', agent.id)}
-                  className="flex w-full items-center gap-2 rounded-lg border border-border bg-background px-2.5 py-2 text-left hover:border-accent/40 hover:bg-surface-hover">
+                  className="app-focus flex w-full items-center gap-2 rounded-xl border border-border/70 bg-background/55 px-2.5 py-2 text-left transition hover:border-accent/35 hover:bg-surface-hover">
                   <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-accent/10 text-xs text-accent-light">{agent.name.slice(0, 1)}</span>
-                  <span className="min-w-0"><span className="block truncate text-[11px] font-medium">{agent.name}</span><span className="block truncate text-[9px] text-gray-600">{agent.role}</span></span>
+                  <span className="min-w-0"><span className="block truncate text-[11px] font-medium">{agent.name}</span><span className="block truncate text-[9px] text-app-muted">{agent.role}</span></span>
                 </button>
               ))}
-              {!agents.length && <div className="rounded-lg border border-dashed border-border p-3 text-[10px] text-gray-600">No agents loaded. Gate and publisher nodes remain available.</div>}
+              {!agents.length && <div className="rounded-lg border border-dashed border-border p-3 text-[10px] text-app-muted">No agents loaded. Gate and publisher nodes remain available.</div>}
             </div>
           </aside>
         )}
@@ -508,9 +508,9 @@ export function OrchestratePage() {
             onMouseDown={() => { setSelectedNodeId(null); setSelectedEdgeId(null); }}
             className="relative" style={{ width: CANVAS_W, height: CANVAS_H }}>
             {nodes.length === 0 && (
-              <div className="absolute left-1/2 top-1/3 w-80 -translate-x-1/2 rounded-2xl border border-dashed border-border bg-surface/80 p-6 text-center backdrop-blur">
+              <div className="message-enter absolute left-1/2 top-1/3 w-80 -translate-x-1/2 rounded-2xl border border-dashed border-border/80 bg-surface/88 p-6 text-center shadow-xl backdrop-blur-xl">
                 <div className="text-2xl text-accent-light">⌘</div><div className="mt-2 text-sm font-semibold">Compose your agent team</div>
-                <div className="mt-1 text-xs leading-relaxed text-gray-500">Drag agents or gates from the palette. Connect output ports to define artifact and control flow.</div>
+                <div className="mt-1 text-xs leading-relaxed text-app-muted">Drag agents or gates from the palette. Connect output ports to define artifact and control flow.</div>
               </div>
             )}
             <svg className="pointer-events-none absolute inset-0 h-full w-full overflow-visible">
@@ -537,8 +537,8 @@ export function OrchestratePage() {
                   className={cn('absolute flex cursor-move select-none flex-col rounded-xl border-2 bg-surface px-3 py-2.5 shadow-xl transition-shadow', statusColor[status], selectedNodeId === node.id && 'ring-2 ring-accent/50', connecting === node.id && 'ring-2 ring-blue-400')}
                   style={{ left: node.position?.x || 0, top: node.position?.y || 0, width: NODE_W, height: NODE_H }}>
                   <div className="flex items-center gap-2"><span className="text-sm text-accent-light">{definition.icon}</span><span className="min-w-0 flex-1 truncate text-[12px] font-semibold">{node.label || definition.label}</span><span className={cn('h-2 w-2 rounded-full', statusDot[status])} /></div>
-                  <div className="mt-1 truncate text-[10px] text-gray-500">{node.agentRole || definition.label} · {status}</div>
-                  <div className="mt-auto flex items-center justify-between text-[9px] text-gray-600"><span>{node.inputArtifacts?.length || 0} in</span><span>{node.outputArtifacts?.length || 0} out</span><span>{node.requiredSkills?.length || 0} skills</span></div>
+                  <div className="mt-1 truncate text-[10px] text-app-muted">{node.agentRole || definition.label} · {status}</div>
+                  <div className="mt-auto flex items-center justify-between text-[9px] text-app-muted"><span>{node.inputArtifacts?.length || 0} in</span><span>{node.outputArtifacts?.length || 0} out</span><span>{node.requiredSkills?.length || 0} skills</span></div>
                   <span className="absolute -left-1.5 top-1/2 h-3 w-3 -translate-y-1/2 rounded-full border-2 border-gray-500 bg-background" />
                   <button type="button" onMouseDown={event => startConnect(event, node.id)} onClick={event => event.stopPropagation()} title="Connect output"
                     className="absolute -right-1.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 cursor-crosshair rounded-full border-2 border-blue-400 bg-background hover:bg-blue-400" />
@@ -549,10 +549,10 @@ export function OrchestratePage() {
         </main>
 
         {inspectorOpen && (
-          <aside className="absolute inset-y-0 right-0 z-30 w-[min(26rem,94vw)] overflow-y-auto border-l border-border bg-surface shadow-2xl xl:static xl:z-auto xl:w-[23rem] xl:shrink-0 xl:shadow-none">
+          <aside className="absolute inset-y-0 right-0 z-30 w-[min(26rem,94vw)] overflow-y-auto border-l border-border/70 bg-surface/95 shadow-2xl backdrop-blur-xl xl:static xl:z-auto xl:w-[23rem] xl:shrink-0 xl:bg-surface/70 xl:shadow-none">
             <div className="sticky top-0 z-10 flex items-center justify-between border-b border-border bg-surface/95 px-4 py-3 backdrop-blur">
-              <div><div className="text-xs font-semibold">Inspector</div><div className="text-[9px] uppercase tracking-[0.15em] text-gray-600">Contract · Runtime · Artifacts</div></div>
-              <button type="button" onClick={() => setInspectorOpen(false)} className="text-gray-500 hover:text-gray-200">✕</button>
+              <div><div className="text-xs font-semibold">Inspector</div><div className="text-[9px] uppercase tracking-[0.15em] text-app-muted">Contract · Runtime · Artifacts</div></div>
+              <button type="button" onClick={() => setInspectorOpen(false)} className="text-app-muted hover:text-app-primary">✕</button>
             </div>
             <div className="p-4">
               {selectedNode ? (
@@ -572,7 +572,7 @@ export function OrchestratePage() {
 }
 
 function StatusBadge({ status }: { status: GraphWorkflowDTO['status'] }) {
-  const style = status === 'done' ? 'bg-emerald-500/10 text-emerald-300' : status === 'failed' ? 'bg-red-500/10 text-red-300' : status === 'waiting' ? 'bg-violet-500/10 text-violet-300' : status === 'running' ? 'bg-blue-500/10 text-blue-300' : 'bg-gray-500/10 text-gray-400';
+  const style = status === 'done' ? 'bg-emerald-500/10 text-emerald-300' : status === 'failed' ? 'bg-red-500/10 text-red-300' : status === 'waiting' ? 'bg-violet-500/10 text-violet-300' : status === 'running' ? 'bg-blue-500/10 text-blue-300' : 'bg-gray-500/10 text-app-secondary';
   return <span className={cn('rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide', style)}>{status}</span>;
 }
 
@@ -582,28 +582,28 @@ function TemplateVersionBar(props: {
   onPublish: (version: TeamTemplateVersion) => void; onArchive: (version: TeamTemplateVersion) => void; onInstantiate: (version?: TeamTemplateVersion) => void;
 }) {
   return (
-    <section className="border-b border-border bg-surface px-3 py-3 lg:px-5" data-testid="template-version-bar">
+    <section className="message-enter border-b border-border/70 bg-surface/78 px-3 py-3 lg:px-5" data-testid="template-version-bar">
       <div className="flex flex-wrap items-center gap-2">
-        <select value={props.teamId} onChange={event => props.setTeamId(event.target.value)} className="rounded-lg border border-border bg-background px-3 py-2 text-xs">
+        <select value={props.teamId} onChange={event => props.setTeamId(event.target.value)} className="ui-field w-auto py-2 text-xs">
           <option value="">Select team</option>{props.teams.map(team => <option key={team.id} value={team.id}>{team.emoji} {team.name}</option>)}
         </select>
-        <input value={props.changeNote} onChange={event => props.setChangeNote(event.target.value)} placeholder="Version change note" className="min-w-[15rem] flex-1 rounded-lg border border-border bg-background px-3 py-2 text-xs" />
-        <button type="button" onClick={props.onSave} disabled={!props.teamId || !!props.busy} className="rounded-lg bg-accent px-3 py-2 text-xs font-semibold text-white disabled:opacity-40">Save draft version</button>
-        <button type="button" onClick={() => props.onInstantiate()} disabled={!props.published || !!props.busy} className="rounded-lg border border-border px-3 py-2 text-xs disabled:opacity-40">Instantiate published</button>
+        <input value={props.changeNote} onChange={event => props.setChangeNote(event.target.value)} placeholder="Version change note" className="ui-field min-w-[15rem] flex-1 py-2 text-xs" />
+        <button type="button" onClick={props.onSave} disabled={!props.teamId || !!props.busy} className="ui-button-primary">Save draft version</button>
+        <button type="button" onClick={() => props.onInstantiate()} disabled={!props.published || !!props.busy} className="ui-button">Instantiate published</button>
       </div>
       <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
         {props.versions.map(version => (
-          <div key={version.id} className="min-w-52 rounded-xl border border-border bg-background px-3 py-2">
-            <div className="flex items-center justify-between"><span className="text-xs font-semibold">v{version.version}</span><span className={cn('rounded-full px-2 py-0.5 text-[9px]', version.status === 'published' ? 'bg-emerald-500/10 text-emerald-300' : version.status === 'archived' ? 'bg-gray-500/10 text-gray-500' : 'bg-yellow-500/10 text-yellow-300')}>{version.status}</span></div>
-            <div className="mt-1 truncate text-[9px] text-gray-600">{version.changeNote || 'No change note'}</div>
+          <div key={version.id} className="ui-panel-interactive min-w-52 px-3 py-2">
+            <div className="flex items-center justify-between"><span className="text-xs font-semibold">v{version.version}</span><span className={cn('rounded-full px-2 py-0.5 text-[9px]', version.status === 'published' ? 'bg-emerald-500/10 text-emerald-300' : version.status === 'archived' ? 'bg-gray-500/10 text-app-muted' : 'bg-yellow-500/10 text-yellow-300')}>{version.status}</span></div>
+            <div className="mt-1 truncate text-[9px] text-app-muted">{version.changeNote || 'No change note'}</div>
             <div className="mt-2 flex gap-1.5">
               {version.status === 'draft' && <button type="button" onClick={() => props.onPublish(version)} className="rounded bg-emerald-500/10 px-2 py-1 text-[9px] text-emerald-300">Publish</button>}
-              {version.status !== 'archived' && <button type="button" onClick={() => props.onArchive(version)} className="rounded bg-gray-500/10 px-2 py-1 text-[9px] text-gray-400">Archive</button>}
+              {version.status !== 'archived' && <button type="button" onClick={() => props.onArchive(version)} className="rounded bg-gray-500/10 px-2 py-1 text-[9px] text-app-secondary">Archive</button>}
               <button type="button" onClick={() => props.onInstantiate(version)} className="rounded bg-blue-500/10 px-2 py-1 text-[9px] text-blue-300">Instantiate</button>
             </div>
           </div>
         ))}
-        {!props.versions.length && <div className="text-[10px] text-gray-600">No immutable versions yet.</div>}
+        {!props.versions.length && <div className="text-[10px] text-app-muted">No immutable versions yet.</div>}
       </div>
     </section>
   );
@@ -644,7 +644,7 @@ function NodeInspector(props: {
       </InspectorSection>
 
       <InspectorSection title="Quality gate">
-        <label className="flex items-center justify-between gap-3 text-[11px] text-gray-400"><span>Human approval required</span><input type="checkbox" checked={props.node.qualityGate?.approvalRequired || false} onChange={event => props.onUpdate({ qualityGate: { ...props.node.qualityGate, approvalRequired: event.target.checked } })} /></label>
+        <label className="flex items-center justify-between gap-3 text-[11px] text-app-secondary"><span>Human approval required</span><input type="checkbox" checked={props.node.qualityGate?.approvalRequired || false} onChange={event => props.onUpdate({ qualityGate: { ...props.node.qualityGate, approvalRequired: event.target.checked } })} /></label>
         <Field label="Output JSON Schema"><textarea value={props.node.qualityGate?.outputSchema || ''} onChange={event => props.onUpdate({ qualityGate: { ...props.node.qualityGate, outputSchema: event.target.value || undefined } })} rows={5} className="field font-mono text-[10px]" placeholder={'{"type":"object"}'} /></Field>
       </InspectorSection>
 
@@ -657,8 +657,8 @@ function NodeInspector(props: {
       </InspectorSection>
 
       <InspectorSection title="Runtime">
-        <div className="rounded-xl border border-border bg-background p-3 text-[10px] text-gray-500">
-          <div className="flex items-center justify-between"><span>Status</span><span className="font-semibold text-gray-200">{status}</span></div>
+        <div className="rounded-xl border border-border bg-background p-3 text-[10px] text-app-muted">
+          <div className="flex items-center justify-between"><span>Status</span><span className="font-semibold text-app-primary">{status}</span></div>
           <div className="mt-1 flex items-center justify-between"><span>Attempt</span><span>{props.state ? `${props.state.attempt}/${props.state.maxAttempts}` : '—'}</span></div>
           {props.state?.error && <div className="mt-2 rounded-lg bg-red-500/10 p-2 text-red-300">{props.state.error}</div>}
           {!!props.state?.validationErrors?.length && <ul className="mt-2 list-disc pl-4 text-orange-300">{props.state.validationErrors.map(error => <li key={error}>{error}</li>)}</ul>}
@@ -694,12 +694,12 @@ function EdgeInspector(props: { edge: GraphEdgeDTO; nodes: GraphNodeDTO[]; onUpd
         {(props.edge.artifactMappings || []).map((mapping, index) => (
           <div key={`${mapping.from}-${mapping.to}-${index}`} className="grid grid-cols-[1fr_auto_1fr_auto] items-center gap-1.5">
             <input value={mapping.from} onChange={event => props.onUpdate({ artifactMappings: (props.edge.artifactMappings || []).map((item, itemIndex) => itemIndex === index ? { ...item, from: event.target.value } : item) })} placeholder="source output" className="field" />
-            <span className="text-gray-600">→</span>
+            <span className="text-app-muted">→</span>
             <input value={mapping.to} onChange={event => props.onUpdate({ artifactMappings: (props.edge.artifactMappings || []).map((item, itemIndex) => itemIndex === index ? { ...item, to: event.target.value } : item) })} placeholder="target input" className="field" />
-            <button type="button" onClick={() => props.onUpdate({ artifactMappings: (props.edge.artifactMappings || []).filter((_, itemIndex) => itemIndex !== index) })} className="text-gray-600 hover:text-red-300">✕</button>
+            <button type="button" onClick={() => props.onUpdate({ artifactMappings: (props.edge.artifactMappings || []).filter((_, itemIndex) => itemIndex !== index) })} className="text-app-muted hover:text-red-300">✕</button>
           </div>
         ))}
-        <button type="button" onClick={() => props.onUpdate({ artifactMappings: [...(props.edge.artifactMappings || []), { from: '', to: '' }] })} className="w-full rounded-lg border border-dashed border-border px-2 py-2 text-[10px] text-gray-400">+ Map artifact</button>
+        <button type="button" onClick={() => props.onUpdate({ artifactMappings: [...(props.edge.artifactMappings || []), { from: '', to: '' }] })} className="w-full rounded-lg border border-dashed border-border px-2 py-2 text-[10px] text-app-secondary">+ Map artifact</button>
       </InspectorSection>
       <button type="button" onClick={props.onRemove} className="w-full rounded-lg border border-red-500/30 px-3 py-2 text-xs text-red-300">Delete edge</button>
     </div>
@@ -711,15 +711,15 @@ function WorkflowInspector(props: { run: GraphWorkflowDTO | null; artifacts: Art
   return (
     <div className="space-y-5">
       <InspectorSection title="Workflow runtime">
-        <div className="grid grid-cols-2 gap-2">{Object.entries(counts).map(([status, count]) => <div key={status} className="rounded-lg border border-border bg-background p-2"><div className="text-lg font-semibold">{count}</div><div className="text-[9px] uppercase text-gray-600">{status}</div></div>)}</div>
-        {!props.run?.runState && <div className="rounded-xl border border-dashed border-border p-4 text-center text-xs text-gray-600">Run the workflow to inspect live node state and artifacts.</div>}
+        <div className="grid grid-cols-2 gap-2">{Object.entries(counts).map(([status, count]) => <div key={status} className="rounded-lg border border-border bg-background p-2"><div className="text-lg font-semibold">{count}</div><div className="text-[9px] uppercase text-app-muted">{status}</div></div>)}</div>
+        {!props.run?.runState && <div className="rounded-xl border border-dashed border-border p-4 text-center text-xs text-app-muted">Run the workflow to inspect live node state and artifacts.</div>}
       </InspectorSection>
       <InspectorSection title={`Workflow artifacts (${props.artifacts.length})`}>
         <ArtifactList artifacts={props.artifacts} selected={props.selectedArtifact} onSelect={props.onSelectArtifact} />
         <ArtifactPreview artifact={props.selectedArtifact} />
       </InspectorSection>
       <InspectorSection title="Quick guide">
-        <ol className="list-decimal space-y-2 pl-4 text-[11px] leading-relaxed text-gray-500"><li>Drag an Agent, Gate or Publisher onto the canvas.</li><li>Declare input/output artifacts and required skills.</li><li>Connect nodes and map output names to downstream inputs.</li><li>Save, run, then approve or retry nodes from this inspector.</li><li>Save immutable team versions and publish a reusable template.</li></ol>
+        <ol className="list-decimal space-y-2 pl-4 text-[11px] leading-relaxed text-app-muted"><li>Drag an Agent, Gate or Publisher onto the canvas.</li><li>Declare input/output artifacts and required skills.</li><li>Connect nodes and map output names to downstream inputs.</li><li>Save, run, then approve or retry nodes from this inspector.</li><li>Save immutable team versions and publish a reusable template.</li></ol>
       </InspectorSection>
     </div>
   );
@@ -728,28 +728,28 @@ function WorkflowInspector(props: { run: GraphWorkflowDTO | null; artifacts: Art
 function ArtifactEditor(props: { title: string; items: Array<ArtifactRequirement | ArtifactDeclaration>; declaration: boolean; onChange: (items: Array<ArtifactRequirement | ArtifactDeclaration>) => void }) {
   return (
     <div className="space-y-2">
-      <div className="flex items-center justify-between"><span className="text-[10px] font-semibold text-gray-400">{props.title}</span><button type="button" onClick={() => props.onChange([...props.items, { name: '', kind: 'markdown', required: props.declaration }])} className="text-[10px] text-accent-light">+ Add</button></div>
+      <div className="flex items-center justify-between"><span className="text-[10px] font-semibold text-app-secondary">{props.title}</span><button type="button" onClick={() => props.onChange([...props.items, { name: '', kind: 'markdown', required: props.declaration }])} className="text-[10px] text-accent-light">+ Add</button></div>
       {props.items.map((item, index) => (
         <div key={`${item.name}-${index}`} className="rounded-lg border border-border bg-background p-2">
           <div className="grid grid-cols-[minmax(0,1fr)_7rem_auto] gap-1.5">
             <input value={item.name} onChange={event => props.onChange(props.items.map((current, itemIndex) => itemIndex === index ? { ...current, name: event.target.value } : current))} placeholder="artifact name" className="field" />
             <select value={item.kind} onChange={event => props.onChange(props.items.map((current, itemIndex) => itemIndex === index ? { ...current, kind: event.target.value as ArtifactKind } : current))} className="field">{artifactKinds.map(kind => <option key={kind}>{kind}</option>)}</select>
-            <button type="button" onClick={() => props.onChange(props.items.filter((_, itemIndex) => itemIndex !== index))} className="px-1 text-gray-600 hover:text-red-300">✕</button>
+            <button type="button" onClick={() => props.onChange(props.items.filter((_, itemIndex) => itemIndex !== index))} className="px-1 text-app-muted hover:text-red-300">✕</button>
           </div>
-          <div className="mt-1.5 flex items-center gap-3 text-[9px] text-gray-600">
+          <div className="mt-1.5 flex items-center gap-3 text-[9px] text-app-muted">
             <label><input type="checkbox" checked={item.required || false} onChange={event => props.onChange(props.items.map((current, itemIndex) => itemIndex === index ? { ...current, required: event.target.checked } : current))} /> required</label>
             <label><input type="checkbox" checked={item.multiple || false} onChange={event => props.onChange(props.items.map((current, itemIndex) => itemIndex === index ? { ...current, multiple: event.target.checked } : current))} /> multiple</label>
           </div>
         </div>
       ))}
-      {!props.items.length && <div className="rounded-lg border border-dashed border-border p-2 text-center text-[9px] text-gray-600">No declared {props.title.toLowerCase()}</div>}
+      {!props.items.length && <div className="rounded-lg border border-dashed border-border p-2 text-center text-[9px] text-app-muted">No declared {props.title.toLowerCase()}</div>}
     </div>
   );
 }
 
 function ArtifactList(props: { artifacts: ArtifactContract[]; selected: ArtifactContract | null; onSelect: (id: string) => void }) {
-  if (!props.artifacts.length) return <div className="rounded-lg border border-dashed border-border p-3 text-center text-[10px] text-gray-600">No artifacts produced yet.</div>;
-  return <div className="space-y-1.5">{props.artifacts.map(artifact => <button key={artifact.id} type="button" onClick={() => props.onSelect(artifact.id)} className={cn('flex w-full items-center justify-between rounded-lg border px-2.5 py-2 text-left', props.selected?.id === artifact.id ? 'border-accent bg-accent/10' : 'border-border bg-background')}><span className="min-w-0"><span className="block truncate text-[10px] font-medium">{artifact.name}</span><span className="block text-[9px] text-gray-600">{artifact.kind} · {artifact.integrity?.sizeBytes || 0} B</span></span><span className="text-[9px] text-gray-600">{String(artifact.metadata?.approvalStatus || '')}</span></button>)}</div>;
+  if (!props.artifacts.length) return <div className="rounded-lg border border-dashed border-border p-3 text-center text-[10px] text-app-muted">No artifacts produced yet.</div>;
+  return <div className="space-y-1.5">{props.artifacts.map(artifact => <button key={artifact.id} type="button" onClick={() => props.onSelect(artifact.id)} className={cn('flex w-full items-center justify-between rounded-lg border px-2.5 py-2 text-left', props.selected?.id === artifact.id ? 'border-accent bg-accent/10' : 'border-border bg-background')}><span className="min-w-0"><span className="block truncate text-[10px] font-medium">{artifact.name}</span><span className="block text-[9px] text-app-muted">{artifact.kind} · {artifact.integrity?.sizeBytes || 0} B</span></span><span className="text-[9px] text-app-muted">{String(artifact.metadata?.approvalStatus || '')}</span></button>)}</div>;
 }
 
 function ArtifactPreview({ artifact }: { artifact: ArtifactContract | null }) {
@@ -757,15 +757,15 @@ function ArtifactPreview({ artifact }: { artifact: ArtifactContract | null }) {
   if (artifact.uri && artifact.kind === 'image') return <img src={artifact.uri} alt={artifact.name} className="mt-2 max-h-72 w-full rounded-lg border border-border bg-black object-contain" />;
   if (artifact.uri && artifact.kind === 'video') return <video src={artifact.uri} controls className="mt-2 max-h-72 w-full rounded-lg border border-border bg-black" />;
   if (artifact.uri && artifact.kind === 'audio') return <audio src={artifact.uri} controls className="mt-2 w-full" />;
-  return <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-border bg-background p-3 text-[10px] leading-relaxed text-gray-400">{artifact.inlineContent || artifact.uri || 'Artifact content is not inline.'}</pre>;
+  return <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-border bg-background p-3 text-[10px] leading-relaxed text-app-secondary">{artifact.inlineContent || artifact.uri || 'Artifact content is not inline.'}</pre>;
 }
 
 function InspectorSection({ title, children }: { title: string; children: React.ReactNode }) {
-  return <section className="space-y-3"><div className="text-[10px] font-semibold uppercase tracking-[0.17em] text-gray-600">{title}</div>{children}</section>;
+  return <section className="space-y-3"><div className="text-[10px] font-semibold uppercase tracking-[0.17em] text-app-muted">{title}</div>{children}</section>;
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return <label className="block"><span className="mb-1 block text-[10px] text-gray-500">{label}</span>{children}</label>;
+  return <label className="block"><span className="mb-1 block text-[10px] text-app-muted">{label}</span>{children}</label>;
 }
 
 function layout(nodes: GraphNodeDTO[]): GraphNodeDTO[] {

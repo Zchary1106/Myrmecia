@@ -347,7 +347,7 @@ export function AgentsPage() {
 
       {isExternalAgentsOpen && <ExternalAgentsPanel onClose={() => setIsExternalAgentsOpen(false)} />}
 
-      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+      <section className="grid grid-cols-2 gap-3 [&>*:last-child]:col-span-2 sm:grid-cols-2 sm:[&>*:last-child]:col-span-1 xl:grid-cols-5">
         <Metric icon={<Bot size={17} />} label="Stable Agents" value={stableAgents.length} />
         <Metric icon={<Play size={17} />} label="Working" value={runningCount} tone="green" />
         <Metric icon={<Wrench size={17} />} label="Tool enabled" value={toolEnabledCount} tone="purple" />
@@ -623,7 +623,7 @@ function Metric({ icon, label, value, tone = 'default' }: { icon: ReactNode; lab
     green: 'bg-emerald-500/10 text-emerald-500',
     yellow: 'bg-amber-500/10 text-amber-500',
   }[tone];
-  return <div className="premium-card flex min-h-[112px] items-center justify-between gap-3 rounded-2xl border border-border bg-surface p-4"><div><div className="text-[10px] text-app-muted">{label}</div><div className="mt-2 text-2xl font-semibold text-app-primary">{value}</div></div><span className={cn('flex h-10 w-10 items-center justify-center rounded-2xl', toneClass)}>{icon}</span></div>;
+  return <div className="premium-card flex min-h-[96px] items-center justify-between gap-3 rounded-2xl border border-border bg-surface p-4 sm:min-h-[112px]"><div><div className="text-[10px] text-app-muted">{label}</div><div className="mt-2 text-2xl font-semibold text-app-primary">{value}</div></div><span className={cn('flex h-10 w-10 items-center justify-center rounded-2xl', toneClass)}>{icon}</span></div>;
 }
 
 function Field({ label, children }: { label: string; children: ReactNode }) {

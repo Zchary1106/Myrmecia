@@ -5,7 +5,7 @@ import type { AgentDefinition, ModelCostType, Task, AgentProgress, ToolActivity,
 import { eventBus } from '../events/event-bus.js';
 import { updateTask, addTaskLog, getTask } from '../db/models/task.js';
 import { updateAgent } from '../db/models/agent.js';
-import { createExecution, updateExecution, addExecutionMessage } from '../db/models/execution.js';
+import { createExecution, getExecution, updateExecution, addExecutionMessage } from '../db/models/execution.js';
 import { recordLedgerEntry } from '../db/models/execution-ledger.js';
 import { guardrails } from './safety-guardrails.js';
 import { workspaceManager } from '../workspace/workspace-manager.js';
@@ -17,7 +17,7 @@ import { resolveSkillForAgent } from '../db/models/skill.js';
 import { getExecutor, DEFAULT_LIMITS } from './executor.js';
 import { getTrajectoryStore } from '../memory/trajectory-store.js';
 import { getMemoryService } from '../memory/memory-service.js';
-import { getWritePipeline } from '../memory/write-pipeline.js';
+import { isDocumentSession, sessionDocumentContext } from '../knowledge/session-documents.js';
 import { modelBaseURL, modelApiKey, defaultModel } from '../lib/brand-config.js';
 import { messageBus } from './message-bus.js';
 import { tsAgentLoop } from './ts-agent-loop.js';
@@ -34,6 +34,10 @@ import { ExecutionMiddlewareChain } from './execution-middleware.js';
 import { indexExecutionArtifacts } from '../artifacts/execution-artifact-indexer.js';
 import { checkpointExecutionContext, loadExecutionContext, persistExecutionContext } from './execution-context.js';
 import { archiveLongToolOutput } from './tool-output-artifact.js';
+import { AgentRunStopped, classifyAgentStop, updateAgentRun, validateAgentOutput } from './run-state.js';
+import type { AgentStopReason } from '@myrmecia/shared';
+import { queueOwnsRetry } from './retry-ownership.js';
+import { requestedAgentInput } from './completion-control.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MAX_RECENT_ACTIVITIES = 5;
@@ -64,6 +68,7 @@ function resolvePythonRuntimeInvocation(executorName: string): { command: string
 }
 
 export interface TaskResult {
+  stopReason?: AgentStopReason;
   output: string;
   costUSD: number | null;
   costType?: ModelCostType;
@@ -133,6 +138,8 @@ export class AgentRuntime {
   }
 
   async execute(agent: AgentDefinition, task: Task): Promise<TaskResult> {
+    const documentContext = sessionDocumentContext(task, task.description || task.input);
+    if (documentContext) task = { ...task, input: task.input + documentContext };
     const executionStartedAtMs = Date.now();
     const abortController = new AbortController();
     this.abortControllers.set(task.id, abortController);
@@ -180,6 +187,7 @@ export class AgentRuntime {
       skillVersionId: runtimeSkill?.version.id,
       workspaceId: task.workspaceId,
     });
+    updateAgentRun(execution.id, 'starting');
     const trace = createRunTrace({ taskId: task.id, executionId: execution.id, agentId: agent.id });
     const middleware = new ExecutionMiddlewareChain(
       agent,
@@ -212,6 +220,7 @@ export class AgentRuntime {
       });
 
       const adapter = selectRuntimeAdapter(agent, this.runtimeAdapters) || this.runtimeAdapters[this.runtimeAdapters.length - 1];
+      updateAgentRun(execution.id, 'deciding', { runtime: adapter.name });
       middleware.beforeExecution(adapter.name);
       addTaskLog(task.id, 'info', `Executor: ${adapter.name}`, 'system');
       recordLedgerEntry({
@@ -230,6 +239,15 @@ export class AgentRuntime {
         runtimeSkill,
         middleware,
       });
+      if (abortController.signal.aborted || getTask(task.id)?.status === 'cancelled') {
+        throw new AgentRunStopped('cancelled', 'Execution cancelled; late output was not committed', result.output);
+      }
+      if (['failed', 'done'].includes(getTask(task.id)?.status || '')) {
+        throw new AgentRunStopped('interrupted', 'AGENT_STOPPED: task was settled while the execution was running', result.output);
+      }
+      if (result.stopReason && result.stopReason !== 'completed' && result.stopReason !== 'needs_input') {
+        throw new AgentRunStopped(result.stopReason, `AGENT_STOPPED: ${result.stopReason}`, result.output);
+      }
       const safeOutput = sanitizeAgentOutput(result.output, {
         agentId: agent.id,
         taskId: task.id,
@@ -237,7 +255,18 @@ export class AgentRuntime {
         executionId: execution.id,
         purpose: 'task output',
       });
-      const safeResult: TaskResult = { ...result, output: safeOutput, executionId: execution.id };
+      const inputRequest = requestedAgentInput(safeOutput);
+      const safeResult: TaskResult = {
+        ...result, output: inputRequest || safeOutput, executionId: execution.id,
+        stopReason: inputRequest ? 'needs_input' : result.stopReason || 'completed',
+      };
+      updateAgentRun(execution.id, 'validating');
+      const validation = validateAgentOutput(safeOutput);
+      if (validation.status !== 'passed') {
+        updateAgentRun(execution.id, 'validating', { validation });
+        throw new AgentRunStopped(safeOutput.trim() ? 'failed' : 'empty_output',
+          `AGENT_EMPTY_OUTPUT: output validation failed: ${validation.checks.filter(check => !check.passed).map(check => check.message).join('; ')}`, safeOutput);
+      }
       assertExecutionTokenBudget(safeResult.inputTokens, safeResult.outputTokens, safeResult.output, 'agent execution');
 
       if (safeResult.costUSD != null) guardrails.trackCost(task.id, safeResult.costUSD);
@@ -248,7 +277,33 @@ export class AgentRuntime {
         numTurns: safeResult.numTurns,
       });
 
+      if (safeResult.stopReason === 'needs_input') {
+        if (task.pipelineId) throw new AgentRunStopped('needs_input', 'AGENT_STOPPED: workflow input requires manual intervention', safeResult.output);
+        const progress = getProgressSnapshot(tracker, 'Waiting for user input');
+        updateAgentRun(execution.id, 'waiting_for_user', { stopReason: 'needs_input', validation, turn: safeResult.numTurns });
+        updateExecution(execution.id, {
+          status: 'done', progress, costUSD: safeResult.costUSD, costType: safeResult.costType || 'unavailable',
+          inputTokens: safeResult.inputTokens, outputTokens: safeResult.outputTokens,
+          tokenCount: safeResult.inputTokens + safeResult.outputTokens, completedAt: new Date().toISOString(),
+        });
+        const waiting = updateTask(task.id, { status: 'review', output: safeResult.output, completedAt: new Date().toISOString() });
+        checkpointExecutionContext(executionContext, {
+          phase: 'waiting_for_user', completed: [], pending: ['user input'], blocked: [],
+          resumeHint: 'Continue this conversation with fresh user input; do not replay prior approvals.',
+        });
+        recordLedgerEntry({
+          executionId: execution.id, taskId: task.id, agentId: agent.id, workspaceId: task.workspaceId,
+          type: 'execution.waiting_for_user', decision: 'needs_input', summary: 'Agent requested essential user input',
+        });
+        eventBus.emit('task:updated', { taskId: task.id, task: waiting, workspaceId: task.workspaceId });
+        eventBus.emit('execution:done', { executionId: execution.id, taskId: task.id, workspaceId: task.workspaceId, progress });
+        return safeResult;
+      }
+
       const finalProgress = getProgressSnapshot(tracker, 'Completed');
+      updateAgentRun(execution.id, 'completed', {
+        stopReason: 'completed', validation, turn: safeResult.numTurns,
+      });
       updateExecution(execution.id, {
         status: 'done', progress: finalProgress,
         costUSD: safeResult.costUSD,
@@ -334,7 +389,7 @@ export class AgentRuntime {
       eventBus.emit('execution:done', { executionId: execution.id, taskId: task.id, workspaceId: task.workspaceId, progress: finalProgress });
 
       // Record trajectory for semantic routing learning
-      this.recordTrajectory(task, agent.id, true, safeResult.durationMs, safeResult.costUSD || 0, safeResult.output);
+      this.recordTrajectory(task, agent.id, true, safeResult.durationMs, safeResult.costUSD || 0, safeResult.output, execution.id);
 
       // Emit telemetry metrics
       metrics.taskExecutions.add(1, { status: 'done' });
@@ -349,30 +404,40 @@ export class AgentRuntime {
     } catch (err: any) {
       middleware.onError(err);
       const errorMsg = err.message || 'Unknown error';
-      updateExecution(execution.id, { status: 'failed', progress: getProgressSnapshot(tracker), completedAt: new Date().toISOString() });
+      const priorStatus = getTask(task.id)?.status;
+      // Python watchdogs also abort their process; that is a timeout, not a
+      // user cancellation. Only the task/canonical abort error proves cancel.
+      const stopReason = classifyAgentStop(err, priorStatus === 'cancelled');
+      const cancelled = stopReason === 'cancelled';
+      updateAgentRun(execution.id, cancelled ? 'cancelled' : stopReason === 'interrupted' ? 'interrupted' : 'failed', { stopReason });
+      updateExecution(execution.id, { status: cancelled ? 'cancelled' : 'failed', progress: getProgressSnapshot(tracker), completedAt: new Date().toISOString() });
       addExecutionMessage({ executionId: execution.id, type: 'error', content: errorMsg });
 
       // If the task was already settled (cancelled by the user or the dependency
       // cascade, which aborts the in-flight execution), don't overwrite that
       // terminal state or re-emit task:failed — doing so would re-trigger the
       // cascade and flip an already-final status.
-      const priorStatus = getTask(task.id)?.status;
       const alreadyTerminal = priorStatus === 'cancelled' || priorStatus === 'failed' || priorStatus === 'done';
       if (!alreadyTerminal) {
-        updateTask(task.id, { status: 'failed', error: errorMsg });
+        const partialOutput = err instanceof AgentRunStopped && err.partialOutput
+          ? sanitizeAgentOutput(err.partialOutput, { agentId: agent.id, taskId: task.id, executionId: execution.id, workspaceId: task.workspaceId, purpose: 'partial output' })
+          : undefined;
+        updateTask(task.id, { status: cancelled ? 'cancelled' : 'failed', error: errorMsg, ...(partialOutput ? { output: partialOutput } : {}) });
       }
       checkpointExecutionContext(loadExecutionContext(task), {
-        phase: 'failed',
+        phase: cancelled ? 'cancelled' : 'failed',
         completed: [],
         pending: ['operator retry or replan'],
         blocked: [errorMsg],
-        lastValidation: { executionId: execution.id, status: 'failed' },
+        lastValidation: { executionId: execution.id, status: cancelled ? 'cancelled' : 'failed', stopReason },
         resumeHint: 'Inspect the failure and retry from this checkpoint or replan the task.',
       });
 
       const stats = { ...agent.stats };
-      stats.tasksFailed++;
-      updateAgent(agent.id, { stats });
+      if (!cancelled) {
+        stats.tasksFailed++;
+        updateAgent(agent.id, { stats });
+      }
 
       addTaskLog(task.id, alreadyTerminal ? 'warn' : 'error',
         alreadyTerminal ? `Execution stopped (task already ${priorStatus}): ${errorMsg}` : `Failed: ${errorMsg}`,
@@ -385,17 +450,20 @@ export class AgentRuntime {
       });
       completeTraceSpan(agentSpan.id, { status: 'failed', error: errorMsg });
       completeRunTrace(trace.id, { status: 'failed', summary: errorMsg });
-      if (!alreadyTerminal) {
+      if (!alreadyTerminal && !cancelled && !queueOwnsRetry(task.id)) {
         eventBus.emit('task:failed', { taskId: task.id, agentId: agent.id, workspaceId: task.workspaceId, error: errorMsg });
       }
-      eventBus.emit('execution:failed', { executionId: execution.id, taskId: task.id, workspaceId: task.workspaceId, error: errorMsg });
+      if (!alreadyTerminal && cancelled) {
+        eventBus.emit('task:cancelled', { taskId: task.id, workspaceId: task.workspaceId });
+      }
+      eventBus.emit(cancelled ? 'execution:done' : 'execution:failed', { executionId: execution.id, taskId: task.id, workspaceId: task.workspaceId, error: errorMsg, stopReason });
 
       // Record failed trajectory too (for learning what doesn't work)
-      this.recordTrajectory(task, agent.id, false, Date.now() - (Date.parse(task.startedAt || '') || Date.now()), 0, errorMsg);
+      if (!cancelled) this.recordTrajectory(task, agent.id, false, Date.now() - (Date.parse(task.startedAt || '') || Date.now()), 0, errorMsg, execution.id);
 
       // Emit failure telemetry
-      metrics.taskExecutions.add(1, { status: 'failed' });
-      metrics.agentExecutions.add(1, { agentId: agent.id, status: 'failed' });
+      metrics.taskExecutions.add(1, { status: cancelled ? 'cancelled' : 'failed' });
+      metrics.agentExecutions.add(1, { agentId: agent.id, status: cancelled ? 'cancelled' : 'failed' });
 
       throw err;
     } finally {
@@ -404,13 +472,16 @@ export class AgentRuntime {
   }
 
   /** Record task trajectory + episodic memory (fire-and-forget) */
-  private recordTrajectory(task: Task, agentId: string, success: boolean, durationMs: number, costUSD: number, output?: string): void {
+  private recordTrajectory(task: Task, agentId: string, success: boolean, durationMs: number, costUSD: number, output?: string, executionId?: string): void {
+    if (isDocumentSession(task)) return; // Session attachments must not enter long-term memory.
     // Quality score: success=0.8 base, penalize high cost, reward fast completion
     const quality = success
       ? Math.min(1, 0.8 + (durationMs < 60000 ? 0.1 : 0) + (costUSD < 0.01 ? 0.1 : 0))
       : 0.2;
 
-    getTrajectoryStore().record({
+    // A successful adapter call is not verified task quality. Only failures are
+    // useful routing evidence here; positive learning needs an accepted eval.
+    if (!success) getTrajectoryStore().record({
       taskInput: task.input,
       agentId,
       mode: task.mode,
@@ -422,6 +493,8 @@ export class AgentRuntime {
 
     // Richer, workspace-scoped episode for long-term context recall.
     getMemoryService().captureEpisode({
+      taskId: task.id,
+      executionId,
       input: task.input,
       output,
       agentId,
@@ -432,14 +505,8 @@ export class AgentRuntime {
       quality,
     }).catch(() => { /* non-critical */ });
 
-    // Extract durable semantic facts / preferences from successful work.
-    if (success) {
-      getWritePipeline().ingestFromExecution({
-        input: task.input,
-        output,
-        scope: task.workspaceId ? { workspace: task.workspaceId } : undefined,
-      }).catch(() => { /* non-critical */ });
-    }
+    // Automatic extraction can overwrite confirmed facts with model prose.
+    // Keep generated episodes quarantined; promotion requires explicit review.
   }
 
   private enforceAgentRateLimit(agentId: string): void {
@@ -456,10 +523,9 @@ export class AgentRuntime {
 
   private recordText(executionId: string, text: string, context: { agentId: string; taskId: string; workspaceId?: string }) {
     const safeText = sanitizeAgentOutput(text, { ...context, executionId, purpose: 'agent text' });
-    const snippet = safeText.slice(0, 500);
-    addExecutionMessage({ executionId, type: 'agent_text', content: snippet });
-    eventBus.emit('execution:message', { executionId, taskId: context.taskId, workspaceId: context.workspaceId, type: 'agent_text', content: snippet });
-    return snippet;
+    const message = addExecutionMessage({ executionId, type: 'agent_text', content: safeText });
+    eventBus.emit('execution:message', { executionId, taskId: context.taskId, workspaceId: context.workspaceId, type: 'agent_text', content: safeText, message });
+    return safeText;
   }
 
   private recordToolStarted(
@@ -483,6 +549,7 @@ export class AgentRuntime {
       startedAt: event.startedAt,
     });
     tracker.toolUseCount++;
+    updateAgentRun(executionId, 'acting', { toolCallCount: tracker.toolUseCount });
     const activity: ToolActivity = {
       toolName,
       input: input && typeof input === 'object' && !Array.isArray(input) ? input : { value: input },
@@ -518,6 +585,7 @@ export class AgentRuntime {
   }
 
   private recordToolResult(executionId: string, task: Task, agent: AgentDefinition, event: any) {
+    updateAgentRun(executionId, 'observing');
     const toolName = String(event.toolName || event.toolId || event.name || 'unknown');
     const status = event.status === 'failed' || event.error ? 'failed' : 'done';
     const outputContext = {
@@ -632,7 +700,7 @@ export class AgentRuntime {
     });
 
     // Build system prompt from the skill file plus DB-editable profile fields.
-    let systemPrompt = buildAgentSystemPrompt(agent, toolPolicy.allowedTools, runtimeSkill?.version.content);
+    let systemPrompt = buildAgentSystemPrompt(agent, toolPolicy.allowedTools, runtimeSkill?.version.content, task);
 
     // Domain Pack overlay (same as the TS loop path).
     const domain = resolveDomainForTask(agent, task);
@@ -813,6 +881,8 @@ export class AgentRuntime {
       });
 
       let buffer = '', finalResult = '', costUSD = 0, inputTokens = 0, outputTokens = 0, numTurns = 0, stderrBuffer = '';
+      let resultReceived = false;
+      let pythonResultError: string | undefined;
       let stdoutBytes = 0, stderrBytes = 0;
       let settled = false;
       let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -883,12 +953,14 @@ export class AgentRuntime {
       };
 
       const handlePythonRuntimeEvent = (ev: any) => {
+        if (abortController.signal.aborted || ['cancelled', 'failed', 'done'].includes(getTask(task.id)?.status || '')) return;
         noteActivity(`runtime event ${String(ev.type || 'unknown')}`);
         // Handle assistant messages (text output from the Python runtime)
         if (ev.type === 'assistant' && ev.message?.content) {
           for (const block of ev.message.content) {
             if (block.type === 'text' && block.text) {
-              const safeText = sanitizePythonRuntimeOutput(String(block.text), 'agent text');
+              const rawText = sanitizePythonRuntimeOutput(String(block.text), 'agent text');
+              const safeText = requestedAgentInput(rawText) || rawText;
               finalResult = safeText;
               this.recordText(executionId, safeText, { agentId: agent.id, taskId: task.id, workspaceId: task.workspaceId });
               addTaskLog(task.id, 'info', safeText.slice(0, 800), agent.id);
@@ -898,6 +970,8 @@ export class AgentRuntime {
 
         // Handle result event
         if (ev.type === 'result') {
+          resultReceived = true;
+          if (ev.subtype === 'error' || ev.is_error) pythonResultError = String(ev.result || 'Python runtime failed');
           finalResult = sanitizePythonRuntimeOutput(String(ev.result || finalResult), 'python runtime result');
           costUSD = ev.total_cost_usd || 0;
           inputTokens = ev.usage?.input_tokens || inputTokens;
@@ -907,6 +981,11 @@ export class AgentRuntime {
         }
 
         if (ev.type === 'model_call') {
+          const sequence = Number(ev.sequence);
+          updateAgentRun(executionId, 'deciding', {
+            ...(Number.isSafeInteger(sequence) && sequence >= 0
+              ? { turn: Math.max(sequence, getExecution(executionId)?.runState?.turn || 0) } : {}),
+          });
           const callInputTokens = Number(ev.input_tokens || 0);
           const callOutputTokens = Number(ev.output_tokens || 0);
           inputTokens += Number.isFinite(callInputTokens) ? callInputTokens : 0;
@@ -1013,6 +1092,8 @@ export class AgentRuntime {
         try {
           if (buffer.trim()) handleNonJsonLine(buffer);
           if (code === 0) {
+            if (!resultReceived) throw new AgentRunStopped('interrupted', 'AGENT_STOPPED: Python runtime exited without a final result event', finalResult);
+            if (pythonResultError) throw new AgentRunStopped('failed', pythonResultError, finalResult);
             finalResult = sanitizePythonRuntimeOutput(finalResult, 'final task output');
             outputTokens = outputTokens || estimateTokenCount(finalResult);
             assertExecutionTokenBudget(inputTokens, outputTokens, finalResult, 'Python runtime execution', limits);

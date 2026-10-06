@@ -7,6 +7,7 @@
 import { describe, it, expect } from 'vitest';
 import type { AgentDefinition } from '../src/types.js';
 import { buildAgentSystemPrompt } from '../src/agents/agent-prompt.js';
+import { isPublicationRequest } from '@myrmecia/shared';
 
 function agent(o: Partial<AgentDefinition> = {}): AgentDefinition {
   return {
@@ -21,6 +22,46 @@ function agent(o: Partial<AgentDefinition> = {}): AgentDefinition {
 }
 
 describe('buildAgentSystemPrompt', () => {
+  it('uses a research contract instead of a mandatory publishing template for advice', () => {
+    const prompt = buildAgentSystemPrompt(agent({ id: 'xiaohongshu-writer' }), ['mcp__xiaohongshu__search_feeds'],
+      '# Mandatory publishing template\nSENTINEL_CARD_TEMPLATE', {
+        mode: 'direct', description: '帮我从小红书收集水屋价格推荐，规划一下跳岛路线', input: 'same request',
+      });
+    expect(prompt).toContain('Research answer contract');
+    expect(prompt).not.toContain('SENTINEL_CARD_TEMPLATE');
+    expect(prompt).toContain('write "未核实" for the price');
+    expect(prompt).toContain('State important evidence gaps at the START');
+    expect(prompt).toContain('explicitly label any planning assumption');
+  });
+
+  it('preserves explicit publication and pipeline skill contracts', () => {
+    const writer = agent({ id: 'xiaohongshu-writer' });
+    expect(buildAgentSystemPrompt(writer, [], 'SENTINEL_CARD_TEMPLATE', {
+      mode: 'direct', description: '帮我写一篇小红书笔记和卡片', input: '',
+    })).toContain('SENTINEL_CARD_TEMPLATE');
+    expect(buildAgentSystemPrompt(writer, [], 'SENTINEL_CARD_TEMPLATE', {
+      mode: 'direct', description: '整理资料', input: '', pipelineId: 'content-pipeline',
+    })).toContain('SENTINEL_CARD_TEMPLATE');
+    expect(buildAgentSystemPrompt(writer, [], 'SENTINEL_CARD_TEMPLATE', {
+      mode: 'direct', description: '继续', input: 'Original goal: 帮我写一篇小红书笔记\n\nNEW user message:\n继续',
+    })).toContain('SENTINEL_CARD_TEMPLATE');
+    expect(buildAgentSystemPrompt(writer, [], 'SENTINEL_CARD_TEMPLATE', {
+      mode: 'direct', description: '继续', input: 'Original goal: 查询水屋价格\n\nRecent turns:\n写一篇小红书笔记\n\nNEW user message:\n继续',
+    })).not.toContain('SENTINEL_CARD_TEMPLATE');
+  });
+
+  it.each([
+    ['从小红书笔记里查一下住宿价格', false],
+    ['帮我收集水屋推荐，可以从小红书寻找资料', false],
+    ['不要生成卡片，只帮我查一下价格', false],
+    ['帮我写一篇小红书笔记', true],
+    ['制作小红书内容和封面', true],
+    ['Write a post about the itinerary', true],
+    ["Don't write a post, just research prices", false],
+  ])('distinguishes sources from publishing intent: %s', (request, publication) => {
+    expect(isPublicationRequest(request)).toBe(publication);
+  });
+
   it('composes a runtime profile from the agent fields', () => {
     const prompt = buildAgentSystemPrompt(agent(), ['file_read', 'shell_exec']);
     expect(prompt).toContain('You are Dev Agent, a developer agent.');

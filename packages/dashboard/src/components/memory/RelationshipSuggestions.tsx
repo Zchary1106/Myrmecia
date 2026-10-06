@@ -62,16 +62,21 @@ export function RelationshipSuggestions({ onChanged }: { onChanged: () => void }
   };
 
   return (
-    <section className="rounded-xl border border-amber-200 bg-amber-50/70 p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div><div className="flex items-center gap-2 text-sm font-semibold text-amber-900"><Link2 size={15} /> Suggested links</div><p className="mt-1 text-xs leading-5 text-amber-800">Generated from shared task, artifact, session, and topic evidence. Confirm before adding an edge.</p></div>
-        <button type="button" onClick={() => void load()} disabled={Boolean(busyId)} className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-amber-800 hover:bg-amber-100" aria-label="Refresh relationship suggestions"><RefreshCw size={14} /></button>
-      </div>
-      {error && <p className="mt-3 text-xs text-red-700">{error}</p>}
-      {suggestions.length > 0 ? <div className="mt-3 space-y-2">{suggestions.map(suggestion => {
+    <details className="knowledge-review-panel group rounded-xl border border-border bg-background/55">
+      <summary className="app-focus flex cursor-pointer list-none items-center justify-between gap-3 rounded-xl px-3.5 py-3 text-left">
+        <div className="min-w-0"><div className="flex items-center gap-2 text-xs font-semibold text-app-primary"><Link2 size={14} className="text-accent-light" /> Suggested links</div><p className="mt-0.5 truncate text-[10px] text-app-muted">Review high-confidence relationships before adding them.</p></div>
+        {suggestions.length > 0 && <span className="shrink-0 rounded-full bg-accent/10 px-2 py-1 text-[10px] font-semibold text-accent-light">{suggestions.length}</span>}
+      </summary>
+      <div className="border-t border-border p-3">
+        <div className="mb-2 flex justify-end">
+          <button type="button" onClick={() => void load()} disabled={Boolean(busyId)} className="inline-flex h-7 items-center gap-1.5 rounded-lg px-2 text-[10px] font-medium text-app-muted hover:bg-surface-hover hover:text-app-primary" aria-label="Refresh relationship suggestions"><RefreshCw size={12} /> Refresh</button>
+        </div>
+        {error && <p className="text-xs text-red-600">{error}</p>}
+        {suggestions.length > 0 ? <div className="space-y-2">{suggestions.map(suggestion => {
         const id = `${suggestion.sourceId}:${suggestion.targetId}`;
-        return <div key={id} className="flex items-center gap-2 rounded-lg bg-white/80 px-3 py-2.5 text-xs shadow-sm"><div className="min-w-0 flex-1"><div className="truncate font-medium text-app-secondary">{label(nodeById.get(suggestion.sourceId))} <span className="mx-1 text-app-muted">↔</span> {label(nodeById.get(suggestion.targetId))}</div><div className="mt-1 text-app-muted">{suggestion.reason} · {Math.round(suggestion.confidence * 100)}% confidence</div></div><button type="button" onClick={() => void confirm(suggestion)} disabled={busyId === id} className={cn('inline-flex shrink-0 items-center gap-1 rounded-lg bg-amber-500 px-2.5 py-1.5 text-[11px] font-semibold text-white transition hover:bg-amber-600 disabled:opacity-50')}><Check size={13} /> Confirm</button></div>;
-      })}</div> : !error && <p className="mt-3 text-xs text-amber-800">No high-confidence links found yet.</p>}
-    </section>
+        return <div key={id} className="flex items-center gap-2 rounded-lg border border-border/70 bg-surface px-3 py-2.5 text-xs"><div className="min-w-0 flex-1"><div className="truncate font-medium text-app-secondary">{label(nodeById.get(suggestion.sourceId))} <span className="mx-1 text-app-muted">↔</span> {label(nodeById.get(suggestion.targetId))}</div><div className="mt-1 text-app-muted">{suggestion.reason} · {Math.round(suggestion.confidence * 100)}% confidence</div></div><button type="button" onClick={() => void confirm(suggestion)} disabled={busyId === id} className={cn('inline-flex shrink-0 items-center gap-1 rounded-lg bg-accent px-2.5 py-1.5 text-[11px] font-semibold text-white transition hover:bg-accent-light disabled:opacity-50')}><Check size={13} /> Confirm</button></div>;
+      })}</div> : !error && <p className="text-xs text-app-muted">No high-confidence links found yet.</p>}
+      </div>
+    </details>
   );
 }

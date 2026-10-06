@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { AgentSummary, ToolDefinition, ToolExecution, ToolPermission } from '@myrmecia/shared';
 import { api } from '../lib/api';
 import { useStore } from '../stores/store';
+import { useConnectionsStore } from '../stores/connections';
 import { cn } from '../lib/utils';
 import { AuditDrawer } from '../components/audit/AuditDrawer';
 
@@ -35,6 +36,13 @@ export function ToolsPage() {
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState('all');
   const [section, setSection] = useState<ToolSection>('registry');
+  const toolsMcpRequested = useConnectionsStore(state => state.toolsMcpRequested);
+  useEffect(() => {
+    if (toolsMcpRequested) {
+      setSection('mcp');
+      useConnectionsStore.setState({ toolsMcpRequested: false });
+    }
+  }, [toolsMcpRequested]);
   const [executionStatus, setExecutionStatus] = useState('all');
   const [savingToolId, setSavingToolId] = useState<string | null>(null);
   const [selectedToolId, setSelectedToolId] = useState<string | null>(null);

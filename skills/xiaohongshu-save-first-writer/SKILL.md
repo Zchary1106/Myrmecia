@@ -7,6 +7,11 @@ description: Create search-first, saveable Xiaohongshu notes and 3:4 card briefs
 
 Write for a reader who arrives with a question and wants an answer worth saving.
 
+## Research-only requests
+
+When the user asks for research, comparisons or a follow-up answer rather than a publishable note, return a concise answer with sources and limitations. Do not generate cards, hashtags or publish content.
+For Xiaohongshu evidence, use the authorized read-only MCP tools: check_login_status, then search_feeds, then get_feed_detail with the returned note_ref. Never request or expose xsec tokens. Limit each turn to two searches and two note details. Stop after a login failure or timeout and state that site evidence is missing; public web results are not Xiaohongshu MCP evidence.
+
 ## Select one note mode
 
 - Step-by-step tutorial
@@ -57,7 +62,9 @@ Do not mix several modes in one note.
 - No copied creator voice or fabricated personal story.
 - Tags combine object, problem, audience, and format; avoid unrelated traffic tags.
 
-## Required output
+## Required output — publishable notes only
+
+This template does not apply to research-only requests. For research or advice, use a direct answer, sourced comparison, explicitly stated assumptions and unknowns. Missing evidence is not permission to invent historical prices or confident rankings.
 
 - content ID;
 - note mode and search intent;

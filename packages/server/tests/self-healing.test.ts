@@ -65,5 +65,28 @@ describe('SelfHealingEngine — decomposition guard', () => {
     expect(isNonRetryableExecutionError('agent execution exceeded token budget (4/3)')).toBe(true);
     expect(isNonRetryableExecutionError('Publish confirmation required')).toBe(true);
     expect(isNonRetryableExecutionError('temporary provider timeout')).toBe(false);
+    expect(isNonRetryableExecutionError('You have exceeded your monthly quota (Request ID: test)')).toBe(true);
+    expect(isNonRetryableExecutionError('insufficient_quota')).toBe(true);
+  });
+
+  it('honors maxRetries including zero and does not increment exhausted retries', async () => {
+    const engine = new SelfHealingEngine();
+    for (const limit of [0, 2]) {
+      const task = createTask({ title: 'limited', description: '', input: '', mode: 'direct', maxRetries: limit });
+      updateTask(task.id, { status: 'failed', retryCount: limit });
+      await (engine as any).onTaskFailed(task.id, 'temporary provider timeout');
+      expect(getTask(task.id)).toMatchObject({ status: 'failed', retryCount: limit, error: 'temporary provider timeout' });
+    }
+  });
+
+  it('does not retry quota exhaustion or repeat an already reduced timeout retry', async () => {
+    const engine = new SelfHealingEngine();
+    for (const [error, retryCount] of [['You have exceeded your monthly quota', 0], ['EXECUTION_IDLE_TIMEOUT: no progress', 1]] as const) {
+      const task = createTask({ title: 'stop', description: '', input: '', mode: 'direct', maxRetries: 5 });
+      updateTask(task.id, { status: 'failed', retryCount });
+      await (engine as any).onTaskFailed(task.id, error);
+      expect(getTask(task.id)).toMatchObject({ status: 'failed', retryCount, error });
+      expect(getTask(task.id)!.completedAt).toBeTruthy();
+    }
   });
 });

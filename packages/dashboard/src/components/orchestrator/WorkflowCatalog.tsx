@@ -39,13 +39,14 @@ export function WorkflowCatalog({ templates, pipelines, query, selectedId, onQue
 
   return (
     <section aria-label="Workflow catalog">
-      <section className="mb-5 flex flex-col gap-4 rounded-2xl border border-indigo-100 bg-[radial-gradient(circle_at_top_right,rgba(129,140,248,0.14),transparent_42%),linear-gradient(135deg,#ffffff,#f8faff)] p-5 shadow-[0_16px_35px_-30px_rgba(79,70,229,.5)] sm:flex-row sm:items-center sm:justify-between">
+      <section className="premium-card relative mb-5 flex flex-col gap-4 overflow-hidden rounded-2xl border border-accent/20 bg-surface p-5 sm:flex-row sm:items-center sm:justify-between">
+        <div className="pointer-events-none absolute -right-16 -top-24 h-52 w-52 rounded-full bg-accent/10 blur-3xl" />
         <div>
-          <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-indigo-600">Advanced workflow editor</div>
+          <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-accent-light">Advanced workflow editor</div>
           <h2 className="mt-1 text-base font-semibold text-app-primary">Visual workflow canvas</h2>
           <p className="mt-1 max-w-2xl text-sm leading-6 text-app-muted">Compose Agent, gate, artifact, and publisher steps when a reusable workflow needs custom control.</p>
         </div>
-        <button type="button" onClick={() => useStore.getState().setActiveView('orchestrate')} className="inline-flex h-10 shrink-0 items-center justify-center rounded-xl bg-indigo-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400">Open visual canvas</button>
+        <button type="button" onClick={() => useStore.getState().setActiveView('orchestrate')} className="home-primary-button app-focus relative inline-flex h-10 shrink-0 items-center justify-center rounded-xl px-4 text-sm font-semibold text-white">Open visual canvas</button>
       </section>
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>

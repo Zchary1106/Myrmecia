@@ -1,4 +1,6 @@
 import './load-env.js';
+import { createSessionDocumentRoutes } from './routes/session-documents.js';
+import { createConversationRoutes } from './routes/conversations.js';
 
 import express from 'express';
 import cors from 'cors';
@@ -6,6 +8,7 @@ import { createServer } from 'http';
 import { join, dirname, resolve, extname } from 'path';
 import { fileURLToPath } from 'url';
 import { existsSync, statSync } from 'fs';
+import { closeEnvironmentFetch } from './lib/environment-fetch.js';
 
 import { getDb } from './db/database.js';
 import { AgentManager } from './agents/agent-manager.js';
@@ -24,6 +27,7 @@ import { NotifierService } from './notifications/notifier.js';
 import { createTaskRoutes } from './routes/tasks.js';
 import { createAgentRoutes } from './routes/agents.js';
 import { createExternalAgentRoutes } from './routes/external-agents.js';
+import { getExternalAgentRuntime } from './agents/external-agent-runtime.js';
 import { createExternalAgentScheduleRoutes } from './routes/external-agent-schedules.js';
 import { createPipelineRoutes } from './routes/pipelines.js';
 import { createTemplateRoutes } from './routes/templates.js';
@@ -349,6 +353,7 @@ async function main() {
 
   // API v1 Routes (canonical)
   app.use('/api/v1/tasks', createTaskRoutes(taskQueue));
+  app.use('/api/v1/tasks', createSessionDocumentRoutes());
   app.use('/api/v1/agents', createAgentRoutes(taskQueue));
   app.use('/api/v1/external-agents', createExternalAgentRoutes());
   app.use('/api/v1/external-agent-schedules', createExternalAgentScheduleRoutes());
@@ -357,6 +362,7 @@ async function main() {
   app.use('/api/v1/skills', createSkillRoutes());
   app.use('/api/v1/skills/registry', createSkillRegistryRoutes());
   app.use('/api/v1/executions', executionRoutes);
+  app.use('/api/v1/conversations', createConversationRoutes());
   app.use('/api/v1/pipelines', createPipelineRoutes(pipelineEngine));
   app.use('/api/v1/templates', createTemplateRoutes());
   app.use('/api/v1/social-workflow', createSocialWorkflowRoutes());
@@ -433,6 +439,7 @@ async function main() {
     logger.info(`API auth: ${isApiAuthEnabled() ? 'enabled' : 'disabled (local mode)'}`);
 
     // Recover any tasks interrupted by previous shutdown
+    getExternalAgentRuntime().recoverCallbacks();
     await taskQueue.recoverRunningTasks();
     await pipelineEngine.recoverInterruptedPipelines();
     taskQueue.startWorker();
@@ -451,6 +458,7 @@ async function main() {
   // Graceful shutdown
   const shutdown = async () => {
     logger.info('Shutting down gracefully...');
+    await getMcpManager().shutdown();
     const { shutdownTelemetry } = await import('./observability/telemetry.js');
     await shutdownTelemetry();
     clearInterval(workspaceCleanupTimer);
@@ -461,6 +469,7 @@ async function main() {
     await taskQueue.shutdown();
     const { shutdownModelGateway } = await import('./models/gateway.js');
     await shutdownModelGateway();
+    await closeEnvironmentFetch();
     skillWatcher.stop();
     closeDb();
     server.close();
@@ -473,6 +482,7 @@ async function main() {
   });
   process.on('uncaughtException', (err: unknown) => {
     logger.fatal({ err }, 'Uncaught exception — shutting down');
+    getMcpManager().dispose();
     closeDb();
     process.exit(1);
   });
@@ -480,5 +490,6 @@ async function main() {
 
 main().catch((err) => {
   logger.fatal({ err }, 'Failed to start Agent Factory');
+  getMcpManager().dispose();
   process.exit(1);
 });

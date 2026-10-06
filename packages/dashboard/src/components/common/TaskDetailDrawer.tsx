@@ -9,7 +9,7 @@ import { SkillStepProgress } from '../tasks/SkillStepProgress';
 type DetailTab = 'overview' | 'context' | 'trace' | 'logs' | 'quality' | 'audit';
 
 const statusClass: Record<string, string> = {
-  pending: 'bg-gray-500/15 text-gray-400 border-gray-500/20',
+  pending: 'bg-gray-500/15 text-app-secondary border-gray-500/20',
   queued: 'bg-yellow-500/15 text-yellow-400 border-yellow-500/20',
   assigned: 'bg-blue-500/15 text-blue-300 border-blue-500/20',
   running: 'bg-blue-500/15 text-blue-400 border-blue-500/20',
@@ -17,7 +17,7 @@ const statusClass: Record<string, string> = {
   review: 'bg-purple-500/15 text-purple-400 border-purple-500/20',
   done: 'bg-green-500/15 text-green-400 border-green-500/20',
   failed: 'bg-red-500/15 text-red-400 border-red-500/20',
-  cancelled: 'bg-gray-500/15 text-gray-500 border-gray-500/20',
+  cancelled: 'bg-gray-500/15 text-app-muted border-gray-500/20',
 };
 
 const qualityClass: Record<QualityLoopAttempt['status'], string> = {
@@ -26,7 +26,7 @@ const qualityClass: Record<QualityLoopAttempt['status'], string> = {
   needs_fix: 'bg-yellow-500/10 text-yellow-400',
   fixing: 'bg-blue-500/10 text-blue-300',
   fixed: 'bg-purple-500/10 text-purple-400',
-  skipped: 'bg-gray-500/10 text-gray-500',
+  skipped: 'bg-gray-500/10 text-app-muted',
   failed: 'bg-red-500/10 text-red-400',
 };
 
@@ -51,9 +51,9 @@ function ActionSummary({ action }: { action: OperatorAction }) {
         )}>
           {action.status}
         </span>
-        <span className="ml-auto text-[10px] text-gray-600">{new Date(action.createdAt).toLocaleString()}</span>
+        <span className="ml-auto text-[10px] text-app-muted">{new Date(action.createdAt).toLocaleString()}</span>
       </div>
-      <div className="mt-1 text-[11px] text-gray-500">
+      <div className="mt-1 text-[11px] text-app-muted">
         {action.actor.id} · {action.actor.role} · {action.actor.source}
       </div>
     </div>
@@ -118,15 +118,15 @@ function RuntimeStatusCard({
     <section aria-label="Runtime status" className="rounded-xl border border-border bg-background/70 p-3">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">Runtime status</div>
-          <div className="mt-1 text-sm font-semibold text-gray-200">{taskPhase(task.status)}</div>
+          <div className="text-[10px] font-semibold uppercase tracking-wide text-app-muted">Runtime status</div>
+          <div className="mt-1 text-sm font-semibold text-app-primary">{taskPhase(task.status)}</div>
         </div>
         {execution ? (
           <span className="rounded-full bg-blue-500/10 px-2 py-1 text-[10px] text-blue-300">
             {execution.status} execution
           </span>
         ) : (
-          <span className="rounded-full bg-gray-500/10 px-2 py-1 text-[10px] text-gray-500">No execution record</span>
+          <span className="rounded-full bg-gray-500/10 px-2 py-1 text-[10px] text-app-muted">No execution record</span>
         )}
       </div>
 
@@ -141,18 +141,18 @@ function RuntimeStatusCard({
           <p className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-amber-100/80">{runtimeReason}</p>
         </div>
       ) : task.status === 'running' && !heartbeat ? (
-        <div className="mt-3 rounded-lg border border-border bg-surface px-2.5 py-2 text-[11px] text-gray-500">
+        <div className="mt-3 rounded-lg border border-border bg-surface px-2.5 py-2 text-[11px] text-app-muted">
           Running without a recorded heartbeat yet. Check Trace or Logs for live evidence.
         </div>
       ) : null}
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
-        <span className="text-[10px] text-gray-600">Evidence</span>
-        <button type="button" onClick={() => onOpenEvidence('trace')} disabled={!execution} className="rounded-md border border-border px-2 py-1 text-[10px] text-gray-400 hover:border-accent/50 hover:text-accent-light disabled:cursor-not-allowed disabled:opacity-40">Trace</button>
-        <button type="button" onClick={() => onOpenEvidence('logs')} disabled={logs.length === 0} className="rounded-md border border-border px-2 py-1 text-[10px] text-gray-400 hover:border-accent/50 hover:text-accent-light disabled:cursor-not-allowed disabled:opacity-40">Logs{logs.length ? ` (${logs.length})` : ''}</button>
-        <button type="button" onClick={() => onOpenEvidence('quality')} disabled={attempts.length === 0} className="rounded-md border border-border px-2 py-1 text-[10px] text-gray-400 hover:border-accent/50 hover:text-accent-light disabled:cursor-not-allowed disabled:opacity-40">Quality{attempts.length ? ` (${attempts.length})` : ''}</button>
-        <button type="button" onClick={() => onOpenEvidence('context')} disabled={!executionContext} className="rounded-md border border-border px-2 py-1 text-[10px] text-gray-400 hover:border-accent/50 hover:text-accent-light disabled:cursor-not-allowed disabled:opacity-40">Context{checkpoints.length ? ` (${checkpoints.length})` : ''}</button>
-        {!hasEvidence && <span className="text-[10px] text-gray-600">No trace, logs, or quality evidence has been recorded.</span>}
+        <span className="text-[10px] text-app-muted">Evidence</span>
+        <button type="button" onClick={() => onOpenEvidence('trace')} disabled={!execution} className="rounded-md border border-border px-2 py-1 text-[10px] text-app-secondary hover:border-accent/50 hover:text-accent-light disabled:cursor-not-allowed disabled:opacity-40">Trace</button>
+        <button type="button" onClick={() => onOpenEvidence('logs')} disabled={logs.length === 0} className="rounded-md border border-border px-2 py-1 text-[10px] text-app-secondary hover:border-accent/50 hover:text-accent-light disabled:cursor-not-allowed disabled:opacity-40">Logs{logs.length ? ` (${logs.length})` : ''}</button>
+        <button type="button" onClick={() => onOpenEvidence('quality')} disabled={attempts.length === 0} className="rounded-md border border-border px-2 py-1 text-[10px] text-app-secondary hover:border-accent/50 hover:text-accent-light disabled:cursor-not-allowed disabled:opacity-40">Quality{attempts.length ? ` (${attempts.length})` : ''}</button>
+        <button type="button" onClick={() => onOpenEvidence('context')} disabled={!executionContext} className="rounded-md border border-border px-2 py-1 text-[10px] text-app-secondary hover:border-accent/50 hover:text-accent-light disabled:cursor-not-allowed disabled:opacity-40">Context{checkpoints.length ? ` (${checkpoints.length})` : ''}</button>
+        {!hasEvidence && <span className="text-[10px] text-app-muted">No trace, logs, or quality evidence has been recorded.</span>}
       </div>
     </section>
   );
@@ -161,9 +161,9 @@ function RuntimeStatusCard({
 function RuntimeFact({ label, value, detail }: { label: string; value: string; detail: string }) {
   return (
     <div className="min-w-0 rounded-lg border border-border bg-surface px-2.5 py-2">
-      <div className="text-[10px] uppercase tracking-wide text-gray-600">{label}</div>
-      <div className="mt-1 truncate text-[11px] font-medium text-gray-300" title={value}>{value}</div>
-      <div className="mt-0.5 truncate text-[10px] text-gray-600" title={detail}>{detail}</div>
+      <div className="text-[10px] uppercase tracking-wide text-app-muted">{label}</div>
+      <div className="mt-1 truncate text-[11px] font-medium text-app-secondary" title={value}>{value}</div>
+      <div className="mt-0.5 truncate text-[10px] text-app-muted" title={detail}>{detail}</div>
     </div>
   );
 }
@@ -206,8 +206,8 @@ function OverviewTab({
 
       {task.description && (
         <section>
-          <div className="text-[11px] font-semibold text-gray-500 mb-2">Description</div>
-          <p className="bg-background border border-border rounded-lg p-3 text-sm text-gray-300 whitespace-pre-wrap">
+          <div className="text-[11px] font-semibold text-app-muted mb-2">Description</div>
+          <p className="bg-background border border-border rounded-lg p-3 text-sm text-app-secondary whitespace-pre-wrap">
             {task.description}
           </p>
         </section>
@@ -215,8 +215,8 @@ function OverviewTab({
 
       {task.output && (
         <section>
-          <div className="text-[11px] font-semibold text-gray-500 mb-2">Output</div>
-          <pre className="bg-background border border-border rounded-lg p-3 text-xs text-gray-300 whitespace-pre-wrap overflow-auto max-h-64">
+          <div className="text-[11px] font-semibold text-app-muted mb-2">Output</div>
+          <pre className="bg-background border border-border rounded-lg p-3 text-xs text-app-secondary whitespace-pre-wrap overflow-auto max-h-64">
             {task.output}
           </pre>
         </section>
@@ -239,8 +239,8 @@ function ContextTab({ context, checkpoints }: { context?: ExecutionContext; chec
   return (
     <div className="space-y-3">
       <section className="rounded-lg border border-border bg-background p-3">
-        <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">Working summary</div>
-        <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-gray-300">{context.goal}</p>
+        <div className="text-[10px] font-semibold uppercase tracking-wide text-app-muted">Working summary</div>
+        <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-app-secondary">{context.goal}</p>
         <div className="mt-3 grid grid-cols-2 gap-2">
           <RuntimeFact label="Workspace" value={context.workspacePath || context.workspaceId} detail={context.workdir || 'No workdir recorded'} />
           <RuntimeFact label="Model" value={context.modelId || 'Provider default'} detail={context.provider || 'Provider not recorded'} />
@@ -249,21 +249,21 @@ function ContextTab({ context, checkpoints }: { context?: ExecutionContext; chec
         <RuntimeFact label="Latest compaction" value={context.contextUsage?.summaryVersion ? `Summary v${context.contextUsage.summaryVersion}` : 'No compaction yet'} detail={context.contextUsage?.summaryVersion ? 'The source summary is stored as an execution artifact.' : 'Older context has not needed compaction.'} />
           <RuntimeFact label="Parent task" value={context.parentTaskId || 'Root task'} detail={`Updated ${new Date(context.updatedAt).toLocaleString()}`} />
         </div>
-        {context.constraints.length > 0 && <div className="mt-3 text-[11px] text-gray-400">Constraints: {context.constraints.join(' · ')}</div>}
-        {context.codeBaseline && Object.keys(context.codeBaseline).length > 0 && <div className="mt-1 text-[11px] text-gray-500">Baseline: {context.codeBaseline.branch || 'unknown branch'} {context.codeBaseline.revision ? `@ ${context.codeBaseline.revision}` : ''}</div>}
+        {context.constraints.length > 0 && <div className="mt-3 text-[11px] text-app-secondary">Constraints: {context.constraints.join(' · ')}</div>}
+        {context.codeBaseline && Object.keys(context.codeBaseline).length > 0 && <div className="mt-1 text-[11px] text-app-muted">Baseline: {context.codeBaseline.branch || 'unknown branch'} {context.codeBaseline.revision ? `@ ${context.codeBaseline.revision}` : ''}</div>}
       </section>
       <section className="rounded-lg border border-border bg-background p-3">
-        <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">Recovery checkpoints</div>
+        <div className="text-[10px] font-semibold uppercase tracking-wide text-app-muted">Recovery checkpoints</div>
         <div className="mt-2 space-y-2">
           {checkpoints.map(checkpoint => (
             <div key={checkpoint.id} className="rounded-md border border-border/70 bg-surface px-2.5 py-2">
-              <div className="flex items-center justify-between gap-2"><span className="text-xs font-medium text-gray-300">{checkpoint.phase}</span><span className="text-[10px] text-gray-600">{new Date(checkpoint.createdAt).toLocaleString()}</span></div>
-              {checkpoint.resumeHint && <p className="mt-1 text-[11px] text-gray-400">{checkpoint.resumeHint}</p>}
+              <div className="flex items-center justify-between gap-2"><span className="text-xs font-medium text-app-secondary">{checkpoint.phase}</span><span className="text-[10px] text-app-muted">{new Date(checkpoint.createdAt).toLocaleString()}</span></div>
+              {checkpoint.resumeHint && <p className="mt-1 text-[11px] text-app-secondary">{checkpoint.resumeHint}</p>}
               {checkpoint.blocked.length > 0 && <p className="mt-1 text-[11px] text-amber-300">Blocked: {checkpoint.blocked.join(' · ')}</p>}
-              {checkpoint.lastValidation && <pre className="mt-1 overflow-auto text-[10px] text-gray-500">{JSON.stringify(checkpoint.lastValidation, null, 2)}</pre>}
+              {checkpoint.lastValidation && <pre className="mt-1 overflow-auto text-[10px] text-app-muted">{JSON.stringify(checkpoint.lastValidation, null, 2)}</pre>}
             </div>
           ))}
-          {checkpoints.length === 0 && <p className="text-xs text-gray-600">No checkpoints have been recorded.</p>}
+          {checkpoints.length === 0 && <p className="text-xs text-app-muted">No checkpoints have been recorded.</p>}
         </div>
       </section>
     </div>
@@ -273,8 +273,8 @@ function ContextTab({ context, checkpoints }: { context?: ExecutionContext; chec
 function InfoCard({ label, value }: { label: string; value: string }) {
   return (
     <div className="bg-background border border-border rounded-lg p-3 min-w-0">
-      <div className="text-[10px] uppercase tracking-wide text-gray-600 mb-1">{label}</div>
-      <div className="text-xs text-gray-300 truncate">{value}</div>
+      <div className="text-[10px] uppercase tracking-wide text-app-muted mb-1">{label}</div>
+      <div className="text-xs text-app-secondary truncate">{value}</div>
     </div>
   );
 }
@@ -284,14 +284,14 @@ function TraceTab({ messages }: { messages: ExecutionMessage[] }) {
     <div className="space-y-2">
       {messages.map(message => (
         <div key={message.id} className="bg-background border border-border rounded-lg px-3 py-2">
-          <div className="flex items-center gap-2 text-[10px] text-gray-600 mb-1">
+          <div className="flex items-center gap-2 text-[10px] text-app-muted mb-1">
             <span>{messageIcon(message.type)}</span>
             <span>{message.type}</span>
             {message.toolName && <span className="text-accent-light">{message.toolName}</span>}
           </div>
           <div className={cn(
             'text-[12px] whitespace-pre-wrap leading-relaxed',
-            message.type === 'error' ? 'text-red-400' : 'text-gray-300',
+            message.type === 'error' ? 'text-red-400' : 'text-app-secondary',
           )}>
             {message.content}
           </div>
@@ -312,13 +312,13 @@ function LogsTab({ logs }: { logs: LogEntry[] }) {
               'font-mono uppercase text-[10px]',
               log.level === 'error' ? 'text-red-400' :
               log.level === 'warn' ? 'text-yellow-400' :
-              log.level === 'debug' ? 'text-gray-500' : 'text-gray-300',
+              log.level === 'debug' ? 'text-app-muted' : 'text-app-secondary',
             )}>
               {log.level}
             </span>
-            <span className="text-[10px] text-gray-600">{new Date(log.createdAt).toLocaleString()}</span>
+            <span className="text-[10px] text-app-muted">{new Date(log.createdAt).toLocaleString()}</span>
           </div>
-          <div className="font-mono text-gray-300 whitespace-pre-wrap">{log.message}</div>
+          <div className="font-mono text-app-secondary whitespace-pre-wrap">{log.message}</div>
         </div>
       ))}
       {logs.length === 0 && <EmptyState icon="📄" text="No task logs yet" />}
@@ -332,7 +332,7 @@ function QualityTab({ attempts }: { attempts: QualityLoopAttempt[] }) {
       {attempts.map(attempt => (
         <div key={attempt.id} className="bg-background border border-border rounded-lg px-3 py-2">
           <div className="flex items-center gap-2 mb-2">
-            <span className="text-[10px] text-gray-600">Round {attempt.iteration}</span>
+            <span className="text-[10px] text-app-muted">Round {attempt.iteration}</span>
             <span className={cn('px-1.5 py-0.5 rounded text-[10px]', qualityClass[attempt.status])}>
               {attempt.status}
             </span>
@@ -350,10 +350,10 @@ function QualityTab({ attempts }: { attempts: QualityLoopAttempt[] }) {
 function AttemptBlock({ label, value, tone }: { label: string; value: string; tone?: 'error' }) {
   return (
     <div className="mt-2">
-      <div className={cn('text-[10px] font-semibold mb-1', tone === 'error' ? 'text-red-400' : 'text-gray-500')}>
+      <div className={cn('text-[10px] font-semibold mb-1', tone === 'error' ? 'text-red-400' : 'text-app-muted')}>
         {label}
       </div>
-      <div className={cn('text-[11px] whitespace-pre-wrap', tone === 'error' ? 'text-red-300' : 'text-gray-400')}>
+      <div className={cn('text-[11px] whitespace-pre-wrap', tone === 'error' ? 'text-red-300' : 'text-app-secondary')}>
         {value}
       </div>
     </div>
@@ -362,7 +362,7 @@ function AttemptBlock({ label, value, tone }: { label: string; value: string; to
 
 function EmptyState({ icon, text }: { icon: string; text: string }) {
   return (
-    <div className="text-center py-10 text-gray-600">
+    <div className="text-center py-10 text-app-muted">
       <div className="text-3xl mb-2 opacity-30">{icon}</div>
       <p className="text-sm">{text}</p>
     </div>
@@ -441,8 +441,8 @@ export function TaskDetailDrawer({ taskId, onClose }: { taskId: string | null; o
   };
 
   return (
-    <aside aria-label="Task details" className="fixed bottom-0 right-0 top-14 z-40 flex w-[440px] max-w-[calc(100vw-1rem)] flex-col rounded-tl-2xl border-l border-t border-border bg-surface shadow-2xl">
-      <div className="p-4 border-b border-border">
+    <aside aria-label="Task details" className="ui-drawer fixed bottom-0 right-0 top-14 z-40 flex w-[440px] max-w-[calc(100vw-1rem)] flex-col rounded-tl-[20px] border-l border-t">
+      <div className="border-b border-border/70 p-4">
         <div className="flex items-start gap-3">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-2">
@@ -451,14 +451,14 @@ export function TaskDetailDrawer({ taskId, onClose }: { taskId: string | null; o
                   {task.status}
                 </span>
               )}
-              {execution && <span className="text-[10px] text-gray-600">{execution.status} execution</span>}
+              {execution && <span className="text-[10px] text-app-muted">{execution.status} execution</span>}
             </div>
-            <h3 className="font-bold text-base truncate">{task?.title || taskId}</h3>
-            <p className="text-[11px] text-gray-500 mt-1">
+            <h3 className="truncate text-base font-semibold tracking-[-0.02em] text-app-primary">{task?.title || taskId}</h3>
+            <p className="text-[11px] text-app-muted mt-1">
               {agent ? `${agent.emoji || '🤖'} ${agent.name}` : 'No agent assigned'} · {task?.mode || 'unknown'}
             </p>
           </div>
-          <button onClick={onClose} aria-label="Close task details" className="app-focus rounded-lg p-1.5 text-gray-500 transition hover:bg-surface-hover hover:text-app-primary">✕</button>
+          <button onClick={onClose} aria-label="Close task details" className="app-focus rounded-lg p-1.5 text-app-muted transition hover:bg-surface-hover hover:text-app-primary">✕</button>
         </div>
 
         {task && (
@@ -468,7 +468,7 @@ export function TaskDetailDrawer({ taskId, onClose }: { taskId: string | null; o
                 onClick={() => void runTaskAction('cancel')}
                 disabled={!!busyAction || !canControl}
                 title={canControl ? undefined : readOnlyControlMessage}
-                className="px-3 py-1.5 rounded-lg bg-red-500/10 text-red-400 text-[11px] hover:bg-red-500/20 disabled:opacity-50"
+                className="ui-button-quiet bg-red-500/[0.08] text-red-500 hover:bg-red-500/[0.14]"
               >
                 {busyAction === 'cancel' ? 'Cancelling...' : 'Cancel'}
               </button>
@@ -479,7 +479,7 @@ export function TaskDetailDrawer({ taskId, onClose }: { taskId: string | null; o
                   onClick={() => void runTaskAction('resume')}
                   disabled={!!busyAction || !canControl}
                   title={canControl ? undefined : readOnlyControlMessage}
-                  className="px-3 py-1.5 rounded-lg bg-accent/10 text-accent-light text-[11px] hover:bg-accent/20 disabled:opacity-50"
+                  className="ui-button-quiet bg-accent/[0.08] text-accent-light hover:bg-accent/[0.14]"
                 >
                   {busyAction === 'resume' ? 'Resuming...' : 'Resume from checkpoint'}
                 </button>
@@ -488,7 +488,7 @@ export function TaskDetailDrawer({ taskId, onClose }: { taskId: string | null; o
                   onClick={() => void runTaskAction('retry')}
                   disabled={!!busyAction || !canControl}
                   title={canControl ? undefined : readOnlyControlMessage}
-                  className="px-3 py-1.5 rounded-lg bg-accent/10 text-accent-light text-[11px] hover:bg-accent/20 disabled:opacity-50"
+                  className="ui-button-quiet bg-accent/[0.08] text-accent-light hover:bg-accent/[0.14]"
                 >
                   {busyAction === 'retry' ? 'Retrying...' : 'Retry'}
                 </button>
@@ -499,14 +499,14 @@ export function TaskDetailDrawer({ taskId, onClose }: { taskId: string | null; o
                 onClick={() => void runTaskAction('replan')}
                 disabled={!!busyAction || !canControl}
                 title={canControl ? undefined : readOnlyControlMessage}
-                className="px-3 py-1.5 rounded-lg border border-border text-gray-300 text-[11px] hover:border-accent/50 hover:text-accent-light disabled:opacity-50"
+                className="ui-button"
               >
                 {busyAction === 'replan' ? 'Creating plan...' : 'Replan'}
               </button>
             )}
             <button
               onClick={() => void refresh()}
-              className="px-3 py-1.5 rounded-lg bg-surface-hover text-gray-400 text-[11px] hover:text-white"
+              className="ui-button"
             >
               Refresh
             </button>
@@ -517,7 +517,7 @@ export function TaskDetailDrawer({ taskId, onClose }: { taskId: string | null; o
         )}
       </div>
 
-      <div className="px-4 pt-3 border-b border-border">
+      <div className="border-b border-border/70 px-4 pt-3">
         <div className="flex gap-1 overflow-x-auto">
           {(['overview', 'context', 'trace', 'logs', 'quality', 'audit'] as const).map(item => (
             <button
@@ -525,7 +525,7 @@ export function TaskDetailDrawer({ taskId, onClose }: { taskId: string | null; o
               onClick={() => setTab(item)}
               className={cn(
                 'px-3 py-2 text-[11px] capitalize border-b-2 transition',
-                tab === item ? 'border-accent text-accent-light' : 'border-transparent text-gray-500 hover:text-gray-300',
+                tab === item ? 'border-accent text-accent-light' : 'border-transparent text-app-muted hover:text-app-secondary',
               )}
             >
               {item}

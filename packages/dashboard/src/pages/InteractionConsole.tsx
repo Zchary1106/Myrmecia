@@ -17,14 +17,14 @@ type AuditReport = Awaited<ReturnType<typeof api.executionAudit.get>>;
 type ArtifactSummary = Awaited<ReturnType<typeof api.artifacts.list>>[number];
 
 const statusClass: Record<string, string> = {
-  pending: 'bg-gray-500/15 text-gray-400 border-gray-500/20',
+  pending: 'bg-gray-500/15 text-app-secondary border-gray-500/20',
   queued: 'bg-yellow-500/15 text-yellow-400 border-yellow-500/20',
   assigned: 'bg-blue-500/15 text-blue-300 border-blue-500/20',
   running: 'bg-blue-500/15 text-blue-400 border-blue-500/20',
   review: 'bg-purple-500/15 text-purple-400 border-purple-500/20',
   done: 'bg-green-500/15 text-green-400 border-green-500/20',
   failed: 'bg-red-500/15 text-red-400 border-red-500/20',
-  cancelled: 'bg-gray-500/15 text-gray-500 border-gray-500/20',
+  cancelled: 'bg-gray-500/15 text-app-muted border-gray-500/20',
 };
 
 function messageIcon(type: ExecutionMessage['type']) {
@@ -50,7 +50,7 @@ function nextStepFor(task?: Task, execution?: TaskExecution, audit?: AuditReport
 }
 
 function decisionFor(task?: Task, audit?: AuditReport): { label: string; tone: string } {
-  if (!task) return { label: 'No selection', tone: 'bg-gray-500/10 text-gray-500' };
+  if (!task) return { label: 'No selection', tone: 'bg-gray-500/10 text-app-muted' };
   if (audit?.events.some(event => event.severity === 'block' || event.severity === 'error')) {
     return { label: 'Blocked by governance', tone: 'bg-red-500/10 text-red-300' };
   }
@@ -115,7 +115,7 @@ function WorkflowRail({
               <span className={cn('h-2 w-2 rounded-full', workflow.status === 'running' ? 'bg-blue-500 animate-pulse' : workflow.status === 'done' ? 'bg-green-500' : workflow.status === 'failed' ? 'bg-red-500' : 'bg-gray-500')} />
               <span className="truncate text-xs font-semibold">{workflow.goal}</span>
             </div>
-            <div className="mt-1 flex items-center justify-between text-[10px] text-gray-500">
+            <div className="mt-1 flex items-center justify-between text-[10px] text-app-muted">
               <span>{workflow.status}</span>
               <span>{workflow.plan.steps.length} steps</span>
             </div>
@@ -132,7 +132,7 @@ function WorkflowRail({
         </div>
       ))}
       {workflows.length === 0 && (
-        <div className="rounded-xl border border-dashed border-border py-8 text-center text-xs text-gray-600">
+        <div className="rounded-xl border border-dashed border-border py-8 text-center text-xs text-app-muted">
           No dynamic workflows yet
         </div>
       )}
@@ -169,7 +169,7 @@ function TaskGraph({
   });
 
   if (tasks.length === 0) {
-    return <div className="rounded-xl border border-dashed border-border py-10 text-center text-sm text-gray-600">No tasks in this workflow selection</div>;
+    return <div className="rounded-xl border border-dashed border-border py-10 text-center text-sm text-app-muted">No tasks in this workflow selection</div>;
   }
 
   const cardW = 220;
@@ -217,7 +217,7 @@ function TaskGraph({
           </defs>
         </svg>
         {levels.map((level, index) => (
-          <div key={index} className="absolute text-[10px] uppercase tracking-[0.16em] text-gray-600" style={{ left: index * (cardW + colGap), top: 0 }}>
+          <div key={index} className="absolute text-[10px] uppercase tracking-[0.16em] text-app-muted" style={{ left: index * (cardW + colGap), top: 0 }}>
             {index === 0 ? 'Start' : `Depends +${index}`}
           </div>
         ))}
@@ -241,9 +241,9 @@ function TaskGraph({
               </div>
               <div className="mt-2 flex items-center justify-between gap-2">
                 <span className={cn('rounded border px-1.5 py-0.5 text-[10px]', statusClass[task.status])}>{task.status}</span>
-                <span className="truncate text-[10px] text-gray-500">{agent ? `${agent.emoji || '🤖'} ${agent.name}` : 'Unassigned'}</span>
+                <span className="truncate text-[10px] text-app-muted">{agent ? `${agent.emoji || '🤖'} ${agent.name}` : 'Unassigned'}</span>
               </div>
-              {step?.dependsOn?.length ? <div className="mt-1 truncate text-[10px] text-gray-600">← {step.dependsOn.join(', ')}</div> : null}
+              {step?.dependsOn?.length ? <div className="mt-1 truncate text-[10px] text-app-muted">← {step.dependsOn.join(', ')}</div> : null}
             </button>
           );
         })}
@@ -254,18 +254,18 @@ function TaskGraph({
 
 function MessageFeed({ messages }: { messages: ExecutionMessage[] }) {
   if (messages.length === 0) {
-    return <div className="rounded-xl border border-dashed border-border py-12 text-center text-sm text-gray-600">No agent messages yet</div>;
+    return <div className="rounded-xl border border-dashed border-border py-12 text-center text-sm text-app-muted">No agent messages yet</div>;
   }
   return (
     <div className="space-y-2">
       {messages.slice(-12).map(message => (
         <div key={message.id} className="rounded-xl border border-border bg-background p-3">
-          <div className="mb-1 flex items-center gap-2 text-[10px] uppercase tracking-[0.14em] text-gray-600">
+          <div className="mb-1 flex items-center gap-2 text-[10px] uppercase tracking-[0.14em] text-app-muted">
             <span>{messageIcon(message.type)}</span>
             <span>{message.type}</span>
             {message.toolName && <span className="normal-case tracking-normal text-accent-light">{message.toolName}</span>}
           </div>
-          <div className={cn('whitespace-pre-wrap text-xs leading-relaxed', message.type === 'error' ? 'text-red-300' : 'text-gray-300')}>
+          <div className={cn('whitespace-pre-wrap text-xs leading-relaxed', message.type === 'error' ? 'text-red-300' : 'text-app-secondary')}>
             {message.content}
           </div>
         </div>
@@ -310,12 +310,12 @@ function TransparencyPanel({
   );
   return (
     <aside className="w-[340px] shrink-0 space-y-3 overflow-y-auto">
-      <section className="rounded-xl border border-border bg-surface p-4">
+      <section className="ui-panel p-4">
         <div className="mb-3 flex items-center justify-between">
           <h3 className="text-sm font-semibold">Decision</h3>
           <span className={cn('rounded-full px-2 py-1 text-[10px] font-semibold', decision.tone)}>{decision.label}</span>
         </div>
-        <p className="text-xs leading-relaxed text-gray-400">{nextStepFor(task, execution, audit || undefined)}</p>
+        <p className="text-xs leading-relaxed text-app-secondary">{nextStepFor(task, execution, audit || undefined)}</p>
         <div className="mt-3 grid grid-cols-2 gap-2">
           <button
             onClick={onRetryTask}
@@ -332,13 +332,13 @@ function TransparencyPanel({
             Cancel task
           </button>
         </div>
-        <div className="mt-2 text-[10px] leading-relaxed text-gray-600">
+        <div className="mt-2 text-[10px] leading-relaxed text-app-muted">
           Retry increments task retry count; model routing may escalate from cheap to balanced/strong automatically.
         </div>
       </section>
 
       {currentStep && (
-        <section className="rounded-xl border border-border bg-surface p-4">
+        <section className="ui-panel p-4">
           <h3 className="mb-3 text-sm font-semibold">Workflow step controls</h3>
           <div className="grid grid-cols-2 gap-2">
             <button onClick={() => onStepControl('rerun')} disabled={actionBusy} className="rounded-lg bg-accent/15 px-3 py-2 text-xs text-accent-light disabled:opacity-40">Rerun step</button>
@@ -346,58 +346,58 @@ function TransparencyPanel({
             <button onClick={() => onStepControl('force_unblock')} disabled={actionBusy} className="rounded-lg bg-purple-500/10 px-3 py-2 text-xs text-purple-300 disabled:opacity-40">Force unblock</button>
             <button onClick={() => onStepControl('replace_agent', agent?.id)} disabled={actionBusy || !agent} className="rounded-lg bg-blue-500/10 px-3 py-2 text-xs text-blue-300 disabled:opacity-40">Replace agent</button>
           </div>
-          <div className="mt-2 text-[10px] text-gray-600">Current step: {currentStep.id}</div>
+          <div className="mt-2 text-[10px] text-app-muted">Current step: {currentStep.id}</div>
         </section>
       )}
 
-      <section className="rounded-xl border border-border bg-surface p-4">
+      <section className="ui-panel p-4">
         <h3 className="mb-3 text-sm font-semibold">Artifacts / evidence</h3>
         <div className="space-y-2">
           {artifacts.slice(0, 8).map(artifact => (
-            <div key={artifact.id} className="rounded-lg border border-border bg-background px-3 py-2">
+            <div key={artifact.id} className="rounded-xl border border-border/70 bg-background/55 px-3 py-2">
               <div className="truncate text-xs font-medium">{artifact.name}</div>
-              <div className="mt-1 text-[10px] text-gray-600">{artifact.ownerId} · {artifact.createdAt}</div>
+              <div className="mt-1 text-[10px] text-app-muted">{artifact.ownerId} · {artifact.createdAt}</div>
             </div>
           ))}
           {workflow?.validationSummary && (
-            <div className="rounded-lg border border-border bg-background px-3 py-2">
-              <div className="text-[10px] uppercase tracking-[0.14em] text-gray-600">Workflow validation</div>
-              <div className="mt-1 text-xs text-gray-300">{workflow.validationSummary}</div>
+            <div className="rounded-xl border border-border/70 bg-background/55 px-3 py-2">
+              <div className="text-[10px] uppercase tracking-[0.14em] text-app-muted">Workflow validation</div>
+              <div className="mt-1 text-xs text-app-secondary">{workflow.validationSummary}</div>
             </div>
           )}
           {workflow?.result && (
-            <details className="rounded-lg border border-border bg-background px-3 py-2">
+            <details className="rounded-xl border border-border/70 bg-background/55 px-3 py-2">
               <summary className="cursor-pointer text-xs font-medium">Workflow result</summary>
-              <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap text-[10px] text-gray-400">{workflow.result}</pre>
+              <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap text-[10px] text-app-secondary">{workflow.result}</pre>
             </details>
           )}
           {task?.output && (
-            <details className="rounded-lg border border-border bg-background px-3 py-2" open>
+            <details className="rounded-xl border border-border/70 bg-background/55 px-3 py-2" open>
               <summary className="cursor-pointer text-xs font-medium">Task output</summary>
-              <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap text-[10px] text-gray-400">{task.output}</pre>
+              <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap text-[10px] text-app-secondary">{task.output}</pre>
             </details>
           )}
           {tryParseTestReport(task?.output) && (
             <div className="rounded-lg border border-accent/20 bg-accent/10 px-3 py-2">
               <div className="text-[10px] uppercase tracking-[0.14em] text-accent-light">Parsed test report</div>
-              <pre className="mt-1 max-h-44 overflow-auto whitespace-pre-wrap text-[10px] text-gray-300">
+              <pre className="mt-1 max-h-44 overflow-auto whitespace-pre-wrap text-[10px] text-app-secondary">
                 {JSON.stringify(tryParseTestReport(task?.output), null, 2)}
               </pre>
             </div>
           )}
           {!workflow?.validationSummary && !workflow?.result && !task?.output && (
-            <div className="text-xs text-gray-600">Artifacts appear after agents produce outputs or workflow validation completes.</div>
+            <div className="text-xs text-app-muted">Artifacts appear after agents produce outputs or workflow validation completes.</div>
           )}
         </div>
       </section>
 
-      <section className="rounded-xl border border-border bg-surface p-4">
+      <section className="ui-panel p-4">
         <h3 className="mb-3 text-sm font-semibold">Approval cards</h3>
         <div className="space-y-2">
           {relatedApprovals.map(entry => (
             <div key={entry.id} className="rounded-lg border border-yellow-500/20 bg-yellow-500/10 px-3 py-2">
               <div className="text-xs font-medium text-yellow-200">{entry.title}</div>
-              <div className="mt-1 line-clamp-3 text-[10px] text-gray-400">{entry.message}</div>
+              <div className="mt-1 line-clamp-3 text-[10px] text-app-secondary">{entry.message}</div>
               <div className="mt-2 flex gap-2">
                 <button onClick={() => onRespondInbox(entry, true)} className="rounded bg-green-500/15 px-2 py-1 text-[10px] text-green-300">Approve</button>
                 <button onClick={() => onRespondInbox(entry, false)} className="rounded bg-red-500/15 px-2 py-1 text-[10px] text-red-300">Reject</button>
@@ -407,16 +407,16 @@ function TransparencyPanel({
           {audit?.events.filter(event => event.severity === 'block' || event.severity === 'error').map((event, index) => (
             <div key={`${event.type}-approval-${index}`} className="rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2">
               <div className="text-xs font-medium text-red-200">{event.type}</div>
-              <div className="mt-1 text-[10px] text-gray-400">{event.message}</div>
+              <div className="mt-1 text-[10px] text-app-secondary">{event.message}</div>
             </div>
           ))}
           {relatedApprovals.length === 0 && !audit?.events.some(event => event.severity === 'block' || event.severity === 'error') && (
-            <div className="text-xs text-gray-600">No pending approvals or blocking audit cards.</div>
+            <div className="text-xs text-app-muted">No pending approvals or blocking audit cards.</div>
           )}
         </div>
       </section>
 
-      <section className="rounded-xl border border-border bg-surface p-4">
+      <section className="ui-panel p-4">
         <h3 className="mb-3 text-sm font-semibold">Agent & model</h3>
         <Info label="Agent" value={agent ? `${agent.emoji || '🤖'} ${agent.name}` : 'Unassigned'} />
         <Info label="Role" value={agent?.role || task?.assigneeId || '-'} />
@@ -425,35 +425,35 @@ function TransparencyPanel({
         <Info label="Why this model" value={execution?.modelRouteReason || 'route reason will appear after execution starts'} />
       </section>
 
-      <section className="rounded-xl border border-border bg-surface p-4">
+      <section className="ui-panel p-4">
         <h3 className="mb-3 text-sm font-semibold">Tools</h3>
         <div className="space-y-2">
           {tools.slice(0, 8).map(tool => (
-            <div key={tool.id} className="rounded-lg border border-border bg-background px-3 py-2">
+            <div key={tool.id} className="rounded-xl border border-border/70 bg-background/55 px-3 py-2">
               <div className="flex items-center justify-between gap-2">
                 <span className="truncate text-xs font-medium">{tool.toolId}</span>
                 <span className={cn('rounded px-1.5 py-0.5 text-[10px]', tool.status === 'done' ? 'bg-green-500/10 text-green-400' : tool.status === 'failed' || tool.status === 'blocked' ? 'bg-red-500/10 text-red-400' : 'bg-blue-500/10 text-blue-400')}>{tool.status}</span>
               </div>
-              {tool.outputSummary && <div className="mt-1 line-clamp-2 text-[10px] text-gray-500">{tool.outputSummary}</div>}
+              {tool.outputSummary && <div className="mt-1 line-clamp-2 text-[10px] text-app-muted">{tool.outputSummary}</div>}
             </div>
           ))}
-          {tools.length === 0 && <div className="text-xs text-gray-600">No tool calls recorded</div>}
+          {tools.length === 0 && <div className="text-xs text-app-muted">No tool calls recorded</div>}
         </div>
       </section>
 
-      <section className="rounded-xl border border-border bg-surface p-4">
+      <section className="ui-panel p-4">
         <h3 className="mb-3 text-sm font-semibold">Audit</h3>
         <div className="space-y-2">
           {audit?.events.slice(-8).map((event, index) => (
-            <div key={`${event.type}-${index}`} className="rounded-lg border border-border bg-background px-3 py-2">
+            <div key={`${event.type}-${index}`} className="rounded-xl border border-border/70 bg-background/55 px-3 py-2">
               <div className="flex items-center justify-between gap-2">
                 <span className="truncate text-xs font-medium">{event.type}</span>
-                <span className={cn('rounded px-1.5 py-0.5 text-[10px]', event.severity === 'block' || event.severity === 'error' ? 'bg-red-500/10 text-red-400' : event.severity === 'warn' ? 'bg-yellow-500/10 text-yellow-400' : 'bg-gray-500/10 text-gray-400')}>{event.severity}</span>
+                <span className={cn('rounded px-1.5 py-0.5 text-[10px]', event.severity === 'block' || event.severity === 'error' ? 'bg-red-500/10 text-red-400' : event.severity === 'warn' ? 'bg-yellow-500/10 text-yellow-400' : 'bg-gray-500/10 text-app-secondary')}>{event.severity}</span>
               </div>
-              <div className="mt-1 text-[10px] text-gray-500">{event.message}</div>
+              <div className="mt-1 text-[10px] text-app-muted">{event.message}</div>
             </div>
           ))}
-          {!audit && <div className="text-xs text-gray-600">Audit report appears after execution policy snapshot is recorded</div>}
+          {!audit && <div className="text-xs text-app-muted">Audit report appears after execution policy snapshot is recorded</div>}
         </div>
       </section>
     </aside>
@@ -463,8 +463,8 @@ function TransparencyPanel({
 function Info({ label, value }: { label: string; value: string }) {
   return (
     <div className="mb-2 last:mb-0">
-      <div className="text-[10px] uppercase tracking-[0.14em] text-gray-600">{label}</div>
-      <div className="mt-0.5 break-words text-xs text-gray-300">{value}</div>
+      <div className="text-[10px] uppercase tracking-[0.14em] text-app-muted">{label}</div>
+      <div className="mt-0.5 break-words text-xs text-app-secondary">{value}</div>
     </div>
   );
 }
@@ -690,11 +690,12 @@ export function InteractionConsolePage() {
   }
 
   return (
-    <div className="flex h-full flex-col gap-4 p-6">
-      <header className="flex items-start justify-between gap-4">
+    <div className="ui-page h-full overflow-y-auto">
+      <header className="ui-page-heading">
         <div>
-          <h2 className="text-2xl font-bold">Agent Interaction Console</h2>
-          <p className="mt-1 text-sm text-gray-500">
+          <div className="ui-eyebrow">Runtime control</div>
+          <h1 className="ui-page-title">Agent Interaction Console</h1>
+          <p className="ui-page-description">
             See who is working, why the platform chose that model, what tools ran, and what should happen next.
           </p>
         </div>
@@ -702,68 +703,68 @@ export function InteractionConsolePage() {
           onClick={() => {
             void refreshConsole();
           }}
-          className="rounded-lg bg-surface-hover px-3 py-2 text-xs text-gray-400 hover:text-white"
+          className="ui-button"
         >
           Refresh
         </button>
       </header>
 
-      <section className="rounded-xl border border-border bg-surface p-4">
-        <div className="flex gap-3">
+      <section className="ui-panel p-4 sm:p-5">
+        <div className="flex flex-col gap-3 lg:flex-row">
           <div className="min-w-0 flex-1">
-            <label className="mb-1 block text-[10px] uppercase tracking-[0.16em] text-gray-600">Create dynamic workflow</label>
+            <label className="ui-label">Create dynamic workflow</label>
             <textarea
               value={goal}
               onChange={event => setGoal(event.target.value)}
               rows={2}
               placeholder="Describe a goal, e.g. implement auth fix, run QA, security review, and release gate..."
-              className="w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-accent"
+              className="ui-field min-h-24 resize-none"
             />
           </div>
-          <div className="flex w-48 flex-col justify-end gap-2">
+          <div className="flex shrink-0 flex-col justify-end gap-2 sm:flex-row lg:w-48 lg:flex-col">
             <button
               onClick={previewWorkflow}
               disabled={creatingWorkflow}
-              className="rounded-lg bg-surface-hover px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+              className="ui-button"
             >
               {creatingWorkflow ? 'Working...' : 'Preview plan'}
             </button>
             <button
               onClick={createWorkflow}
               disabled={creatingWorkflow}
-              className="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+              className="ui-button-primary"
             >
               Dispatch
             </button>
-            <p className="text-[10px] leading-relaxed text-gray-600">Planner creates steps, fans out agents, then validates and summarizes.</p>
+            <p className="text-[10px] leading-relaxed text-app-muted">Planner creates steps, fans out agents, then validates and summarizes.</p>
           </div>
         </div>
-        {notice && <div className="mt-3 rounded-lg border border-accent/20 bg-accent/10 px-3 py-2 text-xs text-accent-light">{notice}</div>}
+        {notice && <div className="ui-notice message-enter mt-3">{notice}</div>}
         {previewPlan && (
           <div className="mt-4 grid gap-3 lg:grid-cols-[1fr_360px]">
-            <div className="rounded-xl border border-border bg-background p-3">
+            <div className="rounded-xl border border-border/70 bg-background/55 p-3">
               <div className="mb-2 flex items-center justify-between">
                 <div>
                   <h3 className="text-sm font-semibold">Plan preview</h3>
-                  <p className="text-[11px] text-gray-500">{previewPlan.strategy}</p>
+                  <p className="text-[11px] text-app-muted">{previewPlan.strategy}</p>
                 </div>
                 <span className="rounded-full bg-accent/10 px-2 py-1 text-[10px] text-accent-light">{previewPlan.steps.length} steps</span>
               </div>
               <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
                 {previewPlan.steps.map((step, index) => (
-                  <div key={step.id} className="rounded-lg border border-border bg-surface px-3 py-2">
+                  <div key={step.id} className="rounded-xl border border-border/70 bg-surface/70 px-3 py-2.5 transition hover:border-accent/25">
                     <div className="flex items-center justify-between gap-2">
-                      <span className="text-[10px] uppercase tracking-[0.14em] text-gray-600">Step {index + 1}</span>
+                      <span className="text-[10px] uppercase tracking-[0.14em] text-app-muted">Step {index + 1}</span>
                       <span className="rounded bg-blue-500/10 px-1.5 py-0.5 text-[10px] text-blue-300">{step.agentRole}</span>
                     </div>
                     <div className="mt-1 text-xs font-semibold">{step.title}</div>
-                    <div className="mt-1 line-clamp-2 text-[10px] text-gray-500">{step.description}</div>
-                    <div className="mt-2 text-[10px] text-gray-600">Depends: {step.dependsOn?.join(', ') || 'none'}</div>
+                    <div className="mt-1 line-clamp-2 text-[10px] text-app-muted">{step.description}</div>
+                    <div className="mt-2 text-[10px] text-app-muted">Depends: {step.dependsOn?.join(', ') || 'none'}</div>
                   </div>
                 ))}
               </div>
             </div>
-            <div className="rounded-xl border border-border bg-background p-3">
+            <div className="rounded-xl border border-border/70 bg-background/55 p-3">
               <div className="mb-2 text-sm font-semibold">Edit JSON plan</div>
               <textarea
                 value={previewJson}
@@ -773,25 +774,25 @@ export function InteractionConsolePage() {
                     setPreviewPlan(JSON.parse(event.target.value));
                   } catch {}
                 }}
-                className="h-64 w-full resize-none rounded-lg border border-border bg-surface p-2 font-mono text-[10px] leading-relaxed outline-none focus:border-accent"
+                className="ui-field h-64 resize-none font-mono text-[10px] leading-relaxed"
               />
             </div>
           </div>
         )}
       </section>
 
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         <Metric label="Active agents" value={String(activeCount)} detail="running tasks" />
         <Metric label="Needs attention" value={String(blockedCount)} detail="failed or review" />
         <Metric label="Enabled models" value={String(modelCount)} detail="available routes" />
         <Metric label="Tracked cost" value={`$${totalCost.toFixed(4)}`} detail="loaded executions" />
       </div>
 
-      <div className="grid min-h-0 flex-1 grid-cols-[260px_1fr_340px] gap-4">
-        <section className="min-h-0 overflow-y-auto rounded-xl border border-border bg-surface p-4">
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 xl:grid-cols-[240px_minmax(0,1fr)_320px] 2xl:grid-cols-[260px_minmax(0,1fr)_340px]">
+        <section className="ui-panel min-h-0 overflow-y-auto p-4">
           <div className="mb-3">
             <h3 className="text-sm font-semibold">Workflow / task map</h3>
-            <p className="mt-1 text-[11px] text-gray-500">Pick a workflow or inspect recent work directly.</p>
+            <p className="mt-1 text-[11px] text-app-muted">Pick a workflow or inspect recent work directly.</p>
           </div>
           <WorkflowRail
             workflows={workflows}
@@ -805,11 +806,11 @@ export function InteractionConsolePage() {
         </section>
 
         <main className="min-w-0 space-y-4 overflow-y-auto">
-          <section className="rounded-xl border border-border bg-surface p-4">
+          <section className="ui-panel p-4">
             <div className="mb-3 flex items-center justify-between">
               <div>
                 <h3 className="text-sm font-semibold">{selectedWorkflow ? selectedWorkflow.goal : 'Recent work'}</h3>
-                <p className="mt-1 text-[11px] text-gray-500">
+                <p className="mt-1 text-[11px] text-app-muted">
                   {selectedWorkflow ? `${selectedWorkflow.status} · ${selectedWorkflow.plan.strategy}` : 'No workflow selected; showing latest tasks.'}
                 </p>
               </div>
@@ -828,11 +829,11 @@ export function InteractionConsolePage() {
             />
           </section>
 
-          <section className="rounded-xl border border-border bg-surface p-4">
+          <section className="ui-panel p-4">
             <div className="mb-3 flex items-start justify-between gap-3">
               <div>
                 <h3 className="text-sm font-semibold">{selectedTask?.title || 'No task selected'}</h3>
-                <p className="mt-1 text-[11px] text-gray-500">
+                <p className="mt-1 text-[11px] text-app-muted">
                   {agent ? `${agent.emoji || '🤖'} ${agent.name}` : 'No agent'} · {execution?.modelId || 'model pending'} · {execution?.modelRouteSource || 'route pending'}
                 </p>
               </div>
@@ -873,9 +874,9 @@ export function InteractionConsolePage() {
 function Metric({ label, value, detail }: { label: string; value: string; detail: string }) {
   return (
     <div className="rounded-xl border border-border bg-surface p-3">
-      <div className="text-[10px] uppercase tracking-[0.16em] text-gray-600">{label}</div>
+      <div className="text-[10px] uppercase tracking-[0.16em] text-app-muted">{label}</div>
       <div className="mt-1 text-xl font-bold">{value}</div>
-      <div className="mt-1 text-[11px] text-gray-500">{detail}</div>
+      <div className="mt-1 text-[11px] text-app-muted">{detail}</div>
     </div>
   );
 }
@@ -886,7 +887,7 @@ function StepPill({ label, active, done }: { label: string; active?: boolean; do
       'rounded-lg border px-3 py-2 text-center text-[11px]',
       done ? 'border-green-500/30 bg-green-500/10 text-green-300' :
       active ? 'border-blue-500/30 bg-blue-500/10 text-blue-300' :
-      'border-border bg-background text-gray-600',
+      'border-border bg-background text-app-muted',
     )}>
       {label}
     </div>

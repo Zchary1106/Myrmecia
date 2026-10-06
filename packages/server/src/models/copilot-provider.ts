@@ -13,6 +13,8 @@ import type { StreamAccumulation } from './gateway.js';
 export interface CopilotToolCall {
   id: string;
   function: { name: string; arguments: string };
+  /** Internal cancellation only; never serialized into model arguments. */
+  signal?: AbortSignal;
 }
 
 export interface CopilotProviderOptions {
@@ -153,6 +155,7 @@ export class CopilotProvider {
       onToolCall?: (toolCall: CopilotToolCall) => Promise<string>;
       signal?: AbortSignal;
       timeoutMs?: number;
+      idleTimeoutMs?: number;
     },
   ): Promise<StreamAccumulation> {
     if (params.tools?.length && !options?.onToolCall) {
@@ -160,30 +163,80 @@ export class CopilotProvider {
     }
     if (options?.signal?.aborted) throw new Error('Request aborted');
 
-    const client = await this.getClient();
     const { system, prompt } = formatPrompt(params.messages);
-    const tools = this.toCopilotTools(params.tools, options?.onToolCall);
-    const session = await client.createSession({
-      model: params.model,
-      // `empty` mode requires an explicit allow-list. Only registered custom
-      // tools are allowed; built-in Copilot tools stay unavailable.
-      availableTools: tools.length ? ['custom:*'] : [],
-      systemMessage: { mode: 'append', content: system },
-      streaming: Boolean(options?.onDelta),
-      ...(tools.length ? { tools } : {}),
-    });
+    const controller = new AbortController();
+    const wallClockMs = Math.max(1, options?.timeoutMs ?? (params.tools?.length ? 600_000 : 120_000));
+    const idleMs = Math.max(1, Math.min(options?.idleTimeoutMs ?? 180_000, wallClockMs));
+    let idleTimer: ReturnType<typeof setTimeout> | undefined;
+    let wallTimer: ReturnType<typeof setTimeout> | undefined;
+    let rejectStopped!: (error: Error) => void;
+    const stopped = new Promise<never>((_, reject) => { rejectStopped = reject; });
+    // A rejection can precede sendAndWait while session startup is pending.
+    void stopped.catch(() => undefined);
+    const stop = (error: Error) => {
+      if (controller.signal.aborted) return;
+      controller.abort();
+      rejectStopped(error);
+    };
+    const touch = () => {
+      if (controller.signal.aborted) return;
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => stop(new Error(`EXECUTION_IDLE_TIMEOUT: no model or tool progress for ${idleMs}ms`)), idleMs);
+    };
+    const tools = this.toCopilotTools(params.tools, options?.onToolCall ? async call => {
+      if (controller.signal.aborted) throw new Error('Request aborted');
+      touch();
+      try { return await options.onToolCall!({ ...call, signal: controller.signal }); }
+      finally { touch(); }
+    } : undefined);
+    const abort = () => stop(new Error('Request aborted'));
+    options?.signal?.addEventListener('abort', abort, { once: true });
+    if (options?.signal?.aborted) abort();
+    touch();
+    wallTimer = setTimeout(() => stop(new Error(`EXECUTION_WALL_TIMEOUT: execution budget of ${wallClockMs}ms exhausted`)), wallClockMs);
+    let session: CopilotSessionLike;
+    try {
+      if (controller.signal.aborted) throw new Error('Request aborted');
+      const client = await Promise.race([this.getClient(), stopped]);
+      const creating = client.createSession({
+        model: params.model,
+        // Only registered custom tools are allowed; built-ins stay unavailable.
+        availableTools: tools.length ? ['custom:*'] : [],
+        systemMessage: { mode: 'append', content: system },
+        streaming: true,
+        ...(tools.length ? { tools } : {}),
+      });
+      // Session creation may finish after our caller has cancelled or timed out.
+      void creating.then(late => {
+        if (controller.signal.aborted) {
+          void late.abort().catch(() => undefined);
+          void late.disconnect().catch(() => undefined);
+        }
+      }).catch(() => undefined);
+      session = await Promise.race([creating, stopped]);
+    } catch (err) {
+      stop(err instanceof Error ? err : new Error(String(err)));
+      if (idleTimer) clearTimeout(idleTimer);
+      if (wallTimer) clearTimeout(wallTimer);
+      options?.signal?.removeEventListener('abort', abort);
+      throw err;
+    }
 
     let inputTokens = 0;
     let outputTokens = 0;
     let actualModelId: string | undefined;
     let aiUnits = 0;
     let billingMultiplier: number | undefined;
-    const unsubscribeDelta = options?.onDelta
-      ? session.on('assistant.message_delta', event => {
-          if (event.data.deltaContent) options.onDelta!(event.data.deltaContent);
-        })
-      : undefined;
+    const unsubscribeDelta = session.on('assistant.message_delta', event => {
+      if (controller.signal.aborted) return;
+      if (event.data.deltaContent) {
+        touch();
+        options?.onDelta?.(event.data.deltaContent);
+      }
+    });
     const unsubscribeUsage = session.on('assistant.usage', event => {
+      if (controller.signal.aborted) return;
+      touch();
       inputTokens += event.data.inputTokens || 0;
       outputTokens += event.data.outputTokens || 0;
       actualModelId = event.data.model || actualModelId;
@@ -192,14 +245,17 @@ export class CopilotProvider {
         aiUnits += event.data.copilotUsage.totalNanoAiu / 1_000_000_000;
       }
     });
-    const abort = () => { void session.abort().catch(() => undefined); };
-    options?.signal?.addEventListener('abort', abort, { once: true });
+    const abortSession = () => { void session.abort().catch(() => undefined); };
+    controller.signal.addEventListener('abort', abortSession, { once: true });
 
     try {
-      const response = await session.sendAndWait(
-        { prompt },
-        options?.timeoutMs ?? 120_000,
-      );
+      if (options?.signal?.aborted) abort();
+      if (controller.signal.aborted) throw new Error('Request aborted');
+      touch();
+      const response = await Promise.race([
+        session.sendAndWait({ prompt }, wallClockMs),
+        stopped,
+      ]);
       if (!response) throw new Error('No response from GitHub Copilot');
       return {
         choices: [{
@@ -218,7 +274,15 @@ export class CopilotProvider {
           cost_usd: null,
         },
       };
+    } catch (err) {
+      stop(err instanceof Error ? err : new Error(String(err)));
+      throw err;
     } finally {
+      if (idleTimer) clearTimeout(idleTimer);
+      if (wallTimer) clearTimeout(wallTimer);
+      controller.signal.removeEventListener('abort', abortSession);
+      // Prevent late callbacks from publishing output or starting more tools.
+      if (!controller.signal.aborted) controller.abort();
       options?.signal?.removeEventListener('abort', abort);
       unsubscribeDelta?.();
       unsubscribeUsage();

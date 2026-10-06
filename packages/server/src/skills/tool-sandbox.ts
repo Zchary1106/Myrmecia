@@ -28,6 +28,7 @@ import {
   findSocialScheduleConflicts,
   getActiveSocialComplianceRulebook,
 } from '../db/models/social-workflow.js';
+import { environmentFetch, safeNetworkError } from '../lib/environment-fetch.js';
 
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
@@ -38,6 +39,7 @@ export interface ToolResult {
 }
 
 export interface ToolSandboxOptions {
+  signal?: AbortSignal;
   allowedTools?: string[];
   workspaceId?: string;
   timeoutMs?: number;
@@ -336,7 +338,7 @@ function safeUrl(value: string): URL {
   return url;
 }
 
-async function fetchText(urlValue: string, timeoutMs: number, maxOutputChars: number): Promise<string> {
+async function fetchText(urlValue: string, timeoutMs: number, maxOutputChars: number, signal?: AbortSignal): Promise<string> {
   assertWebToolsEnabled();
   assertNetworkToolAllowed('web');
   assertNetworkAllowed();
@@ -344,8 +346,8 @@ async function fetchText(urlValue: string, timeoutMs: number, maxOutputChars: nu
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(url, {
-      signal: controller.signal,
+    const response = await environmentFetch(url, {
+      signal: signal ? AbortSignal.any([controller.signal, signal]) : controller.signal,
       headers: {
         'User-Agent': 'AgentFactoryBot/0.1 (+https://github.com/agent-factory)',
         Accept: 'text/html,application/json,text/plain;q=0.9,*/*;q=0.8',
@@ -359,6 +361,8 @@ async function fetchText(urlValue: string, timeoutMs: number, maxOutputChars: nu
     const buffer = Buffer.from(await response.arrayBuffer());
     const text = buffer.toString(contentType.includes('charset=') ? undefined : 'utf-8');
     return compactText(text, maxOutputChars);
+  } catch (error) {
+    throw new Error(safeNetworkError(error));
   } finally {
     clearTimeout(timeout);
   }
@@ -418,6 +422,7 @@ export async function executeTool(
   workdir: string,
   options: ToolSandboxOptions = {},
 ): Promise<ToolResult> {
+  if (options.signal?.aborted) return { status: 'failed', output: 'Request aborted' };
   const limits = getRuntimeLimits();
   const timeoutMs = options.timeoutMs ?? limits.maxToolCallTimeoutMs;
   const maxOutputChars = options.maxOutputChars ?? 8_000;
@@ -441,6 +446,7 @@ export async function executeTool(
       const cmd = String(toolInput.command || toolInput.cmd || '');
       assertShellCommandAllowed(cmd);
       const { stdout, stderr } = await execAsync(cmd, {
+        signal: options.signal,
         cwd: workdir,
         timeout: timeoutMs,
         maxBuffer: Math.max(maxOutputChars * 4, 16_384),
@@ -652,7 +658,7 @@ export async function executeTool(
 
   if (toolName === 'web.fetch') {
     try {
-      const output = await fetchText(String(toolInput.url || ''), Math.min(timeoutMs, 15_000), maxOutputChars);
+      const output = await fetchText(String(toolInput.url || ''), Math.min(timeoutMs, 15_000), maxOutputChars, options.signal);
       return { output, status: 'done' };
     } catch (err: any) {
       return { output: `Fetch failed: ${err.message}`, status: 'failed' };
@@ -663,7 +669,7 @@ export async function executeTool(
     try {
       const url = safeUrl(String(toolInput.url || '')).toString();
       const maxChars = Math.min(Number(toolInput.maxChars || 6000), maxOutputChars);
-      const page = await fetchText(url, Math.min(timeoutMs, 15_000), Math.max(maxChars * 3, 20_000));
+      const page = await fetchText(url, Math.min(timeoutMs, 15_000), Math.max(maxChars * 3, 20_000), options.signal);
       const title = extractTitle(page, url);
       const content = htmlToReadableText(page, maxChars);
       return {
@@ -685,7 +691,7 @@ export async function executeTool(
       const query = String(toolInput.query || '');
       if (!query.trim()) throw new Error('web.search requires a query');
       const searchUrl = `https://duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
-      const page = await fetchText(searchUrl, Math.min(timeoutMs, 15_000), 80_000);
+      const page = await fetchText(searchUrl, Math.min(timeoutMs, 15_000), 80_000, options.signal);
       const links = parseLinks(page, searchUrl, 8);
       return { output: jsonToolOutput(links, maxOutputChars), status: 'done' };
     } catch (err: any) {
@@ -696,7 +702,7 @@ export async function executeTool(
   if (toolName === 'crawler.extract_links') {
     try {
       const url = String(toolInput.url || '');
-      const page = await fetchText(url, Math.min(timeoutMs, 15_000), 120_000);
+      const page = await fetchText(url, Math.min(timeoutMs, 15_000), 120_000, options.signal);
       const links = parseLinks(page, safeUrl(url).toString(), 50);
       return { output: jsonToolOutput(links, maxOutputChars), status: 'done' };
     } catch (err: any) {

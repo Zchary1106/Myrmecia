@@ -7,6 +7,11 @@
  */
 
 import { getMcpManager, type McpCallPolicyContext } from './mcp-manager.js';
+import { XHS_READ_TOOLS, xiaohongshuReadAdapter, xiaohongshuReadSchema } from './xiaohongshu-read-adapter.js';
+import { xiaohongshuSession } from './xiaohongshu-session.js';
+import type { XiaohongshuDiagnostics, XiaohongshuProgress } from './xiaohongshu-session.js';
+import type { ToolFailure } from '@myrmecia/shared';
+import { classifyToolFailure } from './tool-failure.js';
 
 export interface ModelToolDef {
   type: 'function';
@@ -33,14 +38,18 @@ export function getMcpToolDefinitions(
     if (allowedTools && !allowedTools.has(tool.qualifiedName)) continue;
     const modelName = sanitizeToolName(tool.qualifiedName);
     nameToQualified.set(modelName, tool.qualifiedName);
-    const parameters = isObjectSchema(tool.inputSchema)
+    const parameters = XHS_READ_TOOLS.has(tool.qualifiedName)
+      ? xiaohongshuReadSchema(tool.qualifiedName)
+      : isObjectSchema(tool.inputSchema)
       ? (tool.inputSchema as Record<string, unknown>)
       : { type: 'object', properties: {} };
     defs.push({
       type: 'function',
       function: {
         name: modelName,
-        description: tool.description || `MCP tool ${tool.name} from ${tool.server}`,
+        description: XHS_READ_TOOLS.has(tool.qualifiedName)
+          ? `Read-only Xiaohongshu ${tool.name}. Authentication is checked automatically. Search sequentially, at most three queries, then synthesize available evidence. Search returns note_ref for details, never tokens. Stop after login failure or timeout; do not claim unverified data.`
+          : tool.description || `MCP tool ${tool.name} from ${tool.server}`,
         parameters,
       },
     });
@@ -54,12 +63,32 @@ export async function executeMcpTool(
   args: Record<string, unknown>,
   timeoutMs?: number,
   policyContext?: McpCallPolicyContext,
-): Promise<{ output: string; status: 'done' | 'failed' }> {
+  onProgress?: XiaohongshuProgress,
+  signal?: AbortSignal,
+): Promise<{ output: string; status: 'done' | 'failed'; diagnostics?: XiaohongshuDiagnostics; failure?: ToolFailure }> {
+  if (signal?.aborted) throw new Error('Request aborted');
+  if (XHS_READ_TOOLS.has(qualifiedName)) {
+    if (!policyContext?.taskId) return { status: 'failed', output: 'Xiaohongshu reads require a task-scoped Agent context.' };
+    const result = await xiaohongshuSession.agentRead(qualifiedName, (remaining, report) => xiaohongshuReadAdapter.execute(
+      qualifiedName, args,
+      policyContext?.taskId ? JSON.stringify([policyContext.agentId, policyContext.taskId]) : undefined,
+      (input, limit) => signal
+        ? getMcpManager().callTool(qualifiedName, input, limit, policyContext, signal)
+        : getMcpManager().callTool(qualifiedName, input, limit, policyContext),
+      remaining,
+      event => report(event.phase, event.message),
+    ), timeoutMs, onProgress);
+    return { ...result, ...(result.status === 'failed' ? { failure: classifyToolFailure(result.output, true) } : {}) };
+  }
   try {
-    const result = await getMcpManager().callTool(qualifiedName, args || {}, timeoutMs, policyContext);
-    return { output: mcpResultToString(result.content), status: result.isError ? 'failed' : 'done' };
+    const result = signal
+      ? await getMcpManager().callTool(qualifiedName, args || {}, timeoutMs, policyContext, signal)
+      : await getMcpManager().callTool(qualifiedName, args || {}, timeoutMs, policyContext);
+    const output = mcpResultToString(result.content);
+    return { output, status: result.isError ? 'failed' : 'done', ...(result.isError ? { failure: classifyToolFailure(output) } : {}) };
   } catch (err: any) {
-    return { output: err?.message || 'MCP tool failed', status: 'failed' };
+    const output = err?.message || 'MCP tool failed';
+    return { output, status: 'failed', failure: classifyToolFailure(output) };
   }
 }
 

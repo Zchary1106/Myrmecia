@@ -54,6 +54,7 @@ export function parseMatcherResponse(response: string): MatchResult {
 export async function matchSkillForTask(
   taskInput: string,
   agentRole?: string,
+  signal?: AbortSignal,
 ): Promise<MatchResult> {
   const allSkills = listSkills();
   const candidates: SkillCandidate[] = [];
@@ -85,6 +86,8 @@ export async function matchSkillForTask(
     const client = new OpenAI({
       baseURL: modelBaseURL(),
       apiKey: modelApiKey(),
+      timeout: 10_000,
+      maxRetries: 0,
     });
 
     const prompt = buildMatcherPrompt(taskInput, candidates);
@@ -93,7 +96,7 @@ export async function matchSkillForTask(
       messages: [{ role: 'user', content: prompt }],
       temperature: 0,
       max_tokens: 200,
-    });
+    }, { signal });
 
     const content = response.choices[0]?.message?.content || '';
     return parseMatcherResponse(content);

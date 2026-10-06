@@ -13,6 +13,7 @@ import { isAbsolute, join, relative, resolve } from 'node:path';
 import { realpathSync, statSync } from 'node:fs';
 import { consumePublishAuthorization } from '../db/models/publish-authorization.js';
 import { getWeChatDraftMediaIds, recordWeChatDraftOutput } from '../db/models/wechat-draft-output.js';
+import { McpLocalService, parseLocalServices } from './mcp-local-service.js';
 
 export interface QualifiedMcpTool {
   server: string;
@@ -165,6 +166,13 @@ export function parseMcpServersEnv(raw?: string): McpServerConfig[] {
 
 export class McpManager {
   private clients = new Map<string, McpClient>();
+  private localServices = new Map<string, McpLocalService>();
+  private startupConfigs = new Map<string, McpServerConfig>();
+  private connectionErrors = new Map<string, string>();
+  private retryTimer?: ReturnType<typeof setTimeout>;
+  private stopped = false;
+  private stoppingServices: Promise<void>[] = [];
+  private reconnecting = new Map<string, Promise<McpClient>>();
   private consumedPublishAuthorizations = new Set<string>();
 
   /** Connect all servers from config (best-effort; failures are logged, not thrown). */
@@ -179,6 +187,15 @@ export class McpManager {
       logger.warn('WECHAT_MCP_SECRET_KEY is required; WeChat Official Account MCP was not started');
     }
     if (builtInWeChat) list.push(builtInWeChat);
+    // Invalid launch configuration must not silently fall back to an unowned
+    // connector. init's caller logs the configuration failure.
+    const services = parseLocalServices();
+    for (const cfg of list) {
+      this.startupConfigs.set(cfg.name, cfg);
+      if (services[cfg.name] && !this.localServices.has(cfg.name)) {
+        this.localServices.set(cfg.name, new McpLocalService(services[cfg.name]));
+      }
+    }
     for (const cfg of list) {
       try {
         const isBuiltInWeChat = cfg === builtInWeChat;
@@ -188,10 +205,15 @@ export class McpManager {
           logger.info({ server: cfg.name }, 'WeChat Official Account MCP configured');
         }
       } catch (err: any) {
-        this.removeServer(cfg.name);
+        this.clients.get(cfg.name)?.dispose();
+        this.clients.delete(cfg.name);
+        this.connectionErrors.set(cfg.name, this.localServices.has(cfg.name)
+          ? 'Local service startup or MCP handshake failed; check executable/cwd and port configuration. Retrying.'
+          : 'MCP connection failed. For a local HTTP service, configure MCP_LOCAL_SERVICES to start it automatically. Retrying.');
         logger.warn({ server: cfg.name, err: err.message }, 'MCP server connect failed');
       }
     }
+    this.scheduleReconnect();
     if (this.clients.size > 0) {
       logger.info({ servers: this.servers(), tools: this.listTools().length }, 'MCP servers connected');
     }
@@ -206,31 +228,98 @@ export class McpManager {
     }
     const existing = this.clients.get(cfg.name);
     if (existing) existing.dispose();
+    await this.localServices.get(cfg.name)?.ensureStarted();
+    if (this.stopped) throw new Error('MCP manager has been stopped');
     const client = new McpClient(cfg);
-    await client.connect();
+    try {
+      await client.connect();
+      if (this.stopped) throw new Error('MCP manager has been stopped');
+    } catch (error) {
+      client.dispose();
+      throw error;
+    }
     this.clients.set(cfg.name, client);
+    this.connectionErrors.delete(cfg.name);
     return client;
   }
 
   removeServer(name: string): boolean {
     const client = this.clients.get(name);
-    if (!client) return false;
-    client.dispose();
-    return this.clients.delete(name);
+    const existed = Boolean(client) || this.startupConfigs.has(name);
+    client?.dispose();
+    this.clients.delete(name);
+    this.startupConfigs.delete(name);
+    this.connectionErrors.delete(name);
+    const service = this.localServices.get(name);
+    if (service) this.stoppingServices.push(service.dispose());
+    this.localServices.delete(name);
+    return existed;
   }
 
-  servers(): Array<{ name: string; connected: boolean; toolCount: number; serverInfo: unknown }> {
-    return [...this.clients.values()].map(c => ({
-      name: c.config.name,
-      connected: c.isConnected(),
-      toolCount: c.tools.length,
-      serverInfo: c.serverInfo,
+  async reconnectServer(name: string): Promise<McpClient> {
+    if (this.stopped) throw new Error('MCP manager has been stopped');
+    const existing = this.clients.get(name);
+    // Never interrupt an already connected server or its login session.
+    if (existing?.isConnected()) return existing;
+    const pending = this.reconnecting.get(name);
+    if (pending) return pending;
+    const config = this.startupConfigs.get(name) || existing?.config;
+    if (!config) throw new Error('MCP server is not configured');
+    const attempt = (async () => {
+      try {
+        const client = await this.addServer(config, { allowReservedName: name === WECHAT_OFFICIAL_ACCOUNT_MCP });
+        if (name === WECHAT_OFFICIAL_ACCOUNT_MCP) await configureWeChatMcpClient(client);
+        return client;
+      } catch {
+        this.clients.get(name)?.dispose();
+        this.clients.delete(name);
+        this.connectionErrors.set(name, 'MCP connection failed; automatic retry pending.');
+        throw new Error('MCP connection failed; inspect the configured service.');
+      }
+    })();
+    this.reconnecting.set(name, attempt);
+    try { return await attempt; } finally { this.reconnecting.delete(name); }
+  }
+
+  servers(): Array<{ name: string; connected: boolean; toolCount: number; serverInfo: unknown; error?: string; managed?: boolean }> {
+    const names = new Set([...this.startupConfigs.keys(), ...this.clients.keys()]);
+    return [...names].map(name => ({
+      name,
+      connected: this.clients.get(name)?.isConnected() || false,
+      toolCount: this.clients.get(name)?.isConnected() ? this.clients.get(name)!.tools.length : 0,
+      serverInfo: this.clients.get(name)?.serverInfo || {},
+      error: this.connectionErrors.get(name),
+      managed: this.localServices.has(name),
     }));
+  }
+
+  private scheduleReconnect(): void {
+    if (this.stopped || this.retryTimer || !this.startupConfigs.size) return;
+    this.retryTimer = setTimeout(async () => {
+      try {
+        for (const cfg of this.startupConfigs.values()) {
+          if (this.stopped) break;
+          if (this.clients.get(cfg.name)?.isConnected()) continue;
+          try {
+            await this.reconnectServer(cfg.name);
+          } catch {
+            this.clients.get(cfg.name)?.dispose();
+            this.clients.delete(cfg.name);
+            this.connectionErrors.set(cfg.name, 'MCP startup or connection failed; automatic retry pending.');
+          }
+        }
+      } finally {
+        this.retryTimer = undefined;
+        this.scheduleReconnect();
+      }
+    }, 15_000);
+    this.retryTimer.unref();
   }
 
   listTools(): QualifiedMcpTool[] {
     const out: QualifiedMcpTool[] = [];
     for (const client of this.clients.values()) {
+      if (!client.isConnected()) continue;
       for (const tool of client.tools) {
         out.push({
           server: client.config.name,
@@ -250,7 +339,9 @@ export class McpManager {
     args: Record<string, unknown> = {},
     timeoutMs?: number,
     policyContext?: McpCallPolicyContext,
+    signal?: AbortSignal,
   ): Promise<McpCallResult> {
+    if (signal?.aborted) throw new Error('Request aborted');
     const { server, tool } = splitQualified(qualifiedName);
     const normalizedName = `${PREFIX}${server}__${tool}`;
     let publishScope: string | undefined;
@@ -287,7 +378,7 @@ export class McpManager {
       }
       this.consumedPublishAuthorizations.add(authorizationKey);
     }
-    const result = await client.callTool(tool, args, timeoutMs);
+    const result = signal ? await client.callTool(tool, args, timeoutMs, signal) : await client.callTool(tool, args, timeoutMs);
     if (
       server === WECHAT_OFFICIAL_ACCOUNT_MCP
       && tool === 'wechat_draft'
@@ -316,9 +407,21 @@ export class McpManager {
   }
 
   dispose(): void {
+    this.stopped = true;
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.startupConfigs.clear();
+    this.connectionErrors.clear();
     for (const client of this.clients.values()) client.dispose();
     this.clients.clear();
+    for (const service of this.localServices.values()) this.stoppingServices.push(service.dispose());
+    this.localServices.clear();
     this.consumedPublishAuthorizations.clear();
+  }
+
+  async shutdown(): Promise<void> {
+    this.dispose();
+    await Promise.all(this.stoppingServices);
+    this.stoppingServices = [];
   }
 }
 

@@ -1,4 +1,4 @@
-import { Queue, Worker, Job, QueueEvents } from 'bullmq';
+import { Queue, Worker, Job, QueueEvents, UnrecoverableError } from 'bullmq';
 import IORedis from 'ioredis';
 import { eventBus } from '../events/event-bus.js';
 import { createTask, getTask, updateTask, addTaskLog, listTasks, listDependents } from '../db/models/task.js';
@@ -7,6 +7,11 @@ import { metrics } from '../observability/telemetry.js';
 import { logger } from '../lib/logger.js';
 import type { ReasoningEffort, Task, TaskMode, Priority } from '../types.js';
 import { checkpointExecutionContext, loadExecutionContext, persistExecutionContext, persistInheritedExecutionContext } from '../agents/execution-context.js';
+import { claimQueueRetry, queueOwnsRetry, taskMayHaveSideEffects } from '../agents/retry-ownership.js';
+import { isNonRetryableExecutionError } from '../agents/self-healing.js';
+import { listExecutions, updateExecution } from '../db/models/execution.js';
+import { initialAgentRunState } from '../agents/run-state.js';
+import { getExternalAgentRunForExecution, updateExternalAgentRun } from '../db/models/external-agent.js';
 
 const QUEUE_NAME = 'agent-factory-tasks';
 export const PUBLISH_RECONFIRMATION_ERROR = 'Interrupted publish task requires renewed pipeline confirmation';
@@ -158,12 +163,16 @@ export class TaskQueue {
     workspacePath?: string;
     workspaceId?: string;
     domainId?: string;
+    createdBy?: 'user' | 'master';
+    /** Context source may be the previous turn while parentTaskId groups the session. */
+    inheritContextFromTaskId?: string;
   }): Promise<Task> {
     const task = createTask({
       ...data,
-      createdBy: data.parentTaskId ? 'master' : 'user',
+      createdBy: data.createdBy || (data.parentTaskId ? 'master' : 'user'),
     });
-    const parent = data.parentTaskId ? getTask(data.parentTaskId) : undefined;
+    const contextParentId = data.inheritContextFromTaskId || data.parentTaskId;
+    const parent = contextParentId ? getTask(contextParentId) : undefined;
     const context = parent
       ? persistInheritedExecutionContext(loadExecutionContext(parent), task)
       : persistExecutionContext(task);
@@ -200,7 +209,8 @@ export class TaskQueue {
   private async processJob(taskId: string, job?: Job) {
     const task = getTask(taskId);
     if (!task) throw new Error(`Task ${taskId} not found`);
-    if (task.status === 'done' || task.status === 'cancelled' || (task.status === 'failed' && isPipelinePublisherTask(task))) return;
+    if (['done', 'cancelled', 'failed'].includes(task.status) || queueOwnsRetry(taskId)) return;
+    if (listExecutions({ taskId, status: 'running' }).length > 0) return;
 
     // Coordination parents (top-level decomposed `master` tasks) are settled by
     // MasterAgent.monitorSubtasks, never executed as a leaf. Without this guard a
@@ -245,6 +255,7 @@ export class TaskQueue {
     updateTask(taskId, { status: 'assigned', assigneeId: agentId });
     eventBus.emit('task:assigned', { taskId, agentId, workspaceId: getTask(taskId)?.workspaceId });
 
+    const releaseRetry = claimQueueRetry(taskId);
     try {
       await this.agentManager.executeTask(agentId, getTask(taskId)!);
     } catch (err: any) {
@@ -253,7 +264,13 @@ export class TaskQueue {
         return;
       }
       this.recordExecutionFailure(taskId, err, job);
+      if (isNonRetryableExecutionError(err.message) || taskMayHaveSideEffects(taskId)
+        || ['cancelled', 'done'].includes(getTask(taskId)?.status || '')) {
+        throw new UnrecoverableError(err.message);
+      }
       throw err;
+    } finally {
+      releaseRetry();
     }
   }
 
@@ -289,12 +306,14 @@ export class TaskQueue {
 
   private recordExecutionFailure(taskId: string, err: any, job?: Job) {
     const current = getTask(taskId);
-    if (!current || ['done', 'failed', 'cancelled'].includes(current.status)) return;
+    if (!current || ['done', 'cancelled'].includes(current.status)
+      || (current.status === 'failed' && !queueOwnsRetry(taskId))) return;
 
     const attemptsMade = job ? job.attemptsMade + 1 : current.retryCount + 1;
     const maxAttempts = job?.opts.attempts ?? (current.maxRetries + 1);
-    const willRetry = !isPipelinePublisherTask(current) && attemptsMade < maxAttempts;
     const error = err?.message || String(err);
+    const willRetry = !isPipelinePublisherTask(current) && attemptsMade < maxAttempts
+      && !isNonRetryableExecutionError(error) && !taskMayHaveSideEffects(taskId);
     const interruption = interruptedReason(err);
 
     const updated = updateTask(taskId, {
@@ -329,7 +348,8 @@ export class TaskQueue {
 
   /** In-memory mode: try to execute a task */
   private async tryExecute(task: Task) {
-    if (task.status !== 'pending') return;
+    if (getTask(task.id)?.status !== 'pending' || queueOwnsRetry(task.id)) return;
+    if (listExecutions({ taskId: task.id, status: 'running' }).length > 0) return;
     if (!this.checkDependencies(task)) {
       updateTask(task.id, { status: 'queued' });
       return;
@@ -352,21 +372,27 @@ export class TaskQueue {
     eventBus.emit('task:assigned', { taskId: task.id, agentId, workspaceId: task.workspaceId });
 
     // Execute asynchronously
+    const releaseRetry = claimQueueRetry(task.id);
     this.agentManager.executeTask(agentId, getTask(task.id)!).catch(err => {
       logger.error({ taskId: task.id, err: err.message }, 'Task execution failed');
       const current = getTask(task.id)!;
+      if (!current || ['cancelled', 'done'].includes(current.status)) return;
       if (err instanceof AgentConcurrencyError) {
         void this.deferForAgentCapacity(task.id, agentId);
         return;
       }
       const interruption = interruptedReason(err);
-      if (!isPipelinePublisherTask(current) && current.retryCount < current.maxRetries) {
+      if (!isPipelinePublisherTask(current) && current.retryCount < current.maxRetries
+        && !isNonRetryableExecutionError(err.message) && !taskMayHaveSideEffects(task.id)) {
         updateTask(task.id, { status: 'pending', retryCount: current.retryCount + 1 });
         addTaskLog(task.id, 'warn', `${interruption === 'timed_out' ? 'Timed out' : interruption === 'stalled' ? 'Stalled' : 'Execution failed'}; retrying (${current.retryCount + 1}/${current.maxRetries}): ${err.message}`, 'system');
-        this.tryExecute(getTask(task.id)!);
       } else {
         this.recordExecutionFailure(task.id, err);
       }
+    }).finally(() => {
+      releaseRetry();
+      const pending = getTask(task.id);
+      if (pending?.status === 'pending') void this.tryExecute(pending);
     });
   }
 
@@ -479,6 +505,50 @@ export class TaskQueue {
 
     for (const task of toRecover) {
       const wasInFlight = task.status === 'running' || task.status === 'waiting_for_tool' || task.status === 'assigned';
+      const activeRuns = listExecutions({ taskId: task.id, status: 'running' });
+      const external = activeRuns.map(execution =>
+        getExternalAgentRunForExecution(execution.id, task.workspaceId || 'default'))
+        .find(run => run !== undefined);
+      if (external) {
+        if (external.status === 'waiting_for_callback') {
+          updateTask(task.id, { status: 'waiting_for_tool' });
+          addTaskLog(task.id, 'info', 'External Agent is awaiting its authenticated callback; no local execution was replayed', 'system');
+        } else {
+          const runState = {
+            ...(external.runState || initialAgentRunState()),
+            phase: 'interrupted' as const, stopReason: 'interrupted' as const,
+            updatedAt: new Date().toISOString(),
+          };
+          const error = 'RECOVERY_REQUIRES_REVIEW: external process was interrupted; remote effects require verification';
+          updateExternalAgentRun(external.id, task.workspaceId || 'default', {
+            status: 'failed', error, runState, completedAt: new Date().toISOString(),
+          });
+          updateTask(task.id, { status: 'failed', error, completedAt: new Date().toISOString() });
+          for (const execution of activeRuns) updateExecution(execution.id, {
+            status: 'failed', runState, completedAt: new Date().toISOString(),
+          });
+        }
+        continue;
+      }
+      // The old process is gone. Its execution must release its capacity slot
+      // before the task is re-queued, even when the task itself is still active.
+      for (const execution of activeRuns) {
+        updateExecution(execution.id, {
+          status: 'failed', completedAt: new Date().toISOString(),
+          runState: {
+            ...(execution.runState || initialAgentRunState()),
+            phase: 'interrupted', stopReason: 'interrupted', updatedAt: new Date().toISOString(),
+          },
+        });
+      }
+      if (wasInFlight && taskMayHaveSideEffects(task.id) && !isPipelinePublisherTask(task)) {
+        updateTask(task.id, {
+          status: 'failed', error: 'RECOVERY_REQUIRES_REVIEW: verify prior write-tool outcomes before retrying',
+          completedAt: new Date().toISOString(),
+        });
+        addTaskLog(task.id, 'warn', 'Automatic recovery stopped: a write-capable tool may already have acted', 'system');
+        continue;
+      }
       // A publish that was merely waiting in the durable task store can be
       // scheduled normally. Only an in-flight publish needs renewed user
       // confirmation, because its external side effect may be indeterminate.

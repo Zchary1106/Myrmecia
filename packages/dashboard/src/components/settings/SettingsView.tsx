@@ -12,7 +12,7 @@ function CheckRow({ label, ok, detail }: { label: string; ok: boolean; detail: s
       <span className={cn('mt-0.5', ok ? 'text-green-400' : 'text-yellow-400')}>{ok ? '✓' : '!'}</span>
       <div>
         <div className="text-xs font-medium">{label}</div>
-        <div className="text-[11px] text-gray-500 mt-0.5">{detail}</div>
+        <div className="text-[11px] text-app-muted mt-0.5">{detail}</div>
       </div>
     </div>
   );
@@ -81,7 +81,7 @@ function WeChatIntegrationSettings() {
   };
 
   return (
-    <section className="rounded-xl border border-border bg-surface p-5">
+    <section className="ui-panel p-5">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <div className="flex items-center gap-2">
@@ -89,12 +89,12 @@ function WeChatIntegrationSettings() {
             <h3 className="text-sm font-semibold">微信公众号 MCP</h3>
             <span className={cn(
               'rounded-full px-2 py-1 text-[9px] font-semibold',
-              connected ? 'bg-emerald-500/10 text-emerald-300' : summary?.configured ? 'bg-yellow-500/10 text-yellow-300' : 'bg-gray-500/10 text-gray-500',
+              connected ? 'bg-emerald-500/10 text-emerald-300' : summary?.configured ? 'bg-yellow-500/10 text-yellow-300' : 'bg-gray-500/10 text-app-muted',
             )}>
               {connected ? 'connected' : summary?.configured ? 'restart required' : 'not configured'}
             </span>
           </div>
-          <p className="mt-2 max-w-2xl text-[11px] leading-relaxed text-gray-500">
+          <p className="mt-2 max-w-2xl text-[11px] leading-relaxed text-app-muted">
             为公众号写手提供封面素材上传、草稿箱同步和发布能力。AppSecret 由 Electron 系统凭据库加密，
             不会回传到 Dashboard，也不会出现在 MCP 子进程参数中。
           </p>
@@ -109,22 +109,22 @@ function WeChatIntegrationSettings() {
       {desktop ? (
         <div className="mt-5 grid gap-3 lg:grid-cols-[1fr_1fr_auto]">
           <label className="block">
-            <span className="text-[10px] font-medium text-gray-400">AppID</span>
+            <span className="text-[10px] font-medium text-app-secondary">AppID</span>
             <input
               value={appId}
               onChange={event => setAppId(event.target.value)}
               placeholder="wx1234567890abcdef"
-              className="mt-1.5 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-accent"
+              className="ui-field mt-1.5"
             />
           </label>
           <label className="block">
-            <span className="text-[10px] font-medium text-gray-400">AppSecret</span>
+            <span className="text-[10px] font-medium text-app-secondary">AppSecret</span>
             <input
               type="password"
               value={appSecret}
               onChange={event => setAppSecret(event.target.value)}
               placeholder={summary?.configured ? '留空不会读取或显示现有密钥' : '32 位十六进制 AppSecret'}
-              className="mt-1.5 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-accent"
+              className="ui-field mt-1.5"
             />
           </label>
           <button
@@ -308,39 +308,41 @@ export function SettingsView() {
   };
 
   return (
-    <div data-configuration-page data-configuration-context="Runtime and workspace settings" className="app-page-shell p-6 space-y-6">
-      <div className="page-heading-row">
-        <h2 className="text-xl font-bold">Settings</h2>
-        <p className="text-[12px] text-gray-500 mt-0.5">
+    <div data-configuration-page data-configuration-context="Runtime and workspace settings" className="ui-page">
+      <header className="ui-page-heading">
+        <div>
+        <h1 className="ui-page-title">Settings</h1>
+        <p className="ui-page-description">
           API token, connection diagnostics, and deployment readiness checks.
         </p>
-      </div>
+        </div>
+      </header>
 
-      <section aria-labelledby="general-settings" className="bg-surface border border-border rounded-xl p-5 space-y-4">
+      <section aria-labelledby="general-settings" className="ui-panel space-y-4 p-5">
         <div>
           <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-accent-light">General</div>
           <h3 id="general-settings" className="mt-2 text-sm font-semibold">API token</h3>
-          <p className="text-[11px] text-gray-500 mt-1">
+          <p className="text-[11px] text-app-muted mt-1">
             Used for HTTP Authorization and WebSocket authentication when the server has API_AUTH_TOKEN enabled.
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-col gap-2 sm:flex-row">
           <input
             type="password"
             value={token}
             onChange={e => setToken(e.target.value)}
             placeholder="Bearer token"
-            className="flex-1 bg-background border border-border rounded-lg px-3 py-2 text-sm focus:border-accent outline-none"
+            className="ui-field flex-1"
           />
           <button
             onClick={() => saveToken()}
-            className="px-3 py-2 rounded-lg bg-accent/10 text-accent-light text-xs font-medium hover:bg-accent/20 transition"
+            className="ui-button-primary"
           >
             Save
           </button>
           <button
             onClick={() => clearToken()}
-            className="px-3 py-2 rounded-lg bg-surface-hover text-gray-400 text-xs font-medium hover:text-white transition"
+            className="ui-button"
           >
             Clear
           </button>
@@ -353,14 +355,14 @@ export function SettingsView() {
         )}
       </section>
 
-      <section className="rounded-xl border border-border bg-surface p-5">
+      <section className="ui-panel p-5">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-accent-light">Model configuration</div>
             <h3 className="mt-2 text-sm font-semibold">Providers, models and routing</h3>
-            <p className="mt-1 max-w-2xl text-[11px] leading-relaxed text-gray-500">Provider credentials, Copilot sign-in, discovered models, registry health and advanced role routing now live on the dedicated Models page.</p>
+            <p className="mt-1 max-w-2xl text-[11px] leading-relaxed text-app-muted">Provider credentials, Copilot sign-in, discovered models, registry health and advanced role routing now live on the dedicated Models page.</p>
           </div>
-          <button type="button" onClick={() => setActiveView('models')} className="shrink-0 rounded-lg bg-accent px-3 py-2 text-xs font-semibold text-white transition hover:bg-accent-light">Open Models</button>
+          <button type="button" onClick={() => setActiveView('models')} className="ui-button-primary shrink-0">Open Models</button>
         </div>
       </section>
 
@@ -378,12 +380,12 @@ export function SettingsView() {
           <h3 id="runtime-settings" className="mt-1 text-sm font-semibold">Deployment and diagnostics</h3>
         </div>
       <div className="grid lg:grid-cols-2 gap-4">
-        <div className="bg-surface border border-border rounded-xl p-5">
+        <div className="ui-panel p-5">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-sm font-semibold">Deployment checks</h3>
             <button
               onClick={() => checkConnection()}
-              className="px-3 py-1.5 rounded-lg bg-surface-hover text-[11px] text-gray-400 hover:text-white transition"
+              className="ui-button"
             >
               Recheck
             </button>
@@ -393,44 +395,44 @@ export function SettingsView() {
           </div>
         </div>
 
-        <div className="bg-surface border border-border rounded-xl p-5">
+        <div className="ui-panel p-5">
           <h3 className="text-sm font-semibold mb-4">Runtime diagnostics</h3>
           {diagnostics ? (
             <div className="space-y-2 text-[12px]">
-              <div className="flex justify-between"><span className="text-gray-500">Auth mode</span><span>{diagnostics.auth.mode}</span></div>
-              <div className="flex justify-between gap-3"><span className="text-gray-500">Operator</span><span className="text-right">{operatorRoleLabel(diagnostics)}</span></div>
-              <div className="flex justify-between"><span className="text-gray-500">Runtime controls</span><span>{diagnostics.operator.permissions.canControlRuntime ? 'allowed' : 'read-only'}</span></div>
-              <div className="flex justify-between"><span className="text-gray-500">Task delete</span><span>{diagnostics.operator.permissions.canDeleteTasks ? 'allowed' : 'admin only'}</span></div>
-              <div className="flex justify-between"><span className="text-gray-500">Queue</span><span>{diagnostics.queue.backend}</span></div>
-              <div className="flex justify-between"><span className="text-gray-500">Database</span><span>{diagnostics.database.pathSource}:{diagnostics.database.pathHint}</span></div>
-              <div className="flex justify-between"><span className="text-gray-500">Node</span><span>{diagnostics.runtime.nodeVersion}</span></div>
-              <div className="flex justify-between"><span className="text-gray-500">Platform</span><span>{diagnostics.runtime.platform}</span></div>
-              <div className="flex justify-between"><span className="text-gray-500">Environment</span><span>{diagnostics.runtime.environment}</span></div>
+              <div className="flex justify-between"><span className="text-app-muted">Auth mode</span><span>{diagnostics.auth.mode}</span></div>
+              <div className="flex justify-between gap-3"><span className="text-app-muted">Operator</span><span className="text-right">{operatorRoleLabel(diagnostics)}</span></div>
+              <div className="flex justify-between"><span className="text-app-muted">Runtime controls</span><span>{diagnostics.operator.permissions.canControlRuntime ? 'allowed' : 'read-only'}</span></div>
+              <div className="flex justify-between"><span className="text-app-muted">Task delete</span><span>{diagnostics.operator.permissions.canDeleteTasks ? 'allowed' : 'admin only'}</span></div>
+              <div className="flex justify-between"><span className="text-app-muted">Queue</span><span>{diagnostics.queue.backend}</span></div>
+              <div className="flex justify-between"><span className="text-app-muted">Database</span><span>{diagnostics.database.pathSource}:{diagnostics.database.pathHint}</span></div>
+              <div className="flex justify-between"><span className="text-app-muted">Node</span><span>{diagnostics.runtime.nodeVersion}</span></div>
+              <div className="flex justify-between"><span className="text-app-muted">Platform</span><span>{diagnostics.runtime.platform}</span></div>
+              <div className="flex justify-between"><span className="text-app-muted">Environment</span><span>{diagnostics.runtime.environment}</span></div>
               <div className="pt-3 mt-3 border-t border-border">
-                <div className="text-[11px] text-gray-500 mb-2">Applied migrations</div>
+                <div className="text-[11px] text-app-muted mb-2">Applied migrations</div>
                 <div className="space-y-1 max-h-32 overflow-y-auto">
                   {diagnostics.database.migrations.map(migration => (
-                    <div key={migration.id} className="text-[11px] text-gray-400">{migration.id}</div>
+                    <div key={migration.id} className="text-[11px] text-app-secondary">{migration.id}</div>
                   ))}
                   {diagnostics.database.migrations.length === 0 && (
-                    <div className="text-[11px] text-gray-600">No migrations recorded</div>
+                    <div className="text-[11px] text-app-muted">No migrations recorded</div>
                   )}
                 </div>
               </div>
             </div>
           ) : (
-            <div className="text-xs text-gray-600 py-8 text-center">Run a connection check to load diagnostics.</div>
+            <div className="text-xs text-app-muted py-8 text-center">Run a connection check to load diagnostics.</div>
           )}
         </div>
       </div>
       </section>
 
-      <section aria-labelledby="recovery-settings" className="bg-surface border border-border rounded-xl p-5 space-y-4">
+      <section aria-labelledby="recovery-settings" className="ui-panel space-y-4 p-5">
         <div className="flex items-start justify-between gap-4">
           <div>
             <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-accent-light">Data & recovery</div>
             <h3 id="recovery-settings" className="mt-2 text-sm font-semibold">Workspace snapshot</h3>
-            <p className="text-[11px] text-gray-500 mt-1">
+            <p className="text-[11px] text-app-muted mt-1">
               Export a sanitized operator workspace for handoff, demos, or recovery drills. Import currently previews only and does not write server state.
             </p>
           </div>
@@ -456,7 +458,7 @@ export function SettingsView() {
               <button
                 onClick={() => previewSnapshot()}
                 disabled={snapshotBusy || !snapshotInput.trim()}
-                className="px-3 py-1.5 rounded-lg bg-surface-hover text-[11px] text-gray-300 hover:text-white transition disabled:opacity-50"
+                className="px-3 py-1.5 rounded-lg bg-surface-hover text-[11px] text-app-secondary hover:text-app-primary transition disabled:opacity-50"
               >
                 Preview import
               </button>
@@ -469,7 +471,7 @@ export function SettingsView() {
                   setSnapshotError(null);
                   setSnapshotStatus(null);
                 }}
-                className="px-3 py-1.5 rounded-lg bg-background text-[11px] text-gray-500 hover:text-white transition"
+                className="px-3 py-1.5 rounded-lg bg-background text-[11px] text-app-muted hover:text-app-primary transition"
               >
                 Clear
               </button>
@@ -477,23 +479,23 @@ export function SettingsView() {
           </div>
 
           <div className="bg-background border border-border rounded-lg p-3">
-            <div className="text-[11px] text-gray-500 mb-2">Import preview</div>
+            <div className="text-[11px] text-app-muted mb-2">Import preview</div>
             {snapshotPreview ? (
               <div className="space-y-2 text-[11px]">
                 <div className={cn('inline-flex px-2 py-1 rounded-lg', snapshotPreview.valid ? 'bg-green-500/10 text-green-400' : 'bg-yellow-500/10 text-yellow-400')}>
                   {snapshotPreview.valid ? 'Compatible' : 'Review warnings'}
                 </div>
-                <div className="text-gray-500">Version {snapshotPreview.version ?? 'unknown'}</div>
+                <div className="text-app-muted">Version {snapshotPreview.version ?? 'unknown'}</div>
                 {snapshotPreview.generatedBy && (
-                  <div className="text-gray-500">
+                  <div className="text-app-muted">
                     By {snapshotPreview.generatedBy.id} · {snapshotPreview.generatedBy.role} · {snapshotPreview.generatedBy.source}
                   </div>
                 )}
                 <div className="grid grid-cols-2 gap-2 pt-2">
                   {Object.entries(snapshotPreview.counts).map(([key, value]) => (
                     <div key={key} className="rounded bg-surface px-2 py-1">
-                      <div className="text-gray-600">{key}</div>
-                      <div className="text-gray-300 font-semibold">{value}</div>
+                      <div className="text-app-muted">{key}</div>
+                      <div className="text-app-secondary font-semibold">{value}</div>
                     </div>
                   ))}
                 </div>
@@ -506,16 +508,16 @@ export function SettingsView() {
                 )}
                 {restorePlan && (
                   <div className="pt-3 mt-3 border-t border-border space-y-2">
-                    <div className="text-[11px] text-gray-500">Restore plan</div>
+                    <div className="text-[11px] text-app-muted">Restore plan</div>
                     <div className="grid grid-cols-4 gap-1">
                       {([
                         ['create', restorePlan.summary.create, 'text-green-400'],
-                        ['skip', restorePlan.summary.skip, 'text-gray-400'],
+                        ['skip', restorePlan.summary.skip, 'text-app-secondary'],
                         ['conflict', restorePlan.summary.conflict, 'text-red-400'],
                         ['warnings', restorePlan.summary.warnings, 'text-yellow-400'],
                       ] as const).map(([label, value, tone]) => (
                         <div key={label} className="rounded bg-surface px-2 py-1">
-                          <div className="text-gray-600">{label}</div>
+                          <div className="text-app-muted">{label}</div>
                           <div className={cn('font-semibold', tone)}>{value}</div>
                         </div>
                       ))}
@@ -528,13 +530,13 @@ export function SettingsView() {
                               'px-1.5 py-0.5 rounded text-[9px]',
                               action.type === 'create' ? 'bg-green-500/10 text-green-400' :
                               action.type === 'conflict' ? 'bg-red-500/10 text-red-400' :
-                              'bg-gray-500/10 text-gray-400',
+                              'bg-gray-500/10 text-app-secondary',
                             )}>
                               {action.type}
                             </span>
-                            <span className="truncate text-gray-400">{action.resourceType}: {action.resourceId}</span>
+                            <span className="truncate text-app-secondary">{action.resourceType}: {action.resourceId}</span>
                           </div>
-                          <div className="text-[10px] text-gray-600 mt-0.5">{action.reason}</div>
+                          <div className="text-[10px] text-app-muted mt-0.5">{action.reason}</div>
                           {(action.dependencies?.length || 0) > 0 && (
                             <div className="text-[10px] text-yellow-400 mt-0.5">
                               missing: {action.dependencies?.join(', ')}
@@ -543,12 +545,12 @@ export function SettingsView() {
                         </div>
                       ))}
                       {restorePlan.actions.length > 12 && (
-                        <div className="text-[10px] text-gray-600 text-center py-1">
+                        <div className="text-[10px] text-app-muted text-center py-1">
                           {restorePlan.actions.length - 12} more planned actions
                         </div>
                       )}
                       {restorePlan.actions.length === 0 && (
-                        <div className="text-[10px] text-gray-600 text-center py-2">No restorable resources in this snapshot</div>
+                        <div className="text-[10px] text-app-muted text-center py-2">No restorable resources in this snapshot</div>
                       )}
                     </div>
                     <div className="rounded border border-yellow-500/20 bg-yellow-500/5 px-2 py-1 text-[10px] text-yellow-400">
@@ -563,17 +565,17 @@ export function SettingsView() {
                     </button>
                     {preferenceRestoreResult && (
                       <div className="rounded border border-border bg-background px-2 py-2 space-y-2">
-                        <div className="text-[11px] text-gray-500">
+                        <div className="text-[11px] text-app-muted">
                           Preference restore result · audit #{preferenceRestoreResult.auditActionId ?? 'n/a'}
                         </div>
                         <div className="grid grid-cols-3 gap-1">
                           {([
                             ['restored', preferenceRestoreResult.restored, 'text-green-400'],
-                            ['skipped', preferenceRestoreResult.skipped, 'text-gray-400'],
+                            ['skipped', preferenceRestoreResult.skipped, 'text-app-secondary'],
                             ['failed', preferenceRestoreResult.failed, 'text-red-400'],
                           ] as const).map(([label, value, tone]) => (
                             <div key={label} className="rounded bg-surface px-2 py-1">
-                              <div className="text-gray-600">{label}</div>
+                              <div className="text-app-muted">{label}</div>
                               <div className={cn('font-semibold', tone)}>{value}</div>
                             </div>
                           ))}
@@ -583,11 +585,11 @@ export function SettingsView() {
                             <div key={`${item.namespace}-${item.key}-${item.status}`} className="text-[10px]">
                               <span className={cn(
                                 item.status === 'restored' ? 'text-green-400' :
-                                item.status === 'failed' ? 'text-red-400' : 'text-gray-500',
+                                item.status === 'failed' ? 'text-red-400' : 'text-app-muted',
                               )}>
                                 {item.status}
                               </span>
-                              <span className="text-gray-500"> · {item.namespace}/{item.key} · {item.reason}</span>
+                              <span className="text-app-muted"> · {item.namespace}/{item.key} · {item.reason}</span>
                             </div>
                           ))}
                         </div>
@@ -597,7 +599,7 @@ export function SettingsView() {
                 )}
               </div>
             ) : (
-              <div className="text-xs text-gray-600 py-8 text-center">Paste a snapshot and preview it before importing.</div>
+              <div className="text-xs text-app-muted py-8 text-center">Paste a snapshot and preview it before importing.</div>
             )}
           </div>
         </div>

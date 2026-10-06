@@ -95,12 +95,14 @@ export class McpClient {
     return this.tools;
   }
 
-  async callTool(name: string, args: Record<string, unknown> = {}, timeoutMs = 60000): Promise<McpCallResult> {
-    const res = await this.request('tools/call', { name, arguments: args }, timeoutMs);
+  async callTool(name: string, args: Record<string, unknown> = {}, timeoutMs = 60000, signal?: AbortSignal): Promise<McpCallResult> {
+    const res = await this.request('tools/call', { name, arguments: args }, timeoutMs, signal);
     return { content: res?.content ?? res, isError: !!res?.isError };
   }
 
   dispose(): void {
+    for (const request of this.pending.values()) request.reject(new Error('MCP client disposed'));
+    this.pending.clear();
     try { this.proc?.kill(); } catch { /* ignore */ }
     this.connected = false;
   }
@@ -126,20 +128,35 @@ export class McpClient {
     }
   }
 
-  private request(method: string, params: unknown, timeoutMs = 15000): Promise<any> {
+  private request(method: string, params: unknown, timeoutMs = 15000, signal?: AbortSignal): Promise<any> {
+    if (signal?.aborted) return Promise.reject(new Error('Request aborted'));
     if (!this.proc || !this.proc.stdin) return Promise.reject(new Error('mcp not started'));
     const id = this.nextId++;
     const payload = JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n';
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
+      const cleanup = () => {
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', abort);
         this.pending.delete(id);
-        reject(new Error(`mcp "${this.config.name}" ${method} timed out`));
+      };
+      const abort = () => {
+        if (method === 'tools/call') this.notify('notifications/cancelled', { requestId: id, reason: 'User cancelled execution' });
+        this.pending.get(id)?.reject(new Error('Request aborted'));
+      };
+      const timer = setTimeout(() => {
+        if (method === 'tools/call') this.notify('notifications/cancelled', { requestId: id, reason: 'Tool deadline exceeded' });
+        this.pending.get(id)?.reject(new Error(`mcp "${this.config.name}" ${method} timed out`));
       }, timeoutMs);
       this.pending.set(id, {
-        resolve: (v) => { clearTimeout(timer); resolve(v); },
-        reject: (e) => { clearTimeout(timer); reject(e); },
+        resolve: (v) => { cleanup(); resolve(v); },
+        reject: (e) => { cleanup(); reject(e); },
       });
-      this.proc!.stdin!.write(payload);
+      signal?.addEventListener('abort', abort, { once: true });
+      try {
+        this.proc!.stdin!.write(payload, error => { if (error) this.pending.get(id)?.reject(error); });
+      } catch (error) {
+        this.pending.get(id)?.reject(error instanceof Error ? error : new Error(String(error)));
+      }
     });
   }
 

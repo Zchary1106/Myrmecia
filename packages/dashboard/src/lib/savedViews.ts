@@ -43,10 +43,15 @@ function persistLocalSavedViews<TFilters>(viewKey: string, scope: string, views:
 export async function loadSavedViews<TFilters>(viewKey: string, scope: string): Promise<SavedView<TFilters>[]> {
   const localViews = loadLocalSavedViews<TFilters>(viewKey, scope);
   try {
-    const preference = await api.preferences.get<SavedView<TFilters>[]>(PREFERENCE_NAMESPACE, viewKey);
-    if (Array.isArray(preference.value)) {
-      persistLocalSavedViews(viewKey, scope, preference.value);
-      return preference.value;
+    // Listing the namespace keeps a missing preference as a normal empty state.
+    // A direct GET uses a semantic 404 for "not created yet", which browsers
+    // report as a noisy console/network error even though the local fallback is valid.
+    const preferences = await api.preferences.list({ namespace: PREFERENCE_NAMESPACE });
+    const preference = preferences.find(item => item.key === viewKey);
+    if (preference && Array.isArray(preference.value)) {
+      const views = preference.value as SavedView<TFilters>[];
+      persistLocalSavedViews(viewKey, scope, views);
+      return views;
     }
     return localViews;
   } catch (err) {

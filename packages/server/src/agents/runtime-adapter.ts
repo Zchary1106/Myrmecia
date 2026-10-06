@@ -18,6 +18,7 @@ import type {
 } from '../types.js';
 import { isMcpTool } from '../tools/mcp-manager.js';
 import type { ExecutionMiddlewareChain } from './execution-middleware.js';
+import type { AgentStopReason } from '@myrmecia/shared';
 
 export interface RuntimeExecutionContext {
   agent: AgentDefinition;
@@ -32,6 +33,7 @@ export interface RuntimeExecutionContext {
 }
 
 export interface RuntimeAdapterResult {
+  stopReason?: AgentStopReason;
   output: string;
   costUSD: number | null;
   costType?: 'exact' | 'estimated' | 'subscription' | 'unavailable';

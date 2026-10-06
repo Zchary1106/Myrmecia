@@ -1,8 +1,7 @@
 import { eventBus } from '../events/event-bus.js';
 import { getTask } from '../db/models/task.js';
 import { listExecutions } from '../db/models/execution.js';
-import { createExecutionScore, getAgentAvgScore } from '../db/models/execution-score.js';
-import { updateAgent } from '../db/models/agent.js';
+import { createExecutionScore } from '../db/models/execution-score.js';
 import { logger } from '../lib/logger.js';
 
 interface BaseScoreInput {
@@ -62,20 +61,12 @@ export class ExecutionScorer {
       hasError, durationMs, avgDurationMs, outputLength, inputLength,
     });
 
-    let llmScore: number | null = null;
+    const llmScore: number | null = null;
     let dimensions: Record<string, number | undefined> = {};
-    let finalScore = baseScore;
+    const finalScore = baseScore;
 
-    if (baseScore >= 40 && baseScore <= 80) {
-      try {
-        const llmResult = await this.llmJudge(task.input || '', task.output || '');
-        llmScore = llmResult.score;
-        dimensions = llmResult.dimensions;
-        finalScore = llmScore;
-      } catch (err: any) {
-        logger.warn({ taskId, error: err.message }, 'LLM judge failed, using base score');
-      }
-    }
+    // Length/timing heuristics are operational diagnostics, not a quality review.
+    dimensions = { operational: baseScore };
 
     createExecutionScore({
       executionId: execution.id,
@@ -87,27 +78,7 @@ export class ExecutionScorer {
       dimensions,
     });
 
-    const avgScore = getAgentAvgScore(task.assigneeId, 20);
-    const weight = this.computeRouteWeight(avgScore);
-    updateAgent(task.assigneeId, { routeWeight: weight } as any);
-
-    eventBus.emit('score:recorded', { taskId, agentId: task.assigneeId, finalScore, routeWeight: weight });
-    logger.info({ taskId, agentId: task.assigneeId, finalScore, routeWeight: weight }, 'Execution scored');
-  }
-
-  private async llmJudge(input: string, output: string): Promise<{
-    score: number;
-    dimensions: { completeness?: number; correctness?: number; codeQuality?: number };
-  }> {
-    const inputLen = input.length;
-    const outputLen = output.length;
-    const completeness = Math.min(100, (outputLen / Math.max(inputLen, 1)) * 20);
-    const correctness = output.toLowerCase().includes('error') ? 40 : 80;
-    const codeQuality = outputLen > 100 && outputLen < 30000 ? 80 : 50;
-    const score = completeness * 0.4 + correctness * 0.4 + codeQuality * 0.2;
-    return {
-      score: Math.round(Math.max(0, Math.min(100, score))),
-      dimensions: { completeness, correctness, codeQuality },
-    };
+    eventBus.emit('score:recorded', { taskId, agentId: task.assigneeId, finalScore, scoreSource: 'operational_heuristic', affectsRouting: false });
+    logger.info({ taskId, agentId: task.assigneeId, finalScore, affectsRouting: false }, 'Operational execution scored; quality not verified');
   }
 }

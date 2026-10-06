@@ -1,6 +1,8 @@
 import { v4 as uuid } from 'uuid';
 import { getDb } from '../database.js';
 import type { ExecutionArtifact, ExecutionArtifactKind } from '../../types.js';
+import { getTask } from './task.js';
+import { isDocumentSession } from '../../knowledge/session-documents.js';
 
 export interface StoredExecutionArtifact extends ExecutionArtifact {
   rootPath?: string;
@@ -88,6 +90,8 @@ export function upsertExecutionArtifact(data: {
     JSON.stringify(data.metadata || {}),
   );
   const artifact = getExecutionArtifact(id)!;
+  const task = getTask(artifact.taskId);
+  if (task && isDocumentSession(task)) return artifact;
   // Runtime evidence is captured asynchronously as an unconfirmed candidate.
   // Failure must never block artifact persistence or task completion.
   void import('../../memory/runtime-knowledge-bridge.js')

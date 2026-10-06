@@ -61,7 +61,7 @@ describe('MemoryService', () => {
 
   it('captures episodes and builds a context block', async () => {
     const svc = getMemoryService();
-    await svc.captureEpisode({
+    const episode = await svc.captureEpisode({
       input: 'add a stripe billing integration to the checkout flow',
       output: 'Implemented Stripe checkout with webhooks and idempotency keys.',
       agentId: 'dev',
@@ -70,6 +70,11 @@ describe('MemoryService', () => {
       success: true,
       quality: 0.9,
     });
+    expect(episode?.metadata.knowledgeStatus).toBe('candidate');
+    expect(await svc.buildContextBlock({
+      query: 'stripe billing checkout integration', scope: { workspace: 'ws-1' }, types: ['episodic'],
+    })).toBe('');
+    await getMemoryStore().update(episode!.id, { metadata: { ...episode!.metadata, knowledgeStatus: 'confirmed' } });
 
     const block = await svc.buildContextBlock({
       query: 'stripe billing checkout integration',

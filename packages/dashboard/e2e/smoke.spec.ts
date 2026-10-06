@@ -11,11 +11,11 @@ test('dashboard loads and shows navigation', async ({ page }) => {
 test('home composer exposes Team, Workflow, history, and theme controls', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'What should your team work on?' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Use a Team' })).toBeVisible();
-  await expect(page.getByText('Recent work', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Choose a Team', exact: true })).toBeVisible();
+  await expect(page.getByText('Recent conversations', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: /Switch to (light|dark) theme/ })).toBeVisible();
 
-  await page.getByRole('button', { name: 'Use a Team' }).click();
+  await page.getByRole('button', { name: 'Choose a Team', exact: true }).click();
   await expect(page.getByText('Choose a Team', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Choose workflow', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Launch work' })).toBeVisible();
@@ -58,10 +58,13 @@ test('a task opens its conversation instead of the technical timeline', async ({
   await page.getByLabel('Describe work for your Agent Team').fill('Review the workspace');
   await page.getByRole('button', { name: 'Send to Master Agent' }).click();
 
-  await expect(page.getByRole('heading', { name: 'Your conversation with the team' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Review the workspace' })).toBeVisible();
   await expect(page.getByRole('region', { name: 'Task conversation' }).getByText('Review the workspace', { exact: true }).first()).toBeVisible();
-  await expect(page.getByRole('region', { name: 'Task conversation' }).getByText('Master Agent', { exact: true })).toBeVisible();
-  await expect(page.getByText('See what you asked, who owns the next step, and the real output as work completes.')).toBeVisible();
+  const routingMessage = page.getByRole('region', { name: 'Task conversation' }).getByRole('article')
+    .filter({ hasText: 'Your request is being routed to the right specialist.' });
+  await expect(routingMessage.getByText('Master Agent', { exact: true })).toBeVisible();
+  await expect(routingMessage).toBeVisible();
+  await expect(page.getByRole('form', { name: 'Send follow-up instruction' }).locator('.session-composer-destination')).toContainText('Master Agent');
   await expect(page.getByRole('heading', { name: 'Execution Timeline' })).toBeHidden();
 });
 
@@ -69,7 +72,7 @@ test('task session makes the conversation primary and keeps the timeline technic
   await page.goto('/');
   await page.getByRole('button', { name: 'Task session', exact: true }).click();
   await expect(
-    page.getByRole('heading', { name: 'Your conversation with the team' })
+    page.getByRole('region', { name: 'Task conversation' })
       .or(page.getByRole('heading', { name: 'No task conversation yet' })),
   ).toBeVisible();
   const timelineLink = page.getByRole('button', { name: 'Open technical timeline' });
@@ -77,8 +80,23 @@ test('task session makes the conversation primary and keeps the timeline technic
     await timelineLink.click();
     await expect(page.getByText('Technical details for task runs, tools, traces, and runtime events.')).toBeVisible();
     await page.getByRole('button', { name: 'Back to task conversation' }).click();
-    await expect(page.getByRole('heading', { name: 'Your conversation with the team' })).toBeVisible();
+    await expect(page.getByRole('region', { name: 'Task conversation' })).toBeVisible();
   }
+});
+
+test('task session compacts the global navigation and restores it on exit', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/');
+
+  const navigation = page.getByTestId('global-nav-rail');
+  await expect(navigation).toHaveCSS('width', '240px');
+
+  await page.getByRole('button', { name: 'Task session', exact: true }).click();
+  await expect(navigation).toHaveCSS('width', '64px');
+
+  await page.getByTitle('Teams').click();
+  await expect(page.getByRole('heading', { name: 'Agent Teams' })).toBeVisible();
+  await expect(navigation).toHaveCSS('width', '240px');
 });
 
 test('task session renders structured review output as a readable result', async ({ page }) => {
@@ -174,19 +192,81 @@ test('task session sends a follow-up to the live Agent mailbox', async ({ page }
   await page.goto('/');
   await page.getByRole('button', { name: 'Task session', exact: true }).click();
   await page.getByRole('textbox', { name: 'Follow-up instruction' }).fill('Please validate image MIME types too.');
-  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await page.getByRole('button', { name: 'Send follow-up', exact: true }).click();
 
-  await expect(page.getByText('You · follow-up')).toBeVisible();
-  await expect(page.getByText('Please validate image MIME types too.')).toBeVisible();
-  await expect(page.getByText('The current Agent receives this at its next model turn.')).toBeVisible();
+  await expect(page.getByRole('article', { name: 'Your message' }).filter({ hasText: 'Please validate image MIME types too.' })).toBeVisible();
+  await expect(page.getByText(/Sent to .* on its next turn\./)).toBeVisible();
+});
+
+test('task sessions can be searched without changing the active conversation', async ({ page }) => {
+  const tasks = [
+    {
+      id: 'e2e-search-alpha', title: 'Alpha release review', description: 'Alpha release review',
+      mode: 'direct', status: 'done', priority: 'normal', createdBy: 'user', input: 'Review alpha',
+      output: 'Alpha is ready.', retryCount: 0, maxRetries: 1, dependsOn: [],
+      createdAt: '2026-09-15T08:00:00.000Z', completedAt: '2026-09-15T08:03:00.000Z',
+    },
+    {
+      id: 'e2e-search-beta', title: 'Beta accessibility audit', description: 'Beta accessibility audit',
+      mode: 'direct', status: 'failed', priority: 'normal', createdBy: 'user', input: 'Audit beta',
+      error: 'Audit stopped.', retryCount: 0, maxRetries: 1, dependsOn: [],
+      createdAt: '2026-09-14T08:00:00.000Z', completedAt: '2026-09-14T08:03:00.000Z',
+    },
+  ];
+  await page.route('**/api/v1/tasks', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(tasks) }));
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Task session', exact: true }).click();
+
+  const search = page.getByRole('textbox', { name: 'Search task sessions' });
+  await expect(search).toBeVisible();
+  await search.fill('Beta');
+  await expect(page.getByRole('button', { name: /^Beta accessibility audit/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /^Alpha release review/ })).toBeHidden();
+  await expect(page.getByRole('region', { name: 'Task conversation' }).getByText('Alpha is ready.')).toBeVisible();
+});
+
+test('task sessions use a searchable drawer on a narrow viewport', async ({ page }) => {
+  await page.setViewportSize({ width: 760, height: 720 });
+  await page.route(/\/api\/v1\/tasks(?:\?.*)?$/, route => route.fulfill({ json: [{
+    id: 'drawer-fixture', title: 'Drawer fixture', description: 'Fixture', input: 'Fixture',
+    mode: 'direct', status: 'done', priority: 'normal', createdBy: 'user',
+    retryCount: 0, maxRetries: 0, dependsOn: [], createdAt: '2026-10-06T00:00:00Z', output: 'Fixture answer',
+  }] }));
+  await page.route(/\/api\/v1\/executions(?:\?.*)?$/, route => route.fulfill({ json: [] }));
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Open navigation' }).click();
+  await page.getByRole('button', { name: 'Task session', exact: true }).click();
+  await page.getByRole('button', { name: 'Open task sessions' }).click();
+  await expect(page.getByRole('textbox', { name: 'Search task sessions' })).toBeVisible();
+  await page.getByRole('button', { name: 'Close task sessions' }).first().click();
+  await expect(page.getByRole('textbox', { name: 'Search task sessions' })).toBeHidden();
 });
 
 test('home shell remains usable at a narrow viewport', async ({ page }) => {
-  await page.setViewportSize({ width: 760, height: 720 });
+  await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'What should your team work on?' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Model settings' })).toBeInViewport();
   const hasHorizontalOverflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
   expect(hasHorizontalOverflow).toBe(false);
+});
+
+test('global navigation becomes an accessible drawer on a narrow viewport', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/');
+
+  const navigation = page.getByTestId('global-nav-rail');
+  await expect(navigation).toHaveAttribute('aria-hidden', 'true');
+
+  await page.getByRole('button', { name: 'Open navigation' }).click();
+  await expect(navigation).toHaveAttribute('aria-hidden', 'false');
+  await page.getByRole('button', { name: 'Teams', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Agent Teams' })).toBeVisible();
+  await expect(navigation).toHaveAttribute('aria-hidden', 'true');
+
+  await page.getByRole('button', { name: 'Open navigation' }).click();
+  await page.keyboard.press('Escape');
+  await expect(navigation).toHaveAttribute('aria-hidden', 'true');
 });
 
 test('tasks page is accessible', async ({ page }) => {
@@ -216,7 +296,7 @@ test('artifact workbench is accessible', async ({ page }) => {
 
 test('workflow catalog keeps visual canvas as an advanced entry', async ({ page }) => {
   await page.goto('/');
-  await page.getByRole('button', { name: 'Workflows' }).click();
+  await page.getByRole('button', { name: 'Workflows', exact: true }).click();
   await expect(page.getByText('Visual workflow canvas')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Open visual canvas' })).toBeVisible();
   await page.getByRole('button', { name: 'Open visual canvas' }).click();
@@ -299,6 +379,8 @@ test('skill catalog separates registry, version editor, assignments, and marketp
 
 async function openCanvasFromTeams(page: import('@playwright/test').Page) {
   await page.goto('/');
+  const openNavigation = page.getByRole('button', { name: 'Open navigation' });
+  if (await openNavigation.isVisible()) await openNavigation.click();
   await page.getByTitle('Teams').click();
   const openCanvas = page.getByRole('button', { name: /Canvas/ });
   await expect(openCanvas).toBeVisible();

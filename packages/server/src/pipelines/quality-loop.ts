@@ -1,13 +1,15 @@
 import { eventBus } from '../events/event-bus.js';
 import { createTask, getTask, updateTask, addTaskLog } from '../db/models/task.js';
 import { getAgent, listAgents } from '../db/models/agent.js';
-import { getActiveExecutionCount } from '../db/models/execution.js';
+import { getActiveExecutionCount, listExecutions, listExecutionMessages } from '../db/models/execution.js';
 import { createQualityLoopAttempt, listQualityLoopAttempts, updateQualityLoopAttempt } from '../db/models/quality-loop.js';
 import { agentRuntime } from '../agents/agent-runtime.js';
 import { spawnSync } from 'child_process';
 import { createTestReportFromOutput, hasVerifiedTestEvidence, type TestReportWithEvidence } from '../testing/test-report.js';
 import type { AgentDefinition, QualityLoopAttempt, Task } from '../types.js';
 import { loadExecutionContext, persistInheritedExecutionContext } from '../agents/execution-context.js';
+import { isSimpleConversation } from '../agents/conversation-intent.js';
+import { resolveAllowedToolsForAgent } from '../tools/tool-policy.js';
 
 const MAX_PROMPT_EVIDENCE_CHARS = 12_000;
 const MAX_REVIEW_OUTPUT_CHARS = 10_000;
@@ -152,6 +154,15 @@ export class QualityLoop {
     // Approval emits the authoritative terminal task:done event. Check it
     // first so this listener cannot regress an approved task back to review.
     if (latestAttempt?.status === 'approved') return;
+    // Never exempt implementation work based on a greeting substring, a dirty
+    // shared workspace, or the developer's own unsupported "done" claim.
+    if (attempts.every(attempt => attempt.status === 'failed') && isSimpleConversation(task)
+      && !/```|diff --git/.test(task.output || '')
+      && !listExecutions({ taskId }).some(run =>
+        run.progress.toolUseCount > 0 || listExecutionMessages(run.id).some(message => message.type === 'tool_use'))) {
+      addTaskLog(taskId, 'info', 'Quality Loop: standalone conversation without tool activity; code validation is not applicable', 'quality-loop');
+      return;
+    }
 
     // `task:done` is emitted by the execution runtime immediately after the
     // developer process returns. Move the task to a non-terminal gate state
@@ -190,6 +201,12 @@ export class QualityLoop {
       );
       if (!testAgent) {
         this.failAttempt(attempt, taskId, 'blocked: no available Test/QA agent; the implementation could not be verified');
+        return;
+      }
+      const commandPolicy = resolveAllowedToolsForAgent(testAgent).decisions.find(decision =>
+        decision.toolId === 'shell_exec' && !decision.allowed && decision.reason === 'approval_required');
+      if (commandPolicy) {
+        this.failAttempt(attempt, taskId, 'blocked: Test/QA command execution requires approval; validation was not run. Configure scoped command authorization before retrying.');
         return;
       }
 

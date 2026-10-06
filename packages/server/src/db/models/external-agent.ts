@@ -61,6 +61,9 @@ function externalAgentRunFromRow(row: Row): ExternalAgentRun {
     workspaceId: String(row.workspace_id),
     triggerType: row.trigger_type as ExternalAgentTriggerType,
     status: row.status as ExternalAgentRunStatus,
+    runState: jsonObject<ExternalAgentRun['runState']>(row.run_state, undefined),
+    executionId: typeof row.execution_id === 'string' ? row.execution_id : undefined,
+    externalRunId: typeof row.external_run_id === 'string' ? row.external_run_id : undefined,
     invocation: jsonObject<ExternalAgentInvocationContext>(row.invocation, { objective: '', constraints: [] }),
     outputSummary: typeof row.output_summary === 'string' ? row.output_summary : undefined,
     error: typeof row.error === 'string' ? row.error : undefined,
@@ -184,6 +187,13 @@ export function getExternalAgentRun(id: string, workspaceId: string): ExternalAg
   return row ? externalAgentRunFromRow(row) : undefined;
 }
 
+export function getExternalAgentRunForExecution(executionId: string, workspaceId: string): ExternalAgentRun | undefined {
+  const row = getDb().get<Row>(
+    'SELECT * FROM external_agent_runs WHERE execution_id = ? AND workspace_id = ?', executionId, workspaceId,
+  );
+  return row ? externalAgentRunFromRow(row) : undefined;
+}
+
 export function listExternalAgentRuns(filter: { workspaceId: string; externalAgentId?: string; limit?: number }): ExternalAgentRun[] {
   const conditions = ['workspace_id = ?'];
   const params: unknown[] = [filter.workspaceId];
@@ -195,11 +205,14 @@ export function listExternalAgentRuns(filter: { workspaceId: string; externalAge
 export function updateExternalAgentRun(
   id: string,
   workspaceId: string,
-  updates: Partial<Pick<ExternalAgentRun, 'status' | 'outputSummary' | 'error' | 'artifactIds' | 'startedAt' | 'completedAt'>>,
+  updates: Partial<Pick<ExternalAgentRun, 'status' | 'runState' | 'executionId' | 'externalRunId' | 'outputSummary' | 'error' | 'artifactIds' | 'startedAt' | 'completedAt'>>,
 ): ExternalAgentRun | undefined {
   const sets: string[] = [];
   const params: unknown[] = [];
   if (updates.status !== undefined) { sets.push('status = ?'); params.push(updates.status); }
+  if (updates.runState !== undefined) { sets.push('run_state = ?'); params.push(JSON.stringify(updates.runState)); }
+  if (updates.executionId !== undefined) { sets.push('execution_id = ?'); params.push(updates.executionId); }
+  if (updates.externalRunId !== undefined) { sets.push('external_run_id = ?'); params.push(updates.externalRunId); }
   if (updates.outputSummary !== undefined) { sets.push('output_summary = ?'); params.push(updates.outputSummary || null); }
   if (updates.error !== undefined) { sets.push('error = ?'); params.push(updates.error || null); }
   if (updates.artifactIds !== undefined) { sets.push('artifact_ids = ?'); params.push(JSON.stringify(updates.artifactIds)); }

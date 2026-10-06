@@ -6,9 +6,40 @@
 
 import { Router } from 'express';
 import { getMcpManager, isProtectedMcpTool, McpPolicyError, WECHAT_OFFICIAL_ACCOUNT_MCP } from '../tools/mcp-manager.js';
+import { xiaohongshuSession } from '../tools/xiaohongshu-session.js';
+import { HttpError, requireOperatorRole, sendError } from './http.js';
 
 export function createMcpRoutes(): Router {
   const router = Router();
+
+  router.get('/xiaohongshu/status', async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    try {
+      requireOperatorRole(req, 'mcp.xiaohongshu.status', ['admin', 'operator']);
+      res.json(await xiaohongshuSession.status());
+    } catch (err) { sendError(res, err); }
+  });
+
+  router.post('/xiaohongshu/login', async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    try {
+      // Login changes the shared local MCP account, not only this task.
+      requireOperatorRole(req, 'mcp.xiaohongshu.login', ['admin']);
+      res.json(await xiaohongshuSession.qrCode());
+    } catch (err) { sendError(res, err); }
+  });
+
+  router.post('/servers/:name/reconnect', async (req, res) => {
+    try {
+      requireOperatorRole(req, 'mcp.reconnect', ['admin']);
+      const manager = getMcpManager();
+      if (!manager.servers().some(server => server.name === req.params.name)) {
+        throw new HttpError(404, 'MCP_SERVER_NOT_FOUND', '服务未配置，请检查 MCP_SERVERS 配置。');
+      }
+      const client = await manager.reconnectServer(req.params.name);
+      res.json({ name: req.params.name, connected: client.isConnected() });
+    } catch (err) { sendError(res, err); }
+  });
 
   // GET /mcp/servers
   router.get('/servers', (_req, res) => {
@@ -73,6 +104,13 @@ export function createMcpRoutes(): Router {
   router.post('/call', async (req, res) => {
     const { name, arguments: args } = req.body || {};
     if (!name) return res.status(400).json({ error: { message: 'tool name required' } });
+    if (name === 'mcp__xiaohongshu__get_login_qrcode' || name === 'mcp__xiaohongshu__check_login_status') {
+      res.setHeader('Cache-Control', 'no-store');
+      try {
+        requireOperatorRole(req, 'mcp.xiaohongshu.login', name.endsWith('get_login_qrcode') ? ['admin'] : ['admin', 'operator']);
+        return res.json(name.endsWith('get_login_qrcode') ? await xiaohongshuSession.qrCode() : await xiaohongshuSession.status());
+      } catch (err) { return sendError(res, err); }
+    }
     if (isProtectedMcpTool(String(name))) {
       return res.status(403).json({
         error: {

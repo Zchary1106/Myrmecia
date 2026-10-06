@@ -280,7 +280,7 @@ export function TeamsPage() {
       {toast && <div className="text-[12px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 rounded-lg px-3 py-1.5">{toast}</div>}
       {error && <div className="text-[12px] text-red-400 bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2">{error}</div>}
 
-      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+      <section className="grid grid-cols-2 gap-3 [&>*:last-child]:col-span-2 sm:grid-cols-2 sm:[&>*:last-child]:col-span-1 xl:grid-cols-5">
         <TeamMetric icon={<Users size={17} />} label="Core teams" value={coreTeams.length} detail={`${workflowPresetTeams.length} procedures moved to Workflows`} />
         <TeamMetric icon={<Bot size={17} />} label="Team agents" value={uniqueAgentCount} detail={`${agents.filter(agent => agent.activeExecutions > 0).length} currently active`} tone="green" />
         <TeamMetric icon={<Activity size={17} />} label="Running work" value={runningTeamRuns.length} detail="live shared executions" tone="violet" />
@@ -339,8 +339,8 @@ export function TeamsPage() {
                 </div>
                 <p className="text-[11px] text-gray-500 mt-1 leading-snug">{t.blurb}</p>
                 <div className="flex flex-wrap gap-1 mt-2">
-                  {(t.roster?.length ? t.roster.map(r => r.agentId) : t.members).map(m => (
-                    <span key={m} className="text-[10px] text-cyan-300/90 bg-cyan-500/10 rounded px-1.5 py-0.5">{m}</span>
+                  {(t.roster?.length ? t.roster.map(r => r.agentId) : t.members).map((m, index) => (
+                    <span key={`${m}-${index}`} className="text-[10px] text-cyan-300/90 bg-cyan-500/10 rounded px-1.5 py-0.5">{m}</span>
                   ))}
                 </div>
               </div>
@@ -545,7 +545,7 @@ function TeamMetric({ icon, label, value, detail, tone = 'blue' }: { icon: React
     amber: 'bg-amber-500/10 text-amber-500',
   }[tone];
   return (
-    <div className="premium-card flex min-h-[112px] items-center justify-between gap-3 rounded-2xl border border-border bg-surface p-4">
+    <div className="premium-card flex min-h-[96px] items-center justify-between gap-3 rounded-2xl border border-border bg-surface p-4 sm:min-h-[112px]">
       <div className="min-w-0">
         <div className="text-[10px] font-medium text-app-muted">{label}</div>
         <div className="mt-2 text-2xl font-semibold tabular-nums tracking-[-0.04em] text-app-primary">{value}</div>
@@ -580,7 +580,7 @@ function TeamCatalogCard({ team, selected, runCount, active, workflowPreset, onS
           </div>
         </div>
         <div className="mt-4 flex items-center gap-1.5 overflow-hidden">
-          {members.slice(0, 4).map((member, index) => <span key={member} title={member} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border-2 border-surface bg-accent/10 text-[9px] font-semibold text-accent-light" style={{ marginLeft: index ? '-6px' : 0 }}>{member.slice(0, 1).toUpperCase()}</span>)}
+          {members.slice(0, 4).map((member, index) => <span key={`${member}-${index}`} title={member} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border-2 border-surface bg-accent/10 text-[9px] font-semibold text-accent-light" style={{ marginLeft: index ? '-6px' : 0 }}>{member.slice(0, 1).toUpperCase()}</span>)}
           {members.length > 4 && <span className="ml-1 text-[9px] text-app-muted">+{members.length - 4}</span>}
           <span className="ml-auto truncate text-[9px] text-app-muted">{team.template || 'Dynamic routing'}</span>
         </div>
@@ -749,7 +749,7 @@ function TeamPreview({
               ))
             ) : (
               roster.map((member, index) => (
-                <div key={`${member.role}-${member.agentId}`} className="contents">
+                <div key={`${member.role}-${member.agentId}-${index}`} className="contents">
                   <div className="min-w-[150px] flex-1 rounded-xl border border-border bg-background p-3 sm:max-w-[220px]">
                     <div className="text-[11px] font-semibold text-cyan-300">{member.name}</div>
                     <div className="mt-1 font-mono text-[9px] text-gray-600">{member.role}</div>

@@ -1,11 +1,14 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type InputHTMLAttributes, type ReactNode } from 'react';
-import { ArrowUpRight, AtSign, Check, ChevronDown, ChevronRight, CircleDot, Clock3, FolderOpen, GitBranch, Inbox, Layers3, Paperclip, Plus, Sparkles, Users, WandSparkles, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, type FormEvent, type InputHTMLAttributes } from 'react';
+import { ArrowUpRight, AtSign, ChevronDown, ChevronRight, Clock3, FolderOpen, GitBranch, Inbox, MessageSquareText, Plus, Users, X } from 'lucide-react';
 import { api, type TeamDTO } from '../../lib/api';
 import { useStore } from '../../stores/store';
 import { cn } from '../../lib/utils';
 import { WorkLauncher, type LaunchMode } from '../common/WorkLauncher';
-import { structuredResultSummary } from '../common/StructuredTaskResult';
-import type { AgentSummary, ProviderModelOption, Task } from '@myrmecia/shared';
+import { ServiceConnections } from './ServiceConnections';
+import { compactTaskTitle, homeConversations, type HomeConversation } from './homeActivity';
+import { useConversationStore, workflowConversationLabel } from '../../stores/conversations';
+import { LiquidLens } from '../common/LiquidLens';
+import type { ProviderModelOption, Task } from '@myrmecia/shared';
 
 const starterPrompts = [
   { label: 'Fix a GitHub issue', text: 'Inspect this GitHub issue, reproduce the problem, and prepare a focused fix.' },
@@ -15,7 +18,6 @@ const starterPrompts = [
 
 const WORKSPACE_STORAGE_KEY = 'myrmecia.workspace-config';
 const MODEL_PREFERENCES_STORAGE_KEY = 'myrmecia.model-preferences';
-const CURRENT_TASK_STORAGE_KEY = 'myrmecia.home-current-task';
 type WorkspaceSource = 'local' | 'remote';
 type WorkspaceConfig = { source: WorkspaceSource; path: string; name: string; repository?: string; branch?: string };
 type ReasoningChoice = 'auto' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
@@ -51,6 +53,7 @@ function StatusDot({ status }: { status: string }) {
       'h-2 w-2 shrink-0 rounded-full',
       status === 'running' || status === 'assigned' ? 'bg-blue-400 shadow-[0_0_0_3px_rgb(86_145_255_/_0.12)]' :
       status === 'failed' || status === 'blocked' ? 'bg-red-400' :
+      status === 'paused' || status === 'awaiting_retry' ? 'bg-amber-400' :
       status === 'done' ? 'bg-emerald-400' : 'bg-gray-500',
     )} />
   );
@@ -71,84 +74,9 @@ function taskStatusLabel(status: Task['status']): string {
   return labels[status];
 }
 
-function taskActivityLabel(task: Task, agent?: AgentSummary): string {
-  if (task.error) return 'The task needs your attention before it can continue.';
-  if (task.output) return 'A result is ready for you to review.';
-  if (agent) {
-    if (task.status === 'assigned') return `${agent.name} has accepted the task.`;
-    if (task.status === 'running') return `${agent.name} is working on the next step.`;
-    if (task.status === 'waiting_for_tool') return `${agent.name} is waiting for a required tool.`;
-    if (task.status === 'review') return `${agent.name} has sent the work into review.`;
-  }
-  const labels: Partial<Record<Task['status'], string>> = {
-    pending: 'Master Agent is preparing the task.',
-    queued: 'Master Agent is selecting the right specialist.',
-    assigned: 'The assigned Agent is preparing the first step.',
-    running: 'The Agent is working on the next step.',
-    waiting_for_tool: 'The task is waiting for a required tool.',
-    review: 'The work is being reviewed before completion.',
-    done: 'The completed result is ready below.',
-    failed: 'The task needs your attention before it can continue.',
-    cancelled: 'This task was cancelled.',
-  };
-  return labels[task.status] || 'Task status is updating.';
-}
-
-function taskAssigneeLabel(task: Task, agent?: AgentSummary): string {
-  if (agent) return `${agent.name} · ${agent.role}`;
-  if (['pending', 'queued'].includes(task.status)) return 'Master Agent · choosing a specialist';
-  return 'Master Agent · coordinating execution';
-}
-
-function resultExcerpt(value: string, limit = 520): string {
-  const compact = value.replace(/\s+/g, ' ').trim();
-  return compact.length > limit ? `${compact.slice(0, limit).trimEnd()}…` : compact;
-}
-
-function ResultSummary({ value, onSeeMore }: { value: string; onSeeMore: () => void }) {
-  const summaryRef = useRef<HTMLParagraphElement>(null);
-  const [isOverflowing, setIsOverflowing] = useState(false);
-
-  useEffect(() => {
-    const element = summaryRef.current;
-    if (!element) return;
-
-    const measure = () => setIsOverflowing(element.scrollWidth > element.clientWidth + 1);
-    measure();
-    const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(measure);
-    observer?.observe(element);
-    window.addEventListener('resize', measure);
-    return () => {
-      observer?.disconnect();
-      window.removeEventListener('resize', measure);
-    };
-  }, [value]);
-
-  return (
-    <>
-      <p ref={summaryRef} title={value} className="min-w-0 flex-1 truncate text-xs text-app-secondary">{value}</p>
-      {isOverflowing && (
-        <button type="button" onClick={onSeeMore} className="app-focus shrink-0 text-[11px] font-medium text-accent-light transition hover:text-app-primary">
-          See more
-        </button>
-      )}
-    </>
-  );
-}
-
-function isDescendantTask(candidate: Task, rootTaskId: string, tasksById: Map<string, Task>): boolean {
-  const visited = new Set<string>();
-  let parentTaskId = candidate.parentTaskId;
-  while (parentTaskId && !visited.has(parentTaskId)) {
-    if (parentTaskId === rootTaskId) return true;
-    visited.add(parentTaskId);
-    parentTaskId = tasksById.get(parentTaskId)?.parentTaskId;
-  }
-  return false;
-}
-
 export function HomeView() {
-  const { agents, tasks, pipelines, templates, inboxEntries, health, models, loadModels, loadTasks, setActiveView, setSelectedTaskId } = useStore();
+  const conversationStates = useConversationStore(state => state.states);
+  const { agents, tasks, pipelines, executions, inboxEntries, health, models, loadModels, loadTasks, setActiveView, setSelectedTaskId } = useStore();
   const [input, setInput] = useState('');
   const [showLauncher, setShowLauncher] = useState(false);
   const [launcherMode, setLauncherMode] = useState<LaunchMode>('master');
@@ -156,9 +84,6 @@ export function HomeView() {
   const [launchBusy, setLaunchBusy] = useState(false);
   const [launchMessage, setLaunchMessage] = useState<string | null>(null);
   const [launchError, setLaunchError] = useState<string | null>(null);
-  const [focusedTask, setFocusedTask] = useState<Task | null>(null);
-  const [focusedTaskId, setFocusedTaskId] = useState<string | null>(null);
-  const [focusedRequest, setFocusedRequest] = useState('');
   const [teams, setTeams] = useState<TeamDTO[]>([]);
   const [teamPickerOpen, setTeamPickerOpen] = useState(false);
   const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
@@ -179,6 +104,31 @@ export function HomeView() {
   const [providerName, setProviderName] = useState('');
   const [providerSource, setProviderSource] = useState<'provider' | 'registry'>('registry');
   const taskInputRef = useRef<HTMLTextAreaElement>(null);
+  const composerRef = useRef<HTMLFormElement>(null);
+
+  useEffect(() => {
+    if (!teamPickerOpen && !modelOptionsOpen && !workspacePickerOpen) return;
+    const close = () => {
+      setTeamPickerOpen(false);
+      setModelOptionsOpen(false);
+      setWorkspacePickerOpen(false);
+    };
+    const onOutside = (event: PointerEvent) => {
+      if (event.target instanceof Node && !composerRef.current?.contains(event.target)) close();
+    };
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        close();
+        taskInputRef.current?.focus();
+      }
+    };
+    document.addEventListener('pointerdown', onOutside);
+    document.addEventListener('keydown', onEscape);
+    return () => {
+      document.removeEventListener('pointerdown', onOutside);
+      document.removeEventListener('keydown', onEscape);
+    };
+  }, [teamPickerOpen, modelOptionsOpen, workspacePickerOpen]);
 
   const enabledModels = useMemo(() => models.filter(model => model.enabled && model.id !== 'auto'), [models]);
   const selectedTeam = useMemo(
@@ -217,16 +167,6 @@ export function HomeView() {
   }, []);
 
   useEffect(() => {
-    try {
-      const saved = JSON.parse(window.localStorage.getItem(CURRENT_TASK_STORAGE_KEY) || 'null') as { taskId?: string; request?: string } | null;
-      if (saved?.taskId) setFocusedTaskId(saved.taskId);
-      if (saved?.request) setFocusedRequest(saved.request);
-    } catch {
-      // The task panel remains session-only when browser storage is unavailable.
-    }
-  }, []);
-
-  useEffect(() => {
     if (!modelPreferencesLoaded) return;
     try {
       window.localStorage.setItem(MODEL_PREFERENCES_STORAGE_KEY, JSON.stringify({ modelId, reasoningEffort, contextLength } satisfies ModelPreferences));
@@ -258,52 +198,15 @@ export function HomeView() {
     }
   }, [providerModels, reasoningEffort, selectedProviderModel?.id, supportedReasoningEfforts]);
 
-  const activeTasks = useMemo(
-    () => tasks.filter(task => ['running', 'assigned', 'queued'].includes(task.status)).slice(0, 4),
-    [tasks],
+  const conversations = useMemo(
+    () => homeConversations(tasks, pipelines, agents, executions).filter(item => !conversationStates[item.id] && !conversationStates[`task:${item.task.id}`]),
+    [tasks, pipelines, agents, executions, conversationStates],
   );
-  const activePipelines = useMemo(
-    () => pipelines.filter(pipeline => ['running', 'paused', 'blocked'].includes(pipeline.status)).slice(0, 3),
-    [pipelines],
-  );
+  const activeConversations = conversations.filter(conversation => conversation.active);
+  const recentConversations = conversations.filter(conversation => !conversation.active).slice(0, 4);
+  const runningPipelines = pipelines.filter(pipeline => pipeline.status === 'running').length;
+  const waitingPipelines = pipelines.filter(pipeline => ['paused', 'blocked', 'awaiting_retry'].includes(pipeline.status)).length;
   const pendingReviews = inboxEntries.filter(entry => entry.status === 'pending').length;
-  const runningAgents = agents.filter(agent => (agent.activeExecutions || 0) > 0).length;
-  const recentTasks = useMemo(
-    () => tasks.filter(task => !['running', 'assigned', 'queued'].includes(task.status)).slice(0, 4),
-    [tasks],
-  );
-  const currentTask = useMemo(() => {
-    const taskId = focusedTaskId || focusedTask?.id;
-    return taskId ? tasks.find(task => task.id === taskId) || focusedTask || null : null;
-  }, [focusedTask, focusedTaskId, tasks]);
-  const currentExecutionTask = useMemo(() => {
-    if (!currentTask) return null;
-    const tasksById = new Map(tasks.map(task => [task.id, task]));
-    const descendants = tasks.filter(task => isDescendantTask(task, currentTask.id, tasksById));
-    const activeStatuses: Task['status'][] = ['running', 'waiting_for_tool', 'review', 'assigned', 'queued', 'pending'];
-
-    for (const status of activeStatuses) {
-      const activeTask = descendants.find(task => task.status === status);
-      if (activeTask) return activeTask;
-    }
-
-    return descendants
-      .filter(task => task.output || task.error)
-      .sort((left, right) => {
-        const leftTime = new Date(left.completedAt || left.startedAt || left.createdAt).getTime();
-        const rightTime = new Date(right.completedAt || right.startedAt || right.createdAt).getTime();
-        return rightTime - leftTime;
-      })[0] || currentTask;
-  }, [currentTask, tasks]);
-  const currentAgent = currentExecutionTask?.assigneeId ? agents.find(agent => agent.id === currentExecutionTask.assigneeId) : undefined;
-  const currentTaskActivity = currentExecutionTask || currentTask;
-  const currentTaskSummary = currentTaskActivity
-    ? currentTaskActivity.error
-      ? resultExcerpt(currentTaskActivity.error, 280)
-      : currentTaskActivity.output
-        ? structuredResultSummary(currentTaskActivity.output) || resultExcerpt(currentTaskActivity.output, 280)
-        : taskActivityLabel(currentTaskActivity, currentAgent)
-    : '';
   const greeting = timeBasedGreeting();
 
   useEffect(() => {
@@ -324,6 +227,7 @@ export function HomeView() {
 
   const openWorkspacePicker = () => {
     setWorkspaceError(null);
+    setTeamPickerOpen(false);
     setModelOptionsOpen(false);
     setWorkspaceSource(workspace?.source || 'local');
     setRemoteUrl(workspace?.repository || '');
@@ -430,14 +334,6 @@ export function HomeView() {
       await loadTasks();
       if (task) {
         setSelectedTaskId(task.id);
-        setFocusedTask(task);
-        setFocusedTaskId(task.id);
-        setFocusedRequest(goal);
-        try {
-          window.localStorage.setItem(CURRENT_TASK_STORAGE_KEY, JSON.stringify({ taskId: task.id, request: goal }));
-        } catch {
-          // The task is still available for the current session when storage is unavailable.
-        }
         setInput('');
         setSelectedTeamId(null);
         setLaunchMessage(null);
@@ -462,6 +358,8 @@ export function HomeView() {
     setLauncherMode('pipeline');
     setLauncherTemplateId(templateId);
     setTeamPickerOpen(false);
+    setModelOptionsOpen(false);
+    setWorkspacePickerOpen(false);
     setShowLauncher(true);
   };
 
@@ -471,22 +369,22 @@ export function HomeView() {
   };
 
   return (
-    <div className="home-canvas min-h-full w-full px-5 pb-12 pt-10 sm:px-8 lg:px-12 lg:pb-16 lg:pt-16">
-      <div className="relative z-10 mx-auto w-full max-w-[1120px]">
-      <section className="w-full text-left">
-        <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-border/70 bg-surface/80 px-3 py-1.5 text-[11px] font-medium text-app-secondary shadow-sm backdrop-blur-xl">
-          <span className={cn('h-1.5 w-1.5 rounded-full', health?.status === 'ok' ? 'bg-emerald-400' : 'bg-amber-400')} />
-          {health?.status === 'ok' ? 'Myrmecia is ready' : 'Connecting to runtime'}
+    <div data-home-workspace className="home-canvas glass-home flex min-h-full w-full flex-col px-4 py-6 sm:px-8 sm:py-8 lg:px-12">
+      <div data-home-content className="relative z-10 mx-auto my-auto w-full max-w-[880px]">
+      <div className="relative z-40 mb-6 flex flex-wrap items-center justify-between gap-3 sm:mb-8">
+        <div role="status" className="inline-flex items-center gap-2 text-[11px] text-app-muted">
+          <span className={cn('h-1.5 w-1.5 rounded-full', health?.status === 'ok' ? 'bg-emerald-500' : 'bg-amber-500')} />
+          {health?.status === 'ok' ? 'Server online' : health ? 'Server needs attention' : 'Checking server…'}
         </div>
-        <h1 className="max-w-[760px] text-balance text-4xl font-semibold tracking-[-0.045em] text-app-primary sm:text-5xl">
+        <ServiceConnections compact />
+      </div>
+      <section className="home-welcome-stage w-full">
+        <h1 className="text-balance text-2xl font-semibold tracking-[-0.035em] text-app-primary sm:text-3xl">
           {greeting}, Yadong. <span aria-hidden="true">👋</span>
         </h1>
-        <p className="mt-4 max-w-[560px] text-sm leading-6 text-app-secondary sm:text-base">
-          Bring together Teams, Agents, Skills, and Workflows in one focused workspace.
-        </p>
-
-        <h2 className="mt-10 text-lg font-semibold tracking-[-0.025em] text-app-primary">What should your team work on?</h2>
-        <form onSubmit={event => void submit(event)} className="home-command-card relative mt-4 p-3 text-left transition focus-within:shadow-[0_24px_80px_rgb(91_84_220_/_0.16)] sm:p-4">
+        <h2 className="mt-2 text-sm font-normal leading-6 text-app-secondary">What should your team work on?</h2>
+        <form ref={composerRef} onSubmit={event => void submit(event)} className="home-command-card relative mt-4 p-2 text-left transition sm:p-3">
+          <LiquidLens />
           <textarea
             ref={taskInputRef}
             value={input}
@@ -497,27 +395,28 @@ export function HomeView() {
             rows={3}
             aria-label="Describe work for your Agent Team"
             placeholder={selectedTeam ? `Describe work for ${selectedTeam.name}...` : 'Describe a goal, a bug, or a piece of content to create...'}
-            className="min-h-[112px] w-full resize-none bg-transparent px-3 py-4 text-sm leading-6 text-app-primary outline-none placeholder:text-app-muted"
+            className="min-h-[88px] w-full resize-none bg-transparent px-3 py-3 text-sm leading-6 text-app-primary outline-none placeholder:text-app-muted"
           />
           <div className="flex flex-wrap items-end justify-between gap-3 px-1 pb-1">
-            <div className="flex items-center gap-1.5 text-[11px] text-app-muted">
+            <div className="flex w-full min-w-0 flex-wrap items-center gap-1.5 text-[11px] text-app-muted sm:w-auto sm:flex-1">
               <button type="button" onClick={() => openWorkflowLauncher()} className="home-tool-button app-focus" aria-label="Choose workflow" title="Choose workflow">
-                <Paperclip size={15} />
+                <GitBranch size={15} />
               </button>
-              <div className="relative">
+              <div className="static sm:relative">
                 <button
                   type="button"
-                  onClick={() => setTeamPickerOpen(current => !current)}
-                  className={cn('home-tool-button app-focus', teamPickerOpen && 'border-accent/50 bg-accent/10 text-accent-light')}
+                  onClick={() => { setTeamPickerOpen(current => !current); setModelOptionsOpen(false); setWorkspacePickerOpen(false); }}
+                  className={cn('home-tool-button app-focus gap-1.5 px-2.5', teamPickerOpen && 'border-accent/50 bg-accent/10 text-accent-light')}
                   aria-label="Choose a Team"
                   aria-expanded={teamPickerOpen}
                   aria-controls="team-picker"
                   title="Choose a Team"
                 >
                   <AtSign size={15} />
+                  {!selectedTeam && <span>Master Agent</span>}
                 </button>
                 {teamPickerOpen && (
-                  <div id="team-picker" role="dialog" aria-label="Choose a Team" className="absolute bottom-full left-0 z-30 mb-2 w-[min(360px,calc(100vw-2rem))] rounded-2xl border border-border bg-surface p-2 text-left shadow-2xl">
+                  <div id="team-picker" role="dialog" aria-label="Choose a Team" className="glass-popup absolute left-0 top-full z-30 mt-2 max-h-[min(320px,40dvh)] w-full overflow-y-auto rounded-xl border border-border bg-surface p-2 text-left shadow-xl sm:w-[360px]">
                     <div className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-app-muted">Choose a Team</div>
                     {teams.length > 0 ? teams.slice(0, 6).map(team => (
                       <button key={team.id} type="button" onClick={() => selectTeam(team.id)} className="app-focus flex w-full items-center gap-2 rounded-xl px-2 py-2.5 text-left transition hover:bg-surface-hover">
@@ -543,28 +442,28 @@ export function HomeView() {
                 type="button"
                 onClick={openWorkspacePicker}
                 title={workspace?.path || 'Set a workspace'}
-                className={cn('home-tool-button app-focus max-w-[210px] gap-1.5 px-2.5', workspace && 'border-accent/30 text-accent-light')}
+                className={cn('home-tool-button app-focus min-w-0 max-w-[calc(100%-5rem)] gap-1.5 px-2.5 sm:max-w-[210px]', workspace && 'border-accent/30 text-accent-light')}
               >
                 <FolderOpen size={14} />
                 <span className="truncate">{workspace?.name || 'Set workspace'}</span>
               </button>
-              <div className="relative ml-1">
+              <div className="relative mt-1 min-w-0 basis-full sm:ml-1 sm:mt-0 sm:basis-auto">
                 <button
                   type="button"
-                  onClick={() => setModelOptionsOpen(current => !current)}
+                  onClick={() => { setModelOptionsOpen(current => !current); setTeamPickerOpen(false); setWorkspacePickerOpen(false); }}
                   aria-label="Model settings"
                   aria-expanded={modelOptionsOpen}
                   aria-controls="model-options"
                   title="Models are loaded from the model registry"
-                  className={cn('app-focus inline-flex max-w-[320px] items-center gap-2 overflow-hidden rounded-lg border border-border bg-background/70 px-3 py-1.5 text-xs text-app-secondary transition hover:border-accent/50 hover:bg-surface-hover hover:text-app-primary', modelOptionsOpen && 'border-accent/60 bg-surface-hover text-app-primary')}
+                  className={cn('glass-control app-focus inline-flex w-full min-w-0 items-center gap-2 overflow-hidden rounded-lg border border-border bg-background/70 px-3 py-1.5 text-xs text-app-secondary transition hover:border-accent/50 hover:bg-surface-hover hover:text-app-primary sm:w-auto sm:max-w-[320px]', modelOptionsOpen && 'border-accent/60 bg-surface-hover text-app-primary')}
                 >
                   <span className="truncate">{modelId === 'auto' ? 'Route by task' : selectedModelLabel}</span>
-                  <span className="shrink-0 text-app-muted">{reasoningLabel}</span>
-                  <span className="shrink-0 text-app-muted">{contextLabel}</span>
+                  {reasoningEffort !== 'auto' && <span className="shrink-0 text-app-muted">{reasoningLabel}</span>}
+                  {contextLength !== 'auto' && <span className="shrink-0 text-app-muted">{contextLabel}</span>}
                   <ChevronDown size={13} className="shrink-0 text-app-muted" />
                 </button>
                 {modelOptionsOpen && (
-                  <div id="model-options" className="absolute left-0 top-full z-30 mt-2 w-[min(320px,calc(100vw-2rem))] rounded-2xl border border-border bg-surface p-4 text-left shadow-2xl" role="dialog" aria-label="Model settings">
+                  <div id="model-options" className="glass-popup absolute left-0 top-full z-30 mt-2 max-h-[50dvh] w-full overflow-y-auto rounded-xl border border-border bg-surface p-4 text-left shadow-xl sm:w-[320px]" role="dialog" aria-label="Model settings">
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <h2 className="text-sm font-semibold text-app-primary">Model settings</h2>
@@ -600,14 +499,14 @@ export function HomeView() {
                 )}
               </div>
             </div>
-            <button type="submit" disabled={!input.trim() || launchBusy} className="home-primary-button app-focus inline-flex items-center gap-2 rounded-xl px-5 py-3 text-xs font-semibold text-white transition duration-200 hover:-translate-y-0.5 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-40">
+            <button type="submit" disabled={!input.trim() || launchBusy} className="home-primary-button app-focus inline-flex w-full items-center justify-center gap-2 rounded-xl px-5 py-3 text-xs font-semibold text-white transition duration-200 hover:-translate-y-0.5 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-40 sm:w-auto">
               {launchBusy ? 'Sending…' : selectedTeam ? `Send to ${selectedTeam.name}` : 'Send to Master Agent'} <ArrowUpRight size={14} />
             </button>
           </div>
           {workspace && <div className="truncate px-2 pt-2 text-[10px] text-app-muted">Working in {workspace.name}</div>}
           {launchError && <p className="px-2 pt-2 text-[11px] text-red-500">{launchError}</p>}
           {workspacePickerOpen && (
-            <div className="absolute bottom-14 left-3 z-30 w-[min(460px,calc(100vw-2rem))] rounded-2xl border border-border bg-surface p-4 text-left shadow-2xl" role="dialog" aria-label="Set workspace">
+            <div className="glass-popup absolute left-0 top-full z-30 mt-2 max-h-[50dvh] w-full overflow-y-auto rounded-xl border border-border bg-surface p-4 text-left shadow-xl sm:w-[460px]" role="dialog" aria-label="Set workspace">
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <h2 className="text-sm font-semibold text-app-primary">Set workspace</h2>
@@ -646,111 +545,41 @@ export function HomeView() {
 
         {launchMessage && <p className="mt-3 text-center text-[11px] text-emerald-500">{launchMessage}</p>}
 
-        {currentTask && currentTaskActivity && (
-          <section aria-label="Current task" className="app-panel mt-4 overflow-hidden border-accent/20 bg-[linear-gradient(135deg,rgb(var(--color-accent)/.08),transparent_44%),var(--app-panel)]">
-            <div className="flex flex-col gap-3 px-5 py-4 sm:px-6">
-              <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
-                <div className="min-w-0">
-                  <div className="text-[10px] font-semibold tracking-[0.15em] text-accent-light">CURRENT REQUEST</div>
-                  <h2 className="mt-1.5 max-w-[720px] text-pretty text-base font-semibold leading-6 tracking-[-0.02em] text-app-primary sm:text-lg">
-                    {focusedRequest || currentTask.description || currentTask.title}
-                  </h2>
-                </div>
-                <span className={cn(
-                  'inline-flex w-fit shrink-0 items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-medium',
-                  currentTaskActivity.status === 'done' ? 'border-emerald-400/25 bg-emerald-400/[0.08] text-emerald-500' :
-                  currentTaskActivity.status === 'failed' || currentTaskActivity.status === 'cancelled' ? 'border-red-400/25 bg-red-400/[0.08] text-red-500' :
-                  'border-accent/25 bg-accent/[0.08] text-accent-light',
-                )}>
-                  <StatusDot status={currentTaskActivity.status} />
-                  {taskStatusLabel(currentTaskActivity.status)}
-                </span>
-              </div>
-
-              <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1.5 text-[11px] text-app-secondary">
-                <span className="font-medium text-app-primary">Master Agent</span>
-                <ChevronRight size={13} className="text-app-muted" aria-hidden="true" />
-                <span className="min-w-0 truncate font-medium text-app-primary">{taskAssigneeLabel(currentTaskActivity, currentAgent)}</span>
-                <span className="hidden text-app-muted sm:inline">·</span>
-                <span className="min-w-0 truncate text-app-muted">{taskActivityLabel(currentTaskActivity, currentAgent)}</span>
-              </div>
-
-              <div className={cn(
-                'flex min-w-0 items-center gap-3 rounded-xl border px-3.5 py-2.5',
-                currentTaskActivity.error ? 'border-red-400/20 bg-red-400/[0.05]' : currentTaskActivity.output ? 'border-emerald-400/20 bg-emerald-400/[0.045]' : 'border-border/80 bg-background/40',
-              )}>
-                <div className={cn('shrink-0 text-[10px] font-semibold uppercase tracking-[0.12em]', currentTaskActivity.error ? 'text-red-500' : currentTaskActivity.output ? 'text-emerald-500' : 'text-app-muted')}>
-                  {currentTaskActivity.error ? 'Issue' : currentTaskActivity.output ? 'Result' : 'Activity'}
-                </div>
-                <ResultSummary value={currentTaskSummary} onSeeMore={() => openTaskRun(currentTask.id)} />
-              </div>
-
-            </div>
-          </section>
-        )}
-
-        <div className="home-quick-scroll relative mt-5 flex flex-nowrap gap-2 overflow-x-auto pb-2 md:justify-center">
+        <nav aria-label="Task shortcuts" className="mt-3 flex flex-wrap items-center gap-1 text-left">
           {starterPrompts.map(prompt => (
-            <button key={prompt.label} type="button" onClick={() => { setInput(prompt.text); setLaunchMessage(null); setLaunchError(null); }} className="home-quick-action app-focus shrink-0">
-              <WandSparkles size={13} className="text-accent-light" /> {prompt.label}
+            <button key={prompt.label} type="button" onClick={() => { setInput(prompt.text); setLaunchMessage(null); setLaunchError(null); requestAnimationFrame(() => taskInputRef.current?.focus()); }} className="home-prompt-card app-focus group">
+              <Plus size={12} className="shrink-0" />
+              <span>{prompt.label}</span>
             </button>
           ))}
-          <button type="button" onClick={() => setTeamPickerOpen(current => !current)} className="home-quick-action app-focus shrink-0">
-            <Users size={13} /> Use a Team
+          <button type="button" aria-label="Browse workflows" onClick={() => setActiveView('orchestrator')} className="app-focus ml-auto inline-flex items-center gap-1.5 rounded-lg px-2.5 py-2 text-[11px] text-app-muted transition hover:bg-surface-hover hover:text-app-primary">
+            Workflows <ArrowUpRight size={12} />
           </button>
-          {templates.slice(0, 2).map(template => (
-            <button key={template.id} type="button" onClick={() => openWorkflowLauncher(template.id)} className="home-quick-action app-focus max-w-[220px] shrink-0 truncate">
-              <GitBranch size={13} /> <span className="truncate">{template.name}</span>
-            </button>
-          ))}
-        </div>
+        </nav>
       </section>
 
-      <section className="mt-10 grid gap-4 sm:grid-cols-3">
-        <Metric icon={<Users size={16} />} label="Active agents" value={`${runningAgents}/${agents.length || 0}`} detail="ready to collaborate" />
-        <Metric icon={<CircleDot size={16} />} label="Running work" value={String(activeTasks.length)} detail="across your workspace" />
-        <Metric icon={<Inbox size={16} />} label="Needs your input" value={String(pendingReviews)} detail="review gates and decisions" />
-      </section>
+      {(pendingReviews > 0 || runningPipelines > 0 || waitingPipelines > 0) && (
+        <nav aria-label="Work needing attention" className="mt-7 flex flex-wrap items-center gap-2">
+          {pendingReviews > 0 && <button type="button" onClick={() => setActiveView('inbox')} className="app-focus inline-flex items-center gap-2 rounded-lg bg-amber-500/10 px-3 py-2 text-xs text-app-secondary"><Inbox size={14} className="text-amber-500" />{pendingReviews} awaiting your input<ChevronRight size={12} /></button>}
+          {(runningPipelines > 0 || waitingPipelines > 0) && <button type="button" onClick={() => setActiveView('orchestrator')} className="app-focus inline-flex flex-wrap items-center gap-2 rounded-lg bg-surface-hover/60 px-3 py-2 text-xs text-app-secondary"><GitBranch size={14} className="text-accent-light" />Workflow runs{runningPipelines > 0 && <span>{runningPipelines} running</span>}{waitingPipelines > 0 && <span className="text-app-muted">{waitingPipelines} paused / waiting</span>}<ChevronRight size={12} /></button>}
+        </nav>
+      )}
 
-      <section className="mt-8 grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
-        <div className="app-panel overflow-hidden">
-          <PanelHeader title="Active work" action="View queue" onClick={() => setActiveView('tasks')} />
-          {activeTasks.length > 0 ? activeTasks.map(task => (
-            <button key={task.id} type="button" onClick={() => openTaskRun(task.id)} className="app-focus flex w-full items-center gap-3 border-t border-border px-4 py-3.5 text-left transition hover:bg-surface-hover">
-              <StatusDot status={task.status} />
-              <span className="min-w-0 flex-1 truncate text-sm text-app-primary">{task.title}</span>
-              <span className="hidden max-w-[160px] truncate text-[10px] text-app-muted sm:inline">{taskAssigneeLabel(task, agents.find(agent => agent.id === task.assigneeId))}</span>
-              <ChevronRight size={14} className="text-app-muted" />
-            </button>
-          )) : (
-            <EmptyRow icon={<Sparkles size={17} />} text="No active work yet" detail="Start with a goal above." />
-          )}
+      {activeConversations.length > 0 && (
+        <section aria-label="In progress" className="mt-7">
+          <PanelHeader title={`In progress · ${activeConversations.length}`} action="View queue" onClick={() => setActiveView('tasks')} />
+          <div className="divide-y divide-border/50 rounded-xl border border-accent/15 bg-surface/55">
+            {activeConversations.slice(0, 3).map(conversation => <ConversationRow key={conversation.id} conversation={conversation} onClick={() => openTaskRun(conversation.task.id)} />)}
+          </div>
+        </section>
+      )}
+
+      <section aria-label="Recent conversations" className="mt-8">
+        <PanelHeader title="Recent conversations" action="View all" onClick={() => setActiveView('session')} />
+        <div className="divide-y divide-border/60 border-y border-border/60">
+          {recentConversations.map(conversation => <ConversationRow key={conversation.id} conversation={conversation} onClick={() => openTaskRun(conversation.task.id)} />)}
         </div>
-
-        <div className="app-panel overflow-hidden">
-          <PanelHeader title="Your workflows" action="Browse all" onClick={() => setActiveView('orchestrator')} />
-          {activePipelines.length > 0 ? activePipelines.map(pipeline => (
-            <button key={pipeline.id} type="button" onClick={() => setActiveView('orchestrator')} className="app-focus flex w-full items-center gap-3 border-t border-border px-4 py-3.5 text-left transition hover:bg-surface-hover">
-              <Layers3 size={16} className="text-accent-light" />
-              <span className="min-w-0 flex-1 truncate text-sm text-app-primary">{pipeline.name}</span>
-              <span className="text-[10px] capitalize text-app-muted">{pipeline.status}</span>
-            </button>
-          )) : (
-            <EmptyRow icon={<Clock3 size={17} />} text="No workflow runs" detail="Your next run will appear here." />
-          )}
-        </div>
-      </section>
-
-      <section className="app-panel mt-4 overflow-hidden">
-        <PanelHeader title="Recent work" action="Open history" onClick={() => setActiveView('tasks')} />
-        {recentTasks.length > 0 ? recentTasks.map(task => (
-          <button key={task.id} type="button" onClick={() => openTaskRun(task.id)} className="app-focus flex w-full items-center gap-3 border-t border-border px-4 py-3 text-left transition hover:bg-surface-hover">
-            <StatusDot status={task.status} />
-            <span className="min-w-0 flex-1 truncate text-sm text-app-primary">{task.title}</span>
-            <span className="text-[10px] text-app-muted">{taskStatusLabel(task.status)}</span>
-            <ChevronRight size={14} className="text-app-muted" />
-          </button>
-        )) : <EmptyRow icon={<Clock3 size={17} />} text="No history yet" detail="Completed and failed work will appear here." />}
+        {recentConversations.length === 0 && <div className="flex items-center gap-3 py-7 text-app-muted"><MessageSquareText size={20} strokeWidth={1.5} /><div><p className="text-sm text-app-secondary">Your conversations will appear here</p><p className="mt-1 text-xs">Start a task above, then come back to continue the conversation.</p></div></div>}
       </section>
       </div>
 
@@ -770,28 +599,34 @@ export function HomeView() {
   );
 }
 
-function Metric({ icon, label, value, detail }: { icon: ReactNode; label: string; value: string; detail: string }) {
-  return (
-    <div className="home-metric-card flex min-h-[118px] items-center justify-between gap-4 px-5 py-5">
-      <div className="min-w-0">
-        <div className="text-[11px] font-medium text-app-muted">{label}</div>
-        <div className="mt-2 text-2xl font-semibold tabular-nums tracking-[-0.03em] text-app-primary">{value}</div>
-        <div className="mt-1 truncate text-[10px] text-app-muted">{detail}</div>
-      </div>
-      <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-accent/10 text-accent-light">{icon}</span>
-    </div>
-  );
-}
-
 function PanelHeader({ title, action, onClick }: { title: string; action: string; onClick: () => void }) {
   return (
-    <div className="flex items-center justify-between px-4 py-3.5">
-      <h2 className="text-xs font-semibold tracking-[-0.01em] text-app-primary">{title}</h2>
+    <div className="flex items-center justify-between gap-2 pb-3">
+      <h2 className="text-sm font-semibold tracking-[-0.01em] text-app-primary">{title}</h2>
       <button type="button" onClick={onClick} className="app-focus inline-flex items-center gap-1 text-[11px] text-app-muted transition hover:text-app-primary">{action}<ArrowUpRight size={13} /></button>
     </div>
   );
 }
 
-function EmptyRow({ icon, text, detail }: { icon: ReactNode; text: string; detail: string }) {
-  return <div className="flex items-center gap-3 border-t border-border px-4 py-8 text-left"><span className="text-app-muted">{icon}</span><div><div className="text-sm text-app-secondary">{text}</div><div className="mt-1 text-[11px] text-app-muted">{detail}</div></div><Check size={15} className="ml-auto text-emerald-400/70" /></div>;
+function ConversationRow({ conversation, onClick }: { conversation: HomeConversation; onClick: () => void }) {
+  const date = new Date(conversation.updatedAt);
+  return (
+    <button type="button" onClick={onClick} data-home-conversation={conversation.id} className="app-focus group flex w-full items-center gap-3 rounded-lg px-2 py-3.5 text-left transition hover:bg-surface/80 sm:px-3">
+      <span className="hidden h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-surface-hover/65 text-app-muted sm:inline-flex"><MessageSquareText size={16} strokeWidth={1.6} /></span>
+      <div className="min-w-0 flex-1">
+        <div className="flex min-w-0 items-center gap-2">
+          <h3 title={conversation.title} className="min-w-0 truncate text-sm font-medium text-app-primary">{compactTaskTitle(conversation.title)}</h3>
+          {conversation.turns > 1 && <span className="shrink-0 text-[10px] text-app-muted">{conversation.turns} turns</span>}
+        </div>
+        <div className="mt-1 flex min-w-0 items-center gap-2 text-[11px] text-app-muted">
+          <span className="max-w-[45%] shrink-0 truncate text-app-secondary">{conversation.agent}</span>
+          <span aria-hidden="true">·</span>
+          <time dateTime={date.toISOString()} title={date.toLocaleString()} className="shrink-0 tabular-nums">{date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}, {date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}</time>
+          {conversation.preview && <span className="hidden min-w-0 truncate sm:inline">· {conversation.preview}</span>}
+        </div>
+      </div>
+      <span className="flex shrink-0 items-center gap-1.5 text-[10px] text-app-muted"><StatusDot status={conversation.workflowStatus || conversation.activity.status} /><span className="hidden sm:inline">{workflowConversationLabel(conversation.workflowStatus) || taskStatusLabel(conversation.activity.status)}</span><span className="sr-only sm:hidden">{workflowConversationLabel(conversation.workflowStatus) || taskStatusLabel(conversation.activity.status)}</span></span>
+      <ChevronRight size={14} className="shrink-0 text-app-muted transition group-hover:translate-x-0.5 group-hover:text-accent-light" />
+    </button>
+  );
 }

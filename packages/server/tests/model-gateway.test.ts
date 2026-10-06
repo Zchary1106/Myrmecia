@@ -228,7 +228,7 @@ describe('CopilotProvider', () => {
     expect(sessionConfig.tools).toHaveLength(1);
     expect(sessionConfig.tools[0].defer).toBe('never');
     expect(sessionConfig.tools[0].skipPermission).toBe(true);
-    expect(calls).toEqual([{
+    expect(calls).toMatchObject([{
       id: 'call_1',
       function: { name: 'tool_0_web_search', arguments: '{"query":"status"}' },
     }]);

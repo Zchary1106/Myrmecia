@@ -16,7 +16,7 @@ test('confirms governed evidence and exposes it in the knowledge topology', asyn
   let candidates = [{
     item: {
       id: 'candidate-review', type: 'semantic', content: 'Reviewer approved the recovery evidence', importance: 0.85,
-      metadata: { candidateStatus: 'pending', evidenceKind: 'review' },
+      metadata: { knowledgeStatus: 'candidate', evidenceKind: 'review' },
     },
     taskId: 'workspace-long-task',
     evidenceKind: 'review',
@@ -33,7 +33,7 @@ test('confirms governed evidence and exposes it in the knowledge topology', asyn
     if (url.pathname === '/api/v1/memory/graph') return fulfillJson(route, { nodes, edges });
     if (url.pathname === '/api/v1/memory/candidates' && method === 'GET') return fulfillJson(route, candidates);
     if (url.pathname === '/api/v1/memory/candidates/candidate-review/confirm' && method === 'POST') {
-      nodes = [...nodes, candidates[0].item];
+      nodes = [...nodes, { ...candidates[0].item, metadata: { ...candidates[0].item.metadata, knowledgeStatus: 'confirmed' } }];
       edges = [...edges, { sourceId: 'candidate-review', targetId: 'memory-goal', relation: 'supports', weight: 1 }];
       candidates = [];
       return fulfillJson(route, nodes.at(-1));
@@ -46,14 +46,17 @@ test('confirms governed evidence and exposes it in the knowledge topology', asyn
 
   const topology = page.getByText('Knowledge topology').locator('xpath=ancestor::section[1]');
   await expect(topology).toContainText('2 memories · 1 confirmed relationships');
-  await expect(page.getByText('Pending evidence (1)', { exact: true })).toBeVisible();
+  const pending = topology.locator('details').filter({ has: page.getByText('Pending evidence', { exact: true }) });
+  await expect(pending.locator('summary')).toContainText('1 items waiting for review');
+  await expect(pending).not.toHaveAttribute('open', '');
+  await pending.locator('summary').click();
   await expect(page.getByText('Reviewer approved the recovery evidence', { exact: true })).toBeVisible();
 
   const confirmRequest = page.waitForRequest(request => request.url().endsWith('/candidates/candidate-review/confirm') && request.method() === 'POST');
   await page.getByRole('button', { name: /Confirm Reviewer approved/ }).click();
   await confirmRequest;
 
-  await expect(page.getByText('Pending evidence (1)', { exact: true })).toBeHidden();
+  await expect(pending).toHaveCount(0);
   await expect(topology).toContainText('3 memories · 2 confirmed relationships');
 });
 
@@ -137,6 +140,8 @@ test('rejects a pending candidate without promoting it into the graph', async ({
 
   await page.goto('/');
   await page.getByTitle('Memory').click();
+  const pending = page.locator('details').filter({ has: page.getByText('Pending evidence', { exact: true }) });
+  await pending.locator('summary').click();
   await expect(page.getByText(candidate.item.content, { exact: true })).toBeVisible();
   await page.getByRole('button', { name: /Reject Unverified timeout diagnosis/ }).click();
   await expect(page.getByText(candidate.item.content, { exact: true })).toBeHidden();

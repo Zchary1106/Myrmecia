@@ -10,7 +10,9 @@ import { TaskQueue } from '../src/queue/task-queue.js';
 import { closeDb } from '../src/db/database.js';
 import { createAgent } from '../src/db/models/agent.js';
 import { addTaskLog, createTask, getTask, getTaskLogs, listTasks, updateTask } from '../src/db/models/task.js';
-import { listQualityLoopAttempts } from '../src/db/models/quality-loop.js';
+import { createQualityLoopAttempt, listQualityLoopAttempts } from '../src/db/models/quality-loop.js';
+import { createExecution, addExecutionMessage } from '../src/db/models/execution.js';
+import * as toolPolicy from '../src/tools/tool-policy.js';
 
 function result(output: string) {
   return { output, costUSD: 0, inputTokens: 0, outputTokens: 0, durationMs: 1, numTurns: 1, executionId: 'test-execution' };
@@ -34,16 +36,73 @@ describe('reliability and quality-gate integration', () => {
     vi.restoreAllMocks();
   });
 
-  function createDeveloperTask(mode: 'direct' | 'master' = 'direct') {
+  function createDeveloperTask(mode: 'direct' | 'master' = 'direct', conversation?: string) {
     const developer = createAgent({ id: 'developer', name: 'Developer', role: 'dev', config: { maxConcurrent: 1, timeout: 300 } });
     const task = createTask({
-      title: 'Implement reliable task', description: 'Implement and validate it', input: 'Implement it', mode,
+      title: conversation ?? 'Implement reliable task', description: conversation ?? 'Implement and validate it', input: conversation ?? 'Implement it', mode,
       assigneeId: developer.id, workdir: '/workspace/project', workspacePath: '/workspace/project', workspaceId: 'workspace-a',
       modelId: 'gpt-5', reasoningEffort: 'high', contextLength: 128_000, domainId: 'software',
     });
     updateTask(task.id, { status: 'done', output: 'implementation completed' });
     return { developer, task: getTask(task.id)! };
   }
+
+  it.each(['hello', '你好', '你可以帮我干什么'])('does not send standalone %s to code QA', async input => {
+    const { task } = createDeveloperTask('direct', input);
+    const execute = vi.spyOn(agentRuntime, 'execute');
+    await (new QualityLoop() as any).maybeReview(task.id);
+    expect(getTask(task.id)?.status).toBe('done');
+    expect(listQualityLoopAttempts({ taskId: task.id })).toHaveLength(0);
+    expect(listTasks({ parentTaskId: task.id })).toHaveLength(0);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('does not use small talk to exempt a run which actually invoked tools', async () => {
+    const { task } = createDeveloperTask('direct', 'hello');
+    const run = createExecution({ taskId: task.id, agentDefId: 'developer' });
+    addExecutionMessage({ executionId: run.id, type: 'tool_use', toolName: 'file_write', content: '{}' });
+    await (new QualityLoop() as any).maybeReview(task.id);
+    expect(getTask(task.id)?.status).toBe('failed'); // No QA available; fail closed.
+    expect(listQualityLoopAttempts({ taskId: task.id })).toHaveLength(1);
+  });
+
+  it('does not repeat a historically misapplied failed QA gate after a tool-free greeting retry', async () => {
+    const { task } = createDeveloperTask('direct', 'hello');
+    createQualityLoopAttempt({ taskId: task.id, iteration: 1, status: 'failed', developerAgentId: 'developer' });
+    const execute = vi.spyOn(agentRuntime, 'execute');
+    await (new QualityLoop() as any).maybeReview(task.id);
+    expect(getTask(task.id)?.status).toBe('done');
+    expect(listQualityLoopAttempts({ taskId: task.id })).toHaveLength(1);
+    expect(execute).not.toHaveBeenCalled();
+  });
+  it('does not QA a new user greeting in an existing failed conversation, or rewrite the failed root', async () => {
+    const { task: parent } = createDeveloperTask();
+    updateTask(parent.id, { status: 'failed', error: 'Earlier implementation failed' });
+    const child = createTask({ title: 'hello', description: 'hello', mode: 'direct', createdBy: 'user',
+      assigneeId: 'developer', parentTaskId: parent.id,
+      input: `Continue the conversation below and answer the NEW user message.\n\nSession root: ${parent.id}\n\nRecent turns:\n[]\n\nNEW user message:\nhello` });
+    updateTask(child.id, { status: 'done', output: 'Hello!' });
+    const execute = vi.spyOn(agentRuntime, 'execute');
+    await (new QualityLoop() as any).maybeReview(child.id);
+    expect(getTask(child.id)?.status).toBe('done');
+    expect(getTask(parent.id)?.status).toBe('failed');
+    expect(listQualityLoopAttempts({ taskId: child.id })).toHaveLength(0);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('fails promptly without starting QA when command authorization is missing', async () => {
+    const { task } = createDeveloperTask();
+    createAgent({ id: 'qa', name: 'QA', role: 'qa', config: { maxConcurrent: 1 } });
+    vi.spyOn(toolPolicy, 'resolveAllowedToolsForAgent').mockReturnValue({
+      requestedTools: ['shell_exec'], allowedTools: [],
+      decisions: [{ toolId: 'shell_exec', allowed: false, reason: 'approval_required', approvalRequired: true }],
+    });
+    const execute = vi.spyOn(agentRuntime, 'execute');
+    await (new QualityLoop() as any).maybeReview(task.id);
+    expect(getTask(task.id)?.error).toContain('command execution requires approval');
+    expect(execute).not.toHaveBeenCalled();
+    expect(listTasks({ parentTaskId: task.id })).toHaveLength(0);
+  });
 
   it('holds a completed developer task in review, then releases it only after verified Test and JSON Review approval', async () => {
     const { task } = createDeveloperTask('master');

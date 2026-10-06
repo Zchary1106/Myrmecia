@@ -3,7 +3,7 @@ import type { AgentDefinition, ModelCostType, Task, AgentProgress, ToolActivity,
 import { eventBus } from '../events/event-bus.js';
 import { updateTask, addTaskLog, getTask } from '../db/models/task.js';
 import { getPipeline } from '../db/models/pipeline.js';
-import { updateExecution, addExecutionMessage } from '../db/models/execution.js';
+import { updateExecution, addExecutionMessage, getExecution } from '../db/models/execution.js';
 import { completeTraceSpan, createTraceSpan } from '../db/models/trace.js';
 import { resolveAllowedToolsForAgent, validateToolParams } from '../tools/tool-policy.js';
 import { createToolExecution, completeToolExecution, summarizeToolPayload } from '../tools/tool-execution.js';
@@ -30,9 +30,16 @@ import { getMcpToolDefinitions, executeMcpTool } from '../tools/mcp-tools.js';
 import { appendExecutionAuditEvent, recordExecutionPolicySnapshot } from '../audit/execution-audit.js';
 import { recordLedgerEntry } from '../db/models/execution-ledger.js';
 import { resolveDomainForTask, applyDomainOverlay, applyDomainKnowledge } from './domain-context.js';
-import { buildAgentSystemPrompt } from './agent-prompt.js';
+import { buildAgentSystemPrompt, usesResearchAnswerContract } from './agent-prompt.js';
 import { getSandboxProfile } from './sandbox-profile.js';
 import type { ExecutionMiddlewareChain } from './execution-middleware.js';
+import { ResearchBudget } from './research-budget.js';
+import { isResearchTool, recoveredResearchContext, saveResearchEvidence } from './research-evidence.js';
+import { AgentRunStopped, updateAgentRun } from './run-state.js';
+import { loopFingerprint, readLoopCheckpoint, saveLoopCheckpoint, sealLoopCheckpoint } from './loop-checkpoint.js';
+import { runWriteOnce } from '../tools/write-once.js';
+import { requestedAgentInput } from './completion-control.js';
+import { isSimpleConversation } from './conversation-intent.js';
 
 const MAX_RECENT_ACTIVITIES = 5;
 
@@ -149,6 +156,7 @@ function buildModelToolDefinitions(toolIds: string[]) {
 }
 
 export interface TaskResult {
+  stopReason?: import('@myrmecia/shared').AgentStopReason;
   output: string;
   costUSD: number | null;
   costType: ModelCostType;
@@ -233,7 +241,13 @@ export class TsAgentLoop {
     middleware?: ExecutionMiddlewareChain,
   ): Promise<TaskResult> {
     const startTime = Date.now();
-    const toolPolicy = resolveAllowedToolsForAgent(agent);
+    const conversationOnly = isSimpleConversation(task);
+    const resolvedPolicy = resolveAllowedToolsForAgent(agent);
+    // Small talk has no authority to run tools, and needs no extra LLM skill
+    // matching request. Pipeline/compound implementation work keeps its gates.
+    const toolPolicy = conversationOnly
+      ? { ...resolvedPolicy, allowedTools: [], decisions: [] }
+      : resolvedPolicy;
 
     // Block disallowed tools (same as Python runtime path)
     for (const decision of toolPolicy.decisions.filter(d => !d.allowed)) {
@@ -249,7 +263,7 @@ export class TsAgentLoop {
       eventBus.emit('tool:blocked', { toolId: decision.toolId, taskId: task.id, workspaceId: task.workspaceId, executionId, agentId: agent.id, reason: decision.reason });
     }
 
-    const baseSystemPrompt = buildAgentSystemPrompt(agent, toolPolicy.allowedTools, runtimeSkill?.version.content);
+    const baseSystemPrompt = buildAgentSystemPrompt(agent, toolPolicy.allowedTools, runtimeSkill?.version.content, task);
 
     // Domain Pack overlay: prepend domain persona/guidelines/disclaimer if this
     // task (or the agent) is bound to a domain.
@@ -258,16 +272,17 @@ export class TsAgentLoop {
     if (domain) addTaskLog(task.id, 'info', `Domain Pack applied: ${domain.emoji} ${domain.name}`, 'system');
 
     // Check if the resolved skill is structured (step-driven)
-    let parsedSkill = runtimeSkill
+    const researchAnswer = usesResearchAnswerContract(agent, task);
+    let parsedSkill = runtimeSkill && !researchAnswer && !conversationOnly
       ? parseSkillContent(runtimeSkill.version.content)
       : null;
 
     // If no structured skill resolved, try LLM matching
-    if (!parsedSkill?.isStructured) {
+    if (!parsedSkill?.isStructured && !researchAnswer && !conversationOnly) {
       try {
         const { matchSkillForTask } = await import('../skills/skill-matcher.js');
         const { getLatestPublishedSkillVersion } = await import('../db/models/skill.js');
-        const match = await matchSkillForTask(task.input, agent.role);
+        const match = await matchSkillForTask(task.input, agent.role, abortController.signal);
         if (match.skillId && match.confidence >= 0.7) {
           const version = getLatestPublishedSkillVersion(match.skillId);
           if (version) {
@@ -308,8 +323,9 @@ export class TsAgentLoop {
 
     // Inject messages before model routing so long-context escalation sees the real prompt size.
     let enrichedInput = task.input;
+    enrichedInput += recoveredResearchContext(task, executionId, toolPolicy.allowedTools);
     // Domain knowledge: retrieve and prepend the domain's knowledge-base chunks.
-    if (domain) {
+    if (domain && !conversationOnly) {
       try {
         const withKnowledge = await applyDomainKnowledge(enrichedInput, domain, task.workspaceId);
         if (withKnowledge !== enrichedInput) {
@@ -332,6 +348,14 @@ export class TsAgentLoop {
     const selectedModel = modelSelection.modelId;
     const providerUsage = createProviderUsage(selectedModel);
     const limits = resolveAgentRuntimeLimits(agent, modelSelection, task.contextLength);
+    const fingerprint = loopFingerprint({
+      agentId: agent.id, modelId: selectedModel, systemPrompt, input: task.input,
+      tools: toolPolicy.allowedTools, workdir: task.workdir, skillChecksum: runtimeSkill?.version.checksum,
+    });
+    const resumed = readLoopCheckpoint(task, fingerprint, executionId);
+    const elapsedBeforeResume = resumed?.snapshot.elapsedMs || 0;
+    const executionDeadline = startTime + Math.max(1, Math.min(limits.maxExecutionWallClockMs, 600_000) - elapsedBeforeResume);
+    const researchBudget = new ResearchBudget(executionDeadline, task.retryCount > 0 ? 2 : 3);
     updateExecution(executionId, {
       modelId: selectedModel,
       modelTier: modelSelection.modelTier,
@@ -398,22 +422,32 @@ export class TsAgentLoop {
       // invocation back into this TS loop. OpenAI-compatible providers retain
       // their existing function-call path below.
       const { toolDefs, modelNameToToolId } = buildModelToolDefinitions(toolPolicy.allowedTools);
+      const researchFailures = new Set<string>();
+      if (researchAnswer && toolPolicy.allowedTools.some(isResearchTool)
+        && ![...modelNameToToolId.values()].some(isResearchTool)) researchFailures.add('unavailable_research_tools');
 
-      const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+      const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = resumed?.snapshot.messages || [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: enrichedInput },
       ];
 
-      let finalOutput = '';
-      let inputTokens = 0;
-      let outputTokens = 0;
-      let numTurns = 0;
+      let finalOutput = resumed?.snapshot.finalOutput || '';
+      let inputTokens = resumed?.snapshot.inputTokens || 0;
+      let outputTokens = resumed?.snapshot.outputTokens || 0;
+      let numTurns = resumed?.snapshot.turn || 0;
+      tracker.toolUseCount = resumed?.snapshot.toolCallCount || tracker.toolUseCount;
+      if (resumed) {
+        updateAgentRun(executionId, 'deciding', { turn: numTurns, toolCallCount: tracker.toolUseCount, resumedFromExecutionId: resumed.executionId });
+        addTaskLog(task.id, 'info', `Resumed a read-only TS loop from ${resumed.executionId}; prior budget usage was retained`, 'recovery');
+      }
+      let completedNormally = false;
+      let needsInput = false;
       const maxTurns = agent.maxTurns || agent.config.maxTurns || 50;
 
       // Check LLM cache for exact-match responses (no-tool calls only)
-      const canCache = toolDefs.length === 0;
+      const canCache = toolDefs.length === 0 && !resumed && researchFailures.size === 0;
       if (canCache) {
-        const cacheKey = { model: selectedModel, system: systemPrompt, prompt: enrichedInput };
+        const cacheKey = { workspaceId: task.workspaceId, model: selectedModel, system: systemPrompt, prompt: enrichedInput };
         const cached = llmCache.get(cacheKey);
         if (cached) {
           const safeCachedOutput = sanitizeAgentOutput(cached.output, {
@@ -454,9 +488,26 @@ export class TsAgentLoop {
         metrics.cacheHitRate.add(1, { status: 'miss' });
       }
 
-      let totalToolCalls = 0;
-      let totalToolRuntimeMs = 0;
-      const executeCopilotToolCall = async (tc: { id: string; function: { name: string; arguments: string } }): Promise<string> => {
+      let totalToolCalls = resumed?.snapshot.toolCallCount || 0;
+      let totalToolRuntimeMs = resumed?.snapshot.toolRuntimeMs || 0;
+      const checkpoint = (reservedInput = 0, reservedOutput = 0) => saveLoopCheckpoint(task, executionId, fingerprint, {
+        schemaVersion: 1, messages, turn: numTurns, finalOutput,
+        inputTokens: inputTokens + reservedInput, outputTokens: outputTokens + reservedOutput,
+        toolCallCount: totalToolCalls, toolRuntimeMs: totalToolRuntimeMs,
+        elapsedMs: elapsedBeforeResume + Date.now() - startTime,
+      });
+      const reportXiaohongshuProgress = (event: { message: string; elapsedMs: number }) => {
+        const message = `小红书 · ${event.message} · ${(event.elapsedMs / 1000).toFixed(1)}s`;
+        addTaskLog(task.id, 'info', message, agent.id);
+        const progress = getProgressSnapshot(tracker, message);
+        updateExecution(executionId, { progress });
+        eventBus.emit('execution:progress', {
+          executionId, taskId: task.id, agentDefId: agent.id,
+          workspaceId: task.workspaceId, progress,
+        });
+      };
+      const executeCopilotToolCall = async (tc: { id: string; function: { name: string; arguments: string }; signal?: AbortSignal }): Promise<string> => {
+        if (tc.signal?.aborted || abortController.signal.aborted) throw new Error('Request aborted');
         const toolName = modelNameToToolId.get(tc.function.name) || tc.function.name;
         const mcpTool = isMcpTool(toolName);
         let toolInput: Record<string, unknown> = {};
@@ -514,6 +565,7 @@ export class TsAgentLoop {
         }
         totalToolCalls++;
         tracker.toolUseCount++;
+        updateAgentRun(executionId, 'acting', { toolCallCount: tracker.toolUseCount });
         const startedAt = Date.now();
         const toolExecId = `ts_${executionId}_${tc.id}`;
         if (!mcpTool) {
@@ -531,29 +583,42 @@ export class TsAgentLoop {
 
         let output = '';
         let status: 'done' | 'failed' = 'done';
+        let diagnostics: Record<string, unknown> | undefined;
         try {
-          const result = isMcpTool(toolName)
+          const result = await runWriteOnce(task, executionId, toolName, toolInput, async () => isMcpTool(toolName)
             ? await executeMcpTool(
                 toolName,
                 toolInput,
                 Math.min(limits.maxToolCallTimeoutMs, limits.maxToolRuntimeMsPerExecution - totalToolRuntimeMs),
                 buildMcpPolicyContext(agent, task),
+                reportXiaohongshuProgress,
+                abortController.signal,
               )
             : await executeTool(toolName, toolInput, workdir, {
+                signal: abortController.signal,
                 allowedTools: toolPolicy.allowedTools,
                 workspaceId: task.workspaceId,
                 timeoutMs: Math.min(limits.maxToolCallTimeoutMs, limits.maxToolRuntimeMsPerExecution - totalToolRuntimeMs),
                 maxOutputChars: Math.min(limits.maxOutputChars, 8_000),
-              });
+              }));
           output = sanitizeAgentOutput(result.output, {
             agentId: agent.id, taskId: task.id, workspaceId: task.workspaceId, executionId, purpose: `tool ${toolName} result`,
           });
           status = result.status;
+          if (isResearchTool(toolName)) {
+            if (status === 'failed') researchFailures.add(toolName);
+            else researchFailures.delete(toolName);
+          }
+          diagnostics = 'diagnostics' in result && result.diagnostics
+            ? result.diagnostics as unknown as Record<string, unknown>
+            : undefined;
         } catch (err: any) {
           output = err.message || 'Tool execution failed';
           status = 'failed';
+          if (isResearchTool(toolName)) researchFailures.add(toolName);
         }
 
+        if (tc.signal?.aborted || abortController.signal.aborted) throw new Error('Request aborted');
         const durationMs = Date.now() - startedAt;
         totalToolRuntimeMs += durationMs;
         middleware?.afterToolCall(toolName, toolInput, status, String(output), workdir, durationMs);
@@ -567,9 +632,15 @@ export class TsAgentLoop {
           executionId, taskId: task.id, agentId: agent.id, workspaceId: task.workspaceId,
           type: 'tool.executed', decision: status,
           summary: `Tool ${toolName} ${status} in ${durationMs}ms`,
-          metadata: { toolName, status, durationMs, inputSummary: summarizeToolPayload(toolInput) },
+          metadata: { toolName, status, durationMs, inputSummary: summarizeToolPayload(toolInput), diagnostics },
         });
-        addExecutionMessage({ executionId, type: 'tool_result', content: String(output).slice(0, 500), toolName });
+        const evidence = status === 'done' && isResearchTool(toolName)
+          ? saveResearchEvidence(task, executionId, toolExecId, toolName, String(output)) : undefined;
+        const resultContent = isResearchTool(toolName)
+          ? JSON.stringify({ kind: 'research_result', status, output: String(output).slice(0, 16_000), artifactId: evidence?.id, diagnostics })
+          : String(output).slice(0, 500);
+        const resultMessage = addExecutionMessage({ executionId, type: 'tool_result', content: resultContent, toolName });
+        eventBus.emit('execution:message', { executionId, taskId: task.id, workspaceId: task.workspaceId, type: 'tool_result', content: resultContent, message: resultMessage });
         eventBus.emit(status === 'failed' ? 'tool:failed' : 'tool:done', {
           toolExecutionId: toolExecId, toolId: toolName, taskId: task.id, workspaceId: task.workspaceId,
           executionId, agentId: agent.id, status, error: status === 'failed' ? output : undefined,
@@ -578,11 +649,14 @@ export class TsAgentLoop {
         if (!['cancelled', 'failed', 'done'].includes(getTask(task.id)?.status || '')) {
           updateTask(task.id, { status: 'running' });
         }
+        updateAgentRun(executionId, 'observing', { toolCallCount: tracker.toolUseCount });
         return archiveLongToolOutput({ task, executionId, toolExecutionId: toolExecId, toolName, output: String(output) });
       };
 
       while (numTurns < maxTurns) {
+        if (abortController.signal.aborted) throw new AgentRunStopped('cancelled', 'Request aborted', finalOutput);
         numTurns++;
+        updateAgentRun(executionId, 'deciding', { turn: numTurns });
 
         const followUps = messageBus.drain(executionId);
         if (followUps.length > 0) {
@@ -632,6 +706,9 @@ export class TsAgentLoop {
           throw new Error(`CONTEXT_BUDGET_EXCEEDED: prompt needs ${compaction.after}/${promptBudget} tokens after compaction`);
         }
         recordContextUsage(task, compaction.after, limits.maxExecutionTokens, responseReserve, summaryVersion);
+        // Reserve an in-flight model request conservatively. After a crash its
+        // actual bill is unknown, so recovery must not reset the token budget.
+        checkpoint(compaction.after, responseReserve);
 
         const completionParams = {
           model: selectedModel,
@@ -642,13 +719,25 @@ export class TsAgentLoop {
         };
 
         // The gateway preserves the OpenAI path and adapts Copilot sessions into
-        // the same completion shape. Streaming remains opt-in.
+        // the same completion shape. Streaming is enabled unless explicitly disabled.
+        const requestTimeoutMs = Math.max(1, Math.min(conversationOnly ? 60_000 : toolDefs.length ? 600_000 : 120_000, executionDeadline - Date.now()));
+        const modelRequest = {
+          modelId: selectedModel,
+          startedAt: new Date().toISOString(),
+          deadlineAt: new Date(Date.now() + requestTimeoutMs).toISOString(),
+          firstOutputAt: undefined as string | undefined,
+        };
+        updateAgentRun(executionId, 'deciding', { modelRequest });
         const completionOptions = {
-          onToolCall: executeCopilotToolCall,
+          onToolCall: (tc: { id: string; function: { name: string; arguments: string }; signal?: AbortSignal }) =>
+            researchBudget.run(modelNameToToolId.get(tc.function.name) || tc.function.name, () => executeCopilotToolCall(tc), tc.signal || abortController.signal),
           signal: abortController.signal,
+          timeoutMs: requestTimeoutMs,
+          idleTimeoutMs: conversationOnly ? Math.min(30_000, limits.maxExecutionIdleMs) : limits.maxExecutionIdleMs,
           ...(process.env.AGENT_STREAMING !== 'false'
             ? {
                 onDelta: (delta: string) => {
+                  if (abortController.signal.aborted || ['cancelled', 'failed', 'done'].includes(getTask(task.id)?.status || '')) return;
                   const safeDelta = sanitizeAgentOutput(delta, {
                     agentId: agent.id,
                     taskId: task.id,
@@ -657,6 +746,13 @@ export class TsAgentLoop {
                     purpose: 'streamed assistant output',
                   });
                   if (safeDelta) {
+                    if (!modelRequest.firstOutputAt) {
+                      modelRequest.firstOutputAt = new Date().toISOString();
+                      const live = getExecution(executionId);
+                      if (live?.status === 'running' && live.runState && !['completed', 'failed', 'cancelled', 'interrupted'].includes(live.runState.phase)) {
+                        updateAgentRun(executionId, live.runState.phase, { modelRequest: { ...modelRequest } });
+                      }
+                    }
                     eventBus.emit('token:delta', {
                       executionId,
                       taskId: task.id,
@@ -669,17 +765,26 @@ export class TsAgentLoop {
               }
             : {}),
         };
-        const completion = await getModelGateway().completeForModel(selectedModel, completionParams, completionOptions);
+        const completion = await getModelGateway().completeForModel(selectedModel, completionParams, completionOptions).finally(() => {
+          const live = getExecution(executionId);
+          if (live?.status === 'running' && live.runState?.modelRequest?.startedAt === modelRequest.startedAt) {
+            updateAgentRun(executionId, live.runState.phase, { modelRequest: undefined });
+          }
+        });
         mergeProviderUsage(providerUsage, completion.usage);
 
         const choice = completion.choices[0];
-        if (!choice) throw new Error('No response from model');
+        if (!choice) throw new AgentRunStopped('empty_output', 'AGENT_EMPTY_OUTPUT: no response from model');
 
         inputTokens += completion.usage?.prompt_tokens || 0;
         outputTokens += completion.usage?.completion_tokens || 0;
         tracker.latestInputTokens += completion.usage?.prompt_tokens || 0;
         tracker.cumulativeOutputTokens += completion.usage?.completion_tokens || 0;
         assertExecutionTokenBudget(inputTokens, outputTokens, finalOutput, 'TS agent execution', limits);
+        if (choice.finish_reason === 'length') {
+          throw new AgentRunStopped('model_truncated', 'AGENT_MODEL_TRUNCATED: model response reached its output limit', extractMessageText(choice.message.content));
+        }
+        if (choice.finish_reason === 'content_filter') throw new AgentRunStopped('failed', 'AGENT_MODEL_BLOCKED: model response was filtered');
         if (Date.now() - startTime > limits.maxExecutionWallClockMs) {
           throw new Error(`TS agent execution exceeded wall-clock budget (${limits.maxExecutionWallClockMs}ms)`);
         }
@@ -687,6 +792,8 @@ export class TsAgentLoop {
         let assistantMsg = choice.message;
 
         let text = extractMessageText(assistantMsg.content);
+        const inputQuestion = requestedAgentInput(text);
+        if (inputQuestion) text = inputQuestion;
         if (text) {
           text = sanitizeAgentOutput(text, {
             agentId: agent.id,
@@ -702,17 +809,30 @@ export class TsAgentLoop {
         // Handle text content
         if (text) {
           finalOutput = text;
-          addExecutionMessage({ executionId, type: 'agent_text', content: text.slice(0, 500) });
-          eventBus.emit('execution:message', { executionId, taskId: task.id, workspaceId: task.workspaceId, type: 'agent_text', content: text.slice(0, 500) });
+          const message = addExecutionMessage({ executionId, type: 'agent_text', content: text });
+          eventBus.emit('execution:message', { executionId, taskId: task.id, workspaceId: task.workspaceId, type: 'agent_text', content: text, message });
           addTaskLog(task.id, 'info', text.slice(0, 800), agent.id);
+        }
+        if (inputQuestion) {
+          needsInput = true;
+          completedNormally = true;
+          break;
         }
 
         // Handle tool calls
         if (assistantMsg.tool_calls && assistantMsg.tool_calls.length > 0) {
           for (const tc of assistantMsg.tool_calls) {
+            if (abortController.signal.aborted) throw new AgentRunStopped('cancelled', 'Request aborted', finalOutput);
+            updateAgentRun(executionId, 'acting', { toolCallCount: tracker.toolUseCount });
             const toolCallId = tc.id;
             const toolName = modelNameToToolId.get(tc.function.name) || tc.function.name;
             const mcpTool = isMcpTool(toolName);
+            if (isResearchTool(toolName) || toolName === 'mcp__xiaohongshu__check_login_status') {
+              const output = await researchBudget.run(toolName, () => executeCopilotToolCall({ ...tc, signal: abortController.signal }), abortController.signal);
+              messages.push({ role: 'tool', tool_call_id: toolCallId, content: output });
+              updateAgentRun(executionId, 'observing', { toolCallCount: tracker.toolUseCount });
+              continue;
+            }
             let toolInput: Record<string, unknown> = {};
             try {
               toolInput = JSON.parse(tc.function.arguments || '{}');
@@ -781,6 +901,7 @@ export class TsAgentLoop {
               });
             }
             tracker.toolUseCount++;
+            updateAgentRun(executionId, 'acting', { toolCallCount: tracker.toolUseCount });
 
             const activity: ToolActivity = {
               toolName,
@@ -815,14 +936,17 @@ export class TsAgentLoop {
                 throw new Error(`Tool runtime budget exceeded (${limits.maxToolRuntimeMsPerExecution}ms)`);
               }
               totalToolCalls++;
-              const result = isMcpTool(toolName)
+              const result = await runWriteOnce(task, executionId, toolName, toolInput, async () => isMcpTool(toolName)
                 ? await executeMcpTool(
                     toolName,
                     toolInput,
                     Math.min(limits.maxToolCallTimeoutMs, limits.maxToolRuntimeMsPerExecution - totalToolRuntimeMs),
                     buildMcpPolicyContext(agent, task),
+                    reportXiaohongshuProgress,
+                    abortController.signal,
                   )
                 : await executeTool(toolName, toolInput, workdir, {
+                    signal: abortController.signal,
                     allowedTools: toolPolicy.allowedTools,
                     workspaceId: task.workspaceId,
                     timeoutMs: Math.min(limits.maxToolCallTimeoutMs, limits.maxToolRuntimeMsPerExecution - totalToolRuntimeMs),
@@ -834,7 +958,7 @@ export class TsAgentLoop {
                         progress: getProgressSnapshot(tracker, message),
                       });
                     },
-                  });
+                  }));
               toolOutput = sanitizeAgentOutput(result.output, {
                 agentId: agent.id,
                 taskId: task.id,
@@ -892,12 +1016,20 @@ export class TsAgentLoop {
               tool_call_id: toolCallId,
               content: archiveLongToolOutput({ task, executionId, toolExecutionId: toolExecId, toolName, output: String(toolOutput) }),
             });
+            updateAgentRun(executionId, 'observing', { toolCallCount: tracker.toolUseCount });
           }
         } else {
           // No tool calls — we're done
+          completedNormally = true;
           break;
         }
+        checkpoint();
       }
+      if (!completedNormally) {
+        throw new AgentRunStopped('max_turns', `AGENT_MAX_TURNS: execution exhausted ${maxTurns} turns without a final answer`, finalOutput);
+      }
+      if (!finalOutput.trim()) throw new AgentRunStopped('empty_output', 'AGENT_EMPTY_OUTPUT: model returned no final answer');
+      sealLoopCheckpoint(executionId);
 
       const durationMs = Date.now() - startTime;
       finalOutput = sanitizeAgentOutput(finalOutput, {
@@ -910,9 +1042,9 @@ export class TsAgentLoop {
       assertExecutionTokenBudget(inputTokens, outputTokens, finalOutput, 'TS agent execution', limits);
 
       // Cache the result for future identical calls
-      if (canCache && finalOutput) {
+      if (canCache && finalOutput && !needsInput && researchFailures.size === 0) {
         llmCache.set(
-          { model: selectedModel, system: systemPrompt, prompt: enrichedInput },
+          { workspaceId: task.workspaceId, model: selectedModel, system: systemPrompt, prompt: enrichedInput },
           { output: finalOutput, inputTokens, outputTokens },
         );
       }
@@ -941,6 +1073,7 @@ export class TsAgentLoop {
 
       return {
         output: finalOutput,
+        stopReason: needsInput ? 'needs_input' : researchAnswer && researchFailures.size > 0 ? 'tool_unavailable' : 'completed',
         costUSD,
         costType: providerUsage.costType,
         provider: providerUsage.provider,
@@ -969,6 +1102,8 @@ export class TsAgentLoop {
         billingMultiplier: providerUsage.billingMultiplier,
       });
       throw err;
+    } finally {
+      researchBudget.close();
     }
   }
 
@@ -1053,11 +1188,13 @@ export class TsAgentLoop {
       ];
 
       let finalOutput = '';
+      let completedNormally = false;
       const maxTurns = llmOptions?.maxTurns ?? 20; // per-step max turns
       let stepToolRuntimeMs = 0;
 
       for (let turn = 0; turn < maxTurns; turn++) {
         if (abortController.signal.aborted) throw new Error('Execution aborted');
+        updateAgentRun(executionId, 'deciding');
 
         const responseReserve = remainingResponseTokens(inputTokens, outputTokens, limits);
         const promptBudget = Math.max(1, limits.maxExecutionTokens - responseReserve);
@@ -1097,7 +1234,10 @@ export class TsAgentLoop {
         mergeProviderUsage(providerUsage, completion.usage);
 
         const choice = completion.choices[0];
-        if (!choice) break;
+        if (!choice) throw new AgentRunStopped('empty_output', 'AGENT_EMPTY_OUTPUT: no response for skill step');
+        if (choice.finish_reason === 'length') {
+          throw new AgentRunStopped('model_truncated', 'AGENT_MODEL_TRUNCATED: skill output reached the model limit', extractMessageText(choice.message.content));
+        }
 
         const promptTokens = completion.usage?.prompt_tokens || 0;
         const completionTokens = completion.usage?.completion_tokens || 0;
@@ -1179,6 +1319,7 @@ export class TsAgentLoop {
               throw new Error(`Execution tool runtime budget exceeded (${limits.maxToolRuntimeMsPerExecution}ms)`);
             }
             executionToolCalls++;
+            updateAgentRun(executionId, 'acting', { toolCallCount: tracker.toolUseCount });
             updateTask(task.id, { status: 'waiting_for_tool' });
             const remainingToolBudgetMs = Math.min(
               limits.maxToolCallTimeoutMs,
@@ -1186,14 +1327,25 @@ export class TsAgentLoop {
               limits.maxToolRuntimeMsPerExecution - executionToolRuntimeMs,
             );
             const toolStartedAt = Date.now();
-            const result = isMcpTool(toolName)
+            const result = await runWriteOnce(task, executionId, toolName, toolInput, async () => isMcpTool(toolName)
               ? await executeMcpTool(
                   toolName,
                   toolInput,
                   remainingToolBudgetMs,
                   buildMcpPolicyContext(agent, task),
+                  event => {
+                    const message = `小红书 · ${event.message} · ${(event.elapsedMs / 1000).toFixed(1)}s`;
+                    addTaskLog(task.id, 'info', message, agent.id);
+                    addExecutionMessage({ executionId, type: 'progress', content: message, toolName });
+                    eventBus.emit('execution:progress', {
+                      executionId, taskId: task.id, agentDefId: agent.id,
+                      workspaceId: task.workspaceId, progress: getProgressSnapshot(tracker, message),
+                    });
+                  },
+                  abortController.signal,
                 )
               : await executeTool(toolName, toolInput, workdir, {
+                  signal: abortController.signal,
                   allowedTools: stepAllowedTools,
                   workspaceId: task.workspaceId,
                   timeoutMs: remainingToolBudgetMs,
@@ -1202,7 +1354,7 @@ export class TsAgentLoop {
                     addTaskLog(task.id, 'info', `⏳ ${toolName}: ${message}`, agent.id);
                     addExecutionMessage({ executionId, type: 'progress', content: message });
                   },
-                });
+                }));
             const toolElapsedMs = Date.now() - toolStartedAt;
             stepToolRuntimeMs += toolElapsedMs;
             executionToolRuntimeMs += toolElapsedMs;
@@ -1214,6 +1366,7 @@ export class TsAgentLoop {
               purpose: `tool ${toolName} result`,
             });
             middleware?.afterToolCall(toolName, toolInput, result.status, safeToolOutput, workdir, toolElapsedMs);
+            updateAgentRun(executionId, 'observing', { toolCallCount: tracker.toolUseCount });
             if (!['cancelled', 'failed', 'done'].includes(getTask(task.id)?.status || '')) {
               updateTask(task.id, { status: 'running' });
             }
@@ -1226,8 +1379,12 @@ export class TsAgentLoop {
           }
         } else {
           // No tool calls — step complete
+          completedNormally = true;
           break;
         }
+      }
+      if (!completedNormally) {
+        throw new AgentRunStopped('max_turns', `AGENT_MAX_TURNS: skill step exhausted ${maxTurns} turns`, finalOutput);
       }
 
       // If the model only emitted tool calls (no text), ask once more without

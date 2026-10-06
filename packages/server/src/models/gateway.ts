@@ -226,6 +226,8 @@ export class ModelGateway {
       onDelta?: (text: string) => void;
       onToolCall?: (toolCall: CopilotToolCall) => Promise<string>;
       signal?: AbortSignal;
+      timeoutMs?: number;
+      idleTimeoutMs?: number;
     },
   ): Promise<StreamAccumulation | any> {
     const providers = readProviders();
@@ -237,9 +239,12 @@ export class ModelGateway {
     }
 
     const client = this.clientForModel(modelId);
+    const signal = options?.timeoutMs
+      ? AbortSignal.any([AbortSignal.timeout(Math.max(1, Math.ceil(options.timeoutMs))), ...(options.signal ? [options.signal] : [])])
+      : options?.signal;
     return options?.onDelta
-      ? streamChatCompletion(client, params, options.onDelta, options.signal)
-      : client.chat.completions.create(params, { signal: options?.signal });
+      ? streamChatCompletion(client, params, options.onDelta, signal)
+      : client.chat.completions.create(params, { signal });
   }
 
   async shutdown(): Promise<void> {

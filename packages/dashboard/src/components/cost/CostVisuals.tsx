@@ -111,7 +111,7 @@ export function CostVisuals() {
     <div className="space-y-5" data-cost-visuals>
       {error && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
 
-      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <section className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         <VisualMetric icon={Database} label="Tokens" value={compact(totalTokens)} accent="indigo" />
         <VisualMetric icon={Activity} label="Requests" value={compact(requests)} accent="cyan" />
         <VisualMetric icon={CircleDollarSign} label="USD cost" value={totalCost ? money(totalCost) : 'N/A'} accent="emerald" />

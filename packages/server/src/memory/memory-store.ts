@@ -380,11 +380,13 @@ export class SqliteMemoryStore implements MemoryStore {
       const item = rowToItem(row);
       // Runtime evidence is quarantined until a user confirms it. This keeps
       // unreviewed test logs, model output and inferred facts out of prompts.
-      if (item.metadata.knowledgeStatus === 'candidate') continue;
+      if (['candidate', 'revoked'].includes(String(item.metadata.knowledgeStatus))) continue;
 
       if (query.types && !query.types.includes(item.type)) continue;
       if (!itemMatchesScope(item, query.scope)) continue;
       if (!query.includeExpired && item.expiresAt && parseDbTime(item.expiresAt) < now) continue;
+      if (item.validFrom && parseDbTime(item.validFrom) > now) continue;
+      if (item.validTo && parseDbTime(item.validTo) <= now) continue;
 
       const relevance = 1 - hit.distance;
       const ageMs = now - parseDbTime(item.createdAt);

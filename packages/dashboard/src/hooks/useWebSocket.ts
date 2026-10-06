@@ -2,12 +2,24 @@ import { useEffect } from 'react';
 import { wsClient } from '../lib/ws';
 import { useStore } from '../stores/store';
 import { api } from '../lib/api';
-import type { ExecutionEventPayload, InboxEventPayload, PipelineEventPayload, QualityLoopEventPayload, TaskEventPayload, TokenDeltaPayload, WSEvent } from '@myrmecia/shared';
+import type { ExecutionMessage, ExecutionEventPayload, InboxEventPayload, PipelineEventPayload, QualityLoopEventPayload, TaskEventPayload, TokenDeltaPayload, WSEvent } from '@myrmecia/shared';
 
 export function useWebSocket() {
   useEffect(() => {
     const store = useStore.getState();
 
+    const unsubscribeConnected = wsClient.onConnected(() => {
+      // REST replay covers messages/state lost while the socket was disconnected.
+      void (async () => {
+        await Promise.all([store.loadTasks(), store.loadExecutions(), store.loadAgents()]);
+        const current = useStore.getState();
+        const ids = new Set([...current.executions.map(execution => execution.id), ...Object.keys(current.executionMessages)]);
+        await Promise.all([...ids].map(id => current.loadExecutionMessages(id)));
+        for (const execution of current.executions) {
+          if (execution.status !== 'running') current.clearStreamingResponse(execution.id);
+        }
+      })().catch(error => console.warn('[WS] State replay failed', error));
+    });
     wsClient.connect();
     wsClient.subscribe('tasks');
     wsClient.subscribe('agents');
@@ -23,6 +35,7 @@ export function useWebSocket() {
       if (!taskId) return;
       try {
         store.upsertTask(await api.tasks.get(taskId));
+        return true;
       } catch (err) {
         console.warn('[WS] Failed to refresh task', taskId, err);
       }
@@ -85,9 +98,26 @@ export function useWebSocket() {
       if (event.payload.taskId) void refreshTask(event.payload.taskId);
       void store.loadAgents();
     };
-    const onExecutionFinished = (event: WSEvent<ExecutionEventPayload>) => {
+    const onExecutionMessage = (event: WSEvent<ExecutionEventPayload & { message?: ExecutionMessage }>) => {
+      const { executionId, message } = event.payload;
+      if (executionId && message?.type === 'agent_text') {
+        // Complete one model turn atomically before the next turn starts.
+        // Persisted message IDs deduplicate later HTTP message refreshes.
+        store.addExecutionMessages(executionId, [message]);
+        store.clearStreamingResponse(executionId);
+      }
       onExecutionEvent(event);
-      if (event.payload.executionId) store.clearStreamingResponse(event.payload.executionId);
+    };
+    const onExecutionFinished = async (event: WSEvent<ExecutionEventPayload>) => {
+      const { executionId, taskId } = event.payload;
+      const refreshed = await refreshTask(taskId);
+      await Promise.all([
+        store.loadExecutions(),
+        store.loadAgents(),
+        executionId ? store.loadExecutionMessages(executionId) : Promise.resolve(),
+      ]);
+      // Retain the visible stream if fetching the authoritative result fails.
+      if (executionId && refreshed) store.clearStreamingResponse(executionId);
     };
     const onTokenDelta = (event: WSEvent<TokenDeltaPayload>) => {
       const { executionId, delta } = event.payload;
@@ -136,7 +166,7 @@ export function useWebSocket() {
     wsClient.on('agent:status', onAgentStatus);
     wsClient.on('execution:started', onExecutionEvent as (event: WSEvent) => void);
     wsClient.on('execution:progress', onExecutionEvent as (event: WSEvent) => void);
-    wsClient.on('execution:message', onExecutionEvent as (event: WSEvent) => void);
+    wsClient.on('execution:message', onExecutionMessage as (event: WSEvent) => void);
     wsClient.on('execution:done', onExecutionFinished as (event: WSEvent) => void);
     wsClient.on('execution:failed', onExecutionFinished as (event: WSEvent) => void);
     wsClient.on('token:delta', onTokenDelta as (event: WSEvent) => void);
@@ -158,6 +188,7 @@ export function useWebSocket() {
     wsClient.on('skill:assigned', onSkillEvent);
 
     return () => {
+      unsubscribeConnected();
       wsClient.off('task:created', onTaskCreated as (event: WSEvent) => void);
       wsClient.off('task:updated', onTaskUpdated as (event: WSEvent) => void);
       wsClient.off('task:started', onTaskStarted as (event: WSEvent) => void);
@@ -168,7 +199,7 @@ export function useWebSocket() {
       wsClient.off('agent:status', onAgentStatus);
       wsClient.off('execution:started', onExecutionEvent as (event: WSEvent) => void);
     wsClient.off('execution:progress', onExecutionEvent as (event: WSEvent) => void);
-    wsClient.off('execution:message', onExecutionEvent as (event: WSEvent) => void);
+    wsClient.off('execution:message', onExecutionMessage as (event: WSEvent) => void);
     wsClient.off('execution:done', onExecutionFinished as (event: WSEvent) => void);
     wsClient.off('execution:failed', onExecutionFinished as (event: WSEvent) => void);
     wsClient.off('token:delta', onTokenDelta as (event: WSEvent) => void);
