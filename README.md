@@ -6,7 +6,7 @@
   <a href="https://github.com/Zchary1106/Myrmecia/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Zchary1106/Myrmecia/actions/workflows/ci.yml/badge.svg"/></a>
   <a href="https://github.com/Zchary1106/Myrmecia/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/Zchary1106/Myrmecia?logo=github&color=1f6feb"/></a>
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/github/license/Zchary1106/Myrmecia?color=2ea44f"/></a>
-  <img alt="Node" src="https://img.shields.io/badge/Node-%3E%3D20-339933?logo=node.js&logoColor=white"/>
+  <img alt="Node: 20.19+ or 22.12+" src="https://img.shields.io/badge/Node-20.19%2B%20%2F%2022.12%2B-339933?logo=node.js&logoColor=white"/>
   <img alt="pnpm" src="https://img.shields.io/badge/pnpm-%3E%3D9-F69220?logo=pnpm&logoColor=white"/>
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-ESM-3178C6?logo=typescript&logoColor=white"/>
   <img alt="React" src="https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black"/>
@@ -24,7 +24,7 @@ Myrmecia is not another agent SDK and it is not a single coding assistant. It is
 
 | If you have... | Myrmecia gives you... |
 | --- | --- |
-| Claude Code, Gemini CLI, Codex, OpenCode, or custom agents | A control plane to schedule, govern, observe, and coordinate them |
+| Built-in specialists or configured external HTTP/CLI agents | A registry, manual invocation, schedules, and execution history; external runtimes retain their own tool-policy boundaries |
 | Multi-step product/engineering work | Agent teams, pipelines, DAG orchestration, shared boards, and resumable runs |
 | Security or compliance requirements | Tool policy, DLP, audit trails, RBAC, workspace isolation, and cost guardrails |
 | Long-running agent workflows | Durable tasks, execution timelines, memory, checkpoints, and recovery hooks |
@@ -32,9 +32,10 @@ Myrmecia is not another agent SDK and it is not a single coding assistant. It is
 ## Why teams use it
 
 - **Run agent teams, not just prompts** — built-in PM, UI, Dev, QA, Ops, Review, content, security, accessibility, and domain-specialist agents.
-- **Govern every tool call** — workspace-confined engineering tools, per-agent allowlists, approval gates, DLP, audit logs, and policy snapshots.
+- **Govern built-in tool calls** — workspace-confined engineering tools, per-agent allowlists, approval gates, DLP, audit logs, and policy snapshots.
 - **Observe the whole run** — live WebSocket events, execution timelines, trace spans, cost dashboards, task logs, inbox decisions, and rollback checkpoints.
 - **Keep context alive** — four-layer memory, domain packs, RAG citations, context compaction, and post-run reflection.
+- **Work in a conversation** — see the recipient, stream Markdown replies, attach session reference files, continue the same conversation, and explicitly accept or request changes to a completed output.
 - **Stay self-hosted** — SQLite by default, Redis when configured, optional model gateway, and no mandatory hosted control plane.
 
 ## Quickstart
@@ -62,16 +63,22 @@ The demo does **not** require a model API key. It uses a seeded SQLite database 
 
 
 
-For live agent execution, install the optional Python runtime deps and run dev mode with your model endpoint:
+For live agent execution, configure a model provider and start the local web version:
 
 ```bash
-pip install -r packages/python-runtime/requirements.txt
-pnpm dev
+test -f .env || cp .env.example .env
+# Edit .env: configure your provider and set AGENT_EXECUTOR=ts for the built-in TS loop.
+pnpm start:local
+# Dashboard: http://localhost:5173 · API: http://localhost:3000
 ```
+
+The TypeScript loop does not require Python. Install the Python requirements only
+if you choose `AGENT_EXECUTOR=python`. The seeded demo is a UI walkthrough, not
+evidence that a model, external Agent, or MCP account is connected.
 
 <div align="center">
 
-🚀 [Framework](#myrmecia-framework) | 🐜 [Teams](#agent-teams) | 📘 [Domains](#domain-packs) | 🧠 [Memory](#unified-memory) | 🔌 [MCP](#tooling--mcp) | ⚖️ [Compare](#how-myrmecia-compares) | ⚡ [Installation](#installation) | 🎛️ [Usage](#usage) | 🛠️ [Commands](#commands) | 🤝 [Contributing](#contributing)
+🚀 [Framework](#myrmecia-framework) | 💬 [Conversations](#conversation-first-workspace) | 🐜 [Teams](#agent-teams) | 📘 [Domains](#domain-packs) | 🧠 [Memory](#unified-memory) | 🔌 [MCP](#tooling--mcp) | ⚡ [Installation](#installation) | 🎛️ [Usage](#usage) | ✅ [Verification](#verification-and-limitations) | 🤝 [Contributing](#contributing)
 
 </div>
 
@@ -96,6 +103,51 @@ A registry of role-specialized agents (`agents/registry.yaml` + skill markdown).
 - **Master** — decomposes complex requests into a dependency-ordered subtask plan (now few-shot–primed by recalled past decompositions).
 - **PM / UI / Dev / QA / Ops / Review** — the core delivery roles.
 - **Content & specialists** — WeChat/RedNote writers, i18n, security, accessibility, performance, and more.
+
+### Conversation-first workspace
+
+The dashboard separates the user-facing conversation from the technical
+execution timeline. The refreshed shell uses translucent glass surfaces with
+light/dark themes; agent identity, user requests, replies, and tool details remain
+distinct instead of presenting a raw execution payload as the answer.
+
+| In the conversation | What it means |
+| --- | --- |
+| Recipient and Agent name | Know which Agent owns the current step and who produced each reply |
+| Streaming Markdown | See text as it arrives; lists, tables, links, and code blocks render as Markdown |
+| Session history and main composer | Search or archive conversations and continue a settled session without opening a separate task form |
+| Collapsed tool activity | Inspect tool calls and results on demand without letting them dominate the reply |
+| Knowledge attachments | Add TXT, Markdown, PDF, or DOCX references: up to 5 MiB per file and 10 files per session |
+| Explicit output acceptance | A completed run stays pending acceptance until an operator accepts it or requests a revision |
+
+Attachments are scoped to the workspace and conversation. The runtime selects
+bounded excerpts with source locators; it does not promise to read every page or
+perform OCR on scanned PDFs. Document contents are reference material, not tool
+instructions or permission for external actions. Selected excerpts can be sent
+to the configured model provider.
+
+### Agent run state and quality gates
+
+Each run records a versioned state: its current phase, turn, tool-call count,
+stop reason, output-integrity checks, and human acceptance. Waiting for a model,
+waiting for a tool, waiting for user input, completion, cancellation, interruption,
+and failure are separate states.
+
+- Exact standalone greetings and capability questions use a bounded, tool-free
+  conversation path instead of starting code QA.
+- Implementation requests retain their applicable tool policies and quality
+  gates. Missing command authorization blocks validation; it is not a test pass.
+- Max-turn limits, truncated or empty responses, and provider timeouts do not
+  become successful final answers.
+- Follow-up messages after settlement create a new Task/Run in the same
+  conversation with bounded reference history; they do not reopen the old run
+  or reuse an earlier approval.
+- Stable-turn recovery and write-call journaling protect supported TS runs.
+  They are not a blanket promise of exactly-once remote side effects.
+
+**Execution complete is not the same as output correct, quality-gate passed, or
+human accepted.** See the [Agent Run contract](docs/contracts/agent-run-contract.md)
+for the state, clarification, cancellation, and recovery boundaries.
 
 ### Orchestration Modes
 
@@ -181,7 +233,9 @@ Retrieval is a hybrid score (relevance + recency + importance + success) with MM
 
 - **Engineering tools** — agents can actually change code through a sandbox confined to the task workspace: `file_read`, `file_list`, `grep`, `file_write`, `apply_patch` (surgical single-occurrence edits), and `shell_exec`. Paths are traversal-checked, shell commands are guardrailed, and high-risk tools (e.g. `shell_exec`) require approval by default — granted per-agent as an operator override.
 - **Built-in tools** flow through a registry → policy → sandbox → approval pipeline with per-agent allowlists and DLP.
-- **MCP tools** — configure external MCP stdio servers via `MCP_SERVERS`; their tools are aggregated as `mcp__<server>__<tool>` and exposed to agents inside the tool-calling loop (toggle with `MCP_TOOLS_IN_AGENTS`).
+- **MCP tools** — configure stdio or HTTP MCP servers via `MCP_SERVERS`; their tools are aggregated as `mcp__<server>__<tool>` and exposed to agents inside the tool-calling loop (toggle with `MCP_TOOLS_IN_AGENTS`). Per-agent tool policy still applies.
+- **Local service lifecycle** — stdio connections launch their configured process. For an HTTP MCP that also needs a local executable, configure its trusted server-side startup entry in `MCP_LOCAL_SERVICES`; an HTTP URL alone does not start that service. Connection failures use retry/backoff and remain visible.
+- **Platform login** — Home's **工具与服务** panel exposes connection status and Xiaohongshu QR login. Connected and logged in are separate checks; platform access can still be limited by timeouts, account state, or upstream restrictions.
 - **Auto-compact** — long agent runs summarize older conversation turns before each model call (keeping the system prompt, the task, and recent turns verbatim), so context stays bounded instead of growing until it trips the token budget.
 - **TDD loop** — the dev agent writes failing tests, implements until they pass, then refactors, validating each phase by running the workspace's test command.
 
@@ -197,12 +251,30 @@ Budget/cost guardrails, DLP redaction, policy snapshots, operator audit, multi-t
 
 The agent harness is built to be governed, observed, and swappable:
 
-- **Runtime adapters** — every runtime (TypeScript loop, Python runtime, or a future Claude Code / Codex / Gemini CLI bridge) implements one `RuntimeAdapter` contract, so orchestration, governance, ledger, and tracing stay identical regardless of who runs the turn loop. Force one with `AGENT_EXECUTOR=ts|python`.
+- **Runtime adapters** — the built-in TypeScript loop and Python runtime share a `RuntimeAdapter` contract. Select one with `AGENT_EXECUTOR=ts|python`. External HTTP/CLI Agents use a separate adapter layer and expose their outputs in normal Task/Execution conversations; their internal tools do not inherit the TS sandbox automatically.
 - **Execution ledger** — an ordered, durable record of the key decisions in a run (runtime selected, model selected, tools allowed/blocked, per-tool results, retries, outcome). Read it at `GET /api/v1/executions/:id/ledger` for replay, audit, and debugging.
-- **Sandbox profile** — the in-process tool sandbox resolves a `strict` / `standard` / `permissive` profile (strict by default in production): `shell_exec` and network tools are denied unless explicitly granted, so untrusted agents can't reach the host.
+- **Sandbox profile** — the in-process tool sandbox resolves a `strict` / `standard` / `permissive` profile (strict by default in production). Shell and network operations require the applicable policy authorization. This is tool-level enforcement, not an OS isolation boundary; use the configured container execution path where stronger isolation is needed.
 - **Harness eval** — a deterministic, model-free benchmark over a fixed scenario set that reports success rate, cost, duration, tool calls, turns, and human interventions. Run `pnpm --filter @myrmecia/server harness:eval` or `POST /api/v1/harness/eval`.
 
+### External Agents and schedules
+
+Register external HTTP Agents or local CLI profiles for Codex, Claude Code,
+Gemini CLI, and OpenCode. Invoke them manually or configure one-time, cron, or
+supported task-event schedules. A CLI must be installed and authenticated on the
+server host; an adapter definition is not proof that the profile can execute.
+Webhook schedule triggers are not currently supported.
+
+External runs persist their status and bounded output in the conversation.
+HTTP callback jobs have terminal-result validation and a persisted deadline;
+supported local cancellation forwards to the adapter. Cancellation is not
+remote undo, and a detached job cannot be declared stopped without adapter
+support. External CLI internal tool-call visibility and checkpoint recovery are
+not equivalent to the built-in TS loop.
+
 ## Screenshots
+
+These screenshots and the seeded demo capture earlier dashboard styling. They
+illustrate the workflows, not a live connection or the current glass-theme UI.
 
 | Command Center | Unified Memory |
 | --- | --- |
@@ -253,7 +325,7 @@ Most tools in this space give you **one slice** of the problem. Myrmecia package
 
 **Where Myrmecia is strong**
 
-- **All-in-one, self-hosted** — engine + platform in one monorepo; data never leaves your infrastructure.
+- **All-in-one, self-hosted** — engine + platform in one monorepo; task and execution records stay in your configured storage. Model providers, external Agents, and MCP services can receive prompts, selected knowledge, or tool arguments according to your configuration.
 - **Governance is built in** — tool registry with per-agent permissions, risk levels, approval gates, parameter constraints, cost guardrails, and audit.
 - **Observability-first** — trace spans, execution scoring, token/cost tracking, and a real-time dashboard for debugging multi-agent runs.
 - **Memory as a designed subsystem** — not a vector store bolted on; it feeds routing and task decomposition so the system gets better at dispatching similar work.
@@ -267,23 +339,34 @@ Most tools in this space give you **one slice** of the problem. Myrmecia package
 
 ## Installation
 
-**Prerequisites:** Node.js >= 20, pnpm >= 9, Python 3 (for the optional Python runtime).
+**Prerequisites:** Node.js `^20.19.0 || >=22.12.0`, pnpm >= 9.
+Python 3 is needed only for the optional Python runtime.
 
 ```bash
 git clone https://github.com/Zchary1106/Myrmecia.git
 cd Myrmecia
 
 pnpm install
-pip install -r packages/python-runtime/requirements.txt
+test -f .env || cp .env.example .env
+# Configure .env, including AGENT_EXECUTOR=ts for the built-in TypeScript loop.
 
-# Start dev server + dashboard
-pnpm dev
+# Start the local API + dashboard (builds shared types before launch)
+pnpm start:local
 # Dashboard: http://localhost:5173   ·   API: http://localhost:3000
 ```
 
+Use the same Node version for installation, launch, and tests. Native modules
+such as `better-sqlite3` are built for a specific Node ABI; switching Node
+versions without reinstalling or rebuilding dependencies can cause
+`NODE_MODULE_VERSION` errors.
+
+For the Python runtime, install its requirements and explicitly select
+`AGENT_EXECUTOR=python`. Redis is optional for local exploration; configure it
+when queue persistence and restart recovery are required.
+
 ### One-command launch (install + start)
 
-Only **Node.js ≥ 20** is required up front — the launcher auto-provisions pnpm (via corepack), installs dependencies, builds shared types, then starts the API + dashboard and opens the browser.
+Only a **supported Node.js version** is required up front — the launcher auto-provisions pnpm (via corepack), installs dependencies, builds shared types, then starts the API + dashboard and opens the browser.
 
 **macOS / Linux**
 
@@ -332,13 +415,15 @@ The server image includes the built-in `agents/` registry and `templates/`; the 
 | `MODEL_PROVIDER_MAP` | JSON map of modelId → provider name |
 | `MYRMECIA_MODEL_PROVIDER` | `copilot` uses the local Copilot SDK login; `deepseek` selects the direct DeepSeek API; unset preserves OpenAI-compatible routing |
 | `COPILOT_SDK_HOME` | Optional server-local Copilot home (prefer `MODEL_PROVIDERS.copilot.baseDirectory`; never expose it to the Dashboard) |
-| `AGENT_STREAMING` | `true` to stream token deltas over WebSocket (default off) |
-| `MCP_SERVERS` | JSON array of MCP stdio servers, e.g. `[{"name":"fs","command":"npx","args":["-y","@modelcontextprotocol/server-filesystem","/tmp"]}]` |
+| `AGENT_STREAMING` | TS-loop token-delta streaming is enabled unless set to `false`; other runtimes depend on their adapter capabilities |
+| `MCP_SERVERS` | JSON array of stdio or HTTP MCP server configurations; see `.env.example` |
+| `MCP_LOCAL_SERVICES` | Trusted server-side startup configuration for local HTTP MCP executables, keyed by MCP server name; see `.env.example` |
 | `MCP_TOOLS_IN_AGENTS` | `false` to hide MCP tools from the agent loop (default on) |
 | `WEB_TOOLS_ENABLED` | `false` to disable built-in web research tools (`web.search`, `web.fetch`, `web.extract`); also flips the sandbox profile's network lever |
 | `SANDBOX_PROFILE` | `strict` / `standard` / `permissive` for the in-process tool sandbox (default: `strict` in production, `standard` otherwise) |
 | `EXECUTOR_MODE` | `local` / `docker` for the agent subprocess executor (`docker` for container isolation) |
 | `AGENT_EXECUTOR` | Force a runtime adapter: `ts` (TS agent loop) or `python` (Python runtime) |
+| `MYRMECIA_EXTERNAL_CALLBACK_TIMEOUT_MS` | External callback-job deadline; default 15 minutes, capped at one day |
 | `ALLOW_LOCAL_SHELL` | `true` to grant a controlled `shell_exec` exception under the strict sandbox profile |
 | `EMBEDDING_BACKEND` | `openai` / `local` / `pseudo` for the memory vector store |
 | `MEMORY_DECAY_INTERVAL_MS` | Periodic memory decay interval (0 disables) |
@@ -369,11 +454,12 @@ Dashboard setting. With neither set, the adapter passes the local CLI default
 (`~/.copilot`) to the SDK; the server does not parse that directory or its
 credentials.
 
-Current SDK adapter limits: it supports text responses and optional token-delta
-streaming, and it bridges custom tool calls inside the Copilot SDK session rather
-than returning OpenAI tool-call continuations. The SDK also does not provide
-final OpenAI token-usage fields, so Copilot usage is recorded as zero tokens
-rather than fabricated.
+The adapter supports text responses and token-delta streaming, and bridges
+custom tool calls inside the Copilot SDK session rather than returning OpenAI
+tool-call continuations. When the SDK reports usage events, the server records
+input/output tokens, the actual model, and available Copilot usage metadata.
+Subscription-backed usage is not presented as a fabricated USD charge;
+unavailable costs remain **N/A**, not a claim that execution was free.
 
 The Electron startup screen selects Copilot only as a provider; it does not pin
 a model. After launch, open **Models & Routes** to discover the models available
@@ -411,7 +497,22 @@ is the default, while long-context and high-risk routes use
 
 ### Dashboard
 
-Open `http://localhost:5173`. Key pages: **Command Center**, **Interaction Console**, **Work Queue**, **Agents**, **Tools**, **Models**, **Skills**, **Artifacts** (live previews for generated files and execution results), **Pipelines**, **Orchestrate** (visual canvas), **Memory**, **Timeline**, **Observe**, **Audit**, **Costs**.
+Open `http://localhost:5173`. The primary path is **Home → Task session**, with
+**Teams**, **Workflows**, and **Artifacts** for structured work. **Memory**,
+**Queue**, **Timeline**, **Observe**, and **Audit** expose operational context;
+**Models**, **Tools**, **Costs**, and **Settings** configure the system.
+
+1. Configure an available model/provider and, if needed, check **工具与服务** on Home.
+2. Choose the recipient or Team in the main composer, then send the request.
+3. In Task session, follow the named Agent's reply, streamed Markdown, and
+   collapsible tool activity. Open the technical timeline for detailed evidence.
+4. Attach reference files or send a follow-up in the same composer. A settled
+   conversation continues with a new run, retaining its reference history.
+5. Inspect the actual output and validation scope before choosing **接受结果**
+   (accept) or **需要修改** (request changes). A `done` badge alone is not acceptance.
+
+For a custom DAG, open **Workflows → Open visual canvas**. The workflow canvas
+is an advanced editor, not a replacement for the normal conversation.
 
 ### Command-line (CLI)
 
@@ -446,7 +547,7 @@ myrmecia ❯ @feature:dev use react-dropzone, keep the bundle small   # message 
   ✉  to dev: ⋯ 2 queued
 myrmecia ❯ /teams              # list the squads (🛠️ @feature 🐛 @bugfix 🔍 @quality …)
 myrmecia ❯ /model              # show models, or `/model <id>` to switch the colony
-myrmecia ❯ /agents             # the 23 role-specialist agents in the colony
+myrmecia ❯ /agents             # list configured role-specialist agents
 ```
 
 **Agent teams.** Beyond single agents, address a whole **squad** with `@team <task>`: the team's lead splits the goal into subtasks and the members **run in parallel on a shared task board** (dependency-gated), so you watch real teammates collaborate. As one teammate finishes, its key finding is shared with the others still working. You can also **talk to a teammate directly** — `@team:role <message>` (add `!` to *redirect* a finished teammate into new work, e.g. `@feature:dev! also add tests`), and press **Esc** to detach the board (it keeps running) so you can steer. Built-in teams: `@feature` (PM → UI → Dev → QA → Ops), `@bugfix`, `@quality`, `@release`, `@content`. Run `/teams` to see the roster; teams are defined in [`agents/teams.yaml`](agents/teams.yaml).
@@ -466,7 +567,9 @@ Point it at any server with `--server <url>` (or `MYRMECIA_SERVER`), add `--toke
 
 ### Visual orchestration (drag-and-drop)
 
-On the **Orchestrate** page, drag agents from the palette onto the canvas, click a node's `+` handle and then a target to connect them, set a Goal, and hit **Run**. Or do it over the API:
+From **Workflows**, choose **Open visual canvas** to reach the Orchestrate editor.
+Drag agents from the palette onto the canvas, click a node's `+` handle and then
+a target to connect them, set a Goal, and hit **Run**. Or do it over the API:
 
 ```bash
 # Create a graph: PM → Dev, then Review
@@ -541,6 +644,8 @@ myrmecia/
 | Task | Command |
 |------|---------|
 | Install all deps | `pnpm install` |
+| Local web launch | `pnpm start:local` |
+| Seeded demo (no live model required) | `pnpm demo` |
 | Dev server + dashboard | `pnpm dev` |
 | Dev server / dashboard only | `pnpm dev:server` · `pnpm dev:dashboard` |
 | CLI (terminal client) | `pnpm cli <command>` (e.g. `pnpm cli health`) |
@@ -548,7 +653,34 @@ myrmecia/
 | Type-check | `pnpm lint` |
 | Server tests | `pnpm --filter @myrmecia/server test` |
 | Single test file | `pnpm --filter @myrmecia/server exec vitest run tests/<file>.test.ts` |
-| Dashboard tests / e2e | `pnpm --filter @myrmecia/dashboard test` · `test:e2e` |
+| Dashboard tests | `pnpm --filter @myrmecia/dashboard test` |
+| Dashboard E2E | `pnpm --filter @myrmecia/dashboard test:e2e` |
+
+## Verification and limitations
+
+Verification is scoped: implemented code, isolated tests, live model execution,
+browser rendering, CI, and signed desktop releases are different checks.
+
+Local verification recorded on **2026-10-07**, against source commit
+`c6c6dc0`:
+
+- Server suite: **770 passed, 1 skipped**; dashboard suite: **154 passed**.
+- Shared, server, and dashboard production builds passed.
+- Live Dev/Copilot conversation checks covered a greeting, two follow-ups,
+  real token-delta delivery, Markdown rendering, and persisted explicit acceptance.
+  These conversation runs made no tool calls or internal QA attempts.
+
+This is a dated local snapshot, not a latency guarantee or a CI badge for every
+runtime. It does not establish live execution for every external CLI/HTTP
+profile, platform login/search, Redis restart recovery, or signed/notarized
+Windows/macOS packaging. The seeded demo and deterministic tests must not be
+described as live external-service evidence.
+
+Known conversation polish gaps: ordinary greetings can still inherit a Domain's
+extra disclaimer, and refreshing returns to Home rather than restoring the
+selected session. Reopening a conversation retains its messages and acceptance.
+See the [Agent Run contract](docs/contracts/agent-run-contract.md) for the
+implementation's acceptance and recovery limits.
 
 ## Contributing
 
