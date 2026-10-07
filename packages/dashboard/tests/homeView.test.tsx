@@ -45,6 +45,19 @@ afterEach(async () => {
 });
 
 describe('Home workspace', () => {
+  it.each([
+    { hour: 9, greeting: 'Good morning' },
+    { hour: 15, greeting: 'Good afternoon' },
+    { hour: 21, greeting: 'Good evening' },
+  ])('shows $greeting without a hardcoded person or technical account name', async ({ hour, greeting }) => {
+    vi.spyOn(Date.prototype, 'getHours').mockReturnValue(hour);
+    await act(async () => root.render(<HomeView />));
+    const heading = container.querySelector('h1');
+    expect(heading?.textContent).toBe(`${greeting}. 👋`);
+    expect(heading?.textContent).not.toContain('Yadong');
+    expect(heading?.textContent).not.toContain('local-admin');
+  });
+
   it('does not restore a completed current-task card or render empty metrics', async () => {
     window.localStorage.setItem('myrmecia.home-current-task', JSON.stringify({ taskId: task.id, request: 'Full request' }));
     await act(async () => root.render(<HomeView />));

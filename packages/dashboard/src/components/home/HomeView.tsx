@@ -380,7 +380,7 @@ export function HomeView() {
       </div>
       <section className="home-welcome-stage w-full">
         <h1 className="text-balance text-2xl font-semibold tracking-[-0.035em] text-app-primary sm:text-3xl">
-          {greeting}, Yadong. <span aria-hidden="true">👋</span>
+          {greeting}. <span aria-hidden="true">👋</span>
         </h1>
         <h2 className="mt-2 text-sm font-normal leading-6 text-app-secondary">What should your team work on?</h2>
         <form ref={composerRef} onSubmit={event => void submit(event)} className="home-command-card relative mt-4 p-2 text-left transition sm:p-3">
