@@ -8,6 +8,7 @@ import { listTasks, getTask } from '../db/models/task.js';
 import { listExecutions } from '../db/models/execution.js';
 import { getTeam, resolveTeamAgents, type Team } from './team-registry.js';
 import type { Task } from '../types.js';
+import { hasPrivateKnowledgeContext } from '../db/models/agent-knowledge.js';
 
 export interface TeamRun {
   id: string;
@@ -21,7 +22,9 @@ export interface TeamRun {
   completedAt?: string;
 }
 
-type TaskPreferences = Pick<Task, 'modelId' | 'reasoningEffort' | 'contextLength'>;
+type TaskPreferences = Pick<Task, 'modelId' | 'reasoningEffort' | 'contextLength'> & {
+  filesystemWorkspaceId?: string; workspaceAccessMode?: import('@myrmecia/shared').WorkspaceAccessMode; workspaceActorId?: string;
+};
 
 function rowToRun(row: any): TeamRun {
   return {
@@ -117,11 +120,11 @@ export class TeamCoordinator {
     workdir?: string,
     taskPreferences?: TaskPreferences,
   ): Promise<{ run: TeamRun; team: Team; board: BoardItem[] }> {
-    const team = getTeam(teamId);
+    const team = getTeam(teamId, workspaceId);
     if (!team) throw new Error(`Unknown team: ${teamId}`);
     if (!goal || !goal.trim()) throw new Error('goal is required');
 
-    const roster = resolveTeamAgents(team);
+    const roster = resolveTeamAgents(team, workspaceId);
     if (roster.length === 0) throw new Error(`Team "${team.name}" has no resolvable members`);
 
     const id = `trun_${uuid().slice(0, 8)}`;
@@ -140,6 +143,7 @@ export class TeamCoordinator {
       input: goal,
       priority: 'normal',
       workspaceId,
+      knowledgeTeamId: team.id,
       workdir,
       workspacePath: workdir,
       ...taskPreferences,
@@ -194,6 +198,7 @@ export class TeamCoordinator {
     if (!taskId || this.shared.has(taskId)) return;
     const task = getTask(taskId);
     if (!task?.parentTaskId) return;
+    if (hasPrivateKnowledgeContext(task)) return; // No automatic broadcast of private/session-derived answers.
     // Only for tasks that belong to an active team run.
     const row = getDb().get('SELECT * FROM team_runs WHERE parent_task_id = ? AND status = ?', task.parentTaskId, 'running') as any;
     if (!row) return;

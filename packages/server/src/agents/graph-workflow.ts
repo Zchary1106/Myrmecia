@@ -25,6 +25,7 @@ import type {
 } from '../types.js';
 import { validateWorkflowGraphContract } from '../contracts/team-composer-contracts.js';
 import { validateOutputAgainstSchema } from '../pipelines/stage-output-validator.js';
+import { listExecutions } from '../db/models/execution.js';
 import {
   assembleArtifactDrivenInput,
   collectNodeInputArtifacts,
@@ -512,6 +513,8 @@ export class GraphWorkflowEngine {
       assigneeId: agent.id,
       input,
       workspaceId: wf.workspaceId,
+      knowledgeTeamId: getDb().get<{ team_id: string }>('SELECT team_id FROM workflow_team_knowledge_scope WHERE workflow_id = ? AND workspace_id = ?',
+        wf.id, wf.workspaceId || 'default')?.team_id,
     });
 
     rs.nodes[node.id] = {
@@ -541,6 +544,11 @@ export class GraphWorkflowEngine {
     const node = wf.graph.nodes.find(candidate => candidate.id === ref.nodeId);
     if (!node || wf.runState.nodes[ref.nodeId]?.status !== 'running') return;
     const output = payload.output || '';
+    const execution = listExecutions({ taskId: payload.taskId, workspaceId: wf.workspaceId, limit: 1 })[0];
+    if (execution?.runState?.verification && !['passed', 'not_requested'].includes(execution.runState.verification.status)) {
+      this.handleNodeFailure(wf, node, 'Mandatory task completion criteria did not pass', [], output);
+      return;
+    }
     const validation = validateOutputAgainstSchema(output, node.qualityGate?.outputSchema);
     if (!validation.valid) {
       this.handleNodeFailure(wf, node, 'Output failed quality gate', validation.errors, output);

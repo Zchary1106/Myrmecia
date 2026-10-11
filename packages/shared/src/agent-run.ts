@@ -1,3 +1,6 @@
+import type { TurnMetrics } from './runtime-protocol.js';
+import type { CompletionVerification } from './completion-protocol.js';
+
 /** Execution progress is not evidence that the user's goal has been accepted. */
 export type AgentRunPhase =
   | 'starting' | 'deciding' | 'acting' | 'observing' | 'validating'
@@ -25,11 +28,22 @@ export interface AgentRunState {
   deadlineAt?: string;
   stopReason?: AgentStopReason;
   validation?: AgentOutputValidation;
+  verification?: CompletionVerification;
   acceptance: 'pending' | 'accepted' | 'rejected';
   acceptanceNote?: string;
   acceptedAt?: string;
   resumedFromExecutionId?: string;
+  /** This interrupted attempt yielded to a user hold, not a runtime failure. */
+  userPaused?: boolean;
   updatedAt: string;
+  /** Separate host requests from observable provider-internal model turns. */
+  metrics?: TurnMetrics;
+  providerContinuity?: 'fresh' | 'resumed';
+  executionWorld?: {
+    mode: 'host_policy' | 'docker_isolated';
+    filesystemIsolation: boolean; processIsolation: boolean; networkIsolation: boolean; credentialIsolation: boolean;
+    externalMcpIsolated: false;
+  };
   /** Actual request timing, not fabricated reasoning/progress. */
   modelRequest?: {
     modelId: string;
@@ -49,6 +63,7 @@ export function canAcceptAgentOutput(
   sessionStatus = task.status,
 ): boolean {
   return task.status === 'done' && sessionStatus === 'done' && !isQualityStep(task)
+    && (!execution.runState?.verification || ['passed', 'not_requested'].includes(execution.runState.verification.status))
     && execution.status === 'done' && execution.runState?.phase === 'completed'
     && execution.runState.stopReason === 'completed' && execution.runState.validation?.status === 'passed';
 }

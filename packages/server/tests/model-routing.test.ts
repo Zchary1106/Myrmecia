@@ -139,6 +139,36 @@ describe('model registry and routing', () => {
     expect(selection.reason).toContain('selected in Dashboard');
   });
 
+  it('keeps the composer model ahead of Copilot defaults and the agent model', () => {
+    process.env.MYRMECIA_MODEL_PROVIDER = 'copilot';
+    process.env.AGENT_FACTORY_MODEL = 'claude-haiku-4.5';
+    syncProviderModels('copilot', [{
+      id: 'gpt-5.6-terra',
+      name: 'GPT-5.6 Terra',
+      supportsReasoningEffort: true,
+    }]);
+    upsertModelRoute({
+      routeKey: 'provider:copilot',
+      defaultModelId: 'claude-haiku-4.5',
+      fallbackGroup: 'copilot',
+    });
+    const agent = createAgent({
+      id: 'composer-copilot-agent',
+      name: 'Dev Agent',
+      role: 'developer',
+      model: 'gpt-5.3-codex',
+    });
+
+    const selection = selectModelForAgent(agent, {
+      title: 'Test selected model', description: '', input: 'hello',
+      mode: 'direct', modelId: 'gpt-5.6-terra',
+    });
+
+    expect(selection.modelId).toBe('gpt-5.6-terra');
+    expect(selection.requestedModelId).toBe('gpt-5.6-terra');
+    expect(selection.source).toBe('task.requestedModel');
+  });
+
   it('allows a Copilot compatibility model selected in Dashboard', () => {
     process.env.MYRMECIA_MODEL_PROVIDER = 'copilot';
     upsertModelRoute({

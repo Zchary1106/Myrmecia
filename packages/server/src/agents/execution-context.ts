@@ -5,6 +5,9 @@ import {
   upsertExecutionContext,
 } from '../db/models/execution-context.js';
 import { getModel } from '../models/model-registry.js';
+import { getAgent } from '../db/models/agent.js';
+import { pinAgentSetup } from './agent-setup-snapshot.js';
+import { getWorkspaceBinding } from '../db/models/managed-workspace.js';
 
 export type ExecutionContextOverrides = Partial<Omit<ExecutionContextInput, 'taskId'>>;
 
@@ -57,6 +60,9 @@ export function inheritExecutionContext(
 }
 
 export function persistExecutionContext(task: Task, overrides: ExecutionContextOverrides = {}): ExecutionContext {
+  const binding = getWorkspaceBinding(task.id);
+  const assigned = task.assigneeId ? getAgent(task.assigneeId) : undefined;
+  if (assigned) pinAgentSetup(task.id, assigned, true);
   // Runtime updates happen after a task has inherited its parent contract.
   // Merge, rather than rebuild from Task, so adding a workspace path or the
   // resolved runtime model never drops inherited constraints/baseline/provider.
@@ -75,7 +81,8 @@ export function persistExecutionContext(task: Task, overrides: ExecutionContextO
     goal: existing?.goal,
     constraints: existing?.constraints,
     parentTaskId: task.parentTaskId ?? existing?.parentTaskId,
-    codeBaseline: existing?.codeBaseline,
+    codeBaseline: existing?.codeBaseline || (binding ? { revision: binding.baseline.head, branch: binding.baseline.branch,
+      dirty: false, changedFiles: [], capturedAt: new Date().toISOString() } : undefined),
     contextUsage: existing?.contextUsage,
   };
   const merged = { ...preserved, ...overrides };
@@ -88,6 +95,8 @@ export function persistInheritedExecutionContext(
   child: Task,
   overrides: ExecutionContextOverrides = {},
 ): ExecutionContext {
+  const assigned = child.assigneeId ? getAgent(child.assigneeId) : undefined;
+  if (assigned) pinAgentSetup(child.id, assigned, true);
   return upsertExecutionContext(inheritExecutionContext(parent, child, overrides));
 }
 

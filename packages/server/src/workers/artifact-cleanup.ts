@@ -11,7 +11,7 @@ export const artifactCleanupWorker: BackgroundWorker = {
     const deleted = deleteExpiredArtifacts();
     return {
       success: true,
-      message: `Cleaned up ${deleted} expired artifacts`,
+      message: `Cleaned up ${deleted} expired temporary shared artifacts; immutable execution snapshots retained`,
     };
   },
 };

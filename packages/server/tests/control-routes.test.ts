@@ -670,12 +670,12 @@ describe('control routes', () => {
         headers: { 'x-operator-id': 'ops1', 'x-operator-role': 'operator' },
       });
       expect(pipelineResult.status).toBe(201);
-      expect(engine.create).toHaveBeenCalledWith({
+      expect(engine.create).toHaveBeenCalledWith(expect.objectContaining({
         name: 'Launch pipeline',
         templateId: 'tmpl1',
         input: 'run',
         gateMode: 'manual',
-      });
+      }));
     });
   });
 

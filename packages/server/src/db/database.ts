@@ -1,15 +1,12 @@
 /**
- * Database Abstraction Layer — Async-First Design
+ * Database boundary: synchronous SQLite is the supported application path.
  *
- * Two backends:
- * - SQLite (better-sqlite3) for development — sync internally, wrapped as async
- * - PostgreSQL (pg) for production — truly async via Pool
+ * getDb() and current models use better-sqlite3 synchronously. getAsyncDb()
+ * exposes a separately gated experimental PostgreSQL driver, not end-to-end
+ * application compatibility. Setting DATABASE_URL makes getDb() reject startup;
+ * complete the reviewed async model/transaction migration before selecting PG.
  *
- * All public methods are async (return Promises).
- * SQLite wraps sync calls in Promise.resolve() — zero overhead.
- *
- * Set DATABASE_URL=postgres://... to use PostgreSQL.
- * Without DATABASE_URL, falls back to SQLite (DB_PATH or default file).
+ * Without DATABASE_URL, use SQLite (DB_PATH or default file).
  * Tests may set AGENT_FACTORY_TEST_DB_PATH to avoid touching the local dev DB.
  */
 
@@ -47,7 +44,7 @@ export interface DbDriver {
 }
 
 /**
- * Async database driver interface — used by all model code going forward.
+ * Experimental async driver interface; current synchronous models do not use it.
  * SQLite implements this by wrapping sync calls; PG implements natively.
  */
 export interface AsyncDbDriver {
@@ -274,7 +271,9 @@ export function getDb(): DbDriver {
     const dbPath =
       process.env.DB_PATH
       || process.env.AGENT_FACTORY_TEST_DB_PATH
-      || join(__dirname, '../../data/agent-factory.db');
+      // Late asynchronous evidence capture can outlive test teardown/env restoration.
+      // It must never reopen the user's default runtime DB.
+      || (process.env.VITEST ? ':memory:' : join(__dirname, '../../data/agent-factory.db'));
     activeDbPath = dbPath;
     logger.info({ path: basename(dbPath) }, 'Using SQLite database');
     syncDriver = new SqliteDriver(dbPath);
@@ -748,6 +747,8 @@ function convertToPostgres(sql: string): string {
     .replace(/INSERT OR IGNORE/g, 'INSERT INTO');
 }
 
+/** Observe connection lifetime without reopening a DB from late background work. */
+export function peekDb(): DbDriver | undefined { return syncDriver; }
 export function closeDb() {
   if (syncDriver) {
     syncDriver.close();

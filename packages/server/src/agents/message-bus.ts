@@ -4,6 +4,9 @@ import { eventBus } from '../events/event-bus.js';
 import { getExecution } from '../db/models/execution.js';
 import { createInboxEntry } from '../db/models/inbox.js';
 import { createNotification } from '../db/models/notification.js';
+import { enqueueInbox } from '../db/models/agent-inbox.js';
+import { agentSessionForTask } from '../db/models/agent-session-event.js';
+import { getTask } from '../db/models/task.js';
 
 /**
  * Agent Message Bus — inter-agent mailbox communication
@@ -13,7 +16,7 @@ import { createNotification } from '../db/models/notification.js';
 export class AgentMessageBus {
 
   /** Send a message from one execution to another */
-  send(fromExecution: string | null, toExecution: string, messageType: AgentMessageType, content: string): AgentMessage {
+  send(fromExecution: string | null, toExecution: string, messageType: AgentMessageType, content: string, options: { emit?: boolean } = {}): AgentMessage {
     const db = getDb();
     const result = db.run(`
       INSERT INTO agent_messages (from_execution, to_execution, message_type, content)
@@ -30,7 +33,7 @@ export class AgentMessageBus {
       createdAt: new Date().toISOString(),
     };
 
-    eventBus.emit('agent:message', { message: msg });
+    if (options.emit !== false) eventBus.emit('agent:message', { message: msg });
     if (messageType === 'approval_request') {
       const sourceExecution = fromExecution ? getExecution(fromExecution) : undefined;
       const targetExecution = getExecution(toExecution);
@@ -69,16 +72,31 @@ export class AgentMessageBus {
   }
 
   /** Drain (consume) all pending messages for an execution */
-  drain(executionId: string): AgentMessage[] {
+  drain(executionId: string, options: { excludeDurableInbox?: boolean } = {}): AgentMessage[] {
     const db = getDb();
+    if (options.excludeDurableInbox) {
+      const execution = getExecution(executionId);
+      const task = execution && getTask(execution.taskId);
+      if (task) {
+        for (const row of db.all<any>(
+          `SELECT * FROM agent_messages WHERE to_execution = ? AND consumed = 0 AND from_execution IS NULL
+            AND message_type = 'text'
+            AND NOT EXISTS (SELECT 1 FROM agent_inbox_entries i WHERE i.source_message_id = agent_messages.id)`,
+          executionId,
+        )) enqueueInbox({ workspaceId: task.workspaceId || 'default', sessionId: agentSessionForTask(task),
+          targetExecutionId: executionId, mode: 'steer', content: row.content, idempotencyKey: `legacy-mailbox:${row.id}`, sourceMessageId: row.id });
+      }
+    }
+    const excluded = options.excludeDurableInbox
+      ? ' AND NOT EXISTS (SELECT 1 FROM agent_inbox_entries i WHERE i.source_message_id = agent_messages.id)' : '';
     const rows = db.all(
-      'SELECT * FROM agent_messages WHERE to_execution = ? AND consumed = 0 ORDER BY id ASC',
+      `SELECT * FROM agent_messages WHERE to_execution = ? AND consumed = 0${excluded} ORDER BY id ASC`,
       executionId
     ) as any[];
 
     if (rows.length > 0) {
       db.run(
-        'UPDATE agent_messages SET consumed = 1 WHERE to_execution = ? AND consumed = 0',
+        `UPDATE agent_messages SET consumed = 1 WHERE to_execution = ? AND consumed = 0${excluded}`,
         executionId
       );
     }

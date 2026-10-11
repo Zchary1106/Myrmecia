@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import type { AgentSummary, ModelDefinition } from '@myrmecia/shared';
 import { useStore } from '../stores/store';
@@ -6,6 +6,10 @@ import { cn } from '../lib/utils';
 import { api, type TeamDTO } from '../lib/api';
 import { AgentPet } from '../components/agents/AgentPet';
 import { AgentWorkbench } from '../components/agents/AgentWorkbench';
+import { AgentVersionHistory } from '../components/agents/AgentVersionHistory';
+import { AgentEvaluationEditor } from '../components/agents/AgentEvaluationEditor';
+import { AgentKnowledgeEditor } from '../components/agents/AgentKnowledgeEditor';
+import { AgentBudgetEditor } from '../components/agents/AgentBudgetEditor';
 import { AgentSetupWizard } from '../components/agents/AgentSetupWizard';
 import { ExternalAgentsPanel } from '../components/agents/ExternalAgentsPanel';
 import { AuditDrawer } from '../components/audit/AuditDrawer';
@@ -22,7 +26,7 @@ const statusColors: Record<string, string> = {
 };
 
 const statusLabels: Record<string, string> = {
-  idle: 'Ready',
+  idle: 'Idle · 未核验',
   working: 'Working',
 };
 
@@ -162,6 +166,8 @@ export function AgentsPage() {
   const [legacyAliases, setLegacyAliases] = useState<LegacyAliasEntry[]>([]);
   const [teams, setTeams] = useState<TeamDTO[]>([]);
   const [showLegacy, setShowLegacy] = useState(false);
+  const builderRequest = useRef<{ key: string; payload: Partial<AgentSummary> & { name: string; role: string } } | undefined>(undefined);
+  const builderBusy = useRef(false);
 
   const enriched = useMemo(() => agents as EnrichedAgent[], [agents]);
   const stableAgents = useMemo(() => enriched.filter(agent => !agent.legacy?.deprecated), [enriched]);
@@ -260,6 +266,7 @@ export function AgentsPage() {
   };
 
   const startEditing = (agent: AgentSummary) => {
+    builderRequest.current = undefined;
     setEditingAgentId(agent.id);
     setForm(formFromAgent(agent));
     setError('');
@@ -267,6 +274,7 @@ export function AgentsPage() {
   };
 
   const resetBuilder = () => {
+    builderRequest.current = undefined;
     setEditingAgentId(null);
     setForm(emptyForm);
     setError('');
@@ -274,6 +282,8 @@ export function AgentsPage() {
 
   const submitAgent = async (event: FormEvent) => {
     event.preventDefault();
+    if (builderBusy.current) return;
+    builderBusy.current = true;
     setError('');
     setIsSubmitting(true);
     try {
@@ -299,13 +309,16 @@ export function AgentsPage() {
       if (editingAgentId) {
         await api.agents.update(editingAgentId, payload);
       } else {
-        await api.agents.create(payload);
+        if (!builderRequest.current) builderRequest.current = { key: crypto.randomUUID(), payload };
+        await api.agents.create(builderRequest.current.payload, builderRequest.current.key);
       }
       resetBuilder();
       await loadAgents();
     } catch (err: any) {
-      setError(err.message || (editingAgentId ? 'Update agent failed' : 'Create agent failed'));
+      setError(editingAgentId ? err.message || 'Update agent failed'
+        : `创建结果未确认；再次保存会复用原配置和请求。${err.message || '请稍后重试。'}`);
     } finally {
+      builderBusy.current = false;
       setIsSubmitting(false);
     }
   };
@@ -412,7 +425,13 @@ export function AgentsPage() {
           )}
 
           {catalogView !== 'legacy' && workbenchAgent && (
-            <AgentWorkbench agent={workbenchAgent} onEdit={startEditing} teams={teamNamesByAgent.get(workbenchAgent.id)} />
+            <>
+              <AgentWorkbench agent={workbenchAgent} onEdit={startEditing} teams={teamNamesByAgent.get(workbenchAgent.id)} />
+              <AgentVersionHistory key={workbenchAgent.id} agentId={workbenchAgent.id} />
+              <AgentEvaluationEditor key={`evaluation:${workbenchAgent.id}`} agentId={workbenchAgent.id} />
+              <AgentKnowledgeEditor key={`knowledge:${workbenchAgent.id}`} agentId={workbenchAgent.id} />
+              <AgentBudgetEditor key={`budget:${workbenchAgent.id}`} agentId={workbenchAgent.id} />
+            </>
           )}
 
           {catalogView === 'legacy' && legacyAliases.length > 0 && (
@@ -606,7 +625,6 @@ export function AgentsPage() {
         toolPresets={TOOL_PRESETS}
         modelOptions={modelOptions}
         onCreated={async (agentId) => {
-          setWorkbenchAgentId(agentId);
           setIsBuilderOpen(false);
           await loadAgents();
         }}

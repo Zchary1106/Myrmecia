@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import { createHash, randomUUID } from 'node:crypto';
 import type { AgentDefinition, ModelCostType, Task, AgentProgress, ToolActivity, ProgressTracker } from '../types.js';
 import { eventBus } from '../events/event-bus.js';
 import { updateTask, addTaskLog, getTask } from '../db/models/task.js';
@@ -7,8 +8,9 @@ import { updateExecution, addExecutionMessage, getExecution } from '../db/models
 import { completeTraceSpan, createTraceSpan } from '../db/models/trace.js';
 import { resolveAllowedToolsForAgent, validateToolParams } from '../tools/tool-policy.js';
 import { createToolExecution, completeToolExecution, summarizeToolPayload } from '../tools/tool-execution.js';
-import { estimateModelCost, recordModelUsage, selectModelForAgent } from '../models/model-registry.js';
+import { estimateModelCost, getModel, recordModelUsage, selectModelForAgent } from '../models/model-registry.js';
 import { getModelGateway } from '../models/gateway.js';
+import { currentWorkspaceAccessMode } from '../workspace/workspace-lease.js';
 import { messageBus } from './message-bus.js';
 import type { SkillDefinition, SkillVersion, SkillExecutorConfig } from '../types.js';
 import { parseSkillContent } from '../skills/skill-parser.js';
@@ -16,10 +18,12 @@ import { SkillExecutor } from '../skills/skill-executor.js';
 import { llmCache } from '../cache/llm-cache.js';
 import { metrics } from '../observability/telemetry.js';
 import { assertExecutionTokenBudget, remainingResponseTokens, resolveAgentRuntimeLimits } from './runtime-limits.js';
-import { compactMessages } from './context-compactor.js';
+import { buildRequestContext, compactMessages, estimateContextTokens, type ContextBudgetFact, type CompactResult } from './context-compactor.js';
 import { loadExecutionContext, persistExecutionContext } from './execution-context.js';
-import { archiveContextSummary, archiveLongToolOutput } from './tool-output-artifact.js';
-import { sanitizeAgentOutput } from '../security/dlp-runtime.js';
+import { getAgentSetupSnapshot } from './agent-setup-snapshot.js';
+import { archiveLongToolOutput } from './tool-output-artifact.js';
+import { collectContextFacts, nextContextSummaryVersion, recordContextSummary } from './context-state.js';
+import { DlpStreamGuard, sanitizeAgentOutput } from '../security/dlp-runtime.js';
 import { buildSandboxToolDefinition, executeTool, isSandboxTool } from '../skills/tool-sandbox.js';
 import {
   GOVERNED_PUBLISH_MCP_TOOLS,
@@ -29,7 +33,8 @@ import {
 import { getMcpToolDefinitions, executeMcpTool } from '../tools/mcp-tools.js';
 import { appendExecutionAuditEvent, recordExecutionPolicySnapshot } from '../audit/execution-audit.js';
 import { recordLedgerEntry } from '../db/models/execution-ledger.js';
-import { resolveDomainForTask, applyDomainOverlay, applyDomainKnowledge } from './domain-context.js';
+import { resolveDomainForTask, applyDomainOverlay } from './domain-context.js';
+import { assertRuntimeKnowledgeCurrent } from '../knowledge/runtime-knowledge.js';
 import { buildAgentSystemPrompt, usesResearchAnswerContract } from './agent-prompt.js';
 import { getSandboxProfile } from './sandbox-profile.js';
 import type { ExecutionMiddlewareChain } from './execution-middleware.js';
@@ -40,6 +45,21 @@ import { loopFingerprint, readLoopCheckpoint, saveLoopCheckpoint, sealLoopCheckp
 import { runWriteOnce } from '../tools/write-once.js';
 import { requestedAgentInput } from './completion-control.js';
 import { isSimpleConversation } from './conversation-intent.js';
+import { ProviderDriver, normalizeGatewayRequest, type ProviderDriverOptions } from '../models/provider-driver.js';
+import { runAgentCore, runAgentRequest } from './core/loop.js';
+import { runtimeV2Enabled } from './runtime-version.js';
+import type { RuntimeLimits } from './runtime-limits.js';
+import { SessionHarness } from './session-harness.js';
+import { toGatewayRequest } from '../models/provider-driver.js';
+import { scheduleToolBatch } from './core/tool-scheduler.js';
+import { classifyRuntimeTool, configuredReadConcurrency } from './tool-dispatch-policy.js';
+import { assertRunWrite, currentRunLease } from './run-coordinator.js';
+import { boundedModelOutput, ensureBudgetPolicy, reserveBudget, settleUsage, markBudgetDispatched, releaseUndispatchedBudget } from './budget-service.js';
+import { continuationEnabled, createSliceDeadlineGuard, resolveSliceDeadline, RuntimeSliceYield, scheduleContinuation } from './runtime-continuation.js';
+import { pauseAtCheckpoint } from './pause-control.js';
+import { agentSessionForTask, appendSessionEvent, sessionEventCursor } from '../db/models/agent-session-event.js';
+import { prepareProviderSession } from '../models/provider-session.js';
+import { guardrails } from './safety-guardrails.js';
 
 const MAX_RECENT_ACTIVITIES = 5;
 
@@ -228,7 +248,205 @@ function providerCostUSD(model: string, inputTokens: number, outputTokens: numbe
   return estimateCost(model, inputTokens, outputTokens);
 }
 
+/** A transport may resolve after cancellation; its result must not become a deliverable. */
+function assertModelResultCurrent(task: Task, executionId: string, signal: AbortSignal, partialOutput = ''): void {
+  assertRunWrite(task.id);
+  assertRuntimeKnowledgeCurrent(executionId);
+  const execution = getExecution(executionId);
+  const liveTask = getTask(task.id);
+  if (signal.aborted || execution?.runState?.phase === 'cancelled'
+    || execution?.status === 'cancelled' || liveTask?.status === 'cancelled') {
+    throw new AgentRunStopped('cancelled', 'Request aborted: late model result discarded', partialOutput);
+  }
+  if (['failed', 'done'].includes(execution?.status || '') || ['failed', 'done'].includes(liveTask?.status || '')) {
+    throw new AgentRunStopped('interrupted', 'Execution settled: late model result discarded', partialOutput);
+  }
+}
+
 export class TsAgentLoop {
+  private readonly sessions = new WeakMap<object, SessionHarness>();
+
+  private appendToolMessage(messages: any[], message: any): void {
+    if (runtimeV2Enabled()) this.sessions.get(messages)?.appendTool(message);
+    messages.push(message);
+  }
+  private prepareContext(
+    task: Task, executionId: string, modelId: string, messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+    limits: RuntimeLimits, inputTokens: number, outputTokens: number, reserve: number, tools: unknown[],
+  ): CompactResult & { contextFacts?: ContextBudgetFact[] } {
+    if (!runtimeV2Enabled()) return compactMessages(messages, Math.max(1, limits.maxExecutionTokens - reserve), { keepRecent: 6, triggerRatio: 0.5 });
+    // Small historical tool results also need durable evidence before leaving the prompt.
+    const historicCut = Math.max(2, messages.length - 6);
+    const archivedMessages = messages.map((message, index) => {
+      if (index >= historicCut || message.role !== 'tool' || typeof message.content !== 'string'
+        || !message.content.trim() || message.content.startsWith('[Large tool output archived')) return message;
+      const stableId = createHash('sha256').update(`${executionId}:${message.tool_call_id}`).digest('hex');
+      return { ...message, content: archiveLongToolOutput({
+        task, executionId, toolExecutionId: `context_${stableId}`, toolName: 'historical tool result',
+        output: message.content, forceArchive: true,
+      }) };
+    });
+    return buildRequestContext(archivedMessages, {
+      maxContextTokens: Math.min(limits.maxContextTokens, getModel(modelId)?.maxTokens || limits.maxContextTokens),
+      remainingExecutionTokens: Math.max(0, limits.maxExecutionTokens - inputTokens - outputTokens),
+      reservedOutputTokens: reserve,
+      toolSchemaTokens: tools.length ? estimateContextTokens(JSON.stringify(tools)) : 0,
+      protectedFacts: collectContextFacts(task, archivedMessages).facts,
+      keepRecent: 6, triggerRatio: 0.5,
+    });
+  }
+
+  private async requestModel(
+    task: Task, executionId: string, modelId: string, turn: number,
+    params: any, options: Omit<ProviderDriverOptions, 'identity'> & {
+      signal: AbortSignal;
+      contextBudget?: { limits: RuntimeLimits; inputTokens: number; outputTokens: number; reserve: number };
+    },
+  ): Promise<any> {
+    assertRuntimeKnowledgeCurrent(executionId);
+    if (currentWorkspaceAccessMode() === 'shared_readonly' && getModelGateway().runtimeCapabilitiesFor?.(modelId).executionMode !== 'host_loop') {
+      throw new Error('WORKSPACE_READONLY_RUNTIME_UNSUPPORTED: provider-owned loop cannot enforce local readonly tools');
+    }
+    if (!runtimeV2Enabled()) {
+      const compatibilityParams = {
+        ...params, messages: params.messages.map(({ myrmeciaContextFacts: _internal, ...message }: any) => message),
+      };
+      const gateway = getModelGateway();
+      const mode = gateway.runtimeCapabilitiesFor?.(modelId).executionMode;
+      if (getAgentSetupSnapshot(task.id)?.completeConfig?.config.governanceBudget && mode === 'provider_loop') {
+        throw new Error('BUDGET_RUNTIME_UNSUPPORTED: provider-owned loop cannot enforce host turn/token limits');
+      }
+      const key = `${executionId}:model:${randomUUID()}`;
+      const input = estimateContextTokens(JSON.stringify(compatibilityParams.messages)) + estimateContextTokens(JSON.stringify(params.tools || []));
+      const output = boundedModelOutput(task.workspaceId || 'default', getExecution(executionId)!.agentDefId, task.id, input, params.max_tokens || 8192);
+      compatibilityParams.max_tokens = output;
+      const pricing = getModel(modelId)?.costProfile.pricing as { inputPer1k?: number; outputPer1k?: number } | undefined;
+      const cost = mode !== 'provider_loop' && typeof pricing?.inputPer1k === 'number' && typeof pricing.outputPer1k === 'number'
+        ? input / 1000 * pricing.inputPer1k + output / 1000 * pricing.outputPer1k : null;
+      reserveBudget({ workspaceId: task.workspaceId || 'default', taskId: task.id, agentId: getExecution(executionId)!.agentDefId,
+        key, kind: 'model', tokens: input + output, toolCalls: 0, runtimeMs: 0,
+        costType: mode === 'provider_loop' ? 'subscription' : cost === null ? 'unavailable' : 'estimated', costUSD: cost });
+      if (options.signal.aborted) { releaseUndispatchedBudget(task.workspaceId || 'default', key); throw new Error('Request aborted'); }
+      markBudgetDispatched(task.workspaceId || 'default', key);
+      const legacy = await gateway.completeForModel(modelId, compatibilityParams, options);
+      const usage = legacy.usage;
+      const known = usage?.input_tokens_observed !== false && usage?.output_tokens_observed !== false
+        && typeof usage?.prompt_tokens === 'number' && typeof usage?.completion_tokens === 'number';
+      settleUsage({ workspaceId: task.workspaceId || 'default', key, eventKey: `${key}:usage`, tokens: known ? usage.prompt_tokens + usage.completion_tokens : null,
+        costType: mode === 'provider_loop' || usage?.cost_type === 'subscription' ? 'subscription' : cost === null ? 'unavailable' : 'estimated',
+        costUSD: usage?.cost_type !== 'subscription' && known && cost !== null ? usage.prompt_tokens / 1000 * pricing!.inputPer1k! + usage.completion_tokens / 1000 * pricing!.outputPer1k! : null });
+      assertModelResultCurrent(task, executionId, options.signal);
+      return legacy;
+    }
+    const session = new SessionHarness(task, executionId);
+    if (getAgentSetupSnapshot(task.id)?.completeConfig?.config.governanceBudget
+      && getModelGateway().runtimeCapabilitiesFor?.(modelId).executionMode === 'provider_loop') {
+      throw new Error('BUDGET_RUNTIME_UNSUPPORTED: provider-owned loop cannot enforce host turn/token limits');
+    }
+    const providerSession = getModelGateway().runtimeCapabilitiesFor?.(modelId).executionMode === 'provider_loop'
+      ? prepareProviderSession(task, executionId, session.requestId, normalizeGatewayRequest(params)) : undefined;
+    if (options.contextBudget) {
+      const { limits } = options.contextBudget;
+      ensureBudgetPolicy({ workspaceId: task.workspaceId || 'default', scope: 'task', scopeId: task.id, period: 'lifetime',
+        maxTokens: limits.maxExecutionTokens, maxToolCalls: limits.maxToolCallsPerExecution, maxRuntimeMs: limits.maxToolRuntimeMsPerExecution,
+        maxCostUSD: guardrails.getConfig().maxCostPerTask, subscriptionExempt: true });
+      ensureBudgetPolicy({
+        workspaceId: task.workspaceId || 'default', scope: 'workspace', scopeId: task.workspaceId || 'default', period: 'utc_day',
+        maxCostUSD: process.env.AGENT_HARD_DAILY_COST_USD !== undefined
+          ? Number(process.env.AGENT_HARD_DAILY_COST_USD) : guardrails.getConfig().maxCostPerDay,
+        subscriptionExempt: process.env.AGENT_HARD_DAILY_COST_USD === undefined,
+      });
+    }
+    const prior = this.sessions.get(params.messages);
+    if (prior) {
+      const persisted = prior.legacyMessages();
+      // Restore internal fact provenance from the compatibility view; never send it to a provider.
+      for (let index = 0; index < persisted.length; index++) {
+        if (params.messages[index]?.myrmeciaContextFacts) persisted[index].myrmeciaContextFacts = params.messages[index].myrmeciaContextFacts;
+      }
+      params.messages.splice(0, params.messages.length, ...persisted);
+    }
+    const stream = new DlpStreamGuard({ taskId: task.id, workspaceId: task.workspaceId, executionId,
+      purpose: 'streamed assistant output' });
+    const driver = new ProviderDriver(getModelGateway(), modelId, {
+      ...options,
+      onDelta: undefined, // Only accumulated and governed output reaches the UI/journal.
+      providerSession: providerSession?.options,
+      onEvent: event => {
+        if (options.signal.aborted) return;
+        assertModelResultCurrent(task, executionId, options.signal);
+        if (event.type === 'assistant.delta') {
+          const text = stream.push(event.text);
+          if (!text) return;
+          options.onDelta?.(text);
+          event = { ...event, text };
+        } else if (event.type === 'assistant.completed') {
+          const full = event.content.map(block => block.type === 'text' ? block.text : '').join('');
+          const safe = stream.finish(full);
+          if (safe.delta) options.onDelta?.(safe.delta);
+          event = { ...event, content: [{ type: 'text', text: safe.text }] };
+        }
+        session.record(event);
+        options.onEvent?.(event);
+      },
+      identity: {
+        workspaceId: task.workspaceId || 'default',
+        conversationId: session.sessionId,
+        runId: executionId, requestId: session.requestId,
+      },
+    });
+    let legacy: any;
+    const response = await runAgentRequest(normalizeGatewayRequest(params), {
+      context: { turn, signal: options.signal },
+      hooks: {
+        transformContext: request => {
+          return session.prepare(request, incoming => {
+            if (!options.contextBudget) return incoming;
+            const { limits, inputTokens, outputTokens, reserve } = options.contextBudget;
+            const legacy = toGatewayRequest(incoming, driver.capabilities).messages;
+            for (let index = 0; index < legacy.length; index++) {
+              if (params.messages[index]?.myrmeciaContextFacts) legacy[index].myrmeciaContextFacts = params.messages[index].myrmeciaContextFacts;
+            }
+            const checked = this.prepareContext(task, executionId, modelId, legacy, limits, inputTokens, outputTokens, reserve, params.tools || []);
+            params.messages.splice(0, params.messages.length, ...checked.messages);
+            return normalizeGatewayRequest({ ...params, messages: checked.messages });
+          }, driver.capabilities.executionMode);
+        },
+      },
+      provider: {
+        capabilities: driver.capabilities,
+        complete: async (request, signal) => {
+          const result = await driver.completeWithLegacy(request, signal);
+          session.recordAssistant(result.legacy.choices[0].message);
+          if (result.legacy.usage?.session_cleanup_confirmed !== false) providerSession?.settle();
+          legacy = result.legacy;
+          return result.response;
+        },
+      },
+    }).catch(error => {
+      releaseUndispatchedBudget(task.workspaceId || 'default', session.requestId);
+      throw error;
+    });
+    this.sessions.set(params.messages, session);
+    assertModelResultCurrent(task, executionId, options.signal);
+    const previous = getExecution(executionId)?.runState;
+    const metrics = previous?.metrics;
+    const sum = (left: number | null | undefined, right: number | null) => right === null || left === null ? null : (left ?? 0) + right;
+    updateAgentRun(executionId, previous?.phase || 'deciding', {
+      metrics: {
+        requestCount: (metrics?.requestCount || 0) + response.metrics.requestCount,
+        modelTurnCount: sum(metrics?.modelTurnCount, response.metrics.modelTurnCount),
+        toolCallCount: (metrics?.toolCallCount || 0) + response.metrics.toolCallCount,
+        inputTokens: sum(metrics?.inputTokens, response.metrics.inputTokens),
+        outputTokens: sum(metrics?.outputTokens, response.metrics.outputTokens),
+      },
+    });
+    if (response.stopReason === 'unknown') {
+      throw new AgentRunStopped('failed', 'MODEL_STOP_REASON_UNKNOWN: provider did not expose a supported termination reason');
+    }
+    return legacy;
+  }
+
   async execute(
     agent: AgentDefinition,
     task: Task,
@@ -249,7 +467,7 @@ export class TsAgentLoop {
       ? { ...resolvedPolicy, allowedTools: [], decisions: [] }
       : resolvedPolicy;
 
-    // Block disallowed tools (same as Python runtime path)
+    // Record tools blocked by the governed runtime policy.
     for (const decision of toolPolicy.decisions.filter(d => !d.allowed)) {
       const message = `Tool ${decision.toolId} blocked by policy: ${decision.reason}`;
       const span = createTraceSpan({
@@ -278,7 +496,7 @@ export class TsAgentLoop {
       : null;
 
     // If no structured skill resolved, try LLM matching
-    if (!parsedSkill?.isStructured && !researchAnswer && !conversationOnly) {
+    if (!parsedSkill?.isStructured && !researchAnswer && !conversationOnly && !getAgentSetupSnapshot(task.id)?.completeConfig) {
       try {
         const { matchSkillForTask } = await import('../skills/skill-matcher.js');
         const { getLatestPublishedSkillVersion } = await import('../db/models/skill.js');
@@ -324,18 +542,9 @@ export class TsAgentLoop {
     // Inject messages before model routing so long-context escalation sees the real prompt size.
     let enrichedInput = task.input;
     enrichedInput += recoveredResearchContext(task, executionId, toolPolicy.allowedTools);
-    // Domain knowledge: retrieve and prepend the domain's knowledge-base chunks.
-    if (domain && !conversationOnly) {
-      try {
-        const withKnowledge = await applyDomainKnowledge(enrichedInput, domain, task.workspaceId);
-        if (withKnowledge !== enrichedInput) {
-          enrichedInput = withKnowledge;
-          addTaskLog(task.id, 'info', `Injected domain knowledge from "${domain.name}"`, 'system');
-        }
-      } catch { /* non-critical */ }
-    }
+    // Knowledge is authorized, bounded and manifest-backed by AgentRuntime.
     try {
-      const pendingMsgs = messageBus.drain(executionId);
+      const pendingMsgs = messageBus.drain(executionId, { excludeDurableInbox: runtimeV2Enabled() });
       if (pendingMsgs.length > 0) {
         const msgContext = pendingMsgs.map(m => `[${m.messageType}] ${m.content}`).join('\n');
         enrichedInput = `${enrichedInput}\n\n## Context from other agents:\n${msgContext}`;
@@ -353,8 +562,12 @@ export class TsAgentLoop {
       tools: toolPolicy.allowedTools, workdir: task.workdir, skillChecksum: runtimeSkill?.version.checksum,
     });
     const resumed = readLoopCheckpoint(task, fingerprint, executionId);
-    const elapsedBeforeResume = resumed?.snapshot.elapsedMs || 0;
-    const executionDeadline = startTime + Math.max(1, Math.min(limits.maxExecutionWallClockMs, 600_000) - elapsedBeforeResume);
+    const firstStarted = currentRunLease()?.firstStartedAtMs;
+    const elapsedBeforeResume = Math.max(resumed?.snapshot.elapsedMs || 0, firstStarted ? startTime - firstStarted : 0);
+    const executionDeadline = runtimeV2Enabled() && continuationEnabled()
+      ? resolveSliceDeadline(startTime, elapsedBeforeResume, limits.maxExecutionWallClockMs,
+        Number(process.env.MYRMECIA_RUNTIME_SLICE_MS || 600_000))
+      : startTime + Math.max(1, Math.min(limits.maxExecutionWallClockMs, 600_000) - elapsedBeforeResume);
     const researchBudget = new ResearchBudget(executionDeadline, task.retryCount > 0 ? 2 : 3);
     updateExecution(executionId, {
       modelId: selectedModel,
@@ -417,6 +630,7 @@ export class TsAgentLoop {
       metadata: { model: selectedModel, runner: 'ts-agent-loop' },
     });
 
+    const sliceGuard = createSliceDeadlineGuard(abortController, executionDeadline);
     try {
       // The Copilot adapter exposes these as SDK custom tools but routes every
       // invocation back into this TS loop. OpenAI-compatible providers retain
@@ -437,7 +651,8 @@ export class TsAgentLoop {
       let numTurns = resumed?.snapshot.turn || 0;
       tracker.toolUseCount = resumed?.snapshot.toolCallCount || tracker.toolUseCount;
       if (resumed) {
-        updateAgentRun(executionId, 'deciding', { turn: numTurns, toolCallCount: tracker.toolUseCount, resumedFromExecutionId: resumed.executionId });
+        updateAgentRun(executionId, 'deciding', { turn: numTurns, toolCallCount: tracker.toolUseCount, resumedFromExecutionId: resumed.executionId,
+          metrics: getExecution(resumed.executionId)?.runState?.metrics });
         addTaskLog(task.id, 'info', `Resumed a read-only TS loop from ${resumed.executionId}; prior budget usage was retained`, 'recovery');
       }
       let completedNormally = false;
@@ -461,27 +676,36 @@ export class TsAgentLoop {
           addTaskLog(task.id, 'info', `Cache hit — skipping LLM call`, 'system');
           completeTraceSpan(llmSpan.id, {
             status: 'done',
-            metadata: { inputTokens: cached.inputTokens, outputTokens: cached.outputTokens, numTurns: 1, cached: true },
+            metadata: { inputTokens: 0, outputTokens: 0, numTurns: 0, cached: true },
           });
-          const cacheCost = providerCostUSD(selectedModel, cached.inputTokens, cached.outputTokens, providerUsage);
+          const cacheCost = 0; // No Provider request occurred; do not bill historical usage again.
+          if (runtimeV2Enabled()) {
+            const scope = { workspaceId: task.workspaceId || 'default', sessionId: agentSessionForTask(task), runId: executionId };
+            appendSessionEvent({ ...scope, eventKey: `${executionId}:user`,
+              payload: { type: 'user.submitted', taskId: task.id, content: task.input } });
+            appendSessionEvent({ ...scope, requestId: `cache:${executionId}`, eventKey: `${executionId}:cached-assistant`,
+              payload: { type: 'model.message', role: 'assistant', content: [{ type: 'text', text: safeCachedOutput }] } });
+            updateAgentRun(executionId, 'deciding', { metrics: { requestCount: 0, modelTurnCount: 0,
+              toolCallCount: 0, inputTokens: 0, outputTokens: 0 } });
+          }
           recordModelUsage({
             modelId: selectedModel, agentId: agent.id, taskId: task.id,
             executionId, status: 'success',
             inputTokens: 0, outputTokens: 0,
             costUSD: cacheCost, latencyMs: 0, routeReason: modelSelection.reason,
             routeSource: modelSelection.source, modelTier: modelSelection.modelTier,
-            provider: providerUsage.provider, costType: providerUsage.costType,
+            provider: providerUsage.provider, costType: 'exact',
           });
           return {
             output: safeCachedOutput,
             costUSD: cacheCost,
-            costType: providerUsage.costType,
+            costType: 'exact',
             provider: providerUsage.provider,
             aiUnits: 0,
-            inputTokens: cached.inputTokens,
-            outputTokens: cached.outputTokens,
+            inputTokens: 0,
+            outputTokens: 0,
             durationMs: 0,
-            numTurns: 1,
+            numTurns: 0,
             executionId,
           };
         }
@@ -490,11 +714,16 @@ export class TsAgentLoop {
 
       let totalToolCalls = resumed?.snapshot.toolCallCount || 0;
       let totalToolRuntimeMs = resumed?.snapshot.toolRuntimeMs || 0;
+      let reservedToolRuntimeMs = 0;
       const checkpoint = (reservedInput = 0, reservedOutput = 0) => saveLoopCheckpoint(task, executionId, fingerprint, {
         schemaVersion: 1, messages, turn: numTurns, finalOutput,
         inputTokens: inputTokens + reservedInput, outputTokens: outputTokens + reservedOutput,
         toolCallCount: totalToolCalls, toolRuntimeMs: totalToolRuntimeMs,
         elapsedMs: elapsedBeforeResume + Date.now() - startTime,
+        boundary: reservedInput || reservedOutput ? 'request_pending' as const : 'stable' as const,
+        ...(runtimeV2Enabled() ? {
+          journalCursor: sessionEventCursor(task.workspaceId || 'default', agentSessionForTask(task)),
+          ownerToken: currentRunLease()?.token } : {}),
       });
       const reportXiaohongshuProgress = (event: { message: string; elapsedMs: number }) => {
         const message = `小红书 · ${event.message} · ${(event.elapsedMs / 1000).toFixed(1)}s`;
@@ -507,13 +736,14 @@ export class TsAgentLoop {
         });
       };
       const executeCopilotToolCall = async (tc: { id: string; function: { name: string; arguments: string }; signal?: AbortSignal }): Promise<string> => {
+        assertRunWrite(task.id);
         if (tc.signal?.aborted || abortController.signal.aborted) throw new Error('Request aborted');
         const toolName = modelNameToToolId.get(tc.function.name) || tc.function.name;
         const mcpTool = isMcpTool(toolName);
         let toolInput: Record<string, unknown> = {};
         try { toolInput = JSON.parse(tc.function.arguments || '{}'); } catch {}
 
-        if (!toolPolicy.allowedTools.includes(toolName)) {
+        if (!toolPolicy.allowedTools.includes(toolName) || (runtimeV2Enabled() && !resolveAllowedToolsForAgent(agent).allowedTools.includes(toolName))) {
           const output = `Tool ${toolName} is not allowed for agent ${agent.id}`;
           addTaskLog(task.id, 'warn', output, agent.id);
           appendExecutionAuditEvent(executionId, {
@@ -560,10 +790,18 @@ export class TsAgentLoop {
         if (totalToolCalls >= limits.maxToolCallsPerExecution) {
           throw new Error(`Tool call limit exceeded (${limits.maxToolCallsPerExecution})`);
         }
-        if (totalToolRuntimeMs >= limits.maxToolRuntimeMsPerExecution) {
+        if (totalToolRuntimeMs + reservedToolRuntimeMs >= limits.maxToolRuntimeMsPerExecution) {
           throw new Error(`Tool runtime budget exceeded (${limits.maxToolRuntimeMsPerExecution}ms)`);
         }
         totalToolCalls++;
+        const reservedTimeoutMs = Math.min(limits.maxToolCallTimeoutMs,
+          limits.maxToolRuntimeMsPerExecution - totalToolRuntimeMs - reservedToolRuntimeMs);
+        reservedToolRuntimeMs += reservedTimeoutMs;
+        const reservationKey = `${executionId}:tool:${tc.id}`;
+        reserveBudget({
+          workspaceId: task.workspaceId || 'default', taskId: task.id, agentId: agent.id, key: reservationKey, kind: 'tool',
+          tokens: 0, toolCalls: 1, runtimeMs: reservedTimeoutMs, costType: 'unavailable', costUSD: null,
+        });
         tracker.toolUseCount++;
         updateAgentRun(executionId, 'acting', { toolCallCount: tracker.toolUseCount });
         const startedAt = Date.now();
@@ -585,11 +823,12 @@ export class TsAgentLoop {
         let status: 'done' | 'failed' = 'done';
         let diagnostics: Record<string, unknown> | undefined;
         try {
+          markBudgetDispatched(task.workspaceId || 'default', reservationKey);
           const result = await runWriteOnce(task, executionId, toolName, toolInput, async () => isMcpTool(toolName)
             ? await executeMcpTool(
                 toolName,
                 toolInput,
-                Math.min(limits.maxToolCallTimeoutMs, limits.maxToolRuntimeMsPerExecution - totalToolRuntimeMs),
+                reservedTimeoutMs,
                 buildMcpPolicyContext(agent, task),
                 reportXiaohongshuProgress,
                 abortController.signal,
@@ -598,9 +837,9 @@ export class TsAgentLoop {
                 signal: abortController.signal,
                 allowedTools: toolPolicy.allowedTools,
                 workspaceId: task.workspaceId,
-                timeoutMs: Math.min(limits.maxToolCallTimeoutMs, limits.maxToolRuntimeMsPerExecution - totalToolRuntimeMs),
+                timeoutMs: reservedTimeoutMs,
                 maxOutputChars: Math.min(limits.maxOutputChars, 8_000),
-              }));
+              }), abortController.signal);
           output = sanitizeAgentOutput(result.output, {
             agentId: agent.id, taskId: task.id, workspaceId: task.workspaceId, executionId, purpose: `tool ${toolName} result`,
           });
@@ -620,6 +859,9 @@ export class TsAgentLoop {
 
         if (tc.signal?.aborted || abortController.signal.aborted) throw new Error('Request aborted');
         const durationMs = Date.now() - startedAt;
+        settleUsage({ workspaceId: task.workspaceId || 'default', key: reservationKey,
+          eventKey: `${reservationKey}:settled`, tokens: 0, runtimeMs: durationMs, costUSD: null, costType: 'unavailable' });
+        reservedToolRuntimeMs -= reservedTimeoutMs;
         totalToolRuntimeMs += durationMs;
         middleware?.afterToolCall(toolName, toolInput, status, String(output), workdir, durationMs);
         if (!mcpTool) {
@@ -653,12 +895,17 @@ export class TsAgentLoop {
         return archiveLongToolOutput({ task, executionId, toolExecutionId: toolExecId, toolName, output: String(output) });
       };
 
-      while (numTurns < maxTurns) {
+      await runAgentCore({
+        initialTurn: numTurns, maxTurns, signal: abortController.signal,
+        onExhausted: () => { throw new AgentRunStopped('max_turns', `AGENT_MAX_TURNS: execution exhausted ${maxTurns} turns without a final answer`, finalOutput); },
+        executeTurn: async coreTurn => {
         if (abortController.signal.aborted) throw new AgentRunStopped('cancelled', 'Request aborted', finalOutput);
-        numTurns++;
+        checkpoint();
+        pauseAtCheckpoint(task.id);
+        numTurns = coreTurn;
         updateAgentRun(executionId, 'deciding', { turn: numTurns });
 
-        const followUps = messageBus.drain(executionId);
+        const followUps = messageBus.drain(executionId, { excludeDurableInbox: runtimeV2Enabled() });
         if (followUps.length > 0) {
           const followUpContext = followUps
             .map(message => message.fromExecution
@@ -681,18 +928,18 @@ export class TsAgentLoop {
 
         const responseReserve = remainingResponseTokens(inputTokens, outputTokens, limits);
         const promptBudget = Math.max(1, limits.maxExecutionTokens - responseReserve);
-        const compaction = compactMessages(messages, promptBudget, { keepRecent: 6, triggerRatio: 0.5 });
+        const compaction = this.prepareContext(task, executionId, selectedModel, messages, limits, inputTokens, outputTokens, responseReserve, toolDefs);
         if (compaction.compacted) {
           messages.length = 0;
           messages.push(...compaction.messages);
           addTaskLog(task.id, 'info', `🗜️ auto-compacted context ~${compaction.before}→${compaction.after} tokens`, agent.id);
         }
         const summaryVersion = compaction.compacted
-          ? (loadExecutionContext(task).contextUsage?.summaryVersion ?? 0) + 1
+          ? nextContextSummaryVersion(task)
           : undefined;
         if (summaryVersion !== undefined) {
           const summary = compaction.messages.find(message => typeof message.content === 'string' && message.content.startsWith('[Auto-compacted'));
-          const artifactId = archiveContextSummary({ task, executionId, version: summaryVersion, summary: String(summary?.content || '') });
+          const artifactId = recordContextSummary({ task, executionId, version: summaryVersion, summary: String(summary?.content || ''), facts: compaction.contextFacts });
           addTaskLog(task.id, 'info', `Context summary v${summaryVersion} archived: ${artifactId}`, agent.id);
         }
         middleware?.beforeModelTurn({
@@ -734,10 +981,12 @@ export class TsAgentLoop {
           signal: abortController.signal,
           timeoutMs: requestTimeoutMs,
           idleTimeoutMs: conversationOnly ? Math.min(30_000, limits.maxExecutionIdleMs) : limits.maxExecutionIdleMs,
+          contextBudget: { limits, inputTokens, outputTokens, reserve: responseReserve },
           ...(process.env.AGENT_STREAMING !== 'false'
             ? {
                 onDelta: (delta: string) => {
                   if (abortController.signal.aborted || ['cancelled', 'failed', 'done'].includes(getTask(task.id)?.status || '')) return;
+                  assertRuntimeKnowledgeCurrent(executionId);
                   const safeDelta = sanitizeAgentOutput(delta, {
                     agentId: agent.id,
                     taskId: task.id,
@@ -765,13 +1014,14 @@ export class TsAgentLoop {
               }
             : {}),
         };
-        const completion = await getModelGateway().completeForModel(selectedModel, completionParams, completionOptions).finally(() => {
+        const completion = await this.requestModel(task, executionId, selectedModel, numTurns, completionParams, completionOptions).finally(() => {
           const live = getExecution(executionId);
           if (live?.status === 'running' && live.runState?.modelRequest?.startedAt === modelRequest.startedAt) {
             updateAgentRun(executionId, live.runState.phase, { modelRequest: undefined });
           }
         });
         mergeProviderUsage(providerUsage, completion.usage);
+        assertModelResultCurrent(task, executionId, abortController.signal, finalOutput);
 
         const choice = completion.choices[0];
         if (!choice) throw new AgentRunStopped('empty_output', 'AGENT_EMPTY_OUTPUT: no response from model');
@@ -816,12 +1066,37 @@ export class TsAgentLoop {
         if (inputQuestion) {
           needsInput = true;
           completedNormally = true;
-          break;
+          return true;
         }
 
         // Handle tool calls
         if (assistantMsg.tool_calls && assistantMsg.tool_calls.length > 0) {
-          for (const tc of assistantMsg.tool_calls) {
+          if (runtimeV2Enabled()) {
+            const calls: Array<{ id: string; name: string; arguments: string }> = assistantMsg.tool_calls.map((tc: OpenAI.Chat.Completions.ChatCompletionMessageToolCall) => ({
+              id: tc.id, name: modelNameToToolId.get(tc.function.name) || tc.function.name, arguments: tc.function.arguments,
+            }));
+            const outputs = await scheduleToolBatch(calls, {
+              signal: abortController.signal, readConcurrency: configuredReadConcurrency(),
+              classify: call => classifyRuntimeTool(call, task.workdir || process.cwd()),
+              recheck: call => {
+                if (!resolveAllowedToolsForAgent(agent).allowedTools.includes(call.name)) throw new Error(`TOOL_PERMISSION_REVOKED: ${call.name}`);
+                return classifyRuntimeTool(call, task.workdir || process.cwd());
+              },
+              onDispatch: (call, classification) => recordLedgerEntry({
+                executionId, taskId: task.id, agentId: agent.id, workspaceId: task.workspaceId,
+                type: 'tool.dispatched', decision: classification.effect,
+                summary: `Dispatch ${call.name} (${classification.effect})`,
+                metadata: { toolCallId: call.id, classification },
+              }),
+              execute: call => {
+                const invoke = () => executeCopilotToolCall({
+                  id: call.id, function: { name: call.name, arguments: call.arguments }, signal: abortController.signal,
+                });
+                return isResearchTool(call.name) ? researchBudget.run(call.name, invoke, abortController.signal) : invoke();
+              },
+            });
+            calls.forEach((call, index) => this.appendToolMessage(messages, { role: 'tool', tool_call_id: call.id, content: outputs[index] }));
+          } else for (const tc of assistantMsg.tool_calls) {
             if (abortController.signal.aborted) throw new AgentRunStopped('cancelled', 'Request aborted', finalOutput);
             updateAgentRun(executionId, 'acting', { toolCallCount: tracker.toolUseCount });
             const toolCallId = tc.id;
@@ -829,7 +1104,7 @@ export class TsAgentLoop {
             const mcpTool = isMcpTool(toolName);
             if (isResearchTool(toolName) || toolName === 'mcp__xiaohongshu__check_login_status') {
               const output = await researchBudget.run(toolName, () => executeCopilotToolCall({ ...tc, signal: abortController.signal }), abortController.signal);
-              messages.push({ role: 'tool', tool_call_id: toolCallId, content: output });
+              this.appendToolMessage(messages, { role: 'tool', tool_call_id: toolCallId, content: output });
               updateAgentRun(executionId, 'observing', { toolCallCount: tracker.toolUseCount });
               continue;
             }
@@ -851,7 +1126,7 @@ export class TsAgentLoop {
                 toolId: toolName, taskId: task.id, workspaceId: task.workspaceId, executionId, agentId: agent.id,
                 reason: 'not_in_agent_allowlist',
               });
-              messages.push({ role: 'tool', tool_call_id: toolCallId, content: blockedOutput });
+              this.appendToolMessage(messages, { role: 'tool', tool_call_id: toolCallId, content: blockedOutput });
               continue;
             }
 
@@ -876,7 +1151,7 @@ export class TsAgentLoop {
                 reason: `param_constraint: ${toolOutput}`,
               });
               // Add error tool result to messages and continue
-              messages.push({ role: 'tool', tool_call_id: toolCallId, content: toolOutput });
+              this.appendToolMessage(messages, { role: 'tool', tool_call_id: toolCallId, content: toolOutput });
               continue;
             }
             const workdir = task.workdir || process.cwd();
@@ -888,7 +1163,7 @@ export class TsAgentLoop {
                 toolId: toolName, taskId: task.id, workspaceId: task.workspaceId, executionId, agentId: agent.id,
                 reason: blockedOutput,
               });
-              messages.push({ role: 'tool', tool_call_id: toolCallId, content: blockedOutput });
+              this.appendToolMessage(messages, { role: 'tool', tool_call_id: toolCallId, content: blockedOutput });
               continue;
             }
 
@@ -936,6 +1211,12 @@ export class TsAgentLoop {
                 throw new Error(`Tool runtime budget exceeded (${limits.maxToolRuntimeMsPerExecution}ms)`);
               }
               totalToolCalls++;
+              const reservationKey = `${executionId}:legacy-tool:${tc.id}`;
+              reserveBudget({ workspaceId: task.workspaceId || 'default', taskId: task.id, agentId: agent.id,
+                key: reservationKey, kind: 'tool', tokens: 0, toolCalls: 1,
+                runtimeMs: Math.min(limits.maxToolCallTimeoutMs, limits.maxToolRuntimeMsPerExecution - totalToolRuntimeMs),
+                costType: 'unavailable', costUSD: null });
+              markBudgetDispatched(task.workspaceId || 'default', reservationKey);
               const result = await runWriteOnce(task, executionId, toolName, toolInput, async () => isMcpTool(toolName)
                 ? await executeMcpTool(
                     toolName,
@@ -949,7 +1230,7 @@ export class TsAgentLoop {
                     signal: abortController.signal,
                     allowedTools: toolPolicy.allowedTools,
                     workspaceId: task.workspaceId,
-                    timeoutMs: Math.min(limits.maxToolCallTimeoutMs, limits.maxToolRuntimeMsPerExecution - totalToolRuntimeMs),
+                    timeoutMs: Math.max(1, Math.min(limits.maxToolCallTimeoutMs, limits.maxToolRuntimeMsPerExecution - totalToolRuntimeMs, executionDeadline - Date.now())),
                     maxOutputChars: Math.min(limits.maxOutputChars, 8_000),
                     onProgress: ({ message }) => {
                       addTaskLog(task.id, 'info', `⏳ ${toolName}: ${message}`, agent.id);
@@ -958,7 +1239,7 @@ export class TsAgentLoop {
                         progress: getProgressSnapshot(tracker, message),
                       });
                     },
-                  }));
+                  }), abortController.signal);
               toolOutput = sanitizeAgentOutput(result.output, {
                 agentId: agent.id,
                 taskId: task.id,
@@ -967,7 +1248,10 @@ export class TsAgentLoop {
                 purpose: `tool ${toolName} result`,
               });
               toolStatus = result.status;
+              settleUsage({ workspaceId: task.workspaceId || 'default', key: reservationKey, eventKey: `${reservationKey}:usage`,
+                tokens: 0, runtimeMs: Date.now() - toolStartTime, costUSD: null, costType: 'unavailable' });
             } catch (err: any) {
+              if (String(err.message).startsWith('BUDGET_')) throw err;
               toolOutput = err.message || 'Tool execution failed';
               toolStatus = 'failed';
             }
@@ -1011,7 +1295,7 @@ export class TsAgentLoop {
               updateTask(task.id, { status: 'running' });
             }
 
-            messages.push({
+            this.appendToolMessage(messages, {
               role: 'tool',
               tool_call_id: toolCallId,
               content: archiveLongToolOutput({ task, executionId, toolExecutionId: toolExecId, toolName, output: String(toolOutput) }),
@@ -1021,10 +1305,17 @@ export class TsAgentLoop {
         } else {
           // No tool calls — we're done
           completedNormally = true;
-          break;
+          return true;
         }
         checkpoint();
-      }
+        pauseAtCheckpoint(task.id);
+        if (runtimeV2Enabled() && continuationEnabled() && Date.now() >= executionDeadline) {
+          scheduleContinuation(task, executionId, elapsedBeforeResume + Date.now() - startTime, limits.maxExecutionWallClockMs);
+          throw new RuntimeSliceYield();
+        }
+        return false;
+        },
+      });
       if (!completedNormally) {
         throw new AgentRunStopped('max_turns', `AGENT_MAX_TURNS: execution exhausted ${maxTurns} turns without a final answer`, finalOutput);
       }
@@ -1087,6 +1378,9 @@ export class TsAgentLoop {
         executionId,
       };
     } catch (err: any) {
+      if (sliceGuard.expired && getTask(task.id)?.status !== 'cancelled' && !/RUN_FENCE_LOST/.test(err?.message || '')) {
+        err = new AgentRunStopped('deadline', 'Execution slice deadline exceeded; in-flight work requires reconciliation');
+      }
       const durationMs = Date.now() - startTime;
       completeTraceSpan(llmSpan.id, { status: 'failed', error: err.message, metadata: { durationMs } });
       recordModelUsage({
@@ -1103,6 +1397,7 @@ export class TsAgentLoop {
       });
       throw err;
     } finally {
+      sliceGuard.close();
       researchBudget.close();
     }
   }
@@ -1127,6 +1422,21 @@ export class TsAgentLoop {
     const selectedModel = modelSelection.modelId;
     const providerUsage = createProviderUsage(selectedModel);
     const limits = resolveAgentRuntimeLimits(agent, modelSelection);
+    const fingerprint = loopFingerprint({ agentId: agent.id, modelId: selectedModel, input: task.input, systemPrompt,
+      tools: toolPolicy.allowedTools, workdir: task.workdir,
+      skillChecksum: createHash('sha256').update(JSON.stringify(parsedSkill)).digest('hex') });
+    // Validation commands may mutate a workspace; only wholly read-only Skills resume automatically.
+    const checkpointEligible = !parsedSkill.config.steps.some(step => step.validation);
+    if (!checkpointEligible && process.env.MYRMECIA_EXECUTION_WORLD === 'docker_isolated') {
+      throw new Error('SANDBOX_TOOL_UNSUPPORTED: structured Skill validation cannot fall back to a host shell');
+    }
+    const resumed = checkpointEligible ? readLoopCheckpoint(task, fingerprint, executionId) : undefined;
+    const firstStarted = currentRunLease()?.firstStartedAtMs;
+    const elapsedBeforeResume = Math.max(resumed?.snapshot.elapsedMs || 0, firstStarted ? startTime - firstStarted : 0);
+    const executionDeadline = runtimeV2Enabled() && continuationEnabled()
+      ? resolveSliceDeadline(startTime, elapsedBeforeResume, limits.maxExecutionWallClockMs,
+        Number(process.env.MYRMECIA_RUNTIME_SLICE_MS || 600_000))
+      : startTime + Math.max(1, Math.min(limits.maxExecutionWallClockMs, 600_000) - elapsedBeforeResume);
     updateExecution(executionId, {
       modelId: selectedModel,
       modelTier: modelSelection.modelTier,
@@ -1148,10 +1458,12 @@ export class TsAgentLoop {
         sandbox: { enabled: true, guardian: true, profile: getSandboxProfile() },
       },
     });
-    let inputTokens = 0;
-    let outputTokens = 0;
-    let executionToolCalls = 0;
-    let executionToolRuntimeMs = 0;
+    let inputTokens = resumed?.snapshot.inputTokens || 0;
+    let outputTokens = resumed?.snapshot.outputTokens || 0;
+    let executionToolCalls = resumed?.snapshot.toolCallCount || 0;
+    let executionToolRuntimeMs = resumed?.snapshot.toolRuntimeMs || 0;
+    if (resumed) updateAgentRun(executionId, 'deciding', { resumedFromExecutionId: resumed.executionId,
+      toolCallCount: executionToolCalls, metrics: getExecution(resumed.executionId)?.runState?.metrics });
 
     addTaskLog(task.id, 'info', `Skill Executor: ${parsedSkill.config.steps.length} steps`, 'system');
 
@@ -1191,25 +1503,30 @@ export class TsAgentLoop {
       let completedNormally = false;
       const maxTurns = llmOptions?.maxTurns ?? 20; // per-step max turns
       let stepToolRuntimeMs = 0;
+      let reservedStepToolRuntimeMs = 0;
 
-      for (let turn = 0; turn < maxTurns; turn++) {
+      await runAgentCore({
+        maxTurns, signal: abortController.signal,
+        onExhausted: () => { throw new AgentRunStopped('max_turns', `AGENT_MAX_TURNS: skill step exhausted ${maxTurns} turns`, finalOutput); },
+        executeTurn: async coreTurn => {
+        const turn = coreTurn - 1;
         if (abortController.signal.aborted) throw new Error('Execution aborted');
         updateAgentRun(executionId, 'deciding');
 
         const responseReserve = remainingResponseTokens(inputTokens, outputTokens, limits);
         const promptBudget = Math.max(1, limits.maxExecutionTokens - responseReserve);
-        const compaction = compactMessages(messages, promptBudget, { keepRecent: 6, triggerRatio: 0.5 });
+        const compaction = this.prepareContext(task, executionId, selectedModel, messages, limits, inputTokens, outputTokens, responseReserve, stepToolDefs);
         if (compaction.compacted) {
           messages.length = 0;
           messages.push(...compaction.messages);
           addTaskLog(task.id, 'info', `🗜️ auto-compacted step context ~${compaction.before}→${compaction.after} tokens`, agent.id);
         }
         const summaryVersion = compaction.compacted
-          ? (loadExecutionContext(task).contextUsage?.summaryVersion ?? 0) + 1
+          ? nextContextSummaryVersion(task)
           : undefined;
         if (summaryVersion !== undefined) {
           const summary = compaction.messages.find(message => typeof message.content === 'string' && message.content.startsWith('[Auto-compacted'));
-          const artifactId = archiveContextSummary({ task, executionId, version: summaryVersion, summary: String(summary?.content || '') });
+          const artifactId = recordContextSummary({ task, executionId, version: summaryVersion, summary: String(summary?.content || ''), facts: compaction.contextFacts });
           addTaskLog(task.id, 'info', `Context summary v${summaryVersion} archived: ${artifactId}`, agent.id);
         }
         middleware?.beforeModelTurn({
@@ -1224,14 +1541,16 @@ export class TsAgentLoop {
         }
         recordContextUsage(task, compaction.after, limits.maxExecutionTokens, responseReserve, summaryVersion);
 
-        const completion = await getModelGateway().completeForModel(selectedModel, {
+        const completion = await this.requestModel(task, executionId, selectedModel, turn + 1, {
           model: selectedModel,
           messages,
           tools: stepToolDefs.length > 0 ? stepToolDefs : undefined,
           max_tokens: responseReserve,
           ...modelRequestTuning(task),
-        }, { signal: abortController.signal });
+        }, { signal: abortController.signal, timeoutMs: Math.max(1, executionDeadline - Date.now()),
+          contextBudget: { limits, inputTokens, outputTokens, reserve: responseReserve } });
         mergeProviderUsage(providerUsage, completion.usage);
+        assertModelResultCurrent(task, executionId, abortController.signal, finalOutput);
 
         const choice = completion.choices[0];
         if (!choice) throw new AgentRunStopped('empty_output', 'AGENT_EMPTY_OUTPUT: no response for skill step');
@@ -1246,7 +1565,7 @@ export class TsAgentLoop {
         tracker.cumulativeOutputTokens += completionTokens;
         tracker.latestInputTokens = promptTokens;
         assertExecutionTokenBudget(inputTokens, outputTokens, finalOutput, 'skill executor', limits);
-        if (Date.now() - startTime > limits.maxExecutionWallClockMs) {
+        if (elapsedBeforeResume + Date.now() - startTime > limits.maxExecutionWallClockMs) {
           throw new Error(`Skill executor exceeded wall-clock budget (${limits.maxExecutionWallClockMs}ms)`);
         }
 
@@ -1271,12 +1590,14 @@ export class TsAgentLoop {
 
         // Handle tool calls
         if (assistantMsg.tool_calls && assistantMsg.tool_calls.length > 0) {
-          for (const tc of assistantMsg.tool_calls) {
+          const runStepTool = async (tc: typeof assistantMsg.tool_calls[number]): Promise<string> => {
+            assertRunWrite(task.id);
+            if (abortController.signal.aborted) throw new Error('Request aborted');
             const toolName = modelNameToToolId.get(tc.function.name) || tc.function.name;
             let toolInput: Record<string, unknown> = {};
             try { toolInput = JSON.parse(tc.function.arguments || '{}'); } catch {}
 
-            if (!stepAllowedTools.includes(toolName)) {
+            if (!stepAllowedTools.includes(toolName) || (runtimeV2Enabled() && !resolveAllowedToolsForAgent(agent).allowedTools.includes(toolName))) {
               const blockedOutput = `Tool ${toolName} is not allowed for skill step ${llmOptions?.stepName || 'unknown'}`;
               addTaskLog(task.id, 'warn', blockedOutput, agent.id);
               appendExecutionAuditEvent(executionId, {
@@ -1289,8 +1610,7 @@ export class TsAgentLoop {
                 toolId: toolName, taskId: task.id, workspaceId: task.workspaceId, executionId, agentId: agent.id,
                 reason: 'not_in_step_allowlist',
               });
-              messages.push({ role: 'tool', tool_call_id: tc.id, content: blockedOutput });
-              continue;
+              return blockedOutput;
             }
             const middlewareDecision = middleware?.beforeToolCall(toolName, toolInput, workdir);
             if (middlewareDecision && !middlewareDecision.allowed) {
@@ -1300,8 +1620,7 @@ export class TsAgentLoop {
                 toolId: toolName, taskId: task.id, workspaceId: task.workspaceId, executionId, agentId: agent.id,
                 reason: blockedOutput,
               });
-              messages.push({ role: 'tool', tool_call_id: tc.id, content: blockedOutput });
-              continue;
+              return blockedOutput;
             }
 
             // Log tool use
@@ -1312,10 +1631,10 @@ export class TsAgentLoop {
             if (executionToolCalls >= limits.maxToolCallsPerExecution) {
               throw new Error(`Tool call limit exceeded (${limits.maxToolCallsPerExecution})`);
             }
-            if (stepToolRuntimeMs >= limits.maxToolRuntimeMsPerStep) {
+            if (stepToolRuntimeMs + reservedStepToolRuntimeMs >= limits.maxToolRuntimeMsPerStep) {
               throw new Error(`Step tool runtime budget exceeded (${limits.maxToolRuntimeMsPerStep}ms)`);
             }
-            if (executionToolRuntimeMs >= limits.maxToolRuntimeMsPerExecution) {
+            if (executionToolRuntimeMs + reservedStepToolRuntimeMs >= limits.maxToolRuntimeMsPerExecution) {
               throw new Error(`Execution tool runtime budget exceeded (${limits.maxToolRuntimeMsPerExecution}ms)`);
             }
             executionToolCalls++;
@@ -1323,10 +1642,17 @@ export class TsAgentLoop {
             updateTask(task.id, { status: 'waiting_for_tool' });
             const remainingToolBudgetMs = Math.min(
               limits.maxToolCallTimeoutMs,
-              limits.maxToolRuntimeMsPerStep - stepToolRuntimeMs,
-              limits.maxToolRuntimeMsPerExecution - executionToolRuntimeMs,
+              limits.maxToolRuntimeMsPerStep - stepToolRuntimeMs - reservedStepToolRuntimeMs,
+              limits.maxToolRuntimeMsPerExecution - executionToolRuntimeMs - reservedStepToolRuntimeMs,
             );
+            reservedStepToolRuntimeMs += remainingToolBudgetMs;
+            const reservationKey = `${executionId}:skill:${llmOptions?.stepName || 'step'}:${tc.id}`;
+            reserveBudget({
+              workspaceId: task.workspaceId || 'default', taskId: task.id, agentId: agent.id, key: reservationKey, kind: 'tool',
+              tokens: 0, toolCalls: 1, runtimeMs: remainingToolBudgetMs, costType: 'unavailable', costUSD: null,
+            });
             const toolStartedAt = Date.now();
+            markBudgetDispatched(task.workspaceId || 'default', reservationKey);
             const result = await runWriteOnce(task, executionId, toolName, toolInput, async () => isMcpTool(toolName)
               ? await executeMcpTool(
                   toolName,
@@ -1348,14 +1674,17 @@ export class TsAgentLoop {
                   signal: abortController.signal,
                   allowedTools: stepAllowedTools,
                   workspaceId: task.workspaceId,
-                  timeoutMs: remainingToolBudgetMs,
+                  timeoutMs: Math.max(1, Math.min(remainingToolBudgetMs, executionDeadline - Date.now())),
                   maxOutputChars: Math.min(limits.maxOutputChars, 8_000),
                   onProgress: ({ message }) => {
                     addTaskLog(task.id, 'info', `⏳ ${toolName}: ${message}`, agent.id);
                     addExecutionMessage({ executionId, type: 'progress', content: message });
                   },
-                }));
+                }), abortController.signal);
             const toolElapsedMs = Date.now() - toolStartedAt;
+            settleUsage({ workspaceId: task.workspaceId || 'default', key: reservationKey,
+              eventKey: `${reservationKey}:settled`, tokens: 0, runtimeMs: toolElapsedMs, costUSD: null, costType: 'unavailable' });
+            reservedStepToolRuntimeMs -= remainingToolBudgetMs;
             stepToolRuntimeMs += toolElapsedMs;
             executionToolRuntimeMs += toolElapsedMs;
             const safeToolOutput = sanitizeAgentOutput(result.output, {
@@ -1371,18 +1700,26 @@ export class TsAgentLoop {
               updateTask(task.id, { status: 'running' });
             }
 
-            messages.push({
-              role: 'tool',
-              tool_call_id: tc.id,
-              content: archiveLongToolOutput({ task, executionId, toolExecutionId: `skill_${executionId}_${tc.id}`, toolName, output: safeToolOutput }),
-            });
-          }
+            return archiveLongToolOutput({ task, executionId, toolExecutionId: `skill_${executionId}_${tc.id}`, toolName, output: safeToolOutput });
+          };
+          const calls: OpenAI.Chat.Completions.ChatCompletionMessageToolCall[] = assistantMsg.tool_calls;
+          const outputs = await scheduleToolBatch(calls.map(tc => ({
+            id: tc.id, name: modelNameToToolId.get(tc.function.name) || tc.function.name, arguments: tc.function.arguments,
+          })), {
+            signal: abortController.signal, readConcurrency: runtimeV2Enabled() ? configuredReadConcurrency() : 1,
+            classify: call => runtimeV2Enabled() ? classifyRuntimeTool(call, workdir)
+              : { effect: 'unknown', resources: [], basis: 'legacy serial' },
+            execute: call => runStepTool(calls.find(tc => tc.id === call.id)!),
+          });
+          calls.forEach((tc, index) => this.appendToolMessage(messages, { role: 'tool', tool_call_id: tc.id, content: outputs[index] }));
         } else {
           // No tool calls — step complete
           completedNormally = true;
-          break;
+          return true;
         }
-      }
+        return false;
+        },
+      });
       if (!completedNormally) {
         throw new AgentRunStopped('max_turns', `AGENT_MAX_TURNS: skill step exhausted ${maxTurns} turns`, finalOutput);
       }
@@ -1394,26 +1731,28 @@ export class TsAgentLoop {
           const responseReserve = remainingResponseTokens(inputTokens, outputTokens, limits);
           const promptBudget = Math.max(1, limits.maxExecutionTokens - responseReserve);
           const summaryMessages = [...messages, { role: 'user' as const, content: 'Provide the result of this step as plain text.' }];
-          const summaryCompaction = compactMessages(summaryMessages, promptBudget, { keepRecent: 6, triggerRatio: 0.5 });
+          const summaryCompaction = this.prepareContext(task, executionId, selectedModel, summaryMessages, limits, inputTokens, outputTokens, responseReserve, []);
           if (summaryCompaction.after > promptBudget) {
             throw new Error(`CONTEXT_BUDGET_EXCEEDED: summary prompt needs ${summaryCompaction.after}/${promptBudget} tokens after compaction`);
           }
           const summaryVersion = summaryCompaction.compacted
-            ? (loadExecutionContext(task).contextUsage?.summaryVersion ?? 0) + 1
+            ? nextContextSummaryVersion(task)
             : undefined;
           if (summaryVersion !== undefined) {
             const summary = summaryCompaction.messages.find(message => typeof message.content === 'string' && message.content.startsWith('[Auto-compacted'));
-            const artifactId = archiveContextSummary({ task, executionId, version: summaryVersion, summary: String(summary?.content || '') });
+            const artifactId = recordContextSummary({ task, executionId, version: summaryVersion, summary: String(summary?.content || ''), facts: summaryCompaction.contextFacts });
             addTaskLog(task.id, 'info', `Context summary v${summaryVersion} archived: ${artifactId}`, agent.id);
           }
           recordContextUsage(task, summaryCompaction.after, limits.maxExecutionTokens, responseReserve, summaryVersion);
-          const summary = await getModelGateway().completeForModel(selectedModel, {
+          const summary = await this.requestModel(task, executionId, selectedModel, maxTurns + 1, {
             model: selectedModel,
             messages: summaryCompaction.messages,
             max_tokens: responseReserve,
             ...modelRequestTuning(task),
-          }, { signal: abortController.signal });
+          }, { signal: abortController.signal, timeoutMs: Math.max(1, executionDeadline - Date.now()),
+            contextBudget: { limits, inputTokens, outputTokens, reserve: responseReserve } });
           mergeProviderUsage(providerUsage, summary.usage);
+          assertModelResultCurrent(task, executionId, abortController.signal, finalOutput);
           const summaryInputTokens = summary.usage?.prompt_tokens || 0;
           const summaryOutputTokens = summary.usage?.completion_tokens || 0;
           inputTokens += summaryInputTokens;
@@ -1436,6 +1775,13 @@ export class TsAgentLoop {
       llmCall,
       abortSignal: abortController.signal,
       onStepStart: (idx, step) => {
+        if (Date.now() >= executionDeadline) {
+          if (runtimeV2Enabled() && continuationEnabled() && checkpointEligible && idx > 0) {
+            scheduleContinuation(task, executionId, elapsedBeforeResume + Date.now() - startTime, limits.maxExecutionWallClockMs);
+            throw new RuntimeSliceYield();
+          }
+          throw new AgentRunStopped('deadline', 'Skill execution slice deadline exceeded');
+        }
         createTraceSpan({
           traceId, parentSpanId: rootSpanId,
           type: 'skill.step', name: `Step: ${step.name}`,
@@ -1461,9 +1807,27 @@ export class TsAgentLoop {
         addTaskLog(task.id, 'warn', `⚠ Step "${step.name}" advisory: ${message}`, agent.id);
         addExecutionMessage({ executionId, type: 'progress', content: `Advisory (step "${step.name}"): ${message}` });
       },
+      onCheckpoint: steps => {
+        if (!checkpointEligible || steps.some(step => step.status !== 'done')) return;
+        saveLoopCheckpoint(task, executionId, fingerprint, { schemaVersion: 1, boundary: 'stable', messages: [],
+          turn: steps.length, inputTokens, outputTokens, toolCallCount: executionToolCalls, toolRuntimeMs: executionToolRuntimeMs,
+          elapsedMs: elapsedBeforeResume + Date.now() - startTime,
+          finalOutput: steps.map(step => `## ${step.name}\n${step.output || ''}`).join('\n\n'), skillSteps: [...steps] });
+        pauseAtCheckpoint(task.id);
+      },
     });
 
-    const result = await executor.run(task.input);
+    const sliceGuard = createSliceDeadlineGuard(abortController, executionDeadline);
+    let result;
+    try { result = await executor.run(task.input, resumed?.snapshot.skillSteps); }
+    catch (error) {
+      if (sliceGuard.expired && getTask(task.id)?.status !== 'cancelled' && !/RUN_FENCE_LOST/.test((error as Error)?.message || '')) {
+        throw new AgentRunStopped('deadline', 'Skill slice deadline exceeded; in-flight work requires reconciliation');
+      }
+      throw error;
+    } finally { sliceGuard.close(); }
+    assertModelResultCurrent(task, executionId, abortController.signal, result.finalOutput);
+    sealLoopCheckpoint(executionId);
 
     const durationMs = Date.now() - startTime;
     const costUSD = providerCostUSD(selectedModel, inputTokens, outputTokens, providerUsage);

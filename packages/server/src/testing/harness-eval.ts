@@ -31,7 +31,7 @@ export interface HarnessRunOutcome {
   stopReason?: AgentStopReason;
   evidenceIds?: string[];
   output: string;
-  costUSD: number;
+  costUSD: number | null;
   durationMs: number;
   toolCalls: number;
   numTurns: number;
@@ -56,7 +56,9 @@ export interface HarnessEvalReport {
   scenarioCount: number;
   passed: number;
   successRate: number;
-  avgCostUSD: number;
+  avgCostUSD: number | null;
+  mode: 'fixture' | 'live' | 'unknown';
+  unknownCostCount: number;
   avgDurationMs: number;
   avgToolCalls: number;
   avgTurns: number;
@@ -127,8 +129,9 @@ export function scoreScenario(scenario: HarnessScenario, outcome: HarnessRunOutc
   for (const needle of scenario.expectSubstrings || []) {
     if (!lower.includes(needle.toLowerCase())) failures.push(`missing expected text: "${needle}"`);
   }
-  if (scenario.maxCostUSD !== undefined && outcome.costUSD > scenario.maxCostUSD) {
-    failures.push(`cost ${outcome.costUSD} exceeds max ${scenario.maxCostUSD}`);
+  if (scenario.maxCostUSD !== undefined && (outcome.costUSD === null || outcome.costUSD > scenario.maxCostUSD)) {
+    failures.push(outcome.costUSD === null ? 'cost is unknown; configured USD cap cannot be verified'
+      : `cost ${outcome.costUSD} exceeds max ${scenario.maxCostUSD}`);
   }
   if (scenario.maxDurationMs !== undefined && outcome.durationMs > scenario.maxDurationMs) {
     failures.push(`duration ${outcome.durationMs}ms exceeds max ${scenario.maxDurationMs}ms`);
@@ -149,14 +152,16 @@ export async function runHarnessEval(
   runner: HarnessRunner,
   scenarios: HarnessScenario[] = HARNESS_SCENARIOS,
   runnerName = 'custom',
+  mode: 'fixture' | 'live' | 'unknown' = 'unknown',
 ): Promise<HarnessEvalReport> {
   const results: HarnessScenarioResult[] = [];
   for (const scenario of scenarios) {
+    const startedAt = Date.now();
     let outcome: HarnessRunOutcome;
     try {
       outcome = await runner(scenario);
     } catch (err: any) {
-      outcome = { output: '', costUSD: 0, durationMs: 0, toolCalls: 0, numTurns: 0, humanInterventions: 0, error: err?.message || String(err) };
+      outcome = { output: '', costUSD: null, durationMs: Date.now() - startedAt, toolCalls: 0, numTurns: 0, humanInterventions: 0, error: err?.message || String(err) };
     }
     results.push(scoreScenario(scenario, outcome));
   }
@@ -171,7 +176,9 @@ export async function runHarnessEval(
     scenarioCount: results.length,
     passed,
     successRate: results.length ? passed / results.length : 0,
-    avgCostUSD: round(sum(r => r.outcome.costUSD) / n, 6),
+    mode,
+    unknownCostCount: results.filter(r => r.outcome.costUSD === null).length,
+    avgCostUSD: results.some(r => r.outcome.costUSD === null) ? null : round(sum(r => r.outcome.costUSD || 0) / n, 6),
     avgDurationMs: Math.round(sum(r => r.outcome.durationMs) / n),
     avgToolCalls: round(sum(r => r.outcome.toolCalls) / n, 2),
     avgTurns: round(sum(r => r.outcome.numTurns) / n, 2),
@@ -231,7 +238,7 @@ export function createHarnessRoutes(): Router {
   // POST /harness/eval — run the deterministic baseline eval (no model calls)
   router.post('/eval', async (_req, res) => {
     try {
-      const report = await runHarnessEval(createDeterministicRunner(), HARNESS_SCENARIOS, 'deterministic');
+      const report = await runHarnessEval(createDeterministicRunner(), HARNESS_SCENARIOS, 'deterministic', 'fixture');
       res.json(report);
     } catch (err: any) {
       res.status(500).json({ error: { message: err.message } });
@@ -245,7 +252,7 @@ export function createHarnessRoutes(): Router {
 
 const isMainModule = process.argv[1]?.includes('harness-eval');
 if (isMainModule) {
-  runHarnessEval(createDeterministicRunner(), HARNESS_SCENARIOS, 'deterministic')
+  runHarnessEval(createDeterministicRunner(), HARNESS_SCENARIOS, 'deterministic', 'fixture')
     .then(report => {
       console.log(JSON.stringify(report, null, 2));
       process.exit(report.successRate === 1 ? 0 : 1);

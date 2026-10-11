@@ -12,13 +12,20 @@ import type { Task } from '../types.js';
 import { getModel } from '../models/model-registry.js';
 import { getLatestTaskCheckpoint, listTaskCheckpoints } from '../db/models/execution-context.js';
 import { checkpointExecutionContext, loadExecutionContext, persistExecutionContext, persistInheritedExecutionContext } from '../agents/execution-context.js';
-import { listAgents } from '../db/models/agent.js';
+import { listAgents, getAgent } from '../db/models/agent.js';
+import { taskControlCapabilities } from '../agents/task-controls.js';
+import { budgetUsage } from '../agents/budget-service.js';
+import { setupEntity } from '../agents/agent-setup.js';
+import { getAgentSetupSnapshot, pinAgentSetup } from '../agents/agent-setup-snapshot.js';
+import { getDb } from '../db/database.js';
 import { continuationInput } from '../agents/task-continuation.js';
 import { listExecutions } from '../db/models/execution.js';
 import { isWaitingForAgentInput } from '@myrmecia/shared';
 import { getExternalAgent, getExternalAgentRunForExecution } from '../db/models/external-agent.js';
 import { getExternalAgentRuntime } from '../agents/external-agent-runtime.js';
 import { eventBus } from '../events/event-bus.js';
+import { completionCriteriaSchema } from '../agents/completion-gate.js';
+import { getWorkspaceBinding } from '../db/models/managed-workspace.js';
 
 const taskStatusSchema = z.enum(['pending', 'queued', 'assigned', 'running', 'waiting_for_tool', 'review', 'done', 'failed', 'cancelled']);
 const taskModeSchema = z.enum(['master', 'direct', 'pipeline']);
@@ -35,7 +42,10 @@ const createTaskSchema = z.object({
   reasoningEffort: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).optional(),
   contextLength: z.number().int().min(8_000).max(10_000_000).optional(),
   workspacePath: z.string().trim().min(1).max(16_384).optional(),
+  filesystemWorkspaceId: z.string().max(100).optional(),
+  workspaceAccessMode: z.enum(['isolated', 'shared_readonly', 'shared_write']).optional(),
   domainId: z.string().trim().min(1).optional(),
+  completionCriteria: completionCriteriaSchema.optional(),
 });
 
 const listTasksQuerySchema = z.object({
@@ -89,6 +99,62 @@ function getAccessibleTask(req: any, taskId: string): Task {
 
 export function createTaskRoutes(taskQueue: TaskQueue): Router {
   const router = Router();
+  router.get('/:id/controls', (req, res) => {
+    try {
+      requireOperatorRole(req, 'task.controls', ['admin', 'operator']);
+      res.setHeader('Cache-Control', 'no-store');
+      res.json(taskControlCapabilities(getAccessibleTask(req, String(req.params.id)), taskQueue));
+    } catch (error) { sendError(res, error); }
+  });
+  router.get('/:id/budget', (req, res) => {
+    try {
+      requireOperatorRole(req, 'task.budget', ['admin', 'operator']);
+      const task = getAccessibleTask(req, String(req.params.id));
+      res.setHeader('Cache-Control', 'no-store'); res.json(budgetUsage(task.workspaceId || 'default', task.assigneeId, task.id));
+    } catch (error) { sendError(res, error); }
+  });
+  router.get('/:id/debug-history', (req, res) => {
+    try {
+      requireOperatorRole(req, 'task.debug-history', ['admin', 'operator']);
+      const task = getAccessibleTask(req, String(req.params.id)), workspaceId = task.workspaceId || 'default';
+      const root = getDb().get<{ root_task_id: string }>('SELECT root_task_id FROM agent_debug_task_history WHERE workspace_id = ? AND task_id = ?', workspaceId, task.id)?.root_task_id || task.id;
+      res.setHeader('Cache-Control', 'no-store');
+      res.json([root, ...getDb().all<{ task_id: string }>(`SELECT task_id FROM agent_debug_task_history
+        WHERE workspace_id = ? AND root_task_id = ? ORDER BY created_at, rowid LIMIT 100`, workspaceId, root).map(row => row.task_id)]
+        .filter((id, index, all) => all.indexOf(id) === index && !!getTask(id)));
+    } catch (error) { sendError(res, error); }
+  });
+  router.post('/:id/rerun', async (req, res) => {
+    try {
+      const actor = requireOperatorRole(req, 'task.rerun', ['admin', 'operator']);
+      requireConfirmation(req, 'task.rerun');
+      const { idempotencyKey } = parseBody(z.object({ idempotencyKey: z.string().uuid(), confirm: z.literal(true) }).strict(), req);
+      const original = getAccessibleTask(req, String(req.params.id));
+      const prior = setupEntity({ operation: 'debug-rerun', key: idempotencyKey, actorId: actor.id || 'local',
+        workspaceId: original.workspaceId || 'default', payload: { taskId: original.id } }, () => {
+        const controls = taskControlCapabilities(original, taskQueue);
+        if (!controls.operations.rerun.allowed || !original.assigneeId) throw new HttpError(409, 'RERUN_UNSUPPORTED', controls.operations.rerun.reason);
+        const task = createTask({ title: original.title, description: original.description, input: original.input,
+          mode: 'direct', assigneeId: original.assigneeId, workspaceId: original.workspaceId, createdBy: 'user', maxRetries: 0,
+          modelId: original.modelId, contextLength: original.contextLength, reasoningEffort: original.reasoningEffort,
+          completionCriteria: original.completionCriteria,
+          domainId: original.domainId, workdir: original.workdir, workspacePath: original.workspacePath });
+        const versionId = getAgentSetupSnapshot(original.id)?.versionId;
+        const agent = getAgent(original.assigneeId);
+        if (!agent) throw new HttpError(409, 'AGENT_UNAVAILABLE', 'The original Agent is unavailable');
+        pinAgentSetup(task.id, agent, true, versionId);
+        persistExecutionContext(task);
+        const root = getDb().get<{ root_task_id: string }>('SELECT root_task_id FROM agent_debug_task_history WHERE workspace_id = ? AND task_id = ?',
+          original.workspaceId || 'default', original.id)?.root_task_id || original.id;
+        getDb().run('INSERT INTO agent_debug_task_history(workspace_id, root_task_id, task_id) VALUES (?,?,?)',
+          original.workspaceId || 'default', root, task.id);
+        return task.id;
+      });
+      const task = getTask(prior.id)!;
+      await taskQueue.dispatchExisting(task.id);
+      res.status(prior.replayed ? 200 : 201).json(task);
+    } catch (error) { sendError(res, error); }
+  });
   const continuing = new Set<string>();
 
   // New execution within an existing conversation; never reopen a terminal task.
@@ -96,7 +162,20 @@ export function createTaskRoutes(taskQueue: TaskQueue): Router {
     let lockedRoot: string | undefined;
     try {
       const actor = requireOperatorRole(req, 'task.continue', ['admin', 'operator']);
-      const { content } = parseBody(z.object({ content: z.string().trim().min(1).max(8_000) }), req);
+      const { content, idempotencyKey } = parseBody(z.object({ content: z.string().trim().min(1).max(8_000), idempotencyKey: z.string().uuid().optional() }), req);
+      const original = getAccessibleTask(req, String(req.params.id));
+      if (idempotencyKey) {
+        const prior = getDb().get<{ entity_id: string }>(`SELECT entity_id FROM agent_setup_requests
+          WHERE workspace_id = ? AND actor_id = ? AND operation = 'debug-followup' AND request_key = ?`,
+        original.workspaceId || 'default', actor.id || 'local', idempotencyKey);
+        if (prior) {
+          const entity = setupEntity({ operation: 'debug-followup', key: idempotencyKey, workspaceId: original.workspaceId || 'default',
+            actorId: actor.id || 'local', payload: { taskId: original.id, content } }, () => { throw new Error('Unexpected follow-up replay'); });
+          const task = getAccessibleTask(req, entity.id);
+          await taskQueue.dispatchExisting(task.id);
+          return res.json(task);
+        }
+      }
       let root = getAccessibleTask(req, req.params.id);
       const visited = new Set<string>();
       while (root.parentTaskId) {
@@ -170,14 +249,14 @@ export function createTaskRoutes(taskQueue: TaskQueue): Router {
         || availableAgents.find(agent => agent.id === 'master' || agent.role === 'orchestrator');
       if (!agent) throw new HttpError(409, 'AGENT_UNAVAILABLE', 'No Agent is available to continue this conversation');
       const workdir = validateWorkspacePath(context.workdir || context.workspacePath);
-      const task = await taskQueue.enqueue({
+      const createFollowup = () => {
+        const task = createTask({
         title: content.slice(0, 80),
         description: content,
         input: continuationInput(root, turns, content, context),
         mode: 'direct',
         assigneeId: agent.id,
         parentTaskId: root.id,
-        inheritContextFromTaskId: previous.id,
         createdBy: 'user',
         priority: previous.priority,
         workspaceId: root.workspaceId,
@@ -187,7 +266,17 @@ export function createTaskRoutes(taskQueue: TaskQueue): Router {
         reasoningEffort: context.reasoningEffort,
         contextLength: context.contextLength,
         domainId: previous.domainId,
-      });
+        });
+        persistInheritedExecutionContext(context, task);
+        const debugRoot = getDb().get<{ root_task_id: string }>('SELECT root_task_id FROM agent_debug_task_history WHERE workspace_id = ? AND task_id = ?',
+          root.workspaceId || 'default', original.id)?.root_task_id || original.id;
+        getDb().run('INSERT INTO agent_debug_task_history(workspace_id, root_task_id, task_id) VALUES (?,?,?)',
+          root.workspaceId || 'default', debugRoot, task.id);
+        return task.id;
+      };
+      const entity = setupEntity({ operation: 'debug-followup', key: idempotencyKey, workspaceId: root.workspaceId || 'default',
+        actorId: actor.id || 'local', payload: { taskId: original.id, content } }, createFollowup);
+      const task = await taskQueue.dispatchExisting(entity.id);
       createOperatorAction({
         action: 'task.continue', actor, targetType: 'task', targetId: task.id, taskId: task.id,
         metadata: { sessionRootTaskId: root.id, previousTaskId: previous.id },
@@ -203,7 +292,7 @@ export function createTaskRoutes(taskQueue: TaskQueue): Router {
   // Create task
   router.post('/', async (req, res) => {
     try {
-      const { title, description, mode, priority, assigneeId, input, modelId, reasoningEffort, contextLength, workspacePath: requestedWorkspacePath, domainId } = parseBody(createTaskSchema, req);
+      const { title, description, mode, priority, assigneeId, input, modelId, reasoningEffort, contextLength, workspacePath: requestedWorkspacePath, filesystemWorkspaceId, workspaceAccessMode, domainId, completionCriteria } = parseBody(createTaskSchema, req);
       const actor = requireOperatorRole(req, 'task.create', ['admin', 'operator']);
       const workspaceId = workspaceIdFromRequest(req);
       const workspacePath = validateWorkspacePath(requestedWorkspacePath);
@@ -219,8 +308,11 @@ export function createTaskRoutes(taskQueue: TaskQueue): Router {
         reasoningEffort,
         contextLength,
         workspacePath,
+        filesystemWorkspaceId, workspaceAccessMode, workspaceActorId: actor.id,
+        selectedWorkspaceSource: !!workspacePath,
         workspaceId,
         domainId,
+        completionCriteria,
       });
       createOperatorAction({
         action: 'task.create',
@@ -261,7 +353,11 @@ export function createTaskRoutes(taskQueue: TaskQueue): Router {
   router.patch('/:id', (req, res) => {
     try {
       getAccessibleTask(req, req.params.id);
-      const updated = updateTask(req.params.id, parseBody(updateTaskSchema, req));
+      requireOperatorRole(req, 'task.update', ['admin', 'operator']);
+      const changes = parseBody(updateTaskSchema, req);
+      const binding = getWorkspaceBinding(req.params.id);
+      if (binding && changes.workspacePath !== undefined && changes.workspacePath !== binding.executionPath) throw new HttpError(409, 'WORKSPACE_BINDING_IMMUTABLE', 'Create a new task to use a different execution directory');
+      const updated = updateTask(req.params.id, changes);
       res.json(updated);
     } catch (err) {
       sendError(res, err);
@@ -387,6 +483,11 @@ export function createTaskRoutes(taskQueue: TaskQueue): Router {
     try {
       const task = getAccessibleTask(req, req.params.id);
       const actor = requireOperatorRole(req, 'task.retry', ['admin', 'operator']);
+      if (task.pauseControl) {
+        const resumed = await taskQueue.resumeTask(task.id);
+        createOperatorAction({ action: 'task.resume', actor, targetType: 'task', targetId: task.id, taskId: task.id });
+        return res.json(resumed);
+      }
       const latest = getLatestTaskCheckpoint(task.id);
       if (!latest) throw new HttpError(409, 'TASK_CHECKPOINT_MISSING', 'Task has no checkpoint to resume from');
       const context = loadExecutionContext(task);
@@ -408,6 +509,19 @@ export function createTaskRoutes(taskQueue: TaskQueue): Router {
       sendError(res, err?.message?.includes('not retryable')
         ? new HttpError(400, 'TASK_RESUME_FAILED', err.message)
         : err);
+    }
+  });
+
+  router.post('/:id/pause', async (req, res) => {
+    try {
+      const task = getAccessibleTask(req, req.params.id);
+      const actor = requireOperatorRole(req, 'task.pause', ['admin', 'operator']);
+      const paused = await taskQueue.pauseTask(task.id);
+      createOperatorAction({ action: 'task.pause', actor, targetType: 'task', targetId: task.id, taskId: task.id });
+      res.json(paused);
+    } catch (err) {
+      if (err instanceof HttpError) return sendError(res, err);
+      sendError(res, new HttpError(409, 'TASK_PAUSE_FAILED', err instanceof Error ? err.message : 'Unable to pause'));
     }
   });
 

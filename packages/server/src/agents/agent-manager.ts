@@ -8,21 +8,17 @@ import { domainAgentForRole } from './domain-registry.js';
 import { logger } from '../lib/logger.js';
 import type { AgentDefinition, Task } from '../types.js';
 import { normalizeAgentContract } from '../contracts/team-composer-contracts.js';
+import { agentWithPinnedSetup } from './agent-setup-snapshot.js';
+import { configuredConcurrency } from '../db/models/agent-config-version.js';
+import { getTask } from '../db/models/task.js';
+import { getDb } from '../db/database.js';
 
-export class AgentConcurrencyError extends Error {
-  readonly code = 'AGENT_CONCURRENCY_LIMIT';
-
-  constructor(
-    readonly agentId: string,
-    readonly maxConcurrent: number,
-  ) {
-    super(`Agent ${agentId} at max concurrency (${maxConcurrent})`);
-    this.name = 'AgentConcurrencyError';
-  }
-}
+import { AgentConcurrencyError } from './agent-concurrency.js';
+export { AgentConcurrencyError } from './agent-concurrency.js';
 
 export class AgentManager {
   private registryPath: string;
+  private admissions = new Map<string, Set<string>>();
 
   constructor(registryPath: string) {
     this.registryPath = registryPath;
@@ -112,23 +108,37 @@ export class AgentManager {
 
   /** Assign and execute a task on a specific agent */
   async executeTask(agentId: string, task: Task): Promise<string> {
-    const agent = getAgent(agentId);
+    let agent = getAgent(agentId);
     if (!agent) throw new Error(`Agent ${agentId} not found`);
+    agent = agentWithPinnedSetup(task.id, agent);
 
     // Check concurrency
-    const active = getActiveExecutionCount(agentId);
+    const active = this.capacityUse(agentId);
     const max = agent.config.maxConcurrent || 1;
     if (active >= max) throw new AgentConcurrencyError(agentId, max);
+    const pending = this.admissions.get(agentId) || new Set<string>();
+    pending.add(task.id); this.admissions.set(agentId, pending);
+    try {
+      const result = await agentRuntime.execute(agent, task);
+      return result.output;
+    } finally { pending.delete(task.id); if (!pending.size) this.admissions.delete(agentId); }
+  }
 
-    const result = await agentRuntime.execute(agent, task);
-    return result.output;
+  private capacityUse(agentId: string): number {
+    const admissions = this.admissions.get(agentId);
+    if (!admissions?.size) return getActiveExecutionCount(agentId);
+    const running = getDb().all<{ task_id: string }>("SELECT task_id FROM task_executions WHERE agent_def_id = ? AND status = 'running'", agentId);
+    return new Set([...admissions, ...running.map(row => row.task_id)]).size;
   }
 
   /** Whether an Agent can accept another execution without exceeding its limit. */
-  hasCapacity(agentId: string): boolean {
+  hasCapacity(agentId: string, taskId?: string): boolean {
     const agent = getAgent(agentId);
     if (!agent) return false;
-    return getActiveExecutionCount(agentId) < (agent.config.maxConcurrent || 1);
+    const task = taskId ? getTask(taskId) : undefined;
+    const max = task ? agentWithPinnedSetup(task.id, agent).config.maxConcurrent || 1
+      : configuredConcurrency(agent, getDb().get<{ workspace_id: string }>('SELECT workspace_id FROM agents WHERE id = ?', agentId)?.workspace_id || 'default');
+    return this.capacityUse(agentId) < max;
   }
 
   /** Find an available agent for a role (with capacity). When a domainId is given,
@@ -143,8 +153,9 @@ export class AgentManager {
       if (byId) agents = [byId];
     }
     let available = agents.filter(a => {
-      const active = getActiveExecutionCount(a.id);
-      return active < (a.config.maxConcurrent || 1);
+      const active = this.capacityUse(a.id);
+      const workspaceId = getDb().get<{ workspace_id: string }>('SELECT workspace_id FROM agents WHERE id = ?', a.id)?.workspace_id || 'default';
+      return active < configuredConcurrency(a, workspaceId);
     });
 
     if (available.length === 0) return undefined;

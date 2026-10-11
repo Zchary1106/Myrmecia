@@ -1,4 +1,7 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'fs';
+import { clearPauseControl, getPauseControl, setPauseControl } from '../agents/pause-control.js';
+import { getDb } from '../db/database.js';
+import { listTasks } from '../db/models/task.js';
 import { basename, extname, isAbsolute, join, resolve } from 'path';
 import { createHash } from 'crypto';
 import { parse as parseYaml } from 'yaml';
@@ -25,6 +28,10 @@ import {
   validateIndexedWorkflowDependencies,
 } from '../contracts/team-composer-contracts.js';
 import { GOVERNED_PUBLISH_MCP_TOOLS } from '../tools/mcp-manager.js';
+import { listExecutions } from '../db/models/execution.js';
+import { upsertExecutionArtifact } from '../db/models/execution-artifact.js';
+import { saveArtifactSnapshot, snapshotHash } from '../artifacts/artifact-snapshot-store.js';
+import { getWorkspaceBinding, touchWorkspace } from '../db/models/managed-workspace.js';
 
 const execAsync = promisify(exec);
 const DOUYIN_VIDEO_TEMPLATE_NAME = 'Douyin Video Publish';
@@ -282,13 +289,25 @@ export class PipelineEngine {
    * credentials or raw external tool payloads in the database.
    */
   private writeRunSnapshot(pipeline: Pipeline): void {
-    const ws = workspaceManager.getWorkspaceInfo(pipeline.id, 'pipeline');
-    if (!ws) return;
-
-    const reportDir = join(ws.path, 'reports');
-    mkdirSync(reportDir, { recursive: true });
     const snapshot = buildPipelineRunSnapshot(pipeline);
-    writeFileSync(join(reportDir, 'pipeline-run-snapshot.json'), JSON.stringify(snapshot, null, 2));
+    const lastTask = [...pipeline.stages].reverse().find(stage => stage.taskId)?.taskId;
+    if (lastTask) this.capturePipelineArtifact(pipeline, lastTask,
+      `reports/pipeline-run-snapshot-${snapshotHash(JSON.stringify(snapshot)).slice(0, 16)}.json`, JSON.stringify(snapshot, null, 2));
+  }
+  private capturePipelineArtifact(pipeline: Pipeline, taskId: string, path: string, content: string, partial = false): void {
+    const execution = listExecutions({ taskId, workspaceId: pipeline.workspaceId, limit: 1 })[0];
+    if (!execution) return; // Legacy/manual rows are not manufactured into executed evidence.
+    const artifact = upsertExecutionArtifact({ workspaceId: pipeline.workspaceId, taskId, executionId: execution.id,
+      pipelineId: pipeline.id, name: basename(path), kind: path.endsWith('.json') ? 'json' : 'text',
+      mimeType: path.endsWith('.json') ? 'application/json' : 'text/markdown; charset=utf-8',
+      source: 'output', relativePath: path, content, sizeBytes: Buffer.byteLength(content),
+      metadata: { pipelineGenerated: true, captureState: 'pending' } });
+    try { saveArtifactSnapshot(artifact, Buffer.from(content), partial ? 'partial' : 'complete'); }
+    catch (error) {
+      const binding = getWorkspaceBinding(taskId);
+      if (binding) touchWorkspace(binding.filesystemWorkspaceId, 'failed');
+      throw error;
+    }
   }
 
   constructor(taskQueue: TaskQueue, agentManager: AgentManager) {
@@ -298,7 +317,11 @@ export class PipelineEngine {
     // Listen for task completion to advance pipelines
     eventBus.on('task:done', (event) => {
       const { taskId } = event.payload as any;
-      this.onTaskComplete(taskId);
+      void this.onTaskComplete(taskId).catch(error => {
+        const pipelineId = getTask(taskId)?.pipelineId;
+        if (pipelineId) updatePipeline(pipelineId, { status: 'failed', completedAt: new Date().toISOString() });
+        logger.error({ pipelineId, taskId, error: String(error) }, 'Pipeline capture failed; workspace and partial evidence retained');
+      });
     });
   }
 
@@ -363,6 +386,11 @@ export class PipelineEngine {
     modelId?: string;
     reasoningEffort?: import('../types.js').ReasoningEffort;
     contextLength?: number;
+    /** Persist orchestration ownership before asynchronous stage creation starts. */
+    orchestrationId?: string;
+    filesystemWorkspaceId?: string;
+    workspaceAccessMode?: import('@myrmecia/shared').WorkspaceAccessMode;
+    workspaceActorId?: string;
   }): Promise<Pipeline> {
     const template = getTemplate(data.templateId);
     if (!template) throw new Error(`Template ${data.templateId} not found`);
@@ -410,11 +438,16 @@ export class PipelineEngine {
       reasoningEffort: data.reasoningEffort,
       contextLength: data.contextLength,
     });
+    if (data.orchestrationId) {
+      getDb().run('UPDATE orchestrations SET pipeline_id = ? WHERE id = ?', pipeline.id, data.orchestrationId);
+    }
 
     // Create isolated workspace for this pipeline
     try {
-      const ws = await workspaceManager.createPipelineWorkspace(pipeline.id);
+      const ws = await workspaceManager.createPipelineWorkspace(pipeline.id, { workspaceId: data.workspaceId || 'default', actorId: data.workspaceActorId || 'local-admin',
+        sourceWorkspaceId: data.filesystemWorkspaceId, accessMode: data.workspaceAccessMode || 'isolated' });
       if (validatedVideoPath && declaredVideoPath) {
+        if (ws.accessMode === 'shared_readonly') throw new Error('Readonly source cannot receive input assets');
         const inputAssetsDir = join(ws.path, 'input-assets');
         mkdirSync(inputAssetsDir, { recursive: true });
         const importedVideoPath = join(inputAssetsDir, basename(validatedVideoPath));
@@ -438,7 +471,8 @@ export class PipelineEngine {
         });
         throw new Error(`Failed to import Douyin video into the pipeline workspace: ${err.message}`);
       }
-      logger.warn({ err: err.message }, 'Pipeline workspace creation failed; using default cwd');
+      updatePipeline(pipeline.id, { status: 'failed', completedAt: new Date().toISOString() });
+      throw new Error(`PIPELINE_WORKSPACE_PREPARATION_FAILED: ${err.message}`);
     }
 
     // Start all stages that have no dependencies (or depend only on completed stages)
@@ -452,7 +486,7 @@ export class PipelineEngine {
    */
   private startReadyStages(pipelineId: string) {
     const pipeline = getPipeline(pipelineId);
-    if (!pipeline || pipeline.status !== 'running') return;
+    if (!pipeline || pipeline.status !== 'running' || getPauseControl('pipeline', pipelineId)) return;
 
     for (const [idx, stage] of pipeline.stages.entries()) {
       if (stage.status !== 'pending') continue;
@@ -475,7 +509,7 @@ export class PipelineEngine {
     this.startingStages.add(startingKey);
 
     const pipeline = getPipeline(pipelineId);
-    if (!pipeline) {
+    if (!pipeline || getPauseControl('pipeline', pipelineId)) {
       this.startingStages.delete(startingKey);
       return;
     }
@@ -531,6 +565,13 @@ export class PipelineEngine {
         { ...reservation, stages: reservedStages },
         stageIndex,
       );
+      if (getPauseControl('pipeline', pipelineId)) {
+        const held = getPipeline(pipelineId)!;
+        const heldStages = [...held.stages];
+        heldStages[stageIndex] = { ...heldStages[stageIndex], status: 'pending' };
+        updatePipeline(pipelineId, { stages: heldStages });
+        return;
+      }
 
       // Determine workspace — use pipeline workspace if available, else cwd
       const ws = workspaceManager.getWorkspaceInfo(pipelineId, 'pipeline');
@@ -538,7 +579,7 @@ export class PipelineEngine {
       const workspacePath = ws?.path || undefined;
 
       // Capture git SHA for rollback (saved in unified checkpoint later)
-      if (ws?.path) {
+      if (ws?.isGitWorktree) {
         try {
           const { stdout } = await execAsync('git rev-parse HEAD', { cwd: ws.path, encoding: 'utf-8', timeout: 5000 });
           this.stageGitShas.set(`${pipelineId}:${stageIndex}`, stdout.trim());
@@ -548,7 +589,7 @@ export class PipelineEngine {
       }
 
       // Create stage-specific artifact directory
-      if (ws) {
+      if (ws && ws.accessMode !== 'shared_readonly') {
         workspaceManager.createStageDir(ws.path, stageIndex, stage.name);
       }
 
@@ -606,7 +647,7 @@ export class PipelineEngine {
   /** Retry a blocked stage (when agent becomes available) */
   private async retryBlockedStage(pipelineId: string, stageIndex: number) {
     const pipeline = getPipeline(pipelineId);
-    if (!pipeline || pipeline.status !== 'blocked') return;
+    if (!pipeline || pipeline.status !== 'blocked' || getPauseControl('pipeline', pipelineId)) return;
 
     const stage = pipeline.stages[stageIndex];
     if (stage.status !== 'pending') return;
@@ -671,14 +712,15 @@ export class PipelineEngine {
     }
     this.stageGitShas.delete(`${pipeline.id}:${stageIdx}`);
 
-    // Write stage artifact to workspace
+    // Server-generated stage envelopes are immutable snapshots, not competing
+    // writes into a directory which may already be used by a follow-up.
     const ws = workspaceManager.getWorkspaceInfo(pipeline.id, 'pipeline');
-    if (ws && task.output) {
-      const stageDir = workspaceManager.createStageDir(ws.path, stageIdx, stages[stageIdx].name);
-      workspaceManager.writeStageArtifact(stageDir, task.output, 'output.md');
+    if (task.output) {
+      const stageDir = `stage-${stageIdx}-${stages[stageIdx].name.toLowerCase().replace(/[^a-z0-9-]/g, '-')}`;
+      this.capturePipelineArtifact(pipeline, task.id, `${stageDir}/output.md`, task.output, !validation.valid);
       if (isTestingStage(stages[stageIdx].name, stages[stageIdx].agentRole)) {
         const testReport = createTestReportFromOutput(task.output, `${stages[stageIdx].name} completed`);
-        workspaceManager.writeStageArtifact(stageDir, JSON.stringify(testReport, null, 2), 'test-report.json');
+        this.capturePipelineArtifact(pipeline, task.id, `${stageDir}/test-report.json`, JSON.stringify(testReport, null, 2), !validation.valid);
       }
     }
 
@@ -702,6 +744,8 @@ export class PipelineEngine {
     const updatedPipeline = getPipeline(pipeline.id)!;
     const allDone = updatedPipeline.stages.every(s => s.status === 'done' || s.status === 'skipped');
     if (allDone) {
+      clearPauseControl('pipeline', pipeline.id);
+      this.writeRunSnapshot({ ...updatedPipeline, status: 'done', completedAt: new Date().toISOString() });
       updatePipeline(pipeline.id, { status: 'done', completedAt: new Date().toISOString() });
       eventBus.emit('pipeline:done', { pipelineId: pipeline.id, workspaceId: pipeline.workspaceId });
 
@@ -711,16 +755,8 @@ export class PipelineEngine {
         getReflectionService().reflectOnPipeline(finished).catch(() => { /* non-critical */ });
       }
 
-      // Merge workspace back if git worktree
-      if (ws?.isGitWorktree) {
-        const mergeResult = await workspaceManager.mergePipelineWorkspace(
-          pipeline.id,
-          `Agent Factory: ${pipeline.name} complete`
-        );
-        if (!mergeResult.success) {
-          logger.warn({ err: mergeResult.error }, 'Pipeline workspace merge failed');
-        }
-      }
+      // Output acceptance never authorizes integration into the source checkout.
+      logger.info({ pipelineId: pipeline.id, workspacePath: ws?.path }, 'Workspace retained; changes require explicit review/apply');
       return;
     }
 
@@ -761,6 +797,7 @@ export class PipelineEngine {
     const pipelines = listPipelines();
 
     for (const pipeline of pipelines) {
+      if (getPauseControl('pipeline', pipeline.id)) continue;
       // Restore checkpointed stages as done
       const completedIndices = getCompletedStageIndices(pipeline.id);
       if (completedIndices.size > 0) {
@@ -862,6 +899,7 @@ export class PipelineEngine {
     note?: string,
   ) {
     const pipeline = getPipeline(pipelineId);
+    if (getPauseControl('pipeline', pipelineId)) throw new Error('PIPELINE_PAUSED: resume the user hold before approving a gate');
     if (!pipeline || pipeline.status !== 'paused') return;
 
     const stages = [...pipeline.stages];
@@ -940,6 +978,7 @@ export class PipelineEngine {
   /** Resume pipeline from checkpoints — skips completed stages */
   async resume(pipelineId: string, confirmPublish = false): Promise<Pipeline> {
     const pipeline = getPipeline(pipelineId);
+    if (getPauseControl('pipeline', pipelineId)) return this.resumeUserPause(pipelineId);
     if (!pipeline) throw new Error(`Pipeline ${pipelineId} not found`);
     if (pipeline.status === 'done') throw new Error('Pipeline is already done');
     if (pipeline.status === 'running') throw new Error('Pipeline is already running');
@@ -992,7 +1031,34 @@ export class PipelineEngine {
   }
 
   /** Cancel pipeline */
+  async pause(pipelineId: string): Promise<Pipeline> {
+    const pipeline = getPipeline(pipelineId);
+    if (!pipeline) throw new Error('Pipeline not found');
+    if (['done', 'failed'].includes(pipeline.status)) throw new Error('PIPELINE_SETTLED: no running workflow to pause');
+    const tasks = listTasks({ pipelineId, workspaceId: pipeline.workspaceId });
+    this.taskQueue.assertPauseSupported(tasks);
+    if (!getPauseControl('pipeline', pipelineId)) setPauseControl('pipeline', pipelineId, 'paused', pipeline.status);
+    for (const task of tasks) await this.taskQueue.pauseTask(task.id);
+    return getPipeline(pipelineId)!;
+  }
+
+  private async resumeUserPause(pipelineId: string): Promise<Pipeline> {
+    const pipeline = getPipeline(pipelineId)!;
+    const tasks = listTasks({ pipelineId, workspaceId: pipeline.workspaceId });
+    // Keep the pipeline hold until all task resumes have been validated.
+    for (const task of tasks.filter(task => task.pauseControl)) this.taskQueue.assertResumeSupported(this.taskQueue.taskFamily(task.id));
+    clearPauseControl('pipeline', pipelineId);
+    for (const task of tasks.filter(task => task.pauseControl)) await this.taskQueue.resumeTask(task.id);
+    // Do not treat a user resume as approval of a manual/publication gate.
+    if (pipeline.status === 'running' || pipeline.status === 'blocked') {
+      updatePipeline(pipelineId, { status: 'running' });
+      this.startReadyStages(pipelineId);
+    }
+    return getPipeline(pipelineId)!;
+  }
+
   async cancel(pipelineId: string) {
+    clearPauseControl('pipeline', pipelineId);
     const pipeline = getPipeline(pipelineId);
     if (!pipeline) return;
     for (const key of this.publishStageApprovals) {
@@ -1011,8 +1077,7 @@ export class PipelineEngine {
 
     updatePipeline(pipelineId, { status: 'failed' });
 
-    // Cleanup workspace
-    await workspaceManager.cleanupWorkspace(pipelineId, 'pipeline');
+    // Preserve files/checkpoints on rollback. Storage lifecycle is an operator action.
   }
 
   /** Retry a rolled-back stage */

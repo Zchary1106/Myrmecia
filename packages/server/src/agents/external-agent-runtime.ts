@@ -21,6 +21,13 @@ import { addExecutionMessage, createExecution, updateExecution } from '../db/mod
 import { eventBus } from '../events/event-bus.js';
 import type { AgentRunState, ExternalAgentAdapterResult } from '@myrmecia/shared';
 import { getDb } from '../db/database.js';
+import { verifyCompletionCriteria } from './completion-gate.js';
+import { createHash } from 'node:crypto';
+import { hasHardBudget } from './budget-service.js';
+import { getWorkspaceBinding } from '../db/models/managed-workspace.js';
+import { prepareTaskWorkspace } from '../workspace/task-workspace.js';
+import { claimWorkspaceLease, releaseWorkspaceLease } from '../workspace/workspace-lease.js';
+import { indexExecutionArtifacts } from '../artifacts/execution-artifact-indexer.js';
 
 export class ExternalAgentRuntime {
   private readonly adapters: ExternalAgentAdapter[];
@@ -56,8 +63,13 @@ export class ExternalAgentRuntime {
     workspaceId: string,
     invocation: ExternalAgentInvocationContext,
     triggerType: ExternalAgentTriggerType = 'manual',
+    workspaceActorId?: string,
   ): Promise<ExternalAgentRun> {
     const agent = getExternalAgent(externalAgentId, workspaceId);
+    if (invocation.taskId && getWorkspaceBinding(invocation.taskId)?.accessMode === 'shared_readonly') throw new Error('WORKSPACE_READONLY_RUNTIME_UNSUPPORTED');
+    if (hasHardBudget(workspaceId, externalAgentId, invocation.taskId || '')) {
+      throw new Error('BUDGET_RUNTIME_UNSUPPORTED: external runtime cannot enforce host usage quotas');
+    }
     if (!agent) throw new Error('External Agent was not found in this workspace.');
     if (agent.status === 'disabled') throw new Error('External Agent is disabled.');
     if (invocation.workspaceId && invocation.workspaceId !== workspaceId) throw new Error('Invocation workspace does not match the Agent workspace.');
@@ -72,12 +84,14 @@ export class ExternalAgentRuntime {
     if (invocation.taskId && !['pending', 'queued', 'assigned'].includes(getTask(invocation.taskId)?.status || '')) {
       throw new Error('Task was cancelled or started while the external Agent was being validated');
     }
-    const task = invocation.taskId ? getTask(invocation.taskId)! : createTask({
+    let task = invocation.taskId ? getTask(invocation.taskId)! : createTask({
       title: `${agent.name}: ${invocation.objective}`.slice(0, 160),
       description: invocation.objective, input: invocation.objective, mode: 'direct', workspaceId,
       workdir: invocation.workdir, createdBy: 'user', maxRetries: 0,
     });
-    invocation = { ...invocation, taskId: task.id, workspaceId };
+    task = await prepareTaskWorkspace(task, { actorId: workspaceActorId, selectedSource: !invocation.taskId && !!invocation.workdir });
+    const directoryLease = claimWorkspaceLease(task);
+    invocation = { ...invocation, workdir: task.workdir, taskId: task.id, workspaceId };
     const execution = createExecution({ taskId: task.id, agentDefId: `external:${agent.id}`, workspaceId });
     const run = createExternalAgentRun({
       externalAgentId: agent.id,
@@ -120,18 +134,26 @@ export class ExternalAgentRuntime {
       const output = sanitizeAgentOutput(result.outputSummary || '', { workspaceId, taskId: invocation.taskId, purpose: 'external Agent output' });
       const validation = validateAgentOutput(output);
       const emptyResult = result.status === 'succeeded' && validation.status !== 'passed';
-      const succeeded = result.status === 'succeeded' && !emptyResult;
+      const submittedTask = getTask(task.id)!;
+      if (result.status !== 'waiting_for_callback') indexExecutionArtifacts({ task: submittedTask, executionId: execution.id,
+        output, startedAtMs: Date.parse(execution.startedAt), captureState: result.status === 'succeeded' ? 'complete' : 'partial' });
+      const verification = result.status === 'succeeded'
+        ? await verifyCompletionCriteria(submittedTask, execution.id, output, controller.signal) : undefined;
+      if (controller.signal.aborted || getExternalAgentRun(run.id, workspaceId)?.status === 'cancelled') return getExternalAgentRun(run.id, workspaceId)!;
+      const criteriaFailed = verification && !['passed', 'not_requested'].includes(verification.status);
+      const succeeded = result.status === 'succeeded' && !emptyResult && !criteriaFailed;
+      if (result.status === 'succeeded' || result.status === 'failed') releaseWorkspaceLease(directoryLease);
       const cancelled = result.status === 'cancelled';
       const updated = updateExternalAgentRun(run.id, workspaceId, {
-        status: emptyResult ? 'failed' : result.status,
+        status: emptyResult || criteriaFailed ? 'failed' : result.status,
         outputSummary: output,
         externalRunId: result.externalRunId,
-        error: emptyResult ? 'External Agent returned no deliverable' : result.error,
+        error: emptyResult ? 'External Agent returned no deliverable' : criteriaFailed ? 'Mandatory completion evidence did not pass' : result.error,
         runState: {
           ...state,
           phase: succeeded ? 'completed' : cancelled ? 'cancelled' : result.status === 'waiting_for_callback' ? 'waiting_for_tool' : 'failed',
           stopReason: succeeded ? 'completed' : cancelled ? 'cancelled' : result.status === 'timed_out' ? 'deadline' : emptyResult ? 'empty_output' : result.status === 'waiting_for_callback' ? undefined : 'failed',
-          validation, updatedAt: new Date().toISOString(),
+          validation, verification, updatedAt: new Date().toISOString(),
         },
         artifactIds: result.artifactIds || [],
         completedAt: result.status === 'waiting_for_callback' ? undefined : new Date().toISOString(),
@@ -238,30 +260,52 @@ export class ExternalAgentRuntime {
   async completeCallback(runId: string, workspaceId: string, result: ExternalAgentAdapterResult): Promise<ExternalAgentRun> {
     const run = getExternalAgentRun(runId, workspaceId);
     if (!run) throw new Error('External Agent run not found');
-    if (run.taskId && getTask(run.taskId)?.status === 'cancelled') throw new Error('Run already settled: owning task was cancelled');
     if (!['succeeded', 'failed', 'cancelled', 'timed_out'].includes(result.status)) throw new Error('Callback must contain a terminal status');
     const output = sanitizeAgentOutput(result.outputSummary || '', { workspaceId, taskId: run.taskId, purpose: 'external callback' });
+    if (run.externalRunId && result.externalRunId !== run.externalRunId) throw new Error('Remote run identifier does not match');
+    const fingerprint = createHash('sha256').update(JSON.stringify({
+      status: result.status, output, error: result.error || '', externalRunId: result.externalRunId || '',
+      artifactIds: result.artifactIds || [],
+    })).digest('hex');
+    const receipt = getDb().get<{ callback_fingerprint: string | null }>(
+      'SELECT callback_fingerprint FROM external_agent_runs WHERE id = ? AND workspace_id = ?', runId, workspaceId);
     if (run.status !== 'waiting_for_callback') {
+      if (receipt?.callback_fingerprint === fingerprint) return run;
       if (run.status === result.status && (run.outputSummary || '') === output
         && (run.error || '') === (result.error || '') && JSON.stringify(run.artifactIds) === JSON.stringify(result.artifactIds || [])) return run;
       throw new Error('Run already settled or not waiting for a callback');
     }
-    if (run.externalRunId && result.externalRunId !== run.externalRunId) throw new Error('Remote run identifier does not match');
+    if (run.taskId && getTask(run.taskId)?.status === 'cancelled') throw new Error('Run already settled: owning task was cancelled');
     const validation = validateAgentOutput(output);
     if (result.status === 'succeeded' && validation.status !== 'passed') {
       throw new Error('A callback must include usable output; artifact IDs alone are not verified deliverables');
     }
-    const succeeded = result.status === 'succeeded', cancelled = result.status === 'cancelled';
+    if (getDb().run(`UPDATE external_agent_runs SET callback_fingerprint = ?
+      WHERE id = ? AND workspace_id = ? AND status = 'waiting_for_callback' AND callback_fingerprint IS NULL`,
+      fingerprint, runId, workspaceId).changes !== 1) {
+      throw new Error('Callback verification in progress or uncertain; do not replay its verifier');
+    }
+    const task = run.taskId ? getTask(run.taskId) : undefined;
+    if (task && run.executionId) indexExecutionArtifacts({ task, executionId: run.executionId, output,
+      startedAtMs: Date.parse(run.createdAt), captureState: result.status === 'succeeded' ? 'complete' : 'partial' });
+    const verification = result.status === 'succeeded' && task && run.executionId
+      ? await verifyCompletionCriteria(task, run.executionId, output) : undefined;
+    if (getExternalAgentRun(runId, workspaceId)?.status !== 'waiting_for_callback'
+      || (run.taskId && getTask(run.taskId)?.status === 'cancelled')) throw new Error('Run already settled during verification');
+    const criteriaFailed = verification && !['passed', 'not_requested'].includes(verification.status);
+    const succeeded = result.status === 'succeeded' && !criteriaFailed, cancelled = result.status === 'cancelled';
     const runState: AgentRunState = {
       ...(run.runState || initialAgentRunState()), phase: succeeded ? 'completed' : cancelled ? 'cancelled' : 'failed',
       stopReason: succeeded ? 'completed' : cancelled ? 'cancelled' : result.status === 'timed_out' ? 'deadline' : 'failed',
-      validation, updatedAt: new Date().toISOString(),
+      validation, verification, updatedAt: new Date().toISOString(),
     };
     const updated = updateExternalAgentRun(runId, workspaceId, {
-      status: result.status, outputSummary: output, error: result.error, artifactIds: result.artifactIds || [],
+      status: criteriaFailed ? 'failed' : result.status, outputSummary: output,
+      error: criteriaFailed ? 'Mandatory completion evidence did not pass' : result.error, artifactIds: result.artifactIds || [],
       runState, completedAt: new Date().toISOString(),
     })!;
     this.clearCallback(runId);
+    if (run.taskId && ['succeeded', 'failed'].includes(result.status)) getDb().run("UPDATE workspace_leases SET state='released' WHERE task_id=?", run.taskId);
     this.syncConversation(updated);
     return updated;
   }

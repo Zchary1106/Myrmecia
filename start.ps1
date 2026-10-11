@@ -7,7 +7,6 @@
 #   ./start.ps1 -CleanDb        # reset the local SQLite database first
 #   ./start.ps1 -ServerOnly     # start only the API server (port 3000)
 #   ./start.ps1 -DashboardOnly  # start only the dashboard (port 5173)
-#   ./start.ps1 -InstallPython  # also install the Python runtime deps
 #   ./start.ps1 -NoOpen         # don't open the browser automatically
 #
 # Only Node.js >= 20 is required up front (https://nodejs.org).
@@ -18,7 +17,6 @@ param(
   [switch]$CleanDb,
   [string]$Db,
   [switch]$Install,
-  [switch]$InstallPython,
   [switch]$ServerOnly,
   [switch]$DashboardOnly,
   [switch]$NoOpen,
@@ -42,7 +40,6 @@ Options:
   -CleanDb          Remove the local SQLite database before startup.
   -Db <path>        Use a custom SQLite DB_PATH for this run.
   -Install          Force 'pnpm install' before startup.
-  -InstallPython    Install the Myrmecia Python runtime dependencies.
   -ServerOnly       Start only the Express API server.
   -DashboardOnly    Start only the Vite dashboard.
   -NoOpen           Do not open the browser automatically.
@@ -70,14 +67,6 @@ if (-not (Get-Command pnpm -ErrorAction SilentlyContinue)) {
   } catch { }
   if (-not (Get-Command pnpm -ErrorAction SilentlyContinue)) {
     Fail "pnpm not available. Run: npm install -g pnpm  (then re-run ./start.ps1)"
-  }
-}
-
-# --- python (unless dashboard-only) ---
-$python = $null
-if (-not $DashboardOnly) {
-  foreach ($p in @('python', 'python3')) {
-    if (Get-Command $p -ErrorAction SilentlyContinue) { $python = $p; break }
   }
 }
 
@@ -120,17 +109,6 @@ if ($Install -or -not (Test-Path "node_modules")) {
 if (-not (Test-Path "packages/shared/dist/index.js")) {
   Info "Building shared types..."
   pnpm --filter "@myrmecia/shared" build
-}
-
-# --- Python runtime dependencies ---
-if (-not $DashboardOnly -and $InstallPython) {
-  if ($python) {
-    Info "Installing Python runtime dependencies..."
-    & $python -m pip install -r packages/python-runtime/requirements.txt
-  }
-  else {
-    Write-Host "Warning: Python not found; skipping runtime deps. Install Python 3 to run live agents." -ForegroundColor Yellow
-  }
 }
 
 $port = if ($env:PORT) { $env:PORT } else { "3000" }

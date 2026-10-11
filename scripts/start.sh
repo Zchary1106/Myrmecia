@@ -6,7 +6,6 @@ cd "$ROOT_DIR"
 
 OPEN_BROWSER=1
 FORCE_INSTALL=0
-INSTALL_PYTHON=0
 CLEAN_DB=0
 MODE="all"
 CUSTOM_DB_PATH=""
@@ -23,7 +22,6 @@ Options:
   --clean-db          Remove the default local SQLite database before startup.
   --db <path>         Use a custom SQLite DB_PATH for this run.
   --install           Force pnpm install before startup.
-  --install-python    Install Agent Factory Python runtime dependencies.
   --server-only       Start only the Express API server.
   --dashboard-only    Start only the Vite dashboard.
   --no-open           Do not open the browser automatically.
@@ -53,10 +51,6 @@ while [[ $# -gt 0 ]]; do
       ;;
     --install)
       FORCE_INSTALL=1
-      shift
-      ;;
-    --install-python)
-      INSTALL_PYTHON=1
       shift
       ;;
     --server-only)
@@ -99,10 +93,6 @@ if [[ "$NODE_MAJOR" -lt 20 ]]; then
   exit 1
 fi
 
-if [[ "$MODE" != "dashboard" ]]; then
-  require_cmd python3
-fi
-
 if [[ -f ".env" ]]; then
   echo "Loading .env"
   set -a
@@ -126,27 +116,6 @@ fi
 if [[ "$FORCE_INSTALL" -eq 1 || ! -d "node_modules" ]]; then
   echo "Installing JavaScript dependencies..."
   pnpm install
-fi
-
-if [[ "$MODE" != "dashboard" ]]; then
-  if [[ "$INSTALL_PYTHON" -eq 1 ]]; then
-    echo "Installing Agent Factory Python runtime dependencies..."
-    python3 -m pip install -r packages/python-runtime/requirements.txt
-  else
-    if ! python3 - <<'PY' >/dev/null 2>&1
-import importlib, litellm, yaml
-importlib.import_module("cre" + "wai")
-PY
-    then
-      cat <<'EOF'
-Warning: Agent Factory Python runtime dependencies are not installed.
-Agent execution may fail until you run:
-  ./scripts/start.sh --install-python
-or:
-  pip install -r packages/python-runtime/requirements.txt
-EOF
-    fi
-  fi
 fi
 
 echo ""

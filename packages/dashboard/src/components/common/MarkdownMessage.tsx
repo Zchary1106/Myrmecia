@@ -2,11 +2,12 @@ import { memo } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { remarkLabelStrong } from '../../lib/remarkLabelStrong';
+import { KnowledgeCitationLink } from './KnowledgeCitationLink';
 
 /** The same renderer handles partial streamed text and persisted final answers.
  * Raw HTML is disabled; Markdown's default URL sanitization stays enabled.
  */
-export const MarkdownMessage = memo(function MarkdownMessage({ content }: { content: string }) {
+export const MarkdownMessage = memo(function MarkdownMessage({ content, executionId }: { content: string; executionId?: string }) {
   return (
     <div className="min-w-0 text-sm leading-6 text-app-secondary [overflow-wrap:anywhere]
       [&_p]:my-3 [&>:first-child]:mt-0 [&>:last-child]:mb-0
@@ -33,7 +34,11 @@ export const MarkdownMessage = memo(function MarkdownMessage({ content }: { cont
           ),
           th: ({ children, style }) => <th style={style} className="border-b border-border bg-surface-hover px-3 py-2.5 font-semibold text-app-primary">{children}</th>,
           td: ({ children, style }) => <td style={style} className="border-b border-border/60 px-3 py-2.5 align-top">{children}</td>,
-          a: ({ children, href }) => <a href={href} target="_blank" rel="noopener noreferrer">{children}</a>,
+          a: ({ children, href }) => {
+            const citation = /^#citation-(K[1-9]\d{0,2})$/.exec(href || '');
+            return citation ? <KnowledgeCitationLink executionId={executionId} citationId={citation[1]}>{children}</KnowledgeCitationLink>
+              : <a href={href} target="_blank" rel="noopener noreferrer">{children}</a>;
+          },
           // Do not automatically fetch model-supplied remote images/tracking URLs.
           img: ({ src, alt }) => <a href={src} target="_blank" rel="noopener noreferrer">{alt || 'View image'}</a>,
         }}

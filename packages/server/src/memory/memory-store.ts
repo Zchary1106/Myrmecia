@@ -21,7 +21,7 @@ import {
   type ScoreWeights,
   type ScoredMemory,
 } from './types.js';
-import { getDb } from '../db/database.js';
+import { getDb, peekDb, type DbDriver } from '../db/database.js';
 import { logger } from '../lib/logger.js';
 
 // ---------- Schema ----------
@@ -261,14 +261,16 @@ export class SqliteMemoryStore implements MemoryStore {
     this.initialized = true;
   }
 
-  async add(input: MemoryWriteInput): Promise<MemoryItem> {
+  async add(input: MemoryWriteInput, expectedDb?: DbDriver): Promise<MemoryItem> {
     await this.initialize();
+    if (expectedDb && peekDb() !== expectedDb) throw new Error('MEMORY_EVIDENCE_CONNECTION_CLOSED');
 
     const id = `mem_${uuid().slice(0, 12)}`;
     const embedding = input.embedding ?? (await this.embedding.embed(input.summary || input.content));
     const scope = input.scope || {};
     const importance = clamp01(input.importance ?? 0.5);
 
+    if (expectedDb && peekDb() !== expectedDb) throw new Error('MEMORY_EVIDENCE_CONNECTION_CLOSED');
     const db = getDb();
     db.run(
       `INSERT INTO memory_items (

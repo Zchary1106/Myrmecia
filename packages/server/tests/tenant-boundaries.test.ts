@@ -61,6 +61,27 @@ describe('tenant boundary enforcement', () => {
     vi.restoreAllMocks();
   });
 
+  it.each(['token', 'api-key'])('does not let an authenticated %s adopt x-user-id or elevate its role', async (kind) => {
+    const org = createOrganization('Identity fixture');
+    const workspace = createWorkspace(org.id, 'Identity workspace');
+    const owner = createUser({ orgId: org.id, email: `${kind}-owner@example.test`, name: 'Owner', role: 'operator' });
+    const other = createUser({ orgId: org.id, email: `${kind}-other@example.test`, name: 'Other', role: 'admin' });
+    addWorkspaceMember(owner.id, workspace.id, 'operator');
+    addWorkspaceMember(other.id, workspace.id, 'admin');
+    const app = express();
+    app.use((req, _res, next) => {
+      (req as any).authContext = { kind, userId: owner.id, workspaceId: workspace.id, scopes: ['read'] };
+      next();
+    });
+    app.use(tenantMiddleware());
+    app.get('/identity', (req, res) => res.json((req as any).tenantContext));
+    await withApp(app, async (baseUrl) => {
+      const response = await jsonFetch<any>(baseUrl, '/identity', { headers: { 'x-user-id': other.id, 'x-workspace-id': workspace.id } });
+      expect(response.status).toBe(200);
+      expect(response.body).toMatchObject({ userId: owner.id, workspaceId: workspace.id, role: 'viewer' });
+    });
+  });
+
   it('scopes graph workflow list and detail routes to the active workspace', async () => {
     const { workspaceA, workspaceB, headersA } = createTenant();
     const visible = createGraphWorkflow({ name: 'Visible graph', workspaceId: workspaceA.id });
@@ -192,6 +213,7 @@ describe('tenant boundary enforcement', () => {
         modelId: undefined,
         reasoningEffort: undefined,
         contextLength: undefined,
+        filesystemWorkspaceId: undefined, workspaceAccessMode: undefined, workspaceActorId: headersA['x-user-id'],
       });
     });
   });

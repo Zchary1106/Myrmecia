@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useStore } from '../../stores/store';
-import { api, type DomainPackDTO, type TeamDTO } from '../../lib/api';
+import { api, type DomainPackDTO, type TeamDTO, type DirtySourcePreview } from '../../lib/api';
 import { cn } from '../../lib/utils';
 import { readOnlyControlMessage, runtimeControlsAllowed } from '../../lib/permissions';
-import type { Priority, TaskMode } from '@myrmecia/shared';
+import type { Priority, TaskMode, ManagedWorkspace, WorkspaceAccessMode } from '@myrmecia/shared';
 
 export type LaunchMode = Extract<TaskMode, 'direct' | 'master'> | 'team' | 'pipeline';
 
@@ -48,6 +48,11 @@ export function WorkLauncher({
   const [teams, setTeams] = useState<TeamDTO[]>([]);
   const [teamId, setTeamId] = useState(initialTeamId);
   const [workspacePath, setWorkspacePath] = useState(initialWorkspacePath);
+  const [sourceWorkspaces, setSourceWorkspaces] = useState<ManagedWorkspace[]>([]);
+  const [sourceWorkspaceId, setSourceWorkspaceId] = useState('');
+  const [workspaceAccessMode, setWorkspaceAccessMode] = useState<WorkspaceAccessMode>('isolated');
+  const [dirtyFiles, setDirtyFiles] = useState('');
+  const [dirtyPreview, setDirtyPreview] = useState<DirtySourcePreview>();
   const [modelId, setModelId] = useState(initialModelId);
   const [reasoningEffort, setReasoningEffort] = useState(initialReasoningEffort);
   const [contextLength, setContextLength] = useState(initialContextLength);
@@ -61,6 +66,7 @@ export function WorkLauncher({
   const canLaunch = runtimeControlsAllowed(diagnostics);
 
   useEffect(() => {
+    api.managedWorkspaces?.list().then(next => setSourceWorkspaces(next.filter(item => ['active', 'candidate'].includes(item.lifecycle) && item.ownership !== 'legacy_unmanaged'))).catch(() => {});
     if (templates.length === 0) void loadTemplates();
     api.domains.list().then(setDomains).catch(() => { /* domains optional */ });
     api.teams.list().then(next => {
@@ -102,10 +108,11 @@ export function WorkLauncher({
     if (mode !== 'master' && !title.trim()) return 'Title is required.';
     if (mode === 'direct' && !assigneeId) return 'Select an agent for direct work.';
     if (mode === 'team' && !teamId) return 'Select an Agent Team.';
-    if (mode === 'team' && !workspacePath) return 'Choose a local project in Agent Teams before dispatching.';
+    if (mode === 'team' && !workspacePath && !sourceWorkspaceId) return 'Choose a project source before dispatching.';
+    if (workspaceAccessMode !== 'isolated' && !workspacePath && !sourceWorkspaceId) return 'Shared mode requires a selected source.';
     if (mode === 'pipeline' && !templateId) return 'Select a pipeline template.';
     return null;
-  }, [canLaunch, title, description, mode, assigneeId, teamId, templateId, workspacePath]);
+  }, [canLaunch, title, description, mode, assigneeId, teamId, templateId, workspacePath, sourceWorkspaceId, workspaceAccessMode]);
 
   const submit = async () => {
     if (validationError || busy) return;
@@ -115,6 +122,7 @@ export function WorkLauncher({
     try {
       if (mode === 'team') {
         await api.teams.dispatch(teamId, `${title.trim()}\n\n${description.trim()}`, workspacePath, {
+          filesystemWorkspaceId: sourceWorkspaceId || undefined, workspaceAccessMode,
           modelId: modelId === 'auto' ? undefined : modelId,
           reasoningEffort: reasoningEffort === 'auto' ? undefined : reasoningEffort,
           contextLength: contextLength === 'auto' ? undefined : Number(contextLength),
@@ -122,6 +130,7 @@ export function WorkLauncher({
         setActiveView('teams');
       } else if (mode === 'pipeline') {
         await api.pipelines.create({
+          filesystemWorkspaceId: sourceWorkspaceId || undefined, workspaceAccessMode,
           name: taskTitle,
           templateId,
           input: description.trim(),
@@ -133,6 +142,7 @@ export function WorkLauncher({
       } else {
         if (mode === 'master') {
           await api.supervisor.dispatch(description.trim(), {
+            filesystemWorkspaceId: sourceWorkspaceId || undefined, workspaceAccessMode,
             modelId: modelId === 'auto' ? undefined : modelId,
             reasoningEffort: reasoningEffort === 'auto' ? undefined : reasoningEffort,
             contextLength: contextLength === 'auto' ? undefined : Number(contextLength),
@@ -141,6 +151,7 @@ export function WorkLauncher({
           });
         } else {
           await api.tasks.create({
+            filesystemWorkspaceId: sourceWorkspaceId || undefined, workspaceAccessMode,
             title: taskTitle,
             description: description.trim(),
             mode,
@@ -238,6 +249,40 @@ export function WorkLauncher({
             </div>
           )}
 
+          {<div className="rounded-xl border border-border bg-background p-3 text-xs">
+            <label className="block">源目录<select aria-label="Workspace source" value={sourceWorkspaceId} disabled={busy} onChange={event => setSourceWorkspaceId(event.target.value)}
+              className="app-focus mt-1 w-full rounded-lg border border-border bg-surface px-3 py-2">
+              <option value="">{workspacePath || '独立空目录（不读取服务项目）'}</option>
+              {sourceWorkspaces.map(item => <option key={item.id} value={item.id}>{item.canonicalPath}</option>)}
+            </select></label>
+            <label className="mt-2 block">目录访问方式<select aria-label="Workspace access mode" value={workspaceAccessMode} disabled={busy} onChange={event => setWorkspaceAccessMode(event.target.value as WorkspaceAccessMode)}
+              className="app-focus mt-1 w-full rounded-lg border border-border bg-surface px-3 py-2">
+              <option value="isolated">独立执行目录（默认）</option><option value="shared_readonly">共享只读（仅本地读工具）</option><option value="shared_write">共享写入（自动排队）</option>
+            </select></label>
+            <p className="mt-2 text-app-muted">Git 使用 HEAD 基线，不带入未提交文件；非 Git 使用限额过滤复制。追问沿用会话目录。此处不是 OS 沙箱。</p>
+            {sourceWorkspaceId && <details className="mt-2">
+              <summary className="app-focus cursor-pointer">显式带入未提交文件（先审阅，再快照）</summary>
+              <textarea aria-label="Dirty source selected files" rows={2} value={dirtyFiles} onChange={event => { setDirtyFiles(event.target.value); setDirtyPreview(undefined); }}
+                placeholder="每行一个相对路径，禁止凭证文件" className="app-focus mt-2 w-full rounded-lg border border-border bg-surface p-2" />
+              <button type="button" disabled={busy || !dirtyFiles.trim()} className="app-focus mt-2 rounded-lg border border-border px-3 py-2 disabled:opacity-40" onClick={async () => {
+                setBusy(true); setError(null);
+                try { setDirtyPreview(await api.managedWorkspaces.previewSourceSnapshot(sourceWorkspaceId, dirtyFiles.split('\n').map(value => value.trim()).filter(Boolean))); }
+                catch (error) { setError(error instanceof Error ? error.message : '无法生成源快照预览'); }
+                finally { setBusy(false); }
+              }}>预览文件快照</button>
+              {dirtyPreview && <div className="mt-2">
+                <p>HEAD {dirtyPreview.head.slice(0, 12)} + 已选择文件；完整过滤清单 {dirtyPreview.files.length} 项</p>
+                <ul className="mt-1 max-h-28 overflow-auto">{dirtyPreview.files.map(file => <li key={file.path} className="break-all">{file.path} · {file.sizeBytes} bytes · {file.sha256.slice(0, 12)}</li>)}</ul>
+                <button type="button" disabled={busy} className="app-focus mt-2 rounded-lg border border-border px-3 py-2 disabled:opacity-40" onClick={async () => {
+                  if (!window.confirm('按这份文件和哈希清单生成独立源快照？原目录不会改变。')) return;
+                  setBusy(true); setError(null);
+                  try { const snapshot = await api.managedWorkspaces.captureSourceSnapshot(dirtyPreview); setSourceWorkspaces(current => [...current, snapshot]); setSourceWorkspaceId(snapshot.id); setDirtyPreview(undefined); }
+                  catch (error) { setError(error instanceof Error ? error.message : '源已变化，请重新预览'); }
+                  finally { setBusy(false); }
+                }}>确认清单并选用快照</button>
+              </div>}
+            </details>}
+          </div>}
           {mode === 'team' && (
             <div>
               <label className="text-[11px] text-gray-500 mb-1 block">Agent Team</label>

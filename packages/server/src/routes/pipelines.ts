@@ -1,5 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { listExecutionArtifacts } from '../db/models/execution-artifact.js';
+import { excludedWorkspacePath } from '../workspace/path-policy.js';
 import { existsSync, readdirSync, realpathSync, statSync } from 'fs';
 import { basename, extname, relative, resolve } from 'path';
 import { listPipelines, getPipeline } from '../db/models/pipeline.js';
@@ -10,7 +12,7 @@ import {
 } from '../pipelines/pipeline-engine.js';
 import { workspaceManager } from '../workspace/workspace-manager.js';
 import { createOperatorAction } from '../db/models/operator-action.js';
-import { notFound, parseBody, parseQuery, requireConfirmation, requireOperatorRole, sendError } from './http.js';
+import { HttpError, notFound, parseBody, parseQuery, requireConfirmation, requireOperatorRole, sendError } from './http.js';
 import { requestCanAccessWorkspace, workspaceIdFromRequest } from '../auth/tenant.js';
 import type { Pipeline } from '../types.js';
 
@@ -22,6 +24,8 @@ const createPipelineSchema = z.object({
   gateMode: z.enum(['auto', 'manual']).optional(),
   confirmAutonomousPublish: z.boolean().optional(),
   domainId: z.string().trim().min(1).optional(),
+  filesystemWorkspaceId: z.string().max(100).optional(),
+  workspaceAccessMode: z.enum(['isolated', 'shared_readonly', 'shared_write']).optional(),
 });
 const listPipelinesQuerySchema = z.object({
   status: pipelineStatusSchema.optional(),
@@ -80,7 +84,7 @@ export function createPipelineRoutes(pipelineEngine: PipelineEngine): Router {
   router.post('/', async (req, res) => {
     try {
       const actor = requireOperatorRole(req, 'pipeline.create', ['admin', 'operator']);
-      const { name, templateId, input, gateMode, confirmAutonomousPublish, domainId } = parseBody(createPipelineSchema, req);
+      const { name, templateId, input, gateMode, confirmAutonomousPublish, domainId, filesystemWorkspaceId, workspaceAccessMode } = parseBody(createPipelineSchema, req);
       const pipeline = await pipelineEngine.create({
         name,
         templateId,
@@ -89,6 +93,7 @@ export function createPipelineRoutes(pipelineEngine: PipelineEngine): Router {
         confirmAutonomousPublish,
         domainId,
         workspaceId: workspaceIdFromRequest(req),
+        filesystemWorkspaceId, workspaceAccessMode, workspaceActorId: actor.id,
       });
       createOperatorAction({
         action: 'pipeline.create',
@@ -124,7 +129,11 @@ export function createPipelineRoutes(pipelineEngine: PipelineEngine): Router {
 
   router.get('/:id/artifacts', (req, res) => {
     try {
-      getAccessiblePipeline(req, req.params.id);
+      const pipeline = getAccessiblePipeline(req, req.params.id);
+      const saved = listExecutionArtifacts({ workspaceId: pipeline.workspaceId || 'default', pipelineId: pipeline.id, limit: 500 });
+      if (saved.length) return res.json(saved.map(artifact => ({ id: artifact.id, name: artifact.name, path: artifact.relativePath,
+        kind: artifact.kind === 'image' || artifact.kind === 'video' ? artifact.kind : 'document',
+        url: artifact.previewUrl, captureState: artifact.metadata.captureState, immutable: artifact.metadata.immutable })));
       const workspace = workspaceManager.getWorkspaceInfo(req.params.id, 'pipeline');
       if (!workspace) return res.json([]);
       const files = listFiles(workspace.path)
@@ -154,6 +163,7 @@ export function createPipelineRoutes(pipelineEngine: PipelineEngine): Router {
     try {
       getAccessiblePipeline(req, req.params.id);
       const path = z.string().trim().min(1).parse(req.query.path);
+      if (excludedWorkspacePath(path)) throw new HttpError(403, 'ARTIFACT_PATH_DENIED', 'Credential/generated paths are excluded');
       // Pipeline workspaces intentionally live below `.agent-factory`. The
       // resolver above already realpath-checks that the requested file stays
       // inside that workspace, so denying every hidden path segment blocks all
@@ -215,6 +225,19 @@ export function createPipelineRoutes(pipelineEngine: PipelineEngine): Router {
         });
       }
       sendError(res, err);
+    }
+  });
+
+  router.post('/:id/pause', async (req, res) => {
+    try {
+      const actor = requireOperatorRole(req, 'pipeline.pause', ['admin', 'operator']);
+      assertPipelineAccess(req, req.params.id);
+      const pipeline = await pipelineEngine.pause(req.params.id);
+      createOperatorAction({ action: 'pipeline.pause', actor, targetType: 'pipeline', targetId: pipeline.id, pipelineId: pipeline.id });
+      res.json(pipeline);
+    } catch (err) {
+      sendError(res, err instanceof HttpError ? err
+        : new HttpError(409, 'PIPELINE_PAUSE_FAILED', err instanceof Error ? err.message : 'Unable to pause'));
     }
   });
 

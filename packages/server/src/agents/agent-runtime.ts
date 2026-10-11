@@ -1,7 +1,7 @@
-import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
-import { spawnSync } from 'node:child_process';
-import type { AgentDefinition, ModelCostType, Task, AgentProgress, ToolActivity, ProgressTracker } from '../types.js';
+import { join } from 'path';
+import { agentWithPinnedSetup, resolvePinnedSkill, getAgentSetupSnapshot } from './agent-setup-snapshot.js';
+import { missingContractInput } from './agent-contract-input.js';
+import type { AgentDefinition, ModelCostType, Task, AgentProgress, ProgressTracker } from '../types.js';
 import { eventBus } from '../events/event-bus.js';
 import { updateTask, addTaskLog, getTask } from '../db/models/task.js';
 import { updateAgent } from '../db/models/agent.js';
@@ -9,63 +9,38 @@ import { createExecution, getExecution, updateExecution, addExecutionMessage } f
 import { recordLedgerEntry } from '../db/models/execution-ledger.js';
 import { guardrails } from './safety-guardrails.js';
 import { workspaceManager } from '../workspace/workspace-manager.js';
-import { createToolExecution, completeToolExecution, summarizeToolPayload } from '../tools/tool-execution.js';
-import { resolveAllowedToolsForAgent } from '../tools/tool-policy.js';
 import { completeRunTrace, completeTraceSpan, createRunTrace, createTraceSpan } from '../db/models/trace.js';
-import { getModel, recordModelUsage, selectModelForAgent } from '../models/model-registry.js';
-import { resolveSkillForAgent } from '../db/models/skill.js';
-import { getExecutor, DEFAULT_LIMITS } from './executor.js';
 import { getTrajectoryStore } from '../memory/trajectory-store.js';
 import { getMemoryService } from '../memory/memory-service.js';
-import { isDocumentSession, sessionDocumentContext } from '../knowledge/session-documents.js';
-import { modelBaseURL, modelApiKey, defaultModel } from '../lib/brand-config.js';
-import { messageBus } from './message-bus.js';
+import { isDocumentSession } from '../knowledge/session-documents.js';
+import { prepareRuntimeKnowledge, assertRuntimeKnowledgeCurrent } from '../memory/runtime-knowledge-bridge.js';
+import { hasPrivateKnowledgeContext } from '../db/models/agent-knowledge.js';
 import { tsAgentLoop } from './ts-agent-loop.js';
 import { metrics } from '../observability/telemetry.js';
-import type { SkillDefinition, SkillVersion } from '../types.js';
 import { assertExecutionTokenBudget, estimateTokenCount, getRuntimeLimits, resolveAgentRuntimeLimits } from './runtime-limits.js';
+import { prepareTaskBudget } from './agent-budget.js';
+import { AgentConcurrencyError } from './agent-concurrency.js';
+import { getDb } from '../db/database.js';
 import { sanitizeAgentOutput } from '../security/dlp-runtime.js';
-import { appendExecutionAuditEvent, recordExecutionPolicySnapshot } from '../audit/execution-audit.js';
-import { resolveDomainForTask, applyDomainOverlay, applyDomainKnowledge } from './domain-context.js';
-import { buildAgentSystemPrompt } from './agent-prompt.js';
-import { shouldUseTsAgentLoop, selectRuntimeAdapter, type RuntimeAdapter } from './runtime-adapter.js';
+import { selectRuntimeAdapter, type RuntimeAdapter } from './runtime-adapter.js';
 import { logger } from '../lib/logger.js';
 import { ExecutionMiddlewareChain } from './execution-middleware.js';
-import { indexExecutionArtifacts } from '../artifacts/execution-artifact-indexer.js';
+import { indexExecutionArtifacts, captureArtifactBaseline } from '../artifacts/execution-artifact-indexer.js';
 import { checkpointExecutionContext, loadExecutionContext, persistExecutionContext } from './execution-context.js';
-import { archiveLongToolOutput } from './tool-output-artifact.js';
+import { clearPauseControl, getPauseControl, setPauseControl, UserPauseReached } from './pause-control.js';
 import { AgentRunStopped, classifyAgentStop, updateAgentRun, validateAgentOutput } from './run-state.js';
 import type { AgentStopReason } from '@myrmecia/shared';
 import { queueOwnsRetry } from './retry-ownership.js';
 import { requestedAgentInput } from './completion-control.js';
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const MAX_RECENT_ACTIVITIES = 5;
-
-// Path to Agent Factory Python runtime.
-const PYTHON_RUNTIME_RUNNER = process.env.MYRMECIA_PYTHON_RUNTIME_DIR
-  ? join(process.env.MYRMECIA_PYTHON_RUNTIME_DIR, 'runtime_runner.py')
-  : join(__dirname, '../../../../packages/python-runtime/runtime_runner.py');
-
-function resolvePythonRuntimeInvocation(executorName: string): { command: string; argsPrefix: string[] } {
-  if (executorName !== 'local') return { command: 'python3', argsPrefix: [] };
-
-  const configured = process.env.MYRMECIA_PYTHON_PATH?.trim();
-  if (configured) return { command: configured, argsPrefix: [] };
-  if (process.platform !== 'win32') return { command: 'python3', argsPrefix: [] };
-
-  const candidates = [
-    { command: 'py', argsPrefix: ['-3'] },
-    { command: 'python', argsPrefix: [] },
-    { command: 'python3', argsPrefix: [] },
-  ];
-  return candidates.find(candidate =>
-    spawnSync(candidate.command, [...candidate.argsPrefix, '--version'], {
-      stdio: 'ignore',
-      windowsHide: true,
-    }).status === 0,
-  ) ?? { command: 'python3', argsPrefix: [] };
-}
+import { assertRunWrite, withOwnedRun } from './run-coordinator.js';
+import { runtimeV2Enabled } from './runtime-version.js';
+import { markContinuationStarted, RuntimeSliceYield, settleContinuation } from './runtime-continuation.js';
+import { verifyCompletionCriteria } from './completion-gate.js';
+import { finalizeInboxForExecution } from '../db/models/agent-inbox.js';
+import { resolveExecutionWorld } from './execution-world.js';
+import { prepareTaskWorkspace, recordWorkspaceBoundary } from '../workspace/task-workspace.js';
+import { withWorkspaceLease, currentWorkspaceAccessMode } from '../workspace/workspace-lease.js';
+import { safeWorkspacePath } from '../workspace/path-policy.js';
 
 export interface TaskResult {
   stopReason?: AgentStopReason;
@@ -110,22 +85,14 @@ export class AgentRuntime {
   private runtimeAdapters: RuntimeAdapter[];
 
   constructor() {
-    // Built-in adapters in priority order: the TS loop handles tool-free agents
-    // and Copilot's server-side tool bridge; the Python runtime is the catch-all.
-    // External runtimes can be inserted before the fallback via registerRuntimeAdapter().
+    // All built-in Agents use the TS loop. Extensions are inserted before this
+    // universal fallback so their canHandle rules retain priority.
     this.runtimeAdapters = [
       {
         name: 'ts-agent-loop',
-        canHandle: (agent) => shouldUseTsAgentLoop(agent),
+        canHandle: () => true,
         execute: (ctx) => tsAgentLoop.execute(
           ctx.agent, ctx.task, ctx.abortController, ctx.executionId, ctx.traceId, ctx.spanId, ctx.tracker, ctx.runtimeSkill, ctx.middleware,
-        ),
-      },
-      {
-        name: 'python-runtime',
-        canHandle: () => true,
-        execute: (ctx) => this.executeWithPythonRuntime(
-          ctx.agent, ctx.task, ctx.abortController, ctx.executionId, ctx.traceId, ctx.spanId, ctx.tracker, ctx.runtimeSkill,
         ),
       },
     ];
@@ -138,25 +105,25 @@ export class AgentRuntime {
   }
 
   async execute(agent: AgentDefinition, task: Task): Promise<TaskResult> {
-    const documentContext = sessionDocumentContext(task, task.description || task.input);
-    if (documentContext) task = { ...task, input: task.input + documentContext };
+    task = await prepareTaskWorkspace(task);
+    return withWorkspaceLease(task, () => withOwnedRun(task, () => this.executeOwned(agent, task)));
+  }
+
+  private async executeOwned(agent: AgentDefinition, task: Task): Promise<TaskResult> {
+    agent = agentWithPinnedSetup(task.id, agent);
+    const pinnedConfig = getAgentSetupSnapshot(task.id)?.completeConfig;
+    if (pinnedConfig && !task.modelId && pinnedConfig.config.model && pinnedConfig.config.model !== 'auto') {
+      task = { ...task, modelId: pinnedConfig.config.model };
+    }
+    if (runtimeV2Enabled()) markContinuationStarted(task);
     const executionStartedAtMs = Date.now();
     const abortController = new AbortController();
-    this.abortControllers.set(task.id, abortController);
     const tracker = createProgressTracker();
 
     // Ensure workspace exists for this task
     let workspacePath = task.workspacePath;
-    if (!workspacePath && !task.pipelineId) {
-      try {
-        const ws = await workspaceManager.createTaskWorkspace(task.id);
-        workspacePath = ws.path;
-        updateTask(task.id, { workspacePath });
-        addTaskLog(task.id, 'info', `📁 Created workspace: ${ws.path}`, 'system');
-      } catch (err: any) {
-        addTaskLog(task.id, 'warn', `Workspace creation failed: ${err.message}`, 'system');
-      }
-    }
+    if (!workspacePath) throw new Error('WORKSPACE_PREPARATION_REQUIRED');
+    const artifactBaseline = captureArtifactBaseline(workspacePath);
     if (workspacePath && !task.workdir) {
       task.workdir = workspacePath;
     }
@@ -180,15 +147,31 @@ export class AgentRuntime {
     });
 
     // Create execution instance
-    const runtimeSkill = resolveSkillForAgent(agent);
-    const execution = createExecution({
-      taskId: task.id,
-      agentDefId: agent.id,
-      skillVersionId: runtimeSkill?.version.id,
-      workspaceId: task.workspaceId,
+    const runtimeSkill = resolvePinnedSkill(task.id, agent);
+    const execution = getDb().transaction(() => {
+      const active = getDb().get<{ total: number }>(`SELECT COUNT(*) AS total FROM task_executions
+        WHERE agent_def_id = ? AND workspace_id = ? AND status = 'running'`, agent.id, task.workspaceId || 'default')!.total;
+      const max = Math.min(agent.config.maxConcurrent || 1, Number(process.env.AGENT_MAX_CONCURRENCY) || 8);
+      if (active >= max) {
+        if (this.abortControllers.get(task.id) === abortController) this.abortControllers.delete(task.id);
+        throw new AgentConcurrencyError(agent.id, max);
+      }
+      return createExecution({
+        taskId: task.id, agentDefId: agent.id,
+        skillVersionId: runtimeSkill?.version.id.startsWith('file:') ? undefined : runtimeSkill?.version.id,
+        workspaceId: task.workspaceId,
+      });
     });
     updateAgentRun(execution.id, 'starting');
+    this.abortControllers.set(task.id, abortController);
     const trace = createRunTrace({ taskId: task.id, executionId: execution.id, agentId: agent.id });
+    const setup = getAgentSetupSnapshot(task.id);
+    recordLedgerEntry({
+      executionId: execution.id, taskId: task.id, agentId: agent.id, workspaceId: task.workspaceId,
+      type: 'agent.config.pinned', summary: setup?.versionId ? `Agent configuration ${setup.versionId}` : 'Legacy / phase-one configuration; no complete revision',
+      metadata: { versionId: setup?.versionId, configHash: setup?.configHash,
+        pinnedBeforeDispatch: setup?.pinnedBeforeDispatch || false, skillVersionId: runtimeSkill?.version.id },
+    });
     const middleware = new ExecutionMiddlewareChain(
       agent,
       task,
@@ -210,8 +193,16 @@ export class AgentRuntime {
 
     try {
       this.enforceAgentRateLimit(agent.id);
+      const knowledgeContext = prepareRuntimeKnowledge(agent, task, execution.id);
+      if (knowledgeContext) task = { ...task, input: task.input + knowledgeContext };
+      const resolvedWorld = await resolveExecutionWorld();
+      const world = 'capabilities' in resolvedWorld ? resolvedWorld.capabilities : resolvedWorld;
+      updateAgentRun(execution.id, 'deciding', { executionWorld: {
+        mode: world.mode, filesystemIsolation: world.isolation.filesystem, processIsolation: world.isolation.process,
+        networkIsolation: world.isolation.network, credentialIsolation: world.isolation.credentials, externalMcpIsolated: false,
+      } });
 
-      const budget = guardrails.checkBudget();
+      const budget = runtimeV2Enabled() ? { allowed: true, reason: undefined } : guardrails.checkBudget();
       if (!budget.allowed) throw new Error(`Budget exceeded: ${budget.reason}`);
       recordLedgerEntry({
         executionId: execution.id, taskId: task.id, agentId: agent.id, workspaceId: task.workspaceId,
@@ -220,6 +211,11 @@ export class AgentRuntime {
       });
 
       const adapter = selectRuntimeAdapter(agent, this.runtimeAdapters) || this.runtimeAdapters[this.runtimeAdapters.length - 1];
+      if (currentWorkspaceAccessMode() === 'shared_readonly' && adapter.name !== 'ts-agent-loop') throw new Error('WORKSPACE_READONLY_RUNTIME_UNSUPPORTED');
+      if (agent.config.governanceBudget && adapter.name !== 'ts-agent-loop') {
+        throw new Error('BUDGET_RUNTIME_UNSUPPORTED: configured hard limits require the governed host loop');
+      }
+      prepareTaskBudget(agent, task, resolveAgentRuntimeLimits(agent, undefined, task.contextLength));
       updateAgentRun(execution.id, 'deciding', { runtime: adapter.name });
       middleware.beforeExecution(adapter.name);
       addTaskLog(task.id, 'info', `Executor: ${adapter.name}`, 'system');
@@ -230,7 +226,11 @@ export class AgentRuntime {
         metadata: { runtime: adapter.name, role: agent.role },
       });
 
-      const result = await adapter.execute({
+      const inputQuestion = missingContractInput(agent, task);
+      const result = inputQuestion ? {
+        output: JSON.stringify({ kind: 'myrmecia.request_input', question: inputQuestion }),
+        inputTokens: 0, outputTokens: 0, numTurns: 0, durationMs: 0, costUSD: null,
+      } : await adapter.execute({
         agent, task, abortController,
         executionId: execution.id,
         traceId: trace.id,
@@ -248,6 +248,7 @@ export class AgentRuntime {
       if (result.stopReason && result.stopReason !== 'completed' && result.stopReason !== 'needs_input') {
         throw new AgentRunStopped(result.stopReason, `AGENT_STOPPED: ${result.stopReason}`, result.output);
       }
+      assertRuntimeKnowledgeCurrent(execution.id);
       const safeOutput = sanitizeAgentOutput(result.output, {
         agentId: agent.id,
         taskId: task.id,
@@ -269,7 +270,7 @@ export class AgentRuntime {
       }
       assertExecutionTokenBudget(safeResult.inputTokens, safeResult.outputTokens, safeResult.output, 'agent execution');
 
-      if (safeResult.costUSD != null) guardrails.trackCost(task.id, safeResult.costUSD);
+      if (!runtimeV2Enabled() && safeResult.costUSD != null) guardrails.trackCost(task.id, safeResult.costUSD);
       middleware.afterExecution({
         inputTokens: safeResult.inputTokens,
         outputTokens: safeResult.outputTokens,
@@ -278,13 +279,22 @@ export class AgentRuntime {
       });
 
       if (safeResult.stopReason === 'needs_input') {
+        clearPauseControl('task', task.id);
         if (task.pipelineId) throw new AgentRunStopped('needs_input', 'AGENT_STOPPED: workflow input requires manual intervention', safeResult.output);
+        try {
+          recordWorkspaceBoundary(task);
+          indexExecutionArtifacts({ task, executionId: execution.id, output: safeResult.output,
+            startedAtMs: executionStartedAtMs, captureState: 'partial', baseline: artifactBaseline });
+        } catch (error: any) {
+          throw new AgentRunStopped('tool_unavailable', error.message || 'ARTIFACT_CAPTURE_FAILED', safeResult.output);
+        }
         const progress = getProgressSnapshot(tracker, 'Waiting for user input');
         updateAgentRun(execution.id, 'waiting_for_user', { stopReason: 'needs_input', validation, turn: safeResult.numTurns });
         updateExecution(execution.id, {
           status: 'done', progress, costUSD: safeResult.costUSD, costType: safeResult.costType || 'unavailable',
           inputTokens: safeResult.inputTokens, outputTokens: safeResult.outputTokens,
           tokenCount: safeResult.inputTokens + safeResult.outputTokens, completedAt: new Date().toISOString(),
+          provider: safeResult.provider, actualModelId: safeResult.actualModelId,
         });
         const waiting = updateTask(task.id, { status: 'review', output: safeResult.output, completedAt: new Date().toISOString() });
         checkpointExecutionContext(executionContext, {
@@ -300,9 +310,38 @@ export class AgentRuntime {
         return safeResult;
       }
 
-      const finalProgress = getProgressSnapshot(tracker, 'Completed');
+      // Artifact availability must be established before outcome verification, not after "done".
+      // Failed/unavailable checks still need truthful model provenance.
+      updateExecution(execution.id, { provider: safeResult.provider, actualModelId: safeResult.actualModelId });
+      try {
+        recordWorkspaceBoundary(task);
+        if (workspacePath && currentWorkspaceAccessMode() !== 'shared_readonly') {
+          const { mkdirSync, writeFileSync } = await import('node:fs');
+          const outputDir = safeWorkspacePath(workspacePath, 'output');
+          mkdirSync(outputDir, { recursive: true });
+          writeFileSync(safeWorkspacePath(workspacePath, 'output/summary.md'), safeResult.output || '', 'utf8');
+          const executionDir = safeWorkspacePath(workspacePath, 'output/executions');
+          mkdirSync(executionDir, { recursive: true });
+          writeFileSync(safeWorkspacePath(workspacePath, `output/executions/${execution.id}.md`), safeResult.output || '', 'utf8');
+        }
+        indexExecutionArtifacts({ task, executionId: execution.id, output: safeResult.output, startedAtMs: executionStartedAtMs, baseline: artifactBaseline });
+      } catch (error: any) {
+        throw new AgentRunStopped('tool_unavailable', error.message || 'ARTIFACT_CAPTURE_FAILED', safeResult.output);
+      }
+      const verification = await verifyCompletionCriteria(task, execution.id, safeResult.output, abortController.signal);
+      assertRunWrite(task.id);
+      if (abortController.signal.aborted || getTask(task.id)?.status === 'cancelled') {
+        throw new AgentRunStopped('cancelled', 'Execution cancelled during completion verification', safeResult.output);
+      }
+      clearPauseControl('task', task.id);
+      updateAgentRun(execution.id, 'validating', { verification });
+      if (!['passed', 'not_requested'].includes(verification.status)) {
+        throw new AgentRunStopped(verification.status === 'unavailable' ? 'tool_unavailable' : 'failed',
+          `COMPLETION_CRITERIA_${verification.status.toUpperCase()}: mandatory outcome evidence did not pass`, safeResult.output);
+      }
+      const finalProgress = getProgressSnapshot(tracker, 'Execution finished');
       updateAgentRun(execution.id, 'completed', {
-        stopReason: 'completed', validation, turn: safeResult.numTurns,
+        stopReason: 'completed', validation, verification, turn: safeResult.numTurns,
       });
       updateExecution(execution.id, {
         status: 'done', progress: finalProgress,
@@ -334,17 +373,6 @@ export class AgentRuntime {
         lastValidation: { executionId: execution.id, status: 'done', durationMs: safeResult.durationMs },
         resumeHint: 'Execution completed; inspect QA/review state before making further changes.',
       });
-      try {
-        const artifactCount = indexExecutionArtifacts({
-          task,
-          executionId: execution.id,
-          output: safeResult.output,
-          startedAtMs: executionStartedAtMs,
-        });
-        addTaskLog(task.id, 'info', `Indexed ${artifactCount} previewable artifacts`, 'artifacts');
-      } catch (artifactError) {
-        logger.warn({ err: artifactError, taskId: task.id, executionId: execution.id }, 'Artifact indexing failed');
-      }
       recordLedgerEntry({
         executionId: execution.id, taskId: task.id, agentId: agent.id, workspaceId: task.workspaceId,
         type: 'execution.completed', decision: 'done',
@@ -361,16 +389,6 @@ export class AgentRuntime {
           durationMs: safeResult.durationMs,
         },
       });
-
-      // Write output summary to workspace
-      if (workspacePath) {
-        try {
-          const { writeFileSync, mkdirSync } = await import('fs');
-          const { join } = await import('path');
-          mkdirSync(join(workspacePath, 'output'), { recursive: true });
-          writeFileSync(join(workspacePath, 'output', 'summary.md'), safeResult.output || '', 'utf-8');
-        } catch {}
-      }
 
       const stats = { ...agent.stats };
       stats.tasksCompleted++;
@@ -402,11 +420,40 @@ export class AgentRuntime {
 
       return safeResult;
     } catch (err: any) {
+      if (!/FENCE_LOST|ARTIFACT_CAPTURE_FAILED/.test(err?.message || '')) {
+        try { indexExecutionArtifacts({ task, executionId: execution.id, output: String(err.partialOutput || ''), startedAtMs: executionStartedAtMs, captureState: 'partial', baseline: artifactBaseline }); }
+        catch (captureError) { logger.warn({ taskId: task.id }, 'Partial artifact capture unavailable; retained directory requires reconciliation'); }
+      }
+      if (/RUN_FENCE_LOST/.test(err?.message || '')) {
+        abortController.abort();
+        throw err;
+      }
+      if (err instanceof UserPauseReached && getTask(task.id)?.status !== 'cancelled') {
+        recordWorkspaceBoundary(task);
+        updateAgentRun(execution.id, 'interrupted', { stopReason: 'interrupted', userPaused: true });
+        updateExecution(execution.id, { status: 'failed', completedAt: new Date().toISOString() });
+        setPauseControl('task', task.id, 'paused');
+        const held = updateTask(task.id, { status: 'queued', error: null });
+        addTaskLog(task.id, 'info', 'User pause reached a stable turn boundary; execution history and checkpoint retained', 'runtime');
+        completeTraceSpan(agentSpan.id, { status: 'done', metadata: { userPaused: true } });
+        completeRunTrace(trace.id, { status: 'done', summary: 'User pause at stable checkpoint; task awaits resume' });
+        eventBus.emit('task:updated', { taskId: task.id, task: held, workspaceId: task.workspaceId });
+        eventBus.emit('execution:failed', { executionId: execution.id, taskId: task.id, workspaceId: task.workspaceId, stopReason: 'interrupted' });
+        throw err;
+      }
+      if (err instanceof RuntimeSliceYield) {
+        updateAgentRun(execution.id, 'interrupted', { stopReason: 'interrupted' });
+        updateExecution(execution.id, { status: 'failed', completedAt: new Date().toISOString() });
+        updateTask(task.id, { status: 'queued', error: null });
+        addTaskLog(task.id, 'info', 'Run slice completed at a stable read-only boundary; continuation awaits the same queue', 'runtime');
+        throw err;
+      }
       middleware.onError(err);
+      if (getPauseControl('task', task.id)) setPauseControl('task', task.id, 'paused');
       const errorMsg = err.message || 'Unknown error';
       const priorStatus = getTask(task.id)?.status;
-      // Python watchdogs also abort their process; that is a timeout, not a
-      // user cancellation. Only the task/canonical abort error proves cancel.
+      // Provider/tool timeouts can also abort a request; that is not a user
+      // cancellation. Only the task/canonical abort error proves cancel.
       const stopReason = classifyAgentStop(err, priorStatus === 'cancelled');
       const cancelled = stopReason === 'cancelled';
       updateAgentRun(execution.id, cancelled ? 'cancelled' : stopReason === 'interrupted' ? 'interrupted' : 'failed', { stopReason });
@@ -467,13 +514,19 @@ export class AgentRuntime {
 
       throw err;
     } finally {
-      this.abortControllers.delete(task.id);
+      try {
+        const status = getExecution(execution.id)?.status;
+        if (status !== 'running') finalizeInboxForExecution(task.workspaceId || 'default', execution.id);
+        if (runtimeV2Enabled() && ['done', 'failed', 'cancelled'].includes(getTask(task.id)?.status || '')) settleContinuation(task);
+      } finally {
+        if (this.abortControllers.get(task.id) === abortController) this.abortControllers.delete(task.id);
+      }
     }
   }
 
   /** Record task trajectory + episodic memory (fire-and-forget) */
   private recordTrajectory(task: Task, agentId: string, success: boolean, durationMs: number, costUSD: number, output?: string, executionId?: string): void {
-    if (isDocumentSession(task)) return; // Session attachments must not enter long-term memory.
+    if (isDocumentSession(task) || hasPrivateKnowledgeContext(task)) return; // Private/session evidence must not enter global recall.
     // Quality score: success=0.8 base, penalize high cost, reward fast completion
     const quality = success
       ? Math.min(1, 0.8 + (durationMs < 60000 ? 0.1 : 0) + (costUSD < 0.01 ? 0.1 : 0))
@@ -519,623 +572,6 @@ export class AgentRuntime {
     }
     recent.push(now);
     this.agentExecutionWindows.set(agentId, recent);
-  }
-
-  private recordText(executionId: string, text: string, context: { agentId: string; taskId: string; workspaceId?: string }) {
-    const safeText = sanitizeAgentOutput(text, { ...context, executionId, purpose: 'agent text' });
-    const message = addExecutionMessage({ executionId, type: 'agent_text', content: safeText });
-    eventBus.emit('execution:message', { executionId, taskId: context.taskId, workspaceId: context.workspaceId, type: 'agent_text', content: safeText, message });
-    return safeText;
-  }
-
-  private recordToolStarted(
-    executionId: string,
-    traceId: string,
-    parentSpanId: string,
-    task: Task,
-    agent: AgentDefinition,
-    tracker: ProgressTracker,
-    event: any,
-  ) {
-    const toolName = String(event.toolName || event.toolId || event.name || 'unknown');
-    const input = event.input || {};
-    const record = createToolExecution({
-      id: event.toolExecutionId,
-      toolId: toolName,
-      taskId: task.id,
-      executionId,
-      agentId: agent.id,
-      input,
-      startedAt: event.startedAt,
-    });
-    tracker.toolUseCount++;
-    updateAgentRun(executionId, 'acting', { toolCallCount: tracker.toolUseCount });
-    const activity: ToolActivity = {
-      toolName,
-      input: input && typeof input === 'object' && !Array.isArray(input) ? input : { value: input },
-      activityDescription: `Using ${toolName}`,
-      isSearch: toolName.includes('search'),
-      isRead: toolName.includes('fetch') || toolName.includes('crawler'),
-      timestamp: event.startedAt || new Date().toISOString(),
-    };
-    tracker.recentActivities.push(activity);
-    tracker.recentActivities = tracker.recentActivities.slice(-MAX_RECENT_ACTIVITIES);
-    const progress = getProgressSnapshot(tracker, `Using ${toolName}`);
-    updateExecution(executionId, { progress });
-    const content = summarizeToolPayload(input);
-    createTraceSpan({
-      id: `span_${record.id}`,
-      traceId,
-      parentSpanId,
-      type: 'tool.call',
-      name: toolName,
-      metadata: { toolExecutionId: record.id, inputSummary: content },
-      startedAt: event.startedAt,
-    });
-    addExecutionMessage({ executionId, type: 'tool_use', content, toolName });
-    eventBus.emit('tool:started', {
-      toolExecutionId: record.id,
-      toolId: toolName,
-      taskId: task.id,
-      executionId,
-      agentId: agent.id,
-      inputSummary: content,
-    });
-    eventBus.emit('execution:progress', { executionId, taskId: task.id, agentDefId: agent.id, workspaceId: task.workspaceId, progress });
-  }
-
-  private recordToolResult(executionId: string, task: Task, agent: AgentDefinition, event: any) {
-    updateAgentRun(executionId, 'observing');
-    const toolName = String(event.toolName || event.toolId || event.name || 'unknown');
-    const status = event.status === 'failed' || event.error ? 'failed' : 'done';
-    const outputContext = {
-      agentId: agent.id,
-      taskId: task.id,
-      workspaceId: task.workspaceId,
-      executionId,
-    };
-    const rawOutput = event.output ?? event.result;
-    const safeOutput = rawOutput === undefined
-      ? undefined
-      : sanitizeAgentOutput(summarizeToolPayload(rawOutput), { ...outputContext, purpose: `tool ${toolName} output` });
-    const rawContent = event.error || event.outputSummary || safeOutput || '';
-    const content = sanitizeAgentOutput(String(rawContent), {
-      ...outputContext,
-      purpose: `tool ${toolName} result`,
-    });
-    const evidenceOutput = rawOutput === undefined
-      ? content
-      : sanitizeAgentOutput(String(rawOutput), { ...outputContext, purpose: `tool ${toolName} raw evidence` });
-    archiveLongToolOutput({
-      task,
-      executionId,
-      toolExecutionId: String(event.toolExecutionId || `${toolName}_${Date.now()}`),
-      toolName,
-      output: evidenceOutput,
-    });
-    const updated = completeToolExecution(String(event.toolExecutionId), {
-      status,
-      output: safeOutput,
-      outputSummary: content,
-      error: status === 'failed' ? content : undefined,
-      durationMs: event.durationMs,
-      completedAt: event.completedAt,
-    });
-    if (status === 'failed') {
-      appendExecutionAuditEvent(executionId, {
-        type: 'tool.failed',
-        severity: content.includes('blocked') || content.includes('guardian') ? 'block' : 'warn',
-        message: `Tool ${toolName} failed`,
-        metadata: { toolName, output: content.slice(0, 500), durationMs: event.durationMs },
-      });
-    }
-    completeTraceSpan(`span_${event.toolExecutionId}`, {
-      status,
-      metadata: { outputSummary: content, durationMs: event.durationMs },
-      error: status === 'failed' ? content : undefined,
-      durationMs: event.durationMs,
-      completedAt: event.completedAt,
-    });
-    addExecutionMessage({ executionId, type: 'tool_result', content, toolName });
-    eventBus.emit(status === 'failed' ? 'tool:failed' : 'tool:done', {
-      toolExecutionId: updated?.id || event.toolExecutionId,
-      toolId: toolName,
-      taskId: task.id,
-      workspaceId: task.workspaceId,
-      executionId,
-      agentId: agent.id,
-      status,
-      error: status === 'failed' ? content : undefined,
-      durationMs: event.durationMs,
-      outputSummary: content,
-    });
-  }
-
-  /**
-   * Execute agent task via the Agent Factory Python runtime subprocess.
-   * Spawns the Python runtime runner which outputs JSON events to stdout.
-   */
-  private async executeWithPythonRuntime(
-    agent: AgentDefinition, task: Task, abortController: AbortController,
-    executionId: string, traceId: string, rootSpanId: string, tracker: ProgressTracker,
-    runtimeSkill?: { skill: SkillDefinition; version: SkillVersion; source: 'assignment' | 'skillPath' },
-  ): Promise<TaskResult> {
-    const startTime = Date.now();
-    const toolPolicy = resolveAllowedToolsForAgent(agent);
-    for (const decision of toolPolicy.decisions.filter(decision => !decision.allowed)) {
-      const message = `Tool ${decision.toolId} blocked by policy: ${decision.reason}`;
-      const span = createTraceSpan({
-        traceId,
-        parentSpanId: rootSpanId,
-        type: 'permission.check',
-        name: `Tool policy: ${decision.toolId}`,
-        metadata: { reason: decision.reason, approvalRequired: decision.approvalRequired },
-      });
-      completeTraceSpan(span.id, { status: 'blocked', metadata: { decision } });
-      addTaskLog(task.id, 'warn', message, agent.id);
-      addExecutionMessage({ executionId, type: 'progress', content: message, toolName: decision.toolId });
-      eventBus.emit('tool:blocked', {
-        toolId: decision.toolId,
-        taskId: task.id,
-        executionId,
-        agentId: agent.id,
-        reason: decision.reason,
-      });
-    }
-
-    const promptSpan = createTraceSpan({
-      traceId,
-      parentSpanId: rootSpanId,
-      type: 'prompt.build',
-      name: 'Build runtime prompt',
-      metadata: {
-        skillPath: agent.skillPath,
-        skillId: runtimeSkill?.skill.id,
-        skillVersionId: runtimeSkill?.version.id,
-        skillVersion: runtimeSkill?.version.version,
-        skillChecksum: runtimeSkill?.version.checksum,
-        skillSource: runtimeSkill?.source,
-        requestedTools: toolPolicy.requestedTools,
-      },
-    });
-
-    // Build system prompt from the skill file plus DB-editable profile fields.
-    let systemPrompt = buildAgentSystemPrompt(agent, toolPolicy.allowedTools, runtimeSkill?.version.content, task);
-
-    // Domain Pack overlay (same as the TS loop path).
-    const domain = resolveDomainForTask(agent, task);
-    systemPrompt = applyDomainOverlay(systemPrompt, domain);
-    if (domain) addTaskLog(task.id, 'info', `Domain Pack applied: ${domain.emoji} ${domain.name}`, 'system');
-    completeTraceSpan(promptSpan.id, {
-      status: 'done',
-      metadata: {
-        allowedTools: toolPolicy.allowedTools,
-        blockedTools: toolPolicy.decisions.filter(decision => !decision.allowed).map(decision => ({
-          toolId: decision.toolId,
-          reason: decision.reason,
-        })),
-        promptChars: task.input.length,
-        systemPromptChars: systemPrompt.length,
-      },
-    });
-
-    // Inject pending messages before model routing so long-context escalation sees the real prompt size.
-    let enrichedInput = task.input;
-    if (domain) {
-      try {
-        enrichedInput = await applyDomainKnowledge(enrichedInput, domain, task.workspaceId);
-      } catch { /* non-critical */ }
-    }
-    try {
-      const pendingMsgs = messageBus.drain(executionId);
-      if (pendingMsgs.length > 0) {
-        const msgContext = pendingMsgs
-          .map(m => `[${m.messageType}] ${m.content}`)
-          .join('\n');
-        enrichedInput = `${enrichedInput}\n\n## Context from other agents:\n${msgContext}`;
-        addTaskLog(task.id, 'info', `Injected ${pendingMsgs.length} message(s) from other agents`, 'system');
-      }
-    } catch { /* non-critical */ }
-
-    const modelSelection = selectModelForAgent(agent, task, { promptText: `${systemPrompt}\n\n${enrichedInput}` });
-    const selectedModel = modelSelection.modelId;
-    persistExecutionContext(task, {
-      modelId: selectedModel,
-      provider: getModel(selectedModel)?.provider,
-    });
-    const limits = resolveAgentRuntimeLimits(agent, modelSelection, task.contextLength);
-    const reservedOutputTokens = Math.min(limits.maxModelResponseTokens, limits.maxExecutionTokens);
-    const estimatedInputTokens = estimateTokenCount(`${systemPrompt}\n\n${enrichedInput}`);
-    const promptBudget = Math.max(1, limits.maxExecutionTokens - reservedOutputTokens);
-    if (estimatedInputTokens > promptBudget) {
-      throw new Error(`CONTEXT_BUDGET_EXCEEDED: Python runtime prompt needs ${estimatedInputTokens}/${promptBudget} tokens after reserving output`);
-    }
-    persistExecutionContext(task, {
-      contextUsage: {
-        estimatedInputTokens,
-        maxInputTokens: limits.maxExecutionTokens,
-        reservedOutputTokens,
-        occupancyPercent: Math.min(100, Math.round((estimatedInputTokens / promptBudget) * 100)),
-        updatedAt: new Date().toISOString(),
-      },
-    });
-    updateExecution(executionId, {
-      modelId: selectedModel,
-      modelTier: modelSelection.modelTier,
-      modelRouteSource: modelSelection.source,
-      modelRouteReason: modelSelection.reason,
-    });
-    recordExecutionPolicySnapshot({
-      executionId,
-      taskId: task.id,
-      agentId: agent.id,
-      workspaceId: task.workspaceId,
-      policySnapshot: {
-        runner: 'agent-factory-python-runtime',
-        modelSelection,
-        runtimeLimits: limits,
-        toolPolicy,
-        workspaceScope: { workspaceId: task.workspaceId, workdir: task.workdir },
-        dlp: { enabled: true, mode: 'scan-redact-block' },
-        sandbox: { enabled: true, guardian: true },
-      },
-    });
-    for (const decision of toolPolicy.decisions.filter(d => !d.allowed)) {
-      appendExecutionAuditEvent(executionId, {
-        type: 'tool.blocked',
-        severity: 'block',
-        message: `Tool ${decision.toolId} blocked by policy: ${decision.reason}`,
-        metadata: { decision },
-      });
-    }
-    const modelSpan = createTraceSpan({
-      traceId,
-      parentSpanId: rootSpanId,
-      type: 'model.route',
-      name: 'Select model',
-      metadata: modelSelection as unknown as Record<string, unknown>,
-    });
-    completeTraceSpan(modelSpan.id, { status: 'done' });
-
-    // Build config JSON for the Python runtime runner.
-    const config = JSON.stringify({
-      agentId: agent.id,
-      prompt: enrichedInput,
-      systemPrompt,
-      model: selectedModel,
-      reasoningEffort: task.reasoningEffort,
-      agentMeta: {
-        name: agent.name,
-        role: agent.role,
-        description: agent.description,
-        model: selectedModel,
-        maxTurns: agent.maxTurns || agent.config.maxTurns,
-        reasoningEffort: task.reasoningEffort,
-      },
-      allowedTools: toolPolicy.allowedTools,
-      disallowedTools: agent.disallowedTools || [],
-    });
-    const llmSpan = createTraceSpan({
-      traceId,
-      parentSpanId: rootSpanId,
-      type: 'llm.call',
-      name: 'Python runtime kickoff',
-      metadata: { model: selectedModel, runner: 'agent-factory-python-runtime' },
-    });
-    let llmSpanCompleted = false;
-    const finishLlmSpan = (status: 'done' | 'failed', metadata?: Record<string, unknown>, error?: string) => {
-      if (llmSpanCompleted) return;
-      llmSpanCompleted = true;
-      completeTraceSpan(llmSpan.id, {
-        status,
-        metadata,
-        error,
-        durationMs: Date.now() - startTime,
-      });
-    };
-    // `timeout: 300` was the historical generated-agent default. Treat it as a
-    // legacy default rather than an explicit five-minute policy, so deployments
-    // can raise the global long-task limit without editing every existing agent.
-    // Any other positive value remains an intentional per-agent ceiling.
-    const legacyAgentTimeoutSeconds = 300;
-    const requestedAgentTimeoutSeconds = agent.config.timeout && agent.config.timeout !== legacyAgentTimeoutSeconds
-      ? agent.config.timeout
-      : Math.ceil(limits.maxExecutionWallClockMs / 1000);
-    const timeoutMs = Math.min(requestedAgentTimeoutSeconds * 1000, limits.maxExecutionWallClockMs);
-    const cpuTimeoutSeconds = Math.min(limits.pythonRuntimeCpuSeconds, Math.ceil(timeoutMs / 1000));
-
-    return new Promise((resolve, reject) => {
-      const executor = getExecutor();
-      const python = resolvePythonRuntimeInvocation(executor.name);
-      const proc = executor.spawn({
-        executionId,
-        command: python.command,
-        args: [...python.argsPrefix, PYTHON_RUNTIME_RUNNER, config],
-        workdir: task.workdir || agent.config.workdir || process.cwd(),
-        env: {
-          AGENT_FACTORY_BASE_URL: modelBaseURL(),
-          AGENT_FACTORY_API_KEY: modelApiKey(),
-          OPENAI_API_KEY: modelApiKey(),
-          OPENAI_BASE_URL: modelBaseURL(),
-          AGENT_FACTORY_MODEL: defaultModel(),
-          AGENT_FACTORY_EXECUTION_ID: executionId,
-          AGENT_FACTORY_TASK_ID: task.id,
-          AGENT_FACTORY_AGENT_ID: agent.id,
-          AGENT_FACTORY_CPU_TIME_SEC: String(cpuTimeoutSeconds),
-          AGENT_FACTORY_MEMORY_MB: String(limits.pythonRuntimeMemoryMB),
-          AGENT_FACTORY_MAX_OUTPUT_CHARS: String(limits.maxOutputChars),
-          AGENT_FACTORY_TOOL_RESULT_MAX_CHARS: String(Math.min(2_000, limits.maxOutputChars)),
-          AGENT_FACTORY_TOOL_EVIDENCE_MAX_CHARS: String(Math.min(65_536, limits.pythonRuntimeMaxStdoutBytes)),
-          AGENT_FACTORY_MAX_EXECUTION_TOKENS: String(limits.maxExecutionTokens),
-          AGENT_FACTORY_MAX_RESPONSE_TOKENS: String(limits.maxModelResponseTokens),
-          AGENT_FACTORY_MAX_TOOL_CALLS: String(limits.maxToolCallsPerExecution),
-          AGENT_FACTORY_MAX_TURNS: String(agent.maxTurns || agent.config.maxTurns || 20),
-          AGENT_FACTORY_NETWORK_ALLOWED: String(guardrails.checkOperation('network_access').allowed),
-        },
-        signal: abortController.signal,
-        limits: {
-          ...DEFAULT_LIMITS,
-          timeoutSec: Math.ceil(timeoutMs / 1000),
-          memoryMB: limits.pythonRuntimeMemoryMB,
-        },
-      });
-
-      let buffer = '', finalResult = '', costUSD = 0, inputTokens = 0, outputTokens = 0, numTurns = 0, stderrBuffer = '';
-      let resultReceived = false;
-      let pythonResultError: string | undefined;
-      let stdoutBytes = 0, stderrBytes = 0;
-      let settled = false;
-      let timeout: ReturnType<typeof setTimeout> | undefined;
-      let heartbeat: ReturnType<typeof setInterval> | undefined;
-      let idleWatchdog: ReturnType<typeof setInterval> | undefined;
-      let lastActivityAt = Date.now();
-      let lastCheckpointAt = startTime;
-
-      const noteActivity = (boundary: string) => {
-        lastActivityAt = Date.now();
-        // Task logs are persisted and therefore give restart recovery a useful
-        // checkpoint hint without pretending that an in-flight process resumed.
-        if (lastActivityAt - lastCheckpointAt >= limits.executionHeartbeatMs) {
-          lastCheckpointAt = lastActivityAt;
-          addTaskLog(task.id, 'info', `Runtime checkpoint: ${boundary}; execution=${executionId}`, agent.id);
-          checkpointExecutionContext(loadExecutionContext(task), {
-            phase: 'running',
-            completed: [],
-            pending: ['agent execution'],
-            blocked: [],
-            resumeHint: `Continue from runtime activity boundary: ${boundary}.`,
-          });
-        }
-      };
-
-      const clearMonitors = () => {
-        if (timeout) clearTimeout(timeout);
-        if (heartbeat) clearInterval(heartbeat);
-        if (idleWatchdog) clearInterval(idleWatchdog);
-      };
-
-      const recordFailure = (reason: string) => {
-        recordModelUsage({
-          modelId: selectedModel,
-          agentId: agent.id,
-          taskId: task.id,
-          executionId,
-          status: 'failed',
-          latencyMs: Date.now() - startTime,
-          routeReason: reason,
-          routeSource: modelSelection.source,
-          modelTier: modelSelection.modelTier,
-        });
-      };
-
-      const fail = (err: Error, metadata?: Record<string, unknown>) => {
-        if (settled) return;
-        settled = true;
-        clearMonitors();
-        abortController.abort();
-        proc.kill('SIGTERM');
-        finishLlmSpan('failed', metadata, err.message);
-        recordFailure(modelSelection.reason);
-        reject(err);
-      };
-
-      const sanitizePythonRuntimeOutput = (text: string, purpose: string): string => sanitizeAgentOutput(text, {
-        agentId: agent.id,
-        taskId: task.id,
-        workspaceId: task.workspaceId,
-        executionId,
-        purpose,
-      });
-
-      const handleNonJsonLine = (line: string) => {
-        if (!line.trim()) return;
-        finalResult = sanitizePythonRuntimeOutput(`${finalResult}${line}\n`, 'python runtime stdout');
-      };
-
-      const handlePythonRuntimeEvent = (ev: any) => {
-        if (abortController.signal.aborted || ['cancelled', 'failed', 'done'].includes(getTask(task.id)?.status || '')) return;
-        noteActivity(`runtime event ${String(ev.type || 'unknown')}`);
-        // Handle assistant messages (text output from the Python runtime)
-        if (ev.type === 'assistant' && ev.message?.content) {
-          for (const block of ev.message.content) {
-            if (block.type === 'text' && block.text) {
-              const rawText = sanitizePythonRuntimeOutput(String(block.text), 'agent text');
-              const safeText = requestedAgentInput(rawText) || rawText;
-              finalResult = safeText;
-              this.recordText(executionId, safeText, { agentId: agent.id, taskId: task.id, workspaceId: task.workspaceId });
-              addTaskLog(task.id, 'info', safeText.slice(0, 800), agent.id);
-            }
-          }
-        }
-
-        // Handle result event
-        if (ev.type === 'result') {
-          resultReceived = true;
-          if (ev.subtype === 'error' || ev.is_error) pythonResultError = String(ev.result || 'Python runtime failed');
-          finalResult = sanitizePythonRuntimeOutput(String(ev.result || finalResult), 'python runtime result');
-          costUSD = ev.total_cost_usd || 0;
-          inputTokens = ev.usage?.input_tokens || inputTokens;
-          outputTokens = ev.usage?.output_tokens || outputTokens || estimateTokenCount(finalResult);
-          numTurns = ev.num_turns || 0;
-          assertExecutionTokenBudget(inputTokens, outputTokens, finalResult, 'Python runtime execution', limits);
-        }
-
-        if (ev.type === 'model_call') {
-          const sequence = Number(ev.sequence);
-          updateAgentRun(executionId, 'deciding', {
-            ...(Number.isSafeInteger(sequence) && sequence >= 0
-              ? { turn: Math.max(sequence, getExecution(executionId)?.runState?.turn || 0) } : {}),
-          });
-          const callInputTokens = Number(ev.input_tokens || 0);
-          const callOutputTokens = Number(ev.output_tokens || 0);
-          inputTokens += Number.isFinite(callInputTokens) ? callInputTokens : 0;
-          outputTokens += Number.isFinite(callOutputTokens) ? callOutputTokens : 0;
-          addExecutionMessage({
-            executionId,
-            type: 'progress',
-            content: `Python model call #${ev.sequence || '?'} ${ev.phase || 'completed'}: model=${ev.model || selectedModel}; input=${callInputTokens}; output=${callOutputTokens}; usage=${ev.usage_source || 'provider'}`,
-          });
-        }
-
-        if (ev.type === 'tool_use') {
-          updateTask(task.id, { status: 'waiting_for_tool' });
-          this.recordToolStarted(executionId, traceId, rootSpanId, task, agent, tracker, ev);
-        }
-
-        if (ev.type === 'tool_result') {
-          this.recordToolResult(executionId, task, agent, ev);
-          if (!['cancelled', 'failed', 'done'].includes(getTask(task.id)?.status || '')) {
-            updateTask(task.id, { status: 'running' });
-          }
-        }
-
-        // Handle error event
-        if (ev.type === 'error') {
-          addTaskLog(task.id, 'error', ev.message || 'Unknown Python runtime error', agent.id);
-        }
-      };
-
-      proc.stdout?.on('data', (data: Buffer) => {
-        if (settled) return;
-        try {
-          noteActivity('stdout');
-          stdoutBytes += data.byteLength;
-          if (stdoutBytes > limits.pythonRuntimeMaxStdoutBytes) {
-            throw new Error(`Python runtime stdout exceeded limit (${stdoutBytes}/${limits.pythonRuntimeMaxStdoutBytes} bytes)`);
-          }
-          buffer += data.toString();
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || '';
-          for (const line of lines) {
-            if (!line.trim()) continue;
-            let ev: any;
-            try {
-              ev = JSON.parse(line);
-            } catch {
-              handleNonJsonLine(line);
-              continue;
-            }
-            handlePythonRuntimeEvent(ev);
-          }
-        } catch (err: any) {
-          fail(new Error(err.message || 'Python runtime output processing failed'), { reason: 'output_processing' });
-        }
-      });
-
-      proc.stderr?.on('data', (data: Buffer) => {
-        if (settled) return;
-        try {
-          noteActivity('stderr');
-          const t = sanitizePythonRuntimeOutput(data.toString(), 'python runtime stderr');
-          stderrBytes += data.byteLength;
-          if (stderrBytes > limits.pythonRuntimeMaxStderrBytes) {
-            fail(new Error(`Python runtime stderr exceeded limit (${stderrBytes}/${limits.pythonRuntimeMaxStderrBytes} bytes)`), { reason: 'stderr_limit' });
-            return;
-          }
-          stderrBuffer += t;
-          // Only log meaningful stderr (skip Python warnings/noise)
-          if (t.trim() && !t.includes('UserWarning') && !t.includes('DeprecationWarning')) {
-            logger.error({ taskId: task.id, stderr: t.slice(0, 500) }, 'Python runtime stderr');
-            addTaskLog(task.id, 'warn', `stderr: ${t.slice(0, 300)}`, agent.id);
-          }
-        } catch (err: any) {
-          fail(new Error(err.message || 'Python runtime stderr processing failed'), { reason: 'stderr_processing' });
-        }
-      });
-
-      timeout = setTimeout(() => {
-        fail(new Error(`TIMED_OUT: wall-clock limit reached after ${Math.ceil(timeoutMs / 1000)}s`), {
-          reason: 'timed_out', timeoutMs,
-        });
-      }, timeoutMs);
-      const heartbeatMs = Math.max(1_000, Math.min(limits.executionHeartbeatMs, limits.maxExecutionIdleMs));
-      heartbeat = setInterval(() => {
-        if (settled) return;
-        const idleMs = Date.now() - lastActivityAt;
-        addTaskLog(task.id, 'info', `Runtime heartbeat: execution=${executionId}; idle=${Math.ceil(idleMs / 1000)}s`, agent.id);
-      }, heartbeatMs);
-      idleWatchdog = setInterval(() => {
-        if (settled) return;
-        const idleMs = Date.now() - lastActivityAt;
-        if (idleMs >= limits.maxExecutionIdleMs) {
-          fail(new Error(`STALLED: no runtime activity for ${Math.ceil(idleMs / 1000)}s`), {
-            reason: 'stalled', idleMs, idleLimitMs: limits.maxExecutionIdleMs,
-          });
-        }
-      }, heartbeatMs);
-      addTaskLog(task.id, 'info', `Runtime checkpoint: started; execution=${executionId}; wallClock=${timeoutMs}ms; idle=${limits.maxExecutionIdleMs}ms`, agent.id);
-
-      proc.on('close', (code) => {
-        if (settled) return;
-        settled = true;
-        clearMonitors();
-        try {
-          if (buffer.trim()) handleNonJsonLine(buffer);
-          if (code === 0) {
-            if (!resultReceived) throw new AgentRunStopped('interrupted', 'AGENT_STOPPED: Python runtime exited without a final result event', finalResult);
-            if (pythonResultError) throw new AgentRunStopped('failed', pythonResultError, finalResult);
-            finalResult = sanitizePythonRuntimeOutput(finalResult, 'final task output');
-            outputTokens = outputTokens || estimateTokenCount(finalResult);
-            assertExecutionTokenBudget(inputTokens, outputTokens, finalResult, 'Python runtime execution', limits);
-            finishLlmSpan('done', { exitCode: code, costUSD, inputTokens, outputTokens, numTurns });
-            recordModelUsage({
-              modelId: selectedModel,
-              agentId: agent.id,
-              taskId: task.id,
-              executionId,
-              status: 'success',
-              inputTokens,
-              outputTokens,
-              costUSD,
-              latencyMs: Date.now() - startTime,
-              routeReason: modelSelection.reason,
-              routeSource: modelSelection.source,
-              modelTier: modelSelection.modelTier,
-            });
-            resolve({
-              output: finalResult,
-              costUSD, inputTokens, outputTokens,
-              durationMs: Date.now() - startTime,
-              numTurns,
-              executionId,
-            });
-          } else {
-            const message = `Python runtime exit ${code}: ${stderrBuffer.slice(0, 500) || 'no output'}`;
-            finishLlmSpan('failed', { exitCode: code }, message);
-            recordFailure(modelSelection.reason);
-            reject(new Error(message));
-          }
-        } catch (err: any) {
-          finishLlmSpan('failed', { reason: 'finalization' }, err.message);
-          recordFailure(modelSelection.reason);
-          reject(err);
-        }
-      });
-
-      proc.on('error', (err) => {
-        fail(new Error(`Python runtime spawn failed: ${err.message}`), { reason: 'spawn_error' });
-      });
-    });
   }
 
   cancel(taskId: string) {

@@ -10,6 +10,9 @@ import sharp from 'sharp';
 import { parse as parseYaml } from 'yaml';
 import { guardrails } from '../agents/safety-guardrails.js';
 import { getRuntimeLimits } from '../agents/runtime-limits.js';
+import { executionWorldMode, resolveExecutionWorld } from '../agents/execution-world.js';
+import { safeWorkspacePath, readWorkspaceBytes, writeWorkspaceBytes, workspaceCommandEnvironment } from '../workspace/path-policy.js';
+import { assertWorkspaceToolAllowed } from '../workspace/workspace-lease.js';
 import { assertLocalShellAllowed, assertNetworkToolAllowed } from '../agents/sandbox-profile.js';
 import { formatToolGuardianDecision, formatToolGuardianWarnings, redactSecrets, reviewToolCall } from './tool-guardian.js';
 import {
@@ -29,6 +32,7 @@ import {
   getActiveSocialComplianceRulebook,
 } from '../db/models/social-workflow.js';
 import { environmentFetch, safeNetworkError } from '../lib/environment-fetch.js';
+import { BUILTIN_TOOLS } from '../tools/tool-registry.js';
 
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
@@ -63,6 +67,7 @@ export const SANDBOX_TOOL_NAMES = [
   'web.search',
   'web.extract',
   'crawler.extract_links',
+  'browser.query',
   'content.wechat_layout',
   'content.hashtag_plan',
   'content.compliance_check',
@@ -94,6 +99,7 @@ export function buildSandboxToolDefinition(toolName: string, modelToolName = too
     'web.search': 'Search the public web and return compact result titles and URLs.',
     'web.extract': 'Fetch a page and return structured text with source citations.',
     'crawler.extract_links': 'Fetch a page and extract visible links.',
+    'browser.query': 'Ask the configured remote browser service to navigate and read pages for a bounded task.',
     'content.wechat_layout': 'Convert a markdown draft into WeChat layout recommendations and HTML blocks.',
     'content.hashtag_plan': 'Generate platform hashtag and keyword suggestions.',
     'content.compliance_check': 'Deterministically apply the configured social compliance rulebook to platform drafts and return structured findings.',
@@ -169,6 +175,14 @@ export function buildSandboxToolDefinition(toolName: string, modelToolName = too
     },
     'web.fetch': { properties: { url: { type: 'string', description: 'Absolute http/https URL' } }, required: ['url'] },
     'web.search': { properties: { query: { type: 'string' } }, required: ['query'] },
+    'browser.query': {
+      properties: {
+        task: { type: 'string', minLength: 1, maxLength: 16000 },
+        allowed_domains: { type: 'string', description: 'Optional comma-separated hostname allowlist' },
+        max_steps: { type: 'integer', minimum: 1, maximum: 60 },
+      },
+      required: ['task'],
+    },
     'web.extract': {
       properties: {
         url: { type: 'string', description: 'Absolute http/https URL' },
@@ -229,7 +243,11 @@ export function buildSandboxToolDefinition(toolName: string, modelToolName = too
       required: ['title'],
     },
   };
-  const schema = schemaByTool[toolName];
+  const catalogSchema = BUILTIN_TOOLS.find(tool => tool.id === toolName)?.inputSchema;
+  const schema = schemaByTool[toolName] || (catalogSchema ? {
+    properties: catalogSchema.properties as Record<string, unknown>,
+    required: catalogSchema.required as string[] | undefined,
+  } : undefined);
   return {
     type: 'function' as const,
     function: {
@@ -244,14 +262,7 @@ export function buildSandboxToolDefinition(toolName: string, modelToolName = too
 
 /** Validate that a resolved path is within the workspace boundary */
 function assertSafePath(workdir: string, inputPath: string): string {
-  const workspace = normalize(resolve(workdir));
-  const resolved = resolve(workspace, inputPath);
-  const normalized = normalize(resolved);
-  const rel = relative(workspace, normalized);
-  if (rel.startsWith('..') || isAbsolute(rel)) {
-    throw new Error(`Path traversal blocked: "${inputPath}" resolves outside workspace`);
-  }
-  return resolved;
+  return safeWorkspacePath(workdir, inputPath);
 }
 
 /** Block dangerous shell command patterns */
@@ -422,6 +433,8 @@ export async function executeTool(
   workdir: string,
   options: ToolSandboxOptions = {},
 ): Promise<ToolResult> {
+  try { assertWorkspaceToolAllowed(toolName); }
+  catch (error: any) { return { status: 'failed', output: error.message }; }
   if (options.signal?.aborted) return { status: 'failed', output: 'Request aborted' };
   const limits = getRuntimeLimits();
   const timeoutMs = options.timeoutMs ?? limits.maxToolCallTimeoutMs;
@@ -441,6 +454,17 @@ export async function executeTool(
     return capOutput(combined, maxOutputChars);
   };
 
+  if (executionWorldMode() === 'docker_isolated') {
+    try {
+      if (toolName === 'shell_exec') assertShellCommandAllowed(String(toolInput.command || toolInput.cmd || ''));
+      const world = await resolveExecutionWorld('docker_isolated');
+      if (!('execute' in world)) throw new Error('SANDBOX_UNAVAILABLE');
+      return await world.execute(toolName, toolInput, workdir, { signal: options.signal, timeoutMs, maxOutputChars });
+    } catch (error) {
+      return { status: 'failed', output: error instanceof Error ? error.message : 'SANDBOX_UNAVAILABLE' };
+    }
+  }
+
   if (toolName === 'shell_exec') {
     try {
       const cmd = String(toolInput.command || toolInput.cmd || '');
@@ -448,6 +472,7 @@ export async function executeTool(
       const { stdout, stderr } = await execAsync(cmd, {
         signal: options.signal,
         cwd: workdir,
+        env: workspaceCommandEnvironment(workdir),
         timeout: timeoutMs,
         maxBuffer: Math.max(maxOutputChars * 4, 16_384),
         shell: '/bin/bash',
@@ -465,8 +490,7 @@ export async function executeTool(
   if (toolName === 'file_write') {
     try {
       const filePath = assertSafePath(workdir, String(toolInput.path || toolInput.file_path || ''));
-      mkdirSync(dirname(filePath), { recursive: true });
-      writeFileSync(filePath, String(toolInput.content || ''), 'utf-8');
+      writeWorkspaceBytes(workdir, filePath, Buffer.from(String(toolInput.content || ''), 'utf8'));
       return { output: capOutput(`Written: ${filePath}`, maxOutputChars), status: 'done' };
     } catch (err: any) {
       return { output: `Write failed: ${err.message}`, status: 'failed' };
@@ -476,7 +500,7 @@ export async function executeTool(
   if (toolName === 'file_read') {
     try {
       const filePath = assertSafePath(workdir, String(toolInput.path || toolInput.file_path || ''));
-      const content = readFileSync(filePath, 'utf-8');
+      const content = readWorkspaceBytes(workdir, filePath).toString('utf8');
       return { output: capOutput(content, maxOutputChars), status: 'done' };
     } catch (err: any) {
       return { output: `Read failed: ${err.message}`, status: 'failed' };
@@ -642,13 +666,13 @@ export async function executeTool(
       const newStr = String(toolInput.new_str ?? toolInput.replace ?? '');
       if (!oldStr) throw new Error('apply_patch requires a non-empty old_str');
       if (!existsSync(filePath)) throw new Error(`file not found: ${toolInput.path}`);
-      const content = readFileSync(filePath, 'utf-8');
+      const content = readWorkspaceBytes(workdir, filePath).toString('utf8');
       const idx = content.indexOf(oldStr);
       if (idx === -1) throw new Error('old_str not found in file (it must match exactly, including whitespace)');
       if (content.indexOf(oldStr, idx + oldStr.length) !== -1) {
         throw new Error('old_str matches multiple times; include more surrounding context to make it unique');
       }
-      writeFileSync(filePath, content.slice(0, idx) + newStr + content.slice(idx + oldStr.length), 'utf-8');
+      writeWorkspaceBytes(workdir, filePath, Buffer.from(content.slice(0, idx) + newStr + content.slice(idx + oldStr.length), 'utf8'));
       const delta = newStr.split('\n').length - oldStr.split('\n').length;
       return { output: capOutput(`Patched ${toolInput.path} (${delta >= 0 ? '+' : ''}${delta} lines)`, maxOutputChars), status: 'done' };
     } catch (err: any) {
@@ -662,6 +686,83 @@ export async function executeTool(
       return { output, status: 'done' };
     } catch (err: any) {
       return { output: `Fetch failed: ${err.message}`, status: 'failed' };
+    }
+  }
+
+  if (toolName === 'browser.query') {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const controller = new AbortController();
+    const signal = options.signal ? AbortSignal.any([controller.signal, options.signal]) : controller.signal;
+    try {
+      assertWebToolsEnabled();
+      assertNetworkToolAllowed(toolName);
+      assertNetworkAllowed();
+      if (process.env.AGENT_FACTORY_NETWORK_ALLOWED?.toLowerCase() === 'false') {
+        throw new Error('Network access is disabled by guardrails');
+      }
+      const endpoint = process.env.BROWSER_QUERY_URL?.trim();
+      const token = process.env.BROWSER_QUERY_TOKEN?.trim();
+      if (!endpoint || !token) throw new Error('Configure BROWSER_QUERY_URL and BROWSER_QUERY_TOKEN to use browser.query');
+      const url = safeUrl(endpoint);
+      if (url.username || url.password) throw new Error('Browser service URL must not contain credentials');
+      const task = typeof toolInput.task === 'string' ? toolInput.task.trim() : '';
+      const maxSteps = toolInput.max_steps ?? 25;
+      if (!task || task.length > 16000) throw new Error('browser.query requires a task of 1–16000 characters');
+      if (!Number.isInteger(maxSteps) || Number(maxSteps) < 1 || Number(maxSteps) > 60) {
+        throw new Error('browser.query max_steps must be an integer from 1 to 60');
+      }
+      if (toolInput.allowed_domains !== undefined && typeof toolInput.allowed_domains !== 'string') {
+        throw new Error('browser.query allowed_domains must be a comma-separated string');
+      }
+      const domains = String(toolInput.allowed_domains || '').split(',').map(value => value.trim()).filter(Boolean);
+      timeout = setTimeout(() => controller.abort(), Math.min(timeoutMs, 260000));
+      const response = await environmentFetch(url, {
+        method: 'POST',
+        redirect: 'error',
+        signal,
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ task, max_steps: maxSteps, ...(domains.length ? { allowed_domains: domains } : {}) }),
+      });
+      if (!response.ok) {
+        void response.body?.cancel().catch(() => undefined);
+        throw new Error(`Browser service returned HTTP ${response.status}`);
+      }
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error('Browser service returned an empty response');
+      const chunks: Uint8Array[] = [];
+      let bytes = 0;
+      try {
+        while (true) {
+          signal.throwIfAborted();
+          const { done, value } = await reader.read();
+          if (done) break;
+          bytes += value.byteLength;
+          if (bytes > 512000) throw new Error('Browser service response exceeded 512000 bytes');
+          chunks.push(value);
+        }
+      } finally {
+        void reader.cancel().catch(() => undefined);
+        reader.releaseLock();
+      }
+      let payload: unknown;
+      try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+      catch { throw new Error('Browser service returned malformed JSON'); }
+      if (!payload || typeof payload !== 'object' || Array.isArray(payload) || !('result' in payload)) {
+        throw new Error('Browser service response is missing result');
+      }
+      if ('error' in payload && payload.error) throw new Error('Browser service reported an error');
+      const parsed = payload as { result: unknown; steps?: unknown };
+      const output = JSON.stringify({ result: parsed.result, steps: parsed.steps }, null, 2).split(token).join('[REDACTED]');
+      return { output: capWithGuardianWarnings(output), status: 'done' };
+    } catch (error) {
+      const message = signal.aborted
+        ? (options.signal?.aborted ? 'Request aborted' : 'Browser query timed out')
+        : error instanceof Error && /^(Configure |browser\.query |Browser service |Network access |Web tools |Network tool )/.test(error.message)
+          ? error.message
+          : safeNetworkError(error);
+      return { output: capOutput(message, maxOutputChars), status: 'failed' };
+    } finally {
+      if (timeout) clearTimeout(timeout);
     }
   }
 

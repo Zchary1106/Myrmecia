@@ -9,6 +9,7 @@
 import { CopilotClient, RuntimeConnection, type ModelInfo } from '@github/copilot-sdk';
 import { logger } from '../lib/logger.js';
 import type { StreamAccumulation } from './gateway.js';
+import type { ProviderSessionOptions } from './provider-session.js';
 
 export interface CopilotToolCall {
   id: string;
@@ -25,6 +26,7 @@ export interface CopilotProviderOptions {
 }
 
 export interface CopilotSessionLike {
+  readonly sessionId?: string;
   sendAndWait(options: { prompt: string }, timeout?: number): Promise<{ data: { content: string } } | undefined>;
   disconnect(): Promise<void>;
   abort(): Promise<void>;
@@ -44,6 +46,9 @@ export interface CopilotSessionLike {
 }
 
 export interface CopilotClientLike {
+  resumeSession?(sessionId: string, config: Parameters<CopilotClientLike['createSession']>[0] & {
+    continuePendingWork: false; suppressResumeEvent: true;
+  }): Promise<CopilotSessionLike>;
   start(): Promise<void>;
   stop(): Promise<Error[]>;
   listModels?(): Promise<ModelInfo[]>;
@@ -106,6 +111,16 @@ function formatPrompt(messages: Array<{ role: string; content?: unknown }>): { s
   return { system, prompt };
 }
 
+async function disconnectBounded(session: CopilotSessionLike): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      session.disconnect().then(() => true).catch(() => false),
+      new Promise<boolean>(resolve => { timer = setTimeout(() => resolve(false), 5000); }),
+    ]);
+  } finally { if (timer) clearTimeout(timer); }
+}
+
 /**
  * Adapter for Copilot's session API. It deliberately runs in SDK `empty` mode
  * and only allows explicitly supplied custom tools, so Copilot CLI built-in
@@ -120,6 +135,9 @@ function formatPrompt(messages: Array<{ role: string; content?: unknown }>): { s
 export class CopilotProvider {
   private client: CopilotClientLike | undefined;
   private startPromise: Promise<void> | undefined;
+  private sessionResumeSupported = false;
+
+  supportsSessionResume(): boolean { return this.sessionResumeSupported; }
 
   constructor(
     private readonly options: CopilotProviderOptions = {},
@@ -156,6 +174,7 @@ export class CopilotProvider {
       signal?: AbortSignal;
       timeoutMs?: number;
       idleTimeoutMs?: number;
+      providerSession?: ProviderSessionOptions;
     },
   ): Promise<StreamAccumulation> {
     if (params.tools?.length && !options?.onToolCall) {
@@ -194,18 +213,24 @@ export class CopilotProvider {
     if (options?.signal?.aborted) abort();
     touch();
     wallTimer = setTimeout(() => stop(new Error(`EXECUTION_WALL_TIMEOUT: execution budget of ${wallClockMs}ms exhausted`)), wallClockMs);
-    let session: CopilotSessionLike;
+    let session!: CopilotSessionLike;
     try {
       if (controller.signal.aborted) throw new Error('Request aborted');
       const client = await Promise.race([this.getClient(), stopped]);
-      const creating = client.createSession({
+      this.sessionResumeSupported = typeof client.resumeSession === 'function';
+      const sessionConfig: Parameters<CopilotClientLike['createSession']>[0] = {
         model: params.model,
         // Only registered custom tools are allowed; built-ins stay unavailable.
         availableTools: tools.length ? ['custom:*'] : [],
         systemMessage: { mode: 'append', content: system },
         streaming: true,
         ...(tools.length ? { tools } : {}),
-      });
+      };
+      const resumeId = options?.providerSession?.resumeSessionId;
+      const resumed = Boolean(resumeId && client.resumeSession);
+      const creating = resumed
+        ? client.resumeSession!(resumeId!, { ...sessionConfig, continuePendingWork: false, suppressResumeEvent: true })
+        : client.createSession(sessionConfig);
       // Session creation may finish after our caller has cancelled or timed out.
       void creating.then(late => {
         if (controller.signal.aborted) {
@@ -214,16 +239,24 @@ export class CopilotProvider {
         }
       }).catch(() => undefined);
       session = await Promise.race([creating, stopped]);
+      if (session.sessionId) options?.providerSession?.onSessionReady?.(session.sessionId, resumed);
     } catch (err) {
       stop(err instanceof Error ? err : new Error(String(err)));
       if (idleTimer) clearTimeout(idleTimer);
       if (wallTimer) clearTimeout(wallTimer);
       options?.signal?.removeEventListener('abort', abort);
+      if (session) {
+        void session.abort().catch(() => undefined);
+        await disconnectBounded(session);
+      }
       throw err;
     }
 
     let inputTokens = 0;
     let outputTokens = 0;
+    let inputTokensObserved = false;
+    let outputTokensObserved = false;
+    let aiUnitsObserved = false;
     let actualModelId: string | undefined;
     let aiUnits = 0;
     let billingMultiplier: number | undefined;
@@ -237,17 +270,25 @@ export class CopilotProvider {
     const unsubscribeUsage = session.on('assistant.usage', event => {
       if (controller.signal.aborted) return;
       touch();
-      inputTokens += event.data.inputTokens || 0;
-      outputTokens += event.data.outputTokens || 0;
+      if (typeof event.data.inputTokens === 'number' && Number.isFinite(event.data.inputTokens) && event.data.inputTokens >= 0) {
+        inputTokens += event.data.inputTokens;
+        inputTokensObserved = true;
+      }
+      if (typeof event.data.outputTokens === 'number' && Number.isFinite(event.data.outputTokens) && event.data.outputTokens >= 0) {
+        outputTokens += event.data.outputTokens;
+        outputTokensObserved = true;
+      }
       actualModelId = event.data.model || actualModelId;
       if (typeof event.data.cost === 'number') billingMultiplier = event.data.cost;
       if (typeof event.data.copilotUsage?.totalNanoAiu === 'number') {
         aiUnits += event.data.copilotUsage.totalNanoAiu / 1_000_000_000;
+        aiUnitsObserved = true;
       }
     });
     const abortSession = () => { void session.abort().catch(() => undefined); };
     controller.signal.addEventListener('abort', abortSession, { once: true });
 
+    let result: StreamAccumulation | undefined;
     try {
       if (options?.signal?.aborted) abort();
       if (controller.signal.aborted) throw new Error('Request aborted');
@@ -257,7 +298,7 @@ export class CopilotProvider {
         stopped,
       ]);
       if (!response) throw new Error('No response from GitHub Copilot');
-      return {
+      result = {
         choices: [{
           message: { role: 'assistant', content: response.data.content || null },
           finish_reason: 'stop',
@@ -272,8 +313,12 @@ export class CopilotProvider {
           billing_multiplier: billingMultiplier,
           cost_type: 'subscription',
           cost_usd: null,
+          input_tokens_observed: inputTokensObserved,
+          output_tokens_observed: outputTokensObserved,
+          ai_units_observed: aiUnitsObserved,
         },
       };
+      return result;
     } catch (err) {
       stop(err instanceof Error ? err : new Error(String(err)));
       throw err;
@@ -286,9 +331,10 @@ export class CopilotProvider {
       options?.signal?.removeEventListener('abort', abort);
       unsubscribeDelta?.();
       unsubscribeUsage();
-      await session.disconnect().catch(err => {
-        logger.warn({ err: err instanceof Error ? err.message : String(err) }, 'failed to disconnect Copilot session');
-      });
+      if (!(await disconnectBounded(session))) {
+        if (result) result.usage.session_cleanup_confirmed = false;
+        logger.warn('Copilot session cleanup was not confirmed; its continuity reference remains pending');
+      }
     }
   }
 

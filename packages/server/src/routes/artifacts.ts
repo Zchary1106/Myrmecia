@@ -4,9 +4,11 @@ import { relative, resolve } from 'node:path';
 import type { SharedArtifactStore } from '../agents/shared-artifact-store.js';
 import { listArtifacts, getArtifact } from '../db/models/shared-artifact.js';
 import { getExecutionArtifact, listExecutionArtifacts, type StoredExecutionArtifact } from '../db/models/execution-artifact.js';
+import { readArtifactSnapshot } from '../artifacts/artifact-snapshot-store.js';
+import { workspaceIdFromRequest } from '../auth/tenant.js';
 
 function workspaceId(req: any): string {
-  return req.authContext?.workspaceId || 'default';
+  return workspaceIdFromRequest(req) || 'default';
 }
 
 function publicExecutionArtifact(artifact: StoredExecutionArtifact) {
@@ -46,12 +48,18 @@ export function createArtifactRoutes(store: SharedArtifactStore): Router {
     res.setHeader('Content-Type', artifact.mimeType);
     res.setHeader('Content-Disposition', `inline; filename="${artifact.name.replace(/["\r\n]/g, '_')}"`);
     res.setHeader('X-Content-Type-Options', 'nosniff');
-    if (artifact.kind === 'html') {
+    if (artifact.kind === 'html' || artifact.mimeType.includes('image/svg+xml')) {
       res.setHeader('Content-Security-Policy', "default-src 'none'; img-src data: https:; style-src 'unsafe-inline'");
     }
-    if (artifact.content !== undefined) return res.send(artifact.content);
-
     try {
+      const bytes = readArtifactSnapshot(artifact);
+      if (bytes) {
+        const maxPreview = ['image', 'video', 'audio', 'pdf'].includes(artifact.kind) ? 100 * 1024 * 1024 : 1024 * 1024;
+        if (bytes.length > maxPreview) return res.status(413).json({ error: 'Artifact is too large to preview; download it instead' });
+        return res.send(bytes);
+      }
+      if (artifact.metadata?.immutable || artifact.metadata?.captureState === 'pending') return res.status(409).json({ error: 'Artifact snapshot unavailable' });
+      if (artifact.content !== undefined) return res.send(artifact.content);
       const path = resolveArtifactFile(artifact);
       if (!path) return res.status(404).json({ error: 'Artifact file not found' });
       const stats = statSync(path);
@@ -70,12 +78,15 @@ export function createArtifactRoutes(store: SharedArtifactStore): Router {
     if (!artifact || artifact.workspaceId !== workspaceId(req)) {
       return res.status(404).json({ error: 'Artifact not found' });
     }
-    if (artifact.content !== undefined) {
-      res.setHeader('Content-Type', artifact.mimeType);
-      res.setHeader('Content-Disposition', `attachment; filename="${artifact.name.replace(/["\r\n]/g, '_')}"`);
-      return res.send(artifact.content);
-    }
     try {
+      const bytes = readArtifactSnapshot(artifact);
+      if (bytes || artifact.content !== undefined) {
+        if (!bytes && (artifact.metadata?.immutable || artifact.metadata?.captureState === 'pending')) return res.status(409).json({ error: 'Artifact snapshot unavailable' });
+        res.setHeader('Content-Type', artifact.mimeType);
+        res.setHeader('Content-Disposition', `attachment; filename="${artifact.name.replace(/["\r\n]/g, '_')}"`);
+        return res.send(bytes || artifact.content);
+      }
+      if (artifact.metadata?.immutable || artifact.metadata?.captureState === 'pending') return res.status(409).json({ error: 'Artifact snapshot unavailable' });
       const path = resolveArtifactFile(artifact);
       if (!path) return res.status(404).json({ error: 'Artifact file not found' });
       return res.download(path, artifact.name);

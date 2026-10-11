@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import YAML from 'yaml';
-import { XHS_READ_TOOLS, XiaohongshuReadAdapter, xiaohongshuReadSchema } from '../src/tools/xiaohongshu-read-adapter.js';
+import { XHS_READ_TOOLS, XiaohongshuReadAdapter, xiaohongshuReadSchema, encodeXiaohongshuReference } from '../src/tools/xiaohongshu-read-adapter.js';
 import { executeMcpTool, getMcpToolDefinitions } from '../src/tools/mcp-tools.js';
 import { getMcpManager } from '../src/tools/mcp-manager.js';
 import { scanForPII } from '../src/security/dlp.js';
@@ -18,6 +18,15 @@ const searchResult = response({ feeds: [{
 afterEach(() => vi.restoreAllMocks());
 
 describe('Xiaohongshu read-only Agent adapter', () => {
+  it('encodes random references without accidental phone or API-key patterns while retaining distinct entropy', () => {
+    const uuid = '12345678-1234-4123-8123-123456789012';
+    expect(scanForPII(`xhsref_${uuid}`).clean).toBe(false);
+    const encoded = encodeXiaohongshuReference(uuid);
+    expect(scanForPII(encoded).clean).toBe(true);
+    expect(encoded).not.toMatch(/\d/);
+    expect(encodeXiaohongshuReference('abcdefab-cdef-4abc-8def-abcdefabcdef')).not.toBe(encoded);
+    expect(() => encodeXiaohongshuReference('not-entropy')).toThrow('Invalid reference entropy');
+  });
   it('replaces secrets with scoped references and reconstructs detail arguments only in the tool layer', async () => {
     const adapter = new XiaohongshuReadAdapter();
     const search = vi.fn().mockResolvedValue(searchResult);

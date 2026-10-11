@@ -307,6 +307,7 @@ Example output:
 
     const consolidate = (subtasks: Task[]): string =>
       subtasks.map(t => `## ${t.title}\n${t.output || '(no output)'}`).join('\n\n---\n\n');
+    let pauseStartedAt = 0;
 
     const check = async () => {
       if (!this.monitors.has(parentTaskId)) return; // finalized/cancelled elsewhere
@@ -320,6 +321,15 @@ Example output:
       if (TERMINAL_TASK_STATES.has(parent.status)) {
         this.monitors.delete(parentTaskId);
         return;
+      }
+      if (taskSchedulingPaused(parentTaskId)) {
+        if (!pauseStartedAt) pauseStartedAt = Date.now();
+        setTimeout(check, this.pollIntervalMs);
+        return;
+      }
+      if (pauseStartedAt) {
+        startedAt += Date.now() - pauseStartedAt;
+        pauseStartedAt = 0;
       }
 
       const subtasks = listTasks({ parentTaskId });
@@ -351,3 +361,4 @@ Example output:
     setTimeout(check, 3000);
   }
 }
+import { taskSchedulingPaused } from './pause-control.js';

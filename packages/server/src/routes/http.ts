@@ -55,6 +55,21 @@ export function requireConfirmation(req: Request, operation: string) {
 }
 
 export function actorFromRequest(req: Request): OperatorActor {
+  const restrictRole = (role: OperatorRole): OperatorRole => {
+    const requested = req.header('x-operator-role') as OperatorRole;
+    const order: OperatorRole[] = ['viewer', 'operator', 'admin'];
+    return order.includes(requested) && order.indexOf(requested) < order.indexOf(role) ? requested : role;
+  };
+  // Server-authenticated identity takes precedence over caller-supplied headers.
+  const trustedTenant = (req as any).tenantContext as { userId?: string; role?: OperatorRole } | undefined;
+  if (trustedTenant?.userId) return { id: trustedTenant.userId,
+    role: restrictRole(trustedTenant.role && ['admin', 'operator', 'viewer'].includes(trustedTenant.role) ? trustedTenant.role : 'viewer'), source: 'proxy' };
+  const trustedAuth = (req as any).authContext as { userId?: string; scopes?: string[] } | undefined;
+  if (trustedAuth?.userId) {
+    const scopes = (trustedAuth.scopes || []).map(value => value.toLowerCase());
+    return { id: trustedAuth.userId, source: 'token', role: restrictRole(scopes.some(value => value === 'admin' || value === '*' || value.endsWith(':admin')) ? 'admin'
+      : scopes.some(value => value.includes(':write') || value.startsWith('write:')) ? 'operator' : 'viewer') };
+  }
   const proxyActor = req.header('x-operator-id')?.trim();
   if (proxyActor) {
     const roleHeader = req.header('x-operator-role') as OperatorRole | undefined;

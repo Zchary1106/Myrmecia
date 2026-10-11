@@ -29,6 +29,16 @@ function textOf(result: McpCallResult): string {
   return JSON.stringify(result.content);
 }
 
+const REFERENCE_ALPHABET = 'bcdfghjlmnquvwxz';
+
+/** Bijective UUID encoding: keeps entropy, avoids PII/API-key-like accidental substrings. */
+export function encodeXiaohongshuReference(uuid: string): string {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(uuid)) {
+    throw new Error('Invalid reference entropy');
+  }
+  return `xhsref_${uuid.toLowerCase().replace(/[0-9a-f]/g, value => REFERENCE_ALPHABET[Number.parseInt(value, 16)])}`;
+}
+
 /** Only server memory sees access tokens. References are task+agent scoped and
  * expire on restart/TTL; neither prompts, artifacts nor persistent logs need them. */
 export class XiaohongshuReadAdapter {
@@ -48,7 +58,7 @@ export class XiaohongshuReadAdapter {
     while (this.references.size >= MAX_REFERENCES) {
       this.references.delete(this.references.keys().next().value!);
     }
-    const id = `xhsref_${randomUUID()}`;
+    const id = encodeXiaohongshuReference(randomUUID());
     this.references.set(id, { scope, feedId, token, expiresAt: this.now() + TTL_MS });
     return id;
   }

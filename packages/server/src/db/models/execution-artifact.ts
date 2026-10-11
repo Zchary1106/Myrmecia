@@ -1,8 +1,9 @@
 import { v4 as uuid } from 'uuid';
-import { getDb } from '../database.js';
+import { getDb, peekDb } from '../database.js';
 import type { ExecutionArtifact, ExecutionArtifactKind } from '../../types.js';
 import { getTask } from './task.js';
 import { isDocumentSession } from '../../knowledge/session-documents.js';
+import { getArtifactSnapshot } from '../../artifacts/artifact-snapshot-store.js';
 
 export interface StoredExecutionArtifact extends ExecutionArtifact {
   rootPath?: string;
@@ -26,7 +27,7 @@ function rowToArtifact(row: any): StoredExecutionArtifact {
     rootPath: row.root_path || undefined,
     content: row.content ?? undefined,
     sizeBytes: Number(row.size_bytes) || 0,
-    metadata: typeof row.metadata === 'string' ? JSON.parse(row.metadata || '{}') : (row.metadata || {}),
+    metadata: { captureState: 'legacy_live', immutable: false, ...(typeof row.metadata === 'string' ? JSON.parse(row.metadata || '{}') : (row.metadata || {})) },
     previewUrl: `/api/v1/artifacts/workbench/${encodeURIComponent(id)}/preview`,
     downloadUrl: `/api/v1/artifacts/workbench/${encodeURIComponent(id)}/download`,
     createdAt: row.created_at,
@@ -57,6 +58,7 @@ export function upsertExecutionArtifact(data: {
     data.relativePath,
   );
   const id = existing?.id || `xart_${uuid().slice(0, 8)}`;
+  if (existing && getArtifactSnapshot(id)) return getExecutionArtifact(id)!;
   db.run(`
     INSERT INTO execution_artifacts (
       id, workspace_id, task_id, execution_id, pipeline_id, stage_index,
@@ -95,7 +97,7 @@ export function upsertExecutionArtifact(data: {
   // Runtime evidence is captured asynchronously as an unconfirmed candidate.
   // Failure must never block artifact persistence or task completion.
   void import('../../memory/runtime-knowledge-bridge.js')
-    .then(({ captureExecutionArtifactKnowledge }) => captureExecutionArtifactKnowledge(artifact))
+    .then(({ captureExecutionArtifactKnowledge }) => peekDb() === db ? captureExecutionArtifactKnowledge(artifact, db) : undefined)
     .catch(() => undefined);
   return artifact;
 }
@@ -109,6 +111,7 @@ export function listExecutionArtifacts(filter?: {
   workspaceId?: string;
   taskId?: string;
   executionId?: string;
+  pipelineId?: string;
   limit?: number;
 }): StoredExecutionArtifact[] {
   let sql = 'SELECT * FROM execution_artifacts';
@@ -117,6 +120,7 @@ export function listExecutionArtifacts(filter?: {
   if (filter?.workspaceId) { conditions.push('workspace_id = ?'); params.push(filter.workspaceId); }
   if (filter?.taskId) { conditions.push('task_id = ?'); params.push(filter.taskId); }
   if (filter?.executionId) { conditions.push('execution_id = ?'); params.push(filter.executionId); }
+  if (filter?.pipelineId) { conditions.push('pipeline_id = ?'); params.push(filter.pipelineId); }
   if (conditions.length) sql += ` WHERE ${conditions.join(' AND ')}`;
   sql += ' ORDER BY updated_at DESC';
   sql += ' LIMIT ?';

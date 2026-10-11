@@ -12,6 +12,7 @@ import { xiaohongshuSession } from './xiaohongshu-session.js';
 import type { XiaohongshuDiagnostics, XiaohongshuProgress } from './xiaohongshu-session.js';
 import type { ToolFailure } from '@myrmecia/shared';
 import { classifyToolFailure } from './tool-failure.js';
+import { executionWorldMode } from '../agents/execution-world.js';
 
 export interface ModelToolDef {
   type: 'function';
@@ -67,6 +68,9 @@ export async function executeMcpTool(
   signal?: AbortSignal,
 ): Promise<{ output: string; status: 'done' | 'failed'; diagnostics?: XiaohongshuDiagnostics; failure?: ToolFailure }> {
   if (signal?.aborted) throw new Error('Request aborted');
+  if (executionWorldMode() === 'docker_isolated' && process.env.MYRMECIA_ALLOW_EXTERNAL_MCP !== 'true') {
+    return { status: 'failed', output: 'WORLD_TOOL_UNSUPPORTED: external MCP is outside container isolation; explicit operator policy is required.' };
+  }
   if (XHS_READ_TOOLS.has(qualifiedName)) {
     if (!policyContext?.taskId) return { status: 'failed', output: 'Xiaohongshu reads require a task-scoped Agent context.' };
     const result = await xiaohongshuSession.agentRead(qualifiedName, (remaining, report) => xiaohongshuReadAdapter.execute(

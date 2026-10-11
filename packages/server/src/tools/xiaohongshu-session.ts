@@ -39,6 +39,13 @@ export class XiaohongshuSession {
 
   constructor(private readonly call: Call, private readonly now = Date.now) {}
 
+  /** Read-only setup diagnostics. Never starts or queues a browser operation. */
+  cachedStatus(): XiaohongshuStatus | undefined {
+    if (!this.lastStatus) return;
+    const ttl = this.lastStatus.status.authenticated ? 120_000 : 5_000;
+    return this.now() - this.lastStatus.at < ttl ? { ...this.lastStatus.status } : undefined;
+  }
+
   /** One browser operation at a time; expired queued work never starts later. */
   private async exclusive<T>(operation: (remaining: () => number) => Promise<T>, timeoutMs: number): Promise<T> {
     if (this.queued >= 8) throw new Error('[XHS_QUEUE_FULL]');

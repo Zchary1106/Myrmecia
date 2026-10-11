@@ -10,6 +10,7 @@ import type { AgentDefinition, QualityLoopAttempt, Task } from '../types.js';
 import { loadExecutionContext, persistInheritedExecutionContext } from '../agents/execution-context.js';
 import { isSimpleConversation } from '../agents/conversation-intent.js';
 import { resolveAllowedToolsForAgent } from '../tools/tool-policy.js';
+import { ownGitRoot } from '../workspace/path-policy.js';
 
 const MAX_PROMPT_EVIDENCE_CHARS = 12_000;
 const MAX_REVIEW_OUTPUT_CHARS = 10_000;
@@ -58,6 +59,8 @@ export function isQualityChildTask(task: Pick<Task, 'title' | 'parentTaskId'>): 
 function workspaceEvidence(task: Task): { diff: string; changedFiles: string[] } {
   const cwd = task.workdir || task.workspacePath;
   if (!cwd) return { diff: '(workspace path unavailable)', changedFiles: [] };
+  try { if (!ownGitRoot(cwd)) return { diff: '(non-Git execution workspace)', changedFiles: [] }; }
+  catch { return { diff: '(Git root requires reconciliation)', changedFiles: [] }; }
   const runGit = (args: string[]) => spawnSync('git', args, { cwd, encoding: 'utf8', timeout: 5_000 });
   const changed = runGit(['diff', '--name-only', 'HEAD']);
   const diff = runGit(['diff', '--no-ext-diff', '--unified=12', 'HEAD']);

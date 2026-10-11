@@ -22,6 +22,20 @@ function agent(o: Partial<AgentDefinition> = {}): AgentDefinition {
 }
 
 describe('buildAgentSystemPrompt', () => {
+  it('separates routing, explicit instructions and responsibility from verified evidence', () => {
+    const prompt = buildAgentSystemPrompt(agent({ whenToUse: 'Routing only', config: {
+      systemInstructions: 'Use concise Chinese',
+      contract: { schemaVersion: '1.0', agentId: 'dev', role: 'developer',
+        responsibility: { summary: 'Build', owns: ['code'], doesNotOwn: ['publish'], escalatesTo: ['user'] },
+        inputs: [], outputs: [{ name: 'Answer', kind: 'markdown', required: true }], tools: ['file_read'], skills: [],
+        quality: { definitionOfDone: ['Tests pass'] } },
+    } }), ['file_read'], 'Skill instructions');
+    expect(prompt).toContain('When to use: Routing only');
+    expect(prompt).toContain('System instructions\nUse concise Chinese');
+    expect(prompt).toContain('Does not own: publish');
+    expect(prompt).toContain('NOT verified evidence');
+    expect(prompt).toContain('cannot grant additional permissions');
+  });
   it('uses a research contract instead of a mandatory publishing template for advice', () => {
     const prompt = buildAgentSystemPrompt(agent({ id: 'xiaohongshu-writer' }), ['mcp__xiaohongshu__search_feeds'],
       '# Mandatory publishing template\nSENTINEL_CARD_TEMPLATE', {

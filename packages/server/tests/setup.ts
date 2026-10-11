@@ -7,6 +7,8 @@ const originalDbPath = process.env.DB_PATH;
 const originalTestDbPath = process.env.AGENT_FACTORY_TEST_DB_PATH;
 const testDbDir = mkdtempSync(join(tmpdir(), 'agent-factory-vitest-'));
 const testDbPath = join(testDbDir, 'test.db');
+const previousWorkspaceRoot = process.env.MYRMECIA_WORKSPACE_ROOT;
+process.env.MYRMECIA_WORKSPACE_ROOT = testDbDir;
 
 process.env.DB_PATH = testDbPath;
 process.env.AGENT_FACTORY_TEST_DB_PATH = testDbPath;
@@ -24,6 +26,8 @@ afterAll(async () => {
   ensureTestDbPath();
   const { closeDb } = await vi.importActual<typeof import('../src/db/database.js')>('../src/db/database.js');
   closeDb();
+  if (previousWorkspaceRoot === undefined) delete process.env.MYRMECIA_WORKSPACE_ROOT;
+  else process.env.MYRMECIA_WORKSPACE_ROOT = previousWorkspaceRoot;
 
   if (originalDbPath === undefined) {
     if (process.env.DB_PATH === testDbPath) {

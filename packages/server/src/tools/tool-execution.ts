@@ -1,6 +1,8 @@
 import { createHash } from 'crypto';
 import { v4 as uuid } from 'uuid';
 import { getDb } from '../db/database.js';
+import { fencedRunWrite } from '../agents/run-coordinator.js';
+import { assertWorkspaceToolAllowed } from '../workspace/workspace-lease.js';
 import type { ToolExecution, ToolExecutionStatus } from '../types.js';
 
 function rowToToolExecution(row: any): ToolExecution {
@@ -52,6 +54,7 @@ export function createToolExecution(data: {
   inputHash?: string;
   startedAt?: string;
 }): ToolExecution {
+  assertWorkspaceToolAllowed(data.toolId);
   const db = getDb();
   const id = data.id || `tool_${uuid().slice(0, 8)}`;
   db.run(`
@@ -83,6 +86,7 @@ export function completeToolExecution(id: string, updates: {
   durationMs?: number;
   completedAt?: string;
 }): ToolExecution | undefined {
+  return fencedRunWrite(getToolExecution(id)?.taskId, () => {
   const db = getDb();
   db.run(`
     UPDATE tool_executions
@@ -101,6 +105,7 @@ export function completeToolExecution(id: string, updates: {
     id,
   );
   return getToolExecution(id);
+  });
 }
 
 export function getToolExecution(id: string): ToolExecution | undefined {

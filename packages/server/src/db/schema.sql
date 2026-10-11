@@ -307,6 +307,63 @@ CREATE TABLE IF NOT EXISTS model_usage_stats (
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Durable setup request receipts (no prompts or credentials are stored).
+CREATE TABLE IF NOT EXISTS agent_setup_requests (
+  workspace_id TEXT NOT NULL,
+  actor_id TEXT NOT NULL,
+  operation TEXT NOT NULL,
+  request_key TEXT NOT NULL,
+  fingerprint TEXT NOT NULL,
+  entity_id TEXT NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (workspace_id, actor_id, operation, request_key)
+);
+
+CREATE TABLE IF NOT EXISTS agent_setup_drafts (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  actor_id TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  form TEXT NOT NULL,
+  step INTEGER NOT NULL DEFAULT 0,
+  locked INTEGER NOT NULL DEFAULT 0,
+  test_submitted INTEGER NOT NULL DEFAULT 0,
+  creation_key TEXT NOT NULL,
+  test_key TEXT NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_agent_setup_drafts_owner
+  ON agent_setup_drafts(workspace_id, actor_id, updated_at);
+
+CREATE TABLE IF NOT EXISTS task_agent_setup_snapshots (
+  task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+  snapshot TEXT NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Immutable Agent revisions; the mutable activation pointer never rewrites runs.
+CREATE TABLE IF NOT EXISTS agent_config_versions (
+  id TEXT PRIMARY KEY,
+  agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+  workspace_id TEXT NOT NULL,
+  sequence INTEGER NOT NULL,
+  config_hash TEXT NOT NULL,
+  snapshot TEXT NOT NULL,
+  created_by TEXT NOT NULL,
+  origin TEXT NOT NULL CHECK(origin IN ('publish', 'task_snapshot')),
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(workspace_id, agent_id, sequence),
+  UNIQUE(workspace_id, agent_id, config_hash)
+);
+CREATE TABLE IF NOT EXISTS agent_config_active (
+  workspace_id TEXT NOT NULL,
+  agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+  version_id TEXT NOT NULL REFERENCES agent_config_versions(id),
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(workspace_id, agent_id)
+);
+
 -- Agent Messages (inter-agent communication mailbox)
 CREATE TABLE IF NOT EXISTS agent_messages (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -958,3 +1015,258 @@ ALTER TABLE external_agent_runs ADD COLUMN run_state JSON;
 -- Migration: 202610060005_external_execution_bridge
 ALTER TABLE external_agent_runs ADD COLUMN execution_id TEXT REFERENCES task_executions(id);
 ALTER TABLE external_agent_runs ADD COLUMN external_run_id TEXT;
+
+-- Migration: 202610070001_agent_session_events
+-- No cascading foreign keys: lifecycle operations must not erase immutable history.
+CREATE TABLE IF NOT EXISTS agent_session_events (
+  event_id TEXT PRIMARY KEY,
+  schema_version INTEGER NOT NULL CHECK(schema_version = 1),
+  workspace_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  sequence INTEGER NOT NULL CHECK(sequence > 0),
+  event_key TEXT NOT NULL,
+  run_id TEXT NOT NULL,
+  request_id TEXT,
+  type TEXT NOT NULL,
+  payload JSON NOT NULL,
+  payload_hash TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE(workspace_id, session_id, sequence),
+  UNIQUE(workspace_id, session_id, event_key)
+);
+CREATE INDEX IF NOT EXISTS idx_agent_session_events_run
+  ON agent_session_events(workspace_id, run_id, sequence);
+
+-- Migration: 202610070002_agent_durable_inbox
+CREATE TABLE IF NOT EXISTS agent_inbox_entries (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  target_execution_id TEXT NOT NULL,
+  source_message_id INTEGER UNIQUE,
+  user_message_id INTEGER,
+  idempotency_key TEXT NOT NULL,
+  mode TEXT NOT NULL CHECK(mode IN ('steer','follow_up')),
+  content TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('pending','claimed','applied','acknowledged','rejected')),
+  claim_owner TEXT,
+  claim_until INTEGER,
+  applied_event_id TEXT,
+  acknowledged_request_id TEXT,
+  assigned_task_id TEXT,
+  reason TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(workspace_id, session_id, idempotency_key)
+);
+CREATE INDEX IF NOT EXISTS idx_agent_inbox_target
+  ON agent_inbox_entries(workspace_id, target_execution_id, mode, status, created_at);
+
+-- Migration: 202610070004_agent_run_ownership
+CREATE TABLE IF NOT EXISTS agent_run_ownership (
+  workspace_id TEXT NOT NULL,
+  task_id TEXT NOT NULL,
+  owner TEXT NOT NULL,
+  fence_token INTEGER NOT NULL CHECK(fence_token > 0),
+  lease_until INTEGER NOT NULL,
+  PRIMARY KEY(workspace_id, task_id)
+);
+
+-- Migration: 202610070005_agent_persistent_budget
+CREATE TABLE IF NOT EXISTS agent_budget_policies (
+  workspace_id TEXT NOT NULL,
+  scope TEXT NOT NULL CHECK(scope IN ('workspace','agent','task')),
+  scope_id TEXT NOT NULL,
+  policy JSON NOT NULL,
+  PRIMARY KEY(workspace_id, scope, scope_id)
+);
+CREATE TABLE IF NOT EXISTS agent_budget_reservations (
+  workspace_id TEXT NOT NULL,
+  reservation_key TEXT NOT NULL,
+  task_id TEXT NOT NULL,
+  agent_id TEXT NOT NULL,
+  period TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  fingerprint TEXT NOT NULL,
+  tokens INTEGER NOT NULL,
+  tool_calls INTEGER NOT NULL,
+  runtime_ms INTEGER NOT NULL,
+  cost_type TEXT NOT NULL,
+  cost_usd REAL,
+  observed_tokens INTEGER,
+  observed_runtime_ms INTEGER,
+  observed_cost_usd REAL,
+  status TEXT NOT NULL CHECK(status IN ('reserved','dispatched','settled','released')),
+  PRIMARY KEY(workspace_id, reservation_key)
+);
+CREATE INDEX IF NOT EXISTS idx_agent_budget_scope ON agent_budget_reservations(workspace_id, task_id, agent_id, period);
+CREATE TABLE IF NOT EXISTS agent_budget_receipts (
+  workspace_id TEXT NOT NULL,
+  reservation_key TEXT NOT NULL,
+  event_key TEXT NOT NULL,
+  fingerprint TEXT NOT NULL,
+  PRIMARY KEY(workspace_id, reservation_key, event_key)
+);
+
+-- Migration: 202610070006_agent_bounded_continuation
+CREATE TABLE IF NOT EXISTS agent_run_continuations (
+  workspace_id TEXT NOT NULL, task_id TEXT NOT NULL, execution_id TEXT NOT NULL,
+  elapsed_ms INTEGER NOT NULL, wakeup_at INTEGER NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('pending','dispatched','settled')),
+  PRIMARY KEY(workspace_id, task_id)
+);
+
+-- Migration: 202610070007_agent_provider_sessions
+CREATE TABLE IF NOT EXISTS agent_provider_sessions (
+  workspace_id TEXT NOT NULL, session_key TEXT NOT NULL, provider_session_id TEXT NOT NULL,
+  request_id TEXT NOT NULL, task_id TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('pending','stable')),
+  mode TEXT NOT NULL CHECK(mode IN ('fresh','resumed')),
+  PRIMARY KEY(workspace_id, session_key)
+);
+
+-- Migration: 202610070008_task_completion_contract
+ALTER TABLE tasks ADD COLUMN completion_criteria JSON NOT NULL DEFAULT '[]';
+
+-- Migration: 202610070009_tool_resource_locks
+CREATE TABLE IF NOT EXISTS agent_tool_resource_locks (
+  lock_key TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, task_id TEXT NOT NULL, execution_id TEXT NOT NULL,
+  effect TEXT NOT NULL, resources JSON NOT NULL, server_key TEXT,
+  status TEXT NOT NULL CHECK(status IN ('held','unknown','released'))
+);
+CREATE INDEX IF NOT EXISTS idx_tool_resource_active ON agent_tool_resource_locks(workspace_id, status);
+
+-- Migration: 202610070010_run_cumulative_clock
+ALTER TABLE agent_run_ownership ADD COLUMN first_started_at_ms INTEGER NOT NULL DEFAULT 0;
+
+-- Migration: 202610070003_execution_message_subtype
+-- Preserve the legacy CHECK/table/ids without a destructive table rebuild.
+ALTER TABLE execution_messages ADD COLUMN message_subtype TEXT;
+
+-- Migration: 202610070011_external_callback_receipt
+-- Receipt commits before verifier dispatch; a crash must not silently rerun a verifier.
+ALTER TABLE external_agent_runs ADD COLUMN callback_fingerprint TEXT;
+
+-- Migration: 202610100001_user_pause_controls
+CREATE TABLE IF NOT EXISTS runtime_pause_controls (
+  target_kind TEXT NOT NULL,
+  target_id TEXT NOT NULL,
+  state TEXT NOT NULL CHECK(state IN ('requested','paused')),
+  requested_at TEXT NOT NULL,
+  paused_at TEXT,
+  previous_status TEXT,
+  PRIMARY KEY(target_kind,target_id)
+);
+
+-- Migration: 202610100002_orchestration_pipeline_ownership
+CREATE TABLE IF NOT EXISTS orchestrations (
+  id TEXT PRIMARY KEY, input TEXT NOT NULL, intent JSON NOT NULL,
+  status TEXT NOT NULL DEFAULT 'planning', task_ids JSON NOT NULL DEFAULT '[]',
+  result TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, completed_at DATETIME
+);
+ALTER TABLE orchestrations ADD COLUMN pipeline_id TEXT;
+
+-- Migration: 202610110001_agent_evaluations
+CREATE TABLE IF NOT EXISTS agent_evaluation_suites (
+  id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, actor_id TEXT NOT NULL, agent_id TEXT NOT NULL,
+  revision INTEGER NOT NULL, body JSON NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_evaluation_suites_scope ON agent_evaluation_suites(workspace_id, actor_id, agent_id);
+CREATE TABLE IF NOT EXISTS agent_evaluation_runs (
+  id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, actor_id TEXT NOT NULL, agent_id TEXT NOT NULL,
+  suite_id TEXT NOT NULL, request_key TEXT NOT NULL, request_hash TEXT NOT NULL, body JSON NOT NULL,
+  UNIQUE(workspace_id, actor_id, agent_id, suite_id, request_key)
+);
+CREATE INDEX IF NOT EXISTS idx_evaluation_runs_scope ON agent_evaluation_runs(workspace_id, actor_id, agent_id);
+CREATE TABLE IF NOT EXISTS agent_evaluation_case_results (
+  run_id TEXT NOT NULL, case_id TEXT NOT NULL, task_id TEXT UNIQUE, body JSON NOT NULL,
+  PRIMARY KEY(run_id, case_id),
+  FOREIGN KEY(run_id) REFERENCES agent_evaluation_runs(id)
+);
+
+-- Migration: 202610110002_agent_knowledge
+CREATE TABLE IF NOT EXISTS agent_knowledge_sources (
+  id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL,
+  scope TEXT NOT NULL CHECK(scope IN ('agent_private','team_shared')), owner_id TEXT NOT NULL,
+  title TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1, source_hash TEXT NOT NULL, passage_hash TEXT NOT NULL,
+  size_bytes INTEGER NOT NULL, passages JSON NOT NULL, original BLOB NOT NULL,
+  created_by TEXT NOT NULL, created_at TEXT NOT NULL, deleted_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_agent_knowledge_owner ON agent_knowledge_sources(workspace_id, scope, owner_id, deleted_at);
+CREATE TABLE IF NOT EXISTS agent_knowledge_bindings (
+  id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, scope TEXT NOT NULL, owner_id TEXT NOT NULL,
+  source_id TEXT NOT NULL, created_at TEXT NOT NULL, revoked_at TEXT,
+  FOREIGN KEY(source_id) REFERENCES agent_knowledge_sources(id)
+);
+CREATE INDEX IF NOT EXISTS idx_agent_knowledge_binding ON agent_knowledge_bindings(workspace_id, scope, owner_id, revoked_at);
+CREATE TABLE IF NOT EXISTS task_team_knowledge_scope (
+  task_id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, team_id TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS workflow_team_knowledge_scope (
+  workflow_id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, team_id TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS execution_knowledge_manifests (
+  execution_id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, task_id TEXT NOT NULL, agent_id TEXT NOT NULL,
+  body JSON NOT NULL, hash TEXT NOT NULL
+);
+
+-- Migration: 202610110003_agent_governance_budget
+CREATE TABLE IF NOT EXISTS agent_governance_budgets (
+  workspace_id TEXT NOT NULL,
+  agent_id TEXT NOT NULL,
+  revision INTEGER NOT NULL,
+  limits JSON NOT NULL,
+  PRIMARY KEY(workspace_id, agent_id)
+);
+
+-- Migration: 202610110004_agent_debug_history
+CREATE TABLE IF NOT EXISTS agent_debug_task_history (
+  workspace_id TEXT NOT NULL,
+  root_task_id TEXT NOT NULL,
+  task_id TEXT NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(workspace_id, task_id)
+);
+
+-- Migration: 202610110005_workspace_lifecycle (no legacy ownership backfill)
+CREATE TABLE IF NOT EXISTS managed_workspaces (
+  id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, actor_id TEXT NOT NULL,
+  canonical_path TEXT NOT NULL UNIQUE, source_path TEXT, source_kind TEXT NOT NULL,
+  ownership TEXT NOT NULL, access_mode TEXT NOT NULL, baseline JSON NOT NULL,
+  root_identity TEXT NOT NULL, lifecycle TEXT NOT NULL DEFAULT 'active',
+  revision INTEGER NOT NULL DEFAULT 1, capture_state TEXT NOT NULL DEFAULT 'pending',
+  last_used_at TEXT NOT NULL, created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_managed_workspace_scope ON managed_workspaces(workspace_id, actor_id);
+CREATE TABLE IF NOT EXISTS workspace_execution_bindings (
+  task_id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, filesystem_workspace_id TEXT NOT NULL,
+  source_workspace_id TEXT, execution_path TEXT NOT NULL, access_mode TEXT NOT NULL, baseline JSON NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS workspace_preparation_requests (
+  task_id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, options JSON NOT NULL
+);
+CREATE TABLE IF NOT EXISTS workspace_operation_journal (
+  id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, actor_id TEXT NOT NULL,
+  filesystem_workspace_id TEXT NOT NULL, operation TEXT NOT NULL,
+  manifest_hash TEXT NOT NULL, manifest JSON NOT NULL, state TEXT NOT NULL,
+  error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS workspace_leases (
+  id TEXT PRIMARY KEY, canonical_path TEXT NOT NULL, task_id TEXT NOT NULL,
+  mode TEXT NOT NULL, fence INTEGER NOT NULL, owner TEXT NOT NULL,
+  state TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_workspace_lease_root ON workspace_leases(canonical_path, state);
+CREATE TABLE IF NOT EXISTS workspace_import_sessions (
+  id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, actor_id TEXT NOT NULL,
+  root TEXT NOT NULL, name TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'uploading',
+  revision INTEGER NOT NULL DEFAULT 1, manifest JSON NOT NULL DEFAULT '{}',
+  receipt JSON, created_at TEXT NOT NULL, expires_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS execution_artifact_snapshots (
+  artifact_id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, execution_id TEXT NOT NULL,
+  snapshot_path TEXT NOT NULL, sha256 TEXT NOT NULL, size_bytes INTEGER NOT NULL,
+  state TEXT NOT NULL, created_at TEXT NOT NULL
+);

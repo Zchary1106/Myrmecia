@@ -26,7 +26,7 @@ afterEach(() => {
 });
 
 describe('WorkspaceManager', () => {
-  it('passes commit messages as arguments instead of shell commands', async () => {
+  it('rejects unattended merge and leaves the source unchanged', async () => {
     const root = createRepository();
     const marker = join(root, 'shell-injection-marker');
     const manager = new WorkspaceManager(root);
@@ -38,12 +38,13 @@ describe('WorkspaceManager', () => {
       `safe"; touch "${marker}"; #`,
     );
 
-    expect(result).toEqual({ success: true });
+    expect(result).toEqual({ success: false, error: 'EXPLICIT_REVIEWED_CHANGESET_REQUIRED' });
     expect(existsSync(marker)).toBe(false);
-    expect(existsSync(join(root, 'result.txt'))).toBe(true);
+    expect(existsSync(join(root, 'result.txt'))).toBe(false);
+    expect(existsSync(join(workspace.path, 'result.txt'))).toBe(true);
   });
 
-  it('retains active workspaces and removes expired terminal workspaces', async () => {
+  it('retains legacy directories regardless of age and rejects unguarded cleanup', async () => {
     const root = createRepository();
     const manager = new WorkspaceManager(root);
     const workspace = await manager.createTaskWorkspace('task_retention');
@@ -63,7 +64,8 @@ describe('WorkspaceManager', () => {
       retentionMs: 60_000,
       now: old.getTime() + 120_000,
     });
-    expect(cleanupResult.removed).toBe(1);
-    expect(existsSync(workspace.path)).toBe(false);
+    expect(cleanupResult.removed).toBe(0);
+    expect(existsSync(workspace.path)).toBe(true);
+    await expect(manager.cleanupWorkspace('task_retention', 'task')).rejects.toThrow('EXPLICIT_WORKSPACE_PURGE_REQUIRED');
   });
 });

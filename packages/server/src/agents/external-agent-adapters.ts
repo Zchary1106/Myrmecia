@@ -1,6 +1,7 @@
 import { spawn } from 'child_process';
 import { existsSync, realpathSync, statSync } from 'fs';
 import { resolve, sep } from 'path';
+import { workspaceCommandEnvironment } from '../workspace/path-policy.js';
 import type {
   ExternalAgent,
   ExternalAgentAdapter,
@@ -67,7 +68,7 @@ function runCommand(command: string, args: string[], cwd: string, timeoutMs = DE
       cwd,
       shell: false,
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...cliEnvironment(), CI: process.env.CI || 'true' },
+      env: workspaceCommandEnvironment(cwd, { ...cliEnvironment(), CI: process.env.CI || 'true' }),
     });
     let output = '';
     let timedOut = false;

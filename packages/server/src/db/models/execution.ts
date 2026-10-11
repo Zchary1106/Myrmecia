@@ -1,4 +1,5 @@
 import { getDb } from '../database.js';
+import { fencedRunWrite } from '../../agents/run-coordinator.js';
 import { v4 as uuid } from 'uuid';
 import type { TaskExecution, ExecutionStatus, AgentProgress, ExecutionMessage, ExecutionMessageType } from '../../types.js';
 import type { AgentRunState } from '@myrmecia/shared';
@@ -37,7 +38,9 @@ function rowToExecution(row: any): TaskExecution {
     modelTier: row.model_tier || undefined,
     modelRouteSource: row.model_route_source || undefined,
     modelRouteReason: row.model_route_reason || undefined,
-    startedAt: row.started_at,
+    // SQLite CURRENT_TIMESTAMP is UTC but omits its timezone marker.
+    startedAt: typeof row.started_at === 'string' && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(row.started_at)
+      ? `${row.started_at.replace(' ', 'T')}Z` : row.started_at,
     completedAt: row.completed_at || undefined,
   };
 }
@@ -165,6 +168,7 @@ export function updateExecution(id: string, updates: Partial<{
   modelRouteReason: string;
   runState: AgentRunState;
 }>): TaskExecution | undefined {
+  return fencedRunWrite(getExecution(id)?.taskId, () => {
   const db = getDb();
   const sets: string[] = [];
   const params: any[] = [];
@@ -191,6 +195,7 @@ export function updateExecution(id: string, updates: Partial<{
   params.push(id);
   db.run(`UPDATE task_executions SET ${sets.join(', ')} WHERE id = ?`, ...params);
   return getExecution(id);
+  });
 }
 
 // Execution messages
@@ -200,10 +205,12 @@ export function addExecutionMessage(data: {
   content: string;
   toolName?: string;
 }): ExecutionMessage {
+  return fencedRunWrite(getExecution(data.executionId)?.taskId, () => {
   const db = getDb();
   const result = db.run(
-    'INSERT INTO execution_messages (execution_id, type, content, tool_name) VALUES (?, ?, ?, ?)',
-    data.executionId, data.type, data.content, data.toolName || null
+    'INSERT INTO execution_messages (execution_id, type, message_subtype, content, tool_name) VALUES (?, ?, ?, ?, ?)',
+    data.executionId, data.type === 'user_follow_up' ? 'user_input' : data.type,
+    data.type === 'user_follow_up' ? 'user_follow_up' : null, data.content, data.toolName || null
   );
 
   return {
@@ -214,6 +221,7 @@ export function addExecutionMessage(data: {
     toolName: data.toolName,
     createdAt: new Date().toISOString(),
   };
+  });
 }
 
 export function listExecutionMessages(executionId: string, opts?: {
@@ -231,7 +239,7 @@ export function listExecutionMessages(executionId: string, opts?: {
   return db.all(sql, ...params).map((row: any) => ({
     id: row.id,
     executionId: row.execution_id,
-    type: row.type,
+    type: row.message_subtype === 'user_follow_up' ? 'user_follow_up' : row.type,
     content: row.content,
     toolName: row.tool_name || undefined,
     createdAt: row.created_at,

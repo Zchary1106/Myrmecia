@@ -5,6 +5,7 @@ import { HttpError, requireOperatorRole, requireConfirmation, sendError } from '
 import { MAX_DOCUMENT_BYTES, parseSessionDocument } from '../knowledge/session-document-parser.js';
 import { listSessionDocuments, sessionDocument, storeSessionDocument } from '../knowledge/session-documents.js';
 import { getDb } from '../db/database.js';
+import { safeKnowledgePassages } from '../db/models/agent-knowledge.js';
 
 export function createSessionDocumentRoutes(): Router {
   const router = Router();
@@ -33,7 +34,7 @@ export function createSessionDocumentRoutes(): Router {
         if (!name || name.length > 200 || /[\\/\x00-\x1f]/.test(name)) throw new HttpError(400, 'INVALID_NAME', 'Invalid filename');
         if (listSessionDocuments(res.locals.task).length >= 10) throw new HttpError(400, 'DOCUMENT_LIMIT', 'A session supports at most 10 documents');
         parsing++; admitted = true;
-        const passages = await parseSessionDocument(name, req.body);
+        const passages = safeKnowledgePassages(await parseSessionDocument(name, req.body), res.locals.task.workspaceId || 'default');
         res.status(201).json(storeSessionDocument(res.locals.task, name, req.body, passages));
       } catch (error) {
         sendError(res, error instanceof HttpError ? error : new HttpError(400, 'DOCUMENT_PARSE_FAILED', error instanceof Error ? error.message : 'Unable to parse document'));

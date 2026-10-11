@@ -18,7 +18,7 @@ root `.env` (git-ignored) before running the live recipes:
 AGENT_FACTORY_BASE_URL=https://your-openai-compatible-endpoint/v1
 AGENT_FACTORY_API_KEY=your-api-key
 AGENT_FACTORY_MODEL=claude-haiku-4.5      # any model your endpoint serves
-AGENT_EXECUTOR=ts                          # use the built-in TypeScript agent loop
+AGENT_EXECUTOR=ts                          # optional: TypeScript is already the built-in default
 ```
 
 Then start the platform (server + dashboard):

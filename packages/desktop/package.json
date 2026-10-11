@@ -64,10 +64,6 @@
         "to": "docs/social-workflow"
       },
       {
-        "from": "../python-runtime",
-        "to": "python-runtime"
-      },
-      {
         "from": "src/splash",
         "to": "desktop"
       }

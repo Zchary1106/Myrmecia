@@ -3,6 +3,8 @@ import IORedis from 'ioredis';
 import { eventBus } from '../events/event-bus.js';
 import { createTask, getTask, updateTask, addTaskLog, listTasks, listDependents } from '../db/models/task.js';
 import { AgentConcurrencyError, AgentManager } from '../agents/agent-manager.js';
+import { WorkspaceBusyError, workspaceAvailable } from '../workspace/workspace-lease.js';
+import { prepareTaskWorkspace } from '../workspace/task-workspace.js';
 import { metrics } from '../observability/telemetry.js';
 import { logger } from '../lib/logger.js';
 import type { ReasoningEffort, Task, TaskMode, Priority } from '../types.js';
@@ -12,6 +14,15 @@ import { isNonRetryableExecutionError } from '../agents/self-healing.js';
 import { listExecutions, updateExecution } from '../db/models/execution.js';
 import { initialAgentRunState } from '../agents/run-state.js';
 import { getExternalAgentRunForExecution, updateExternalAgentRun } from '../db/models/external-agent.js';
+import { materializeQueuedFollowUp } from '../agents/queued-follow-up.js';
+import { getDb } from '../db/database.js';
+import { activeRunLease } from '../db/models/run-ownership.js';
+import { continuationJobId, RuntimeSliceYield } from '../agents/runtime-continuation.js';
+import { reconcileInterruptedRun } from '../agents/run-coordinator.js';
+import { clearPauseControl, getPauseControl, setPauseControl, taskSchedulingPaused, UserPauseReached } from '../agents/pause-control.js';
+import { getExternalAgent } from '../db/models/external-agent.js';
+import { collectEvaluationTask } from '../agents/agent-evaluation.js';
+import { bindTaskKnowledgeTeam } from '../db/models/agent-knowledge.js';
 
 const QUEUE_NAME = 'agent-factory-tasks';
 export const PUBLISH_RECONFIRMATION_ERROR = 'Interrupted publish task requires renewed pipeline confirmation';
@@ -56,13 +67,55 @@ export class TaskQueue {
     }
 
     // Listen for task completions to process waiting tasks
-    eventBus.on('task:done', () => { metrics.queueDepth.add(-1, { direction: 'dec' }); this.processNext(); });
+    eventBus.on('task:updated', event => {
+      if ((event.payload as any).workspaceLeaseReleased && !this.queue) setImmediate(() => void this.processNext());
+    });
+    for (const type of ['task:done', 'task:failed', 'task:cancelled'] as const) {
+      eventBus.on(type, event => {
+        const taskId = (event.payload as { taskId?: string }).taskId;
+        if (taskId) {
+          try { collectEvaluationTask(taskId); }
+          catch (err) { logger.warn({ taskId, err }, 'Evaluation receipt collection failed; read can reconcile without rerunning tools'); }
+        }
+      });
+    }
+    eventBus.on('task:done', () => {
+      metrics.queueDepth.add(-1, { direction: 'dec' });
+      void this.scheduleFollowUps().then(() => this.processNext()).catch(err => logger.error({ err }, 'Follow-up scheduling failed'));
+    });
     eventBus.on('task:failed', (e) => {
       metrics.queueDepth.add(-1, { direction: 'dec' });
       this.cascadeDependentFailure(e);
-      this.processNext();
+      void this.scheduleFollowUps().then(() => this.processNext()).catch(err => logger.error({ err }, 'Follow-up reconciliation failed'));
     });
-    eventBus.on('task:cancelled', (e) => { this.cascadeDependentFailure(e); this.processNext(); });
+    eventBus.on('task:cancelled', (e) => {
+      this.cascadeDependentFailure(e);
+      void this.scheduleFollowUps().then(() => this.processNext()).catch(err => logger.error({ err }, 'Follow-up reconciliation failed'));
+    });
+  }
+
+  private async scheduleFollowUps(): Promise<void> {
+    const targets = getDb().all<{ target_execution_id: string }>(
+      `SELECT DISTINCT target_execution_id FROM agent_inbox_entries
+        WHERE mode = 'follow_up' AND assigned_task_id IS NULL AND status IN ('pending','claimed')`,
+    );
+    for (const target of targets) materializeQueuedFollowUp(target.target_execution_id);
+    // This also recovers the crash gap between task materialization and queue submission.
+    const assigned = getDb().all<{ assigned_task_id: string }>(
+      `SELECT DISTINCT i.assigned_task_id FROM agent_inbox_entries i JOIN tasks t ON t.id = i.assigned_task_id
+        WHERE i.mode = 'follow_up' AND t.status = 'pending'`,
+    );
+    for (const item of assigned) {
+      const task = getTask(item.assigned_task_id);
+      if (!task) continue;
+      if (this.queue) {
+        await this.queue.add('execute-task', { taskId: task.id }, { jobId: task.id, attempts: 1 });
+        updateTask(task.id, { status: 'queued' });
+      } else {
+        updateTask(task.id, { status: 'queued' });
+      }
+      eventBus.emit('task:created', { taskId: task.id, task: getTask(task.id), workspaceId: task.workspaceId });
+    }
   }
 
   /**
@@ -164,13 +217,38 @@ export class TaskQueue {
     workspaceId?: string;
     domainId?: string;
     createdBy?: 'user' | 'master';
+    completionCriteria?: Task['completionCriteria'];
     /** Context source may be the previous turn while parentTaskId groups the session. */
     inheritContextFromTaskId?: string;
+    /** Internal server affiliation; not accepted from public task JSON. */
+    knowledgeTeamId?: string;
+    filesystemWorkspaceId?: string;
+    workspaceAccessMode?: import('@myrmecia/shared').WorkspaceAccessMode;
+    workspaceActorId?: string;
+    selectedWorkspaceSource?: boolean;
   }): Promise<Task> {
     const task = createTask({
       ...data,
       createdBy: data.createdBy || (data.parentTaskId ? 'master' : 'user'),
     });
+    const workspaceOptions = { sourceWorkspaceId: data.filesystemWorkspaceId, accessMode: data.workspaceAccessMode,
+      actorId: data.workspaceActorId, selectedSource: data.selectedWorkspaceSource ?? (!!(data.workspacePath || data.workdir) && !data.pipelineId) };
+    getDb().run('INSERT INTO workspace_preparation_requests (task_id,workspace_id,options) VALUES (?,?,?)', task.id, task.workspaceId || 'default', JSON.stringify(workspaceOptions));
+    if (!data.parentTaskId || data.filesystemWorkspaceId || data.selectedWorkspaceSource) {
+      try { await prepareTaskWorkspace(task, workspaceOptions); }
+      catch (error: any) {
+        if (error instanceof WorkspaceBusyError) {
+          updateTask(task.id, { status: 'queued' });
+          addTaskLog(task.id, 'info', 'Waiting for selected source directory; preparation request retained', 'system');
+        } else {
+        updateTask(task.id, { status: 'failed', error: `WORKSPACE_PREPARATION_FAILED: ${error.message}`, completedAt: new Date().toISOString() });
+        addTaskLog(task.id, 'error', 'Workspace preparation stopped; any partial directory is retained for reconciliation', 'system');
+        throw error;
+        }
+      }
+      Object.assign(task, getTask(task.id));
+    }
+    if (data.knowledgeTeamId) bindTaskKnowledgeTeam(task.id, data.knowledgeTeamId, task.workspaceId || 'default');
     const contextParentId = data.inheritContextFromTaskId || data.parentTaskId;
     const parent = contextParentId ? getTask(contextParentId) : undefined;
     const context = parent
@@ -188,18 +266,28 @@ export class TaskQueue {
     addTaskLog(task.id, 'info', `Task created: ${task.title}`, 'system');
     metrics.queueDepth.add(1, { direction: 'inc' });
 
+    return this.dispatchExisting(task.id);
+  }
+
+  /** Resume dispatch of the same persisted task after an uncertain HTTP/queue result. */
+  async dispatchExisting(taskId: string): Promise<Task> {
+    const task = getTask(taskId);
+    if (!task) throw new Error('Task not found');
+    if (!['pending', 'queued'].includes(task.status) || taskSchedulingPaused(taskId)
+      || listExecutions({ taskId, status: 'running' }).length > 0 || queueOwnsRetry(taskId)) return task;
     if (this.queue) {
       // Use BullMQ
+      if (task.status === 'pending') updateTask(task.id, { status: 'queued' });
       await this.queue.add('execute-task', { taskId: task.id }, {
         priority: PRIORITY_MAP[task.priority] || 3,
         jobId: task.id,
         attempts: isPipelinePublisherTask(task) ? 1 : task.maxRetries + 1,
         backoff: { type: 'exponential', delay: 5000 },
       });
-      updateTask(task.id, { status: 'queued' });
     } else {
       // In-memory: try to execute immediately
-      await this.tryExecute(task);
+      if (task.status === 'queued') updateTask(task.id, { status: 'pending' });
+      await this.tryExecute(getTask(task.id)!);
     }
 
     return getTask(task.id)!;
@@ -209,6 +297,7 @@ export class TaskQueue {
   private async processJob(taskId: string, job?: Job) {
     const task = getTask(taskId);
     if (!task) throw new Error(`Task ${taskId} not found`);
+    if (taskSchedulingPaused(taskId)) return;
     if (['done', 'cancelled', 'failed'].includes(task.status) || queueOwnsRetry(taskId)) return;
     if (listExecutions({ taskId, status: 'running' }).length > 0) return;
 
@@ -247,7 +336,7 @@ export class TaskQueue {
       agentId = agent.id;
     }
 
-    if (!this.hasAgentCapacity(agentId)) {
+    if (!this.hasAgentCapacity(agentId, taskId)) {
       await this.deferForAgentCapacity(taskId, agentId);
       return;
     }
@@ -259,7 +348,13 @@ export class TaskQueue {
     try {
       await this.agentManager.executeTask(agentId, getTask(taskId)!);
     } catch (err: any) {
-      if (err instanceof AgentConcurrencyError) {
+      if (err instanceof UserPauseReached || taskSchedulingPaused(taskId)) return;
+      if (err instanceof RuntimeSliceYield) {
+        if (this.queue) await this.queue.add('execute-task', { taskId }, { jobId: continuationJobId(getTask(taskId)!), attempts: 1 });
+        return;
+      }
+      if (/RUN_ALREADY_OWNED|RUN_FENCE_LOST/.test(err?.message || '')) return;
+      if (err instanceof AgentConcurrencyError || err instanceof WorkspaceBusyError) {
         await this.deferForAgentCapacity(taskId, agentId);
         return;
       }
@@ -297,14 +392,16 @@ export class TaskQueue {
    * AgentManager owns capacity accounting. Keep the queue compatible with
    * narrow test doubles and legacy adapters that only implement executeTask.
    */
-  private hasAgentCapacity(agentId: string): boolean {
+  private hasAgentCapacity(agentId: string, taskId?: string): boolean {
     const manager = this.agentManager as AgentManager & {
-      hasCapacity?: (id: string) => boolean;
+      hasCapacity?: (id: string, taskId?: string) => boolean;
     };
-    return typeof manager.hasCapacity === 'function' ? manager.hasCapacity(agentId) : true;
+    return typeof manager.hasCapacity === 'function' ? manager.hasCapacity(agentId, taskId) : true;
   }
 
   private recordExecutionFailure(taskId: string, err: any, job?: Job) {
+    if (taskSchedulingPaused(taskId)) return;
+    if (/RUN_ALREADY_OWNED|RUN_FENCE_LOST/.test(err?.message || '')) return;
     const current = getTask(taskId);
     if (!current || ['done', 'cancelled'].includes(current.status)
       || (current.status === 'failed' && !queueOwnsRetry(taskId))) return;
@@ -348,6 +445,7 @@ export class TaskQueue {
 
   /** In-memory mode: try to execute a task */
   private async tryExecute(task: Task) {
+    if (taskSchedulingPaused(task.id)) return;
     if (getTask(task.id)?.status !== 'pending' || queueOwnsRetry(task.id)) return;
     if (listExecutions({ taskId: task.id, status: 'running' }).length > 0) return;
     if (!this.checkDependencies(task)) {
@@ -363,7 +461,15 @@ export class TaskQueue {
       return;
     }
 
-    if (!this.hasAgentCapacity(agentId)) {
+    if (!workspaceAvailable(task)) {
+      const current = getTask(task.id);
+      if (current?.status !== 'queued') {
+        updateTask(task.id, { status: 'queued' });
+        addTaskLog(task.id, 'info', 'Waiting for execution directory access; no execution dispatched', 'system');
+      }
+      return;
+    }
+    if (!this.hasAgentCapacity(agentId, task.id)) {
       await this.deferForAgentCapacity(task.id, agentId);
       return;
     }
@@ -374,10 +480,13 @@ export class TaskQueue {
     // Execute asynchronously
     const releaseRetry = claimQueueRetry(task.id);
     this.agentManager.executeTask(agentId, getTask(task.id)!).catch(err => {
+      if (err instanceof UserPauseReached || taskSchedulingPaused(task.id)) return;
+      if (err instanceof RuntimeSliceYield) return;
+      if (/RUN_ALREADY_OWNED|RUN_FENCE_LOST/.test(err?.message || '')) return;
       logger.error({ taskId: task.id, err: err.message }, 'Task execution failed');
       const current = getTask(task.id)!;
       if (!current || ['cancelled', 'done'].includes(current.status)) return;
-      if (err instanceof AgentConcurrencyError) {
+      if (err instanceof AgentConcurrencyError || err instanceof WorkspaceBusyError) {
         void this.deferForAgentCapacity(task.id, agentId);
         return;
       }
@@ -393,6 +502,10 @@ export class TaskQueue {
       releaseRetry();
       const pending = getTask(task.id);
       if (pending?.status === 'pending') void this.tryExecute(pending);
+      // Completion events can run before AgentManager releases its admission.
+      // Wake other queued tasks after that release, including when this task
+      // is terminal, so a materialized follow-up cannot remain queued.
+      else if (pending && ['queued', 'done', 'failed', 'cancelled'].includes(pending.status)) void this.processNext();
     });
   }
 
@@ -405,6 +518,7 @@ export class TaskQueue {
     queued.sort((a, b) => (priorityOrder[a.priority] || 2) - (priorityOrder[b.priority] || 2));
 
     for (const task of queued) {
+      if (taskSchedulingPaused(task.id)) continue;
       if (this.checkDependencies(task)) {
         updateTask(task.id, { status: 'pending' });
         await this.tryExecute(getTask(task.id)!);
@@ -413,12 +527,95 @@ export class TaskQueue {
   }
 
   /** Cancel a task and stop its runtime if it is currently executing. */
+  taskFamily(taskId: string): Task[] {
+    const root = getTask(taskId);
+    if (!root) throw new Error(`Task ${taskId} not found`);
+    const family = [root], seen = new Set([root.id]);
+    for (let index = 0; index < family.length; index++) {
+      for (const child of listTasks({ parentTaskId: family[index].id, workspaceId: root.workspaceId })) {
+        if (!seen.has(child.id)) { seen.add(child.id); family.push(child); }
+      }
+    }
+    return family;
+  }
+
+  assertPauseSupported(tasks: Task[]): void {
+    for (const task of tasks) {
+      const active = listExecutions({ taskId: task.id, status: 'running' })[0];
+      if (active?.runState?.runtime && active.runState.runtime !== 'ts-agent-loop') {
+        throw new Error(`PAUSE_UNSUPPORTED: runtime ${active.runState.runtime} has no safe pause checkpoint`);
+      }
+      if (task.assigneeId?.startsWith('external:') || getExternalAgentRunForExecution(
+        listExecutions({ taskId: task.id, status: 'running' })[0]?.id || '', task.workspaceId || 'default',
+      ) || (task.assigneeId && getExternalAgent(task.assigneeId, task.workspaceId || 'default'))) {
+        throw new Error('PAUSE_UNSUPPORTED: external agents do not expose a safe pause checkpoint');
+      }
+    }
+  }
+
+  async pauseTask(taskId: string): Promise<Task> {
+    const family = this.taskFamily(taskId);
+    this.assertPauseSupported(family);
+    for (const task of family) {
+      if (['done', 'failed', 'cancelled'].includes(task.status)) continue;
+      const running = listExecutions({ taskId: task.id, status: 'running' }).length > 0;
+      setPauseControl('task', task.id, running ? 'requested' : 'paused', task.status);
+      addTaskLog(task.id, 'info', running
+        ? 'Pause requested; waiting for the current complete model/tool turn to settle safely'
+        : 'User paused scheduling; no new execution will start', 'system');
+      eventBus.emit('task:updated', { taskId: task.id, task: getTask(task.id), workspaceId: task.workspaceId });
+    }
+    return getTask(taskId)!;
+  }
+
+  async resumeTask(taskId: string): Promise<Task> {
+    const family = this.taskFamily(taskId);
+    const held = family.filter(task => getPauseControl('task', task.id));
+    if (!held.length) throw new Error('TASK_NOT_PAUSED: no user pause to resume');
+    this.assertResumeSupported(family);
+    for (const task of held) clearPauseControl('task', task.id);
+    for (const task of held) {
+      if (['done', 'cancelled', 'review'].includes(task.status)) continue;
+      if (task.mode === 'master' && !task.parentTaskId) continue;
+      updateTask(task.id, { status: 'queued', error: null, completedAt: null });
+      if (this.queue) {
+        await this.queue.add('execute-task', { taskId: task.id }, {
+          jobId: `${task.id}-resume-${Date.now()}`, attempts: 1,
+          priority: PRIORITY_MAP[task.priority] || 3,
+        });
+      }
+      eventBus.emit('task:updated', { taskId: task.id, task: getTask(task.id), workspaceId: task.workspaceId });
+    }
+    void this.processNext();
+    return getTask(taskId)!;
+  }
+
+  assertResumeSupported(family: Task[]): void {
+    const held = family.filter(task => getPauseControl('task', task.id));
+    // Validate the entire subtree before removing any hold.
+    for (const task of held) {
+      if (listExecutions({ taskId: task.id, status: 'running' }).length || activeRunLease(task.id, task.workspaceId || 'default')) {
+        throw new Error('PAUSE_IN_PROGRESS: wait for the active execution to settle');
+      }
+      if (['done', 'cancelled', 'review'].includes(task.status)) continue;
+      const last = listExecutions({ taskId: task.id })[0];
+      if (!last || task.mode === 'master' && !task.parentTaskId && listTasks({ parentTaskId: task.id }).length) continue;
+      const checkpoint = getDb().get<{ resumable: number; fingerprint: string }>(
+        'SELECT resumable,fingerprint FROM agent_loop_checkpoints WHERE execution_id = ?', last.id,
+      );
+      if (last.runState?.stopReason !== 'interrupted' || !checkpoint?.resumable || taskMayHaveSideEffects(task.id)) {
+        throw new Error('PAUSE_RECONCILIATION_REQUIRED: no confirmed read-only checkpoint; restarting may replay effects');
+      }
+    }
+  }
+
   async cancelTask(taskId: string): Promise<Task> {
     const task = getTask(taskId);
     if (!task) throw new Error(`Task ${taskId} not found`);
-    if (['done', 'failed', 'cancelled'].includes(task.status)) return task;
+    clearPauseControl('task', taskId);
+    if (['done', 'failed', 'cancelled'].includes(task.status)) return getTask(taskId)!;
 
-    if (task.status === 'running' || task.status === 'assigned') {
+    if (task.status === 'running' || task.status === 'assigned' || task.status === 'waiting_for_tool') {
       this.agentManager.cancelTask(taskId);
     }
 
@@ -446,6 +643,7 @@ export class TaskQueue {
   async retryTask(taskId: string): Promise<Task> {
     const task = getTask(taskId);
     if (!task) throw new Error(`Task ${taskId} not found`);
+    if (taskSchedulingPaused(taskId)) throw new Error('TASK_PAUSED: use resume after reconciling the checkpoint');
     if (isPipelinePublisherTask(task)) {
       throw new Error(`Task ${taskId} is not retryable directly; retry the confirmed pipeline publish stage instead`);
     }
@@ -493,6 +691,7 @@ export class TaskQueue {
    * Re-enqueue any tasks that were 'running' or 'assigned' when server crashed.
    */
   async recoverRunningTasks() {
+    await this.scheduleFollowUps();
     const runningTasks = listTasks({ status: 'running' });
     const waitingForToolTasks = listTasks({ status: 'waiting_for_tool' });
     const assignedTasks = listTasks({ status: 'assigned' });
@@ -504,6 +703,27 @@ export class TaskQueue {
     logger.info({ count: toRecover.length }, 'Recovering interrupted tasks');
 
     for (const task of toRecover) {
+      if (taskSchedulingPaused(task.id)) {
+        // Never auto-run held work after restart. A running request lacks a safe
+        // boundary until the existing recovery review verifies it.
+        const own = getPauseControl('task', task.id);
+        if ((own?.state === 'requested' || ['running', 'assigned', 'waiting_for_tool'].includes(task.status))
+          && !activeRunLease(task.id, task.workspaceId || 'default')) {
+          setPauseControl('task', task.id, 'paused');
+          if (['running', 'assigned', 'waiting_for_tool'].includes(task.status)) {
+            for (const execution of listExecutions({ taskId: task.id, status: 'running' })) {
+              updateExecution(execution.id, {
+                status: 'failed', completedAt: new Date().toISOString(),
+                runState: { ...(execution.runState || initialAgentRunState()), phase: 'interrupted', stopReason: 'interrupted' },
+              });
+            }
+            updateTask(task.id, { status: 'failed', error: 'PAUSE_RECONCILIATION_REQUIRED: server stopped before the pause checkpoint was confirmed' });
+          }
+        }
+        continue;
+      }
+      if (activeRunLease(task.id, task.workspaceId || 'default')) continue;
+      const reconciliation = reconcileInterruptedRun(task);
       const wasInFlight = task.status === 'running' || task.status === 'waiting_for_tool' || task.status === 'assigned';
       const activeRuns = listExecutions({ taskId: task.id, status: 'running' });
       const external = activeRuns.map(execution =>
@@ -540,6 +760,12 @@ export class TaskQueue {
             phase: 'interrupted', stopReason: 'interrupted', updatedAt: new Date().toISOString(),
           },
         });
+      }
+      if (reconciliation === 'review_required' && !taskMayHaveSideEffects(task.id) && !isPipelinePublisherTask(task)) {
+        updateTask(task.id, { status: 'failed',
+          error: 'RECOVERY_REQUIRES_REVIEW: prior model request or SDK work may still be in flight; verify its outcome before a fresh execution',
+          completedAt: new Date().toISOString() });
+        continue;
       }
       if (wasInFlight && taskMayHaveSideEffects(task.id) && !isPipelinePublisherTask(task)) {
         updateTask(task.id, {
@@ -586,9 +812,18 @@ export class TaskQueue {
       updateTask(task.id, { status: 'pending' });
 
       if (this.queue) {
-        await this.queue.add('execute-task', { taskId: task.id }, {
-          priority: PRIORITY_MAP[task.priority] || 3,
-        });
+        const jobId = continuationJobId(task);
+        const existing = await this.queue.getJob(jobId);
+        const jobState = existing ? await existing.getState() : undefined;
+        if (existing && jobState === 'failed') await existing.retry();
+        else if (!existing || jobState === 'completed') {
+          if (existing) await existing.remove();
+          await this.queue.add('execute-task', { taskId: task.id }, {
+            priority: PRIORITY_MAP[task.priority] || 3, jobId,
+          });
+        }
+        // waiting/prioritized/delayed/active jobs retain their durable identity.
+        // An active job is recovered by BullMQ's stalled-job protocol, not a duplicate dispatch.
       } else {
         await this.tryExecute(getTask(task.id)!);
       }

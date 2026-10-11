@@ -5,7 +5,7 @@ import { isAbsolute, resolve } from 'node:path';
 import { listTeams, getTeam, resolveTeamAgents, suggestTeam, createTeam, updateTeam, deleteTeam } from '../agents/team-registry.js';
 import type { TeamCoordinator } from '../agents/team-coordinator.js';
 import type { TeamContractV2 } from '../types.js';
-import { HttpError, notFound, parseBody, sendError } from './http.js';
+import { HttpError, notFound, parseBody, sendError, requireOperatorRole } from './http.js';
 import { requestCanAccessWorkspace, workspaceIdFromRequest } from '../auth/tenant.js';
 import { validateTeamContractV2, workflowGraphContractSchema } from '../contracts/team-composer-contracts.js';
 import { runTeamPreflight } from '../agents/team-preflight.js';
@@ -19,11 +19,14 @@ import {
 } from '../db/models/team-template-version.js';
 import { createGraphWorkflow } from '../agents/graph-workflow.js';
 import { getModel } from '../models/model-registry.js';
+import { getDb } from '../db/database.js';
 
 const dispatchSchema = z.object({
   goal: z.string().trim().min(1, 'goal is required'),
   workspaceId: z.string().trim().optional(),
   workdir: z.string().trim().min(1).max(16_384).optional(),
+  filesystemWorkspaceId: z.string().max(100).optional(),
+  workspaceAccessMode: z.enum(['isolated', 'shared_readonly', 'shared_write']).optional(),
   modelId: z.string().trim().min(1).max(200).optional(),
   reasoningEffort: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).optional(),
   contextLength: z.number().int().min(8_000).max(10_000_000).optional(),
@@ -155,7 +158,7 @@ export function createTeamRoutes(coordinator: TeamCoordinator): Router {
 
   // GET /teams — list all teams with their resolved roster
   router.get('/', (req, res) => {
-    res.json({ teams: listTeams(ws(req)).map(t => ({ ...t, roster: resolveTeamAgents(t) })) });
+    res.json({ teams: listTeams(ws(req)).map(t => ({ ...t, roster: resolveTeamAgents(t, ws(req)) })) });
   });
 
   // POST /teams — create a custom team
@@ -163,7 +166,7 @@ export function createTeamRoutes(coordinator: TeamCoordinator): Router {
     try {
       const body = parseBody(teamCreateSchema, req);
       const team = createTeam({ ...body, members: body.members ?? [] }, ws(req));
-      res.status(201).json({ ...team, roster: resolveTeamAgents(team) });
+      res.status(201).json({ ...team, roster: resolveTeamAgents(team, ws(req)) });
     } catch (err) {
       sendError(res, err);
     }
@@ -284,6 +287,8 @@ export function createTeamRoutes(coordinator: TeamCoordinator): Router {
         graph: version!.graph,
         input: body.input,
       });
+      getDb().run('INSERT INTO workflow_team_knowledge_scope(workflow_id, workspace_id, team_id) VALUES (?, ?, ?)',
+        workflow.id, ws(req), team!.id);
       res.status(201).json({ workflow, teamTemplateVersion: version });
     } catch (err) {
       sendError(res, err);
@@ -297,7 +302,7 @@ export function createTeamRoutes(coordinator: TeamCoordinator): Router {
       if (!team) notFound('TEAM_NOT_FOUND', 'Team not found');
       res.json({
         ...team!,
-        roster: resolveTeamAgents(team!),
+        roster: resolveTeamAgents(team!, ws(req)),
         publishedTemplate: getPublishedTeamTemplate(team!.id, ws(req)) || null,
       });
     } catch (err) {
@@ -312,7 +317,7 @@ export function createTeamRoutes(coordinator: TeamCoordinator): Router {
       if (!team) notFound('TEAM_NOT_FOUND', 'Team not found');
       const body = parseBody(teamPatchSchema, req);
       const updated = updateTeam(req.params.id, body, ws(req));
-      res.json({ ...updated, roster: resolveTeamAgents(updated) });
+      res.json({ ...updated, roster: resolveTeamAgents(updated, ws(req)) });
     } catch (err) {
       sendError(res, err);
     }
@@ -334,10 +339,12 @@ export function createTeamRoutes(coordinator: TeamCoordinator): Router {
       const team = getTeam(req.params.id, ws(req));
       if (!team) notFound('TEAM_NOT_FOUND', 'Team not found');
       const body = parseBody(dispatchSchema, req);
+      const actor = requireOperatorRole(req, 'team.dispatch', ['admin', 'operator']);
       const result = await coordinator.dispatch(team!.id, body.goal, ws(req), validateWorkdir(body.workdir), {
         modelId: validateModelId(body.modelId),
         reasoningEffort: body.reasoningEffort,
         contextLength: body.contextLength,
+        filesystemWorkspaceId: body.filesystemWorkspaceId, workspaceAccessMode: body.workspaceAccessMode, workspaceActorId: actor.id,
       });
       res.status(201).json(result);
     } catch (err) {

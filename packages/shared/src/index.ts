@@ -1,4 +1,12 @@
 import type { AgentContract, ArtifactDeclaration, ArtifactRequirement } from './contracts.js';
+import type { CompletionCriterion } from './completion-protocol.js';
+import type { AgentSetupSnapshot } from './agent-setup.js';
+export * from './completion-protocol.js';
+export * from './agent-setup.js';
+export * from './agent-setup-payload.js';
+export * from './agent-config-version.js';
+export * from './agent-evaluation.js';
+export * from './agent-knowledge.js';
 export * from './contracts.js';
 
 export type AgentRole = string;
@@ -10,7 +18,11 @@ export interface AgentStats {
   lastActiveAt?: string;
 }
 
+export * from './agent-governance.js';
+
 export interface AgentConfig {
+  governanceBudget?: import('./agent-governance.js').AgentBudgetLimits;
+  systemInstructions?: string;
   model?: string;
   modelPolicy?: AgentModelPolicy;
   /** Normalized Team Composer responsibility and I/O contract. */
@@ -181,10 +193,20 @@ export interface SkillExecutorConfig {
 
 export type TaskMode = 'master' | 'direct' | 'pipeline';
 export type TaskStatus = 'pending' | 'queued' | 'assigned' | 'running' | 'waiting_for_tool' | 'review' | 'done' | 'failed' | 'cancelled';
+export interface TaskPauseControl {
+  state: 'requested' | 'paused';
+  requestedAt: string;
+  pausedAt?: string;
+  previousStatus?: string;
+}
 export type Priority = 'low' | 'normal' | 'high' | 'urgent';
 export type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
 export interface Task {
+  /** User scheduling/execution hold; distinct from approval and task outcome. */
+  pauseControl?: TaskPauseControl;
+  /** Immutable, operator-submitted outcome contract; never inferred from model prose. */
+  completionCriteria?: CompletionCriterion[];
   id: string;
   title: string;
   description: string;
@@ -245,6 +267,7 @@ export interface ExecutionContext {
   taskId: string;
   workspaceId: string;
   workspacePath?: string;
+  filesystemBinding?: import('./workspace-lifecycle.js').ExecutionWorkspaceBinding;
   workdir?: string;
   provider?: string;
   modelId?: string;
@@ -255,6 +278,7 @@ export interface ExecutionContext {
   parentTaskId?: string;
   codeBaseline?: CodeBaseline;
   contextUsage?: ContextUsageSnapshot;
+  agentSetup?: AgentSetupSnapshot;
   createdAt: string;
   updatedAt: string;
 }
@@ -612,6 +636,7 @@ export interface PipelineStage {
 }
 
 export interface Pipeline {
+  pauseControl?: TaskPauseControl;
   id: string;
   name: string;
   templateId?: string;
@@ -1352,3 +1377,6 @@ export interface ExternalAgentAdapter {
   cancel?(agent: ExternalAgent, run: ExternalAgentRun): Promise<void>;
 }
 export { isPublicationRequest } from './delivery-intent.js';
+export * from './runtime-protocol.js';
+export * from './session-protocol.js';
+export * from './workspace-lifecycle.js';

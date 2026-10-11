@@ -68,6 +68,191 @@ afterEach(async () => {
 });
 
 describe('Markdown conversation rendering', () => {
+  it('keeps settled QA activity static and preserves the failed overall outcome', async () => {
+    const failed = { ...task, status: 'failed' as const, error: 'blocked: QA returned no command evidence' };
+    const qa: Task = {
+      ...task, id: 'quality-task', title: 'Test: Compare options', parentTaskId: task.id,
+      status: 'done', createdBy: 'system', assigneeId: 'qa', createdAt: '2026-09-13T00:02:00Z',
+    };
+    const qaExecution = { ...execution, id: 'quality-execution', taskId: qa.id, status: 'done' as const };
+    useStore.setState({
+      tasks: [failed, qa],
+      executions: [{ ...execution, status: 'done' }, qaExecution],
+      executionMessages: {
+        [qaExecution.id]: [{
+          id: 1, executionId: qaExecution.id, type: 'progress',
+          content: 'Tool shell_exec blocked by policy: approval_required', createdAt: qa.createdAt,
+        }],
+      },
+    });
+    await act(async () => { root = createRoot(container); root.render(<TaskSession />); });
+    const activity = container.querySelector('[aria-label="Historical Agent activity"] summary')!;
+    expect(activity.textContent).toContain('历史活动');
+    expect(activity.querySelector('.agent-thinking-dots')).toBeNull();
+    expect(container.textContent).toContain('执行已停止，任务尚未完成');
+    expect(container.querySelector('[aria-label="Pause conversation"]')).toBeNull();
+  });
+
+  it('stops activity animation when its execution finishes even if another Agent is running', async () => {
+    useStore.setState({
+      executionMessages: {
+        [execution.id]: [{
+          id: 1, executionId: execution.id, type: 'progress',
+          content: 'Reading source files', createdAt: task.createdAt,
+        }],
+      },
+    });
+    await act(async () => { root = createRoot(container); root.render(<TaskSession />); });
+    expect(container.querySelector('details .agent-thinking-dots')).not.toBeNull();
+    const nextTask: Task = { ...task, id: 'next-agent-task', parentTaskId: task.id, assigneeId: 'qa' };
+    await act(async () => useStore.setState({
+      tasks: [{ ...task, status: 'review' }, nextTask],
+      executions: [{ ...execution, status: 'done' }, { ...execution, id: 'next-execution', taskId: nextTask.id }],
+    }));
+    expect(container.querySelector('details .agent-thinking-dots')).toBeNull();
+    expect(container.querySelector('details summary')?.textContent).toContain('历史活动');
+  });
+
+  it('does not show a permanent waiting animation for a completed run without messages', async () => {
+    useStore.setState({ tasks: [{ ...task, status: 'done' }], executions: [{ ...execution, status: 'done' }] });
+    await act(async () => { root = createRoot(container); root.render(<TaskSession />); });
+    expect(container.querySelector('.agent-thinking-dots')).toBeNull();
+    expect(container.textContent).not.toContain('Waiting for the first real Agent update');
+    expect(container.textContent).toContain('未记录可展示的回复');
+  });
+
+  it('preserves a stopped partial reply without showing that it is still generating', async () => {
+    useStore.setState({
+      tasks: [{ ...task, status: 'failed' }],
+      executions: [{ ...execution, status: 'failed' }],
+      streamingResponses: { [execution.id]: '已经收到的部分答案' },
+    });
+    await act(async () => { root = createRoot(container); root.render(<TaskSession />); });
+    expect(container.textContent).toContain('已经收到的部分答案');
+    expect(container.textContent).toContain('已停止 · 保留已收到的部分回复');
+    expect(container.textContent).not.toContain('Writing a response');
+    expect(container.querySelector('[aria-label="Generating"]')).toBeNull();
+  });
+
+  it('applies the pause response immediately without relying on a WebSocket or list reload', async () => {
+    const held: Task = { ...task, pauseControl: { state: 'requested', requestedAt: task.createdAt } };
+    vi.spyOn(api.tasks, 'pause').mockResolvedValue(held);
+    await act(async () => { root = createRoot(container); root.render(<TaskSession />); });
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Pause conversation"]')!.click());
+    expect(container.textContent).toContain('正在暂停');
+    expect(container.querySelector<HTMLButtonElement>('[aria-label="Resume conversation"]')?.disabled).toBe(true);
+  });
+
+  it('refreshes a pending pause from authoritative state when its completion event is lost', async () => {
+    vi.useFakeTimers();
+    useStore.setState({
+      tasks: [{ ...task, pauseControl: { state: 'requested', requestedAt: task.createdAt } }],
+    });
+    const paused: Task = { ...task, status: 'queued', pauseControl: { state: 'paused', requestedAt: task.createdAt } };
+    const getTask = vi.spyOn(api.tasks, 'get').mockResolvedValue(paused);
+    const listExecutions = vi.spyOn(api.executions, 'list').mockResolvedValue([{ ...execution, status: 'failed' }]);
+    await act(async () => { root = createRoot(container); root.render(<TaskSession />); });
+    expect(container.textContent).toContain('正在暂停');
+    await act(async () => { await vi.advanceTimersByTimeAsync(2500); });
+    expect(getTask).toHaveBeenCalledWith(task.id);
+    expect(listExecutions).toHaveBeenCalledWith({ taskId: task.id });
+    expect(container.textContent).toContain('已暂停');
+    expect(container.querySelector<HTMLButtonElement>('[aria-label="Resume conversation"]')?.disabled).toBe(false);
+  });
+
+  it('shows a state-sync error without claiming that a requested pause has completed', async () => {
+    vi.useFakeTimers();
+    useStore.setState({
+      tasks: [{ ...task, pauseControl: { state: 'requested', requestedAt: task.createdAt } }],
+    });
+    vi.spyOn(api.tasks, 'get').mockRejectedValue(new Error('offline'));
+    vi.spyOn(api.executions, 'list').mockResolvedValue([execution]);
+    await act(async () => { root = createRoot(container); root.render(<TaskSession />); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(2500); });
+    expect(container.textContent).toContain('状态同步失败');
+    expect(container.textContent).toContain('正在暂停');
+    expect(container.querySelector<HTMLButtonElement>('[aria-label="Resume conversation"]')?.disabled).toBe(true);
+  });
+
+  it('retains a partial answer when polling confirms that a paused run has stopped', async () => {
+    vi.useFakeTimers();
+    useStore.setState({
+      tasks: [{ ...task, pauseControl: { state: 'requested', requestedAt: task.createdAt } }],
+      streamingResponses: { [execution.id]: '已收到的部分结果，完整答案未到达' },
+    });
+    vi.spyOn(api.tasks, 'get').mockResolvedValue({
+      ...task, status: 'queued', pauseControl: { state: 'paused', requestedAt: task.createdAt },
+    });
+    vi.spyOn(api.executions, 'list').mockResolvedValue([{ ...execution, status: 'failed' }]);
+    await act(async () => { root = createRoot(container); root.render(<TaskSession />); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(2500); });
+    expect(container.textContent).toContain('已收到的部分结果，完整答案未到达');
+    expect(container.textContent).toContain('已停止 · 保留已收到的部分回复');
+    expect(container.querySelector('[aria-label="Generating"]')).toBeNull();
+  });
+
+  it('does not overwrite a newer pause-completion event with an older REST response', async () => {
+    vi.useFakeTimers();
+    let resolveTask!: (value: Task) => void;
+    const old: Task = { ...task, pauseControl: { state: 'requested', requestedAt: task.createdAt } };
+    useStore.setState({ tasks: [old] });
+    vi.spyOn(api.tasks, 'get').mockImplementation(() => new Promise(resolve => { resolveTask = resolve; }));
+    vi.spyOn(api.executions, 'list').mockResolvedValue([execution]);
+    await act(async () => { root = createRoot(container); root.render(<TaskSession />); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(2500); });
+    const paused: Task = { ...task, status: 'queued', pauseControl: { state: 'paused', requestedAt: task.createdAt } };
+    await act(async () => {
+      useStore.getState().upsertTask(paused);
+      useStore.getState().upsertExecution({ ...execution, status: 'failed' });
+      resolveTask(old);
+    });
+    expect(useStore.getState().tasks.find(item => item.id === task.id)).toBe(paused);
+    expect(useStore.getState().executions.find(item => item.id === execution.id)?.status).toBe('failed');
+    expect(container.textContent).toContain('已暂停');
+  });
+
+  it('requests pause from the backend and shows pausing until the active turn settles', async () => {
+    const pause = vi.spyOn(api.tasks, 'pause').mockImplementation(async () => {
+      const held: Task = { ...task, pauseControl: { state: 'requested', requestedAt: task.createdAt } };
+      useStore.setState({ tasks: [held] });
+      return held;
+    });
+    await act(async () => { root = createRoot(container); root.render(<TaskSession />); });
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Pause conversation"]')!.click());
+    expect(pause).toHaveBeenCalledWith(task.id);
+    expect(container.textContent).toContain('正在暂停');
+    expect(container.querySelector<HTMLButtonElement>('[aria-label="Resume conversation"]')?.disabled).toBe(true);
+    await act(async () => useStore.setState({
+      tasks: [{ ...task, status: 'queued', pauseControl: { state: 'paused', requestedAt: task.createdAt } }],
+      executions: [{ ...execution, status: 'failed' }],
+    }));
+    expect(container.textContent).toContain('已暂停');
+    expect(container.querySelector<HTMLButtonElement>('[aria-label="Resume conversation"]')?.disabled).toBe(false);
+  });
+
+  it('resumes a persisted pause without creating a replacement task or cancelling it', async () => {
+    useStore.setState({
+      tasks: [{ ...task, status: 'queued', pauseControl: { state: 'paused', requestedAt: task.createdAt } }],
+      executions: [{ ...execution, status: 'failed' }],
+    });
+    const resume = vi.spyOn(api.tasks, 'resume').mockResolvedValue(task);
+    const cancel = vi.spyOn(api.tasks, 'cancel');
+    const create = vi.spyOn(api.tasks, 'create');
+    await act(async () => { root = createRoot(container); root.render(<TaskSession />); });
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Resume conversation"]')!.click());
+    expect(resume).toHaveBeenCalledWith(task.id);
+    expect(cancel).not.toHaveBeenCalled();
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it('preserves backend pause errors visibly instead of displaying false paused state', async () => {
+    vi.spyOn(api.tasks, 'pause').mockRejectedValue(new Error('PAUSE_UNSUPPORTED: external capability'));
+    await act(async () => { root = createRoot(container); root.render(<TaskSession />); });
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Pause conversation"]')!.click());
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('PAUSE_UNSUPPORTED');
+    expect(container.querySelector('[aria-label="Resume conversation"]')).toBeNull();
+  });
+
   it('renders adjacent Chinese bold labels without changing code or escaped literals', () => {
     const html = renderToStaticMarkup(<MarkdownMessage content={'**结论：**按实际资料回答。\n\n**资料说明： **未核实。\n\n`**代码：**原样`\n\n```md\n**示例：**原样\n```\n\n\\*\\*转义：\\*\\*原样'} />);
     expect(html).toContain('<strong>结论：</strong>按实际资料回答');
@@ -558,6 +743,20 @@ describe('Markdown conversation rendering', () => {
     useStore.getState().appendStreamingResponse(execution.id, 'x'.repeat(33_000));
     expect(useStore.getState().streamingResponses[execution.id]).toMatch(/^# Beginning/);
   });
+  it('keeps a later request streaming even when canonical history already contains an earlier reply', async () => {
+    vi.spyOn(api.tasks, 'get').mockResolvedValue(task);
+    vi.spyOn(api.executions, 'session').mockResolvedValue({
+      enabled: true, projectionVersion: 1, sessionId: `task:${task.id}`, cursor: 2, source: 'canonical', inbox: [],
+      items: [{ id: 'first-answer', runId: execution.id, role: 'assistant', content: 'Earlier reply', state: 'completed', createdAt: task.createdAt }],
+    });
+    await act(async () => { root = createRoot(container); root.render(<Harness />); });
+    await act(async () => {
+      await handlers.get('token:delta')?.({ type: 'token:delta', payload: { executionId: execution.id, delta: '## Later streaming reply\n\nNew evidence.' } } as WSEvent);
+    });
+    expect(container.textContent).toContain('Earlier reply');
+    expect(container.querySelector('h2')?.textContent).toBe('Later streaming reply');
+    expect(container.textContent).toContain('New evidence.');
+  });
 
   it('keeps the composer available after completion and creates a visible user turn in the same session', async () => {
     const finished = { ...task, status: 'done' as const, output: 'Original answer', completedAt: '2026-09-13T00:01:00Z' };
@@ -625,7 +824,7 @@ describe('Markdown conversation rendering', () => {
     expect(send).not.toHaveBeenCalled();
     await act(async () => { input.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true })); });
     expect((await press()).defaultPrevented).toBe(true);
-    expect(send).toHaveBeenCalledExactlyOnceWith(execution.id, '第一行\n第二行', 'user_follow_up');
+    expect(send).toHaveBeenCalledExactlyOnceWith(execution.id, '第一行\n第二行', 'user_follow_up', 'steer', expect.any(String));
     expect(input.value).toBe('');
     expect(input.style.height).toBe('44px');
     await press();

@@ -11,6 +11,7 @@ import { Worker } from 'worker_threads';
 import { realpathSync } from 'node:fs';
 import { relative, resolve } from 'node:path';
 import { logger } from '../lib/logger.js';
+import { executionWorldMode } from '../agents/execution-world.js';
 
 export interface SandboxOptions {
   timeoutMs?: number;
@@ -26,6 +27,7 @@ export class PluginSandbox {
   }
 
   async execute(pluginId: string, method: string, args: unknown[] = [], opts?: SandboxOptions): Promise<unknown> {
+    if (executionWorldMode() === 'docker_isolated') throw new Error('WORLD_TOOL_UNSUPPORTED: trusted host plugins do not run in the isolated world');
     if (!opts?.modulePath || !opts.allowedRoot) {
       throw new Error(`Plugin ${pluginId} requires a trusted local module path`);
     }

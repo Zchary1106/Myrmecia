@@ -207,8 +207,8 @@ export function deleteTeam(id: string, workspaceId = 'default'): { reverted: boo
 }
 
 /** Resolve a team's member roles to concrete agent ids that currently exist. */
-export function resolveTeamAgents(team: Team): { role: string; agentId: string; name: string }[] {
-  const agents = listAgents();
+export function resolveTeamAgents(team: Team, workspaceId?: string): { role: string; agentId: string; name: string }[] {
+  const agents = listAgents(workspaceId ? { workspaceId } : undefined);
   const out: { role: string; agentId: string; name: string }[] = [];
   for (const slot of team.roles || []) {
     const agent = agents.find(a => a.id === slot.agentId);

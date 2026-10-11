@@ -1,8 +1,13 @@
-import { getDb } from '../db/database.js';
-import type { StoredExecutionArtifact } from '../db/models/execution-artifact.js';
+import { getDb, peekDb, type DbDriver } from '../db/database.js';
+import { getExecutionArtifact, type StoredExecutionArtifact } from '../db/models/execution-artifact.js';
+import { getArtifactSnapshot, readArtifactSnapshot } from '../artifacts/artifact-snapshot-store.js';
 import { getKnowledgeGraphService } from './knowledge-graph-service.js';
 import { getMemoryStore } from './memory-store.js';
 import type { MemoryItem } from './types.js';
+import { hasPrivateKnowledgeContext } from '../db/models/agent-knowledge.js';
+import { getTask } from '../db/models/task.js';
+import { isDocumentSession } from '../knowledge/session-documents.js';
+export { prepareRuntimeKnowledge, assertRuntimeKnowledgeCurrent } from '../knowledge/runtime-knowledge.js';
 
 export interface KnowledgeCandidate {
   item: MemoryItem;
@@ -19,9 +24,16 @@ function candidateFrom(item: MemoryItem): KnowledgeCandidate {
 }
 
 /** Capture durable runtime evidence without making it available to Agent recall. */
-export async function captureExecutionArtifactKnowledge(artifact: StoredExecutionArtifact): Promise<MemoryItem> {
+export async function captureExecutionArtifactKnowledge(artifact: StoredExecutionArtifact, expectedDb?: DbDriver): Promise<MemoryItem | undefined> {
+  if (expectedDb && peekDb() !== expectedDb) return undefined;
+  artifact = getExecutionArtifact(artifact.id) || artifact;
+  const snapshot = getArtifactSnapshot(artifact.id);
+  if (artifact.metadata.captureState === 'pending' || (artifact.metadata.immutable && !readArtifactSnapshot(artifact))) return undefined;
+  const task = getTask(artifact.taskId);
+  if (task && (isDocumentSession(task) || hasPrivateKnowledgeContext(task))) return undefined;
   const store = getMemoryStore();
   await store.initialize();
+  if (expectedDb && peekDb() !== expectedDb) return undefined;
   const existing = getDb().get(
     "SELECT id FROM memory_items WHERE source_type = 'execution_artifact' AND source_id = ? AND deleted_at IS NULL LIMIT 1",
     artifact.id,
@@ -51,8 +63,11 @@ export async function captureExecutionArtifactKnowledge(artifact: StoredExecutio
       artifactKind: artifact.kind,
       relativePath: artifact.relativePath,
       previewUrl: artifact.previewUrl,
+      captureState: snapshot?.state || 'legacy_live',
+      immutable: !!snapshot,
+      sha256: snapshot?.sha256,
     },
-  });
+  }, expectedDb);
 }
 
 export function listKnowledgeCandidates(workspace?: string, limit = 100): KnowledgeCandidate[] {

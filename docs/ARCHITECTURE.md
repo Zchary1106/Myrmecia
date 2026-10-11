@@ -12,9 +12,9 @@ flowchart LR
   Server --> SQLite[(SQLite)]
   Server --> Queue[TaskQueue<br/>In-memory or BullMQ]
   Queue --> Runtime[Agent Runtime]
-  Runtime --> PythonRuntime[Agent Factory Python Runtime]
-  PythonRuntime --> Proxy[Model Endpoint<br/>OpenAI-compatible]
-  PythonRuntime --> Tools[Built-in Tools]
+  Runtime --> TSRuntime[TypeScript Agent Loop]
+  TSRuntime --> Gateway[ModelGateway<br/>OpenAI-compatible or Copilot SDK]
+  TSRuntime --> Tools[Governed Sandbox / MCP Tools]
   Runtime --> Workspaces[(Task Workspaces)]
   Server --> Notifications[Notifications / Inbox]
 ```
@@ -26,9 +26,9 @@ flowchart LR
 | Dashboard | Agent 管理、任务发起、Pipeline 控制、实时状态、Inbox、观测和设置 |
 | Express API | REST API、鉴权、任务/Agent/Pipeline/模板/系统路由 |
 | TaskQueue | 任务入队、优先级、Redis/BullMQ 或本地内存执行路径 |
-| Agent Runtime | 创建 execution、组装 skill prompt、运行 TS loop 或 Python Runtime、记录消息/成本/状态 |
+| Agent Runtime | 创建 execution、选择 TS loop 或注册的扩展执行器、记录消息/成本/状态 |
 | Model Router | 选择实际模型、应用 role/global fallback、记录健康状态和使用量 |
-| Python Runtime | 根据 Agent 配置构建运行时 Agent，调用模型与工具 |
+| TypeScript Loop | 组装上下文与 skill prompt，通过 ModelGateway 调用模型与受治理的工具 |
 | SQLite | Agent 定义、任务、执行记录、消息、Pipeline、通知、审计事件 |
 | WebSocket Hub | 把内部事件广播到 Dashboard 对应 channel |
 
@@ -38,7 +38,7 @@ flowchart LR
 | --- | --- | --- |
 | Startup wiring | `packages/server/src/index.ts` | Initializes telemetry, DB, registries, task queue, pipeline engine, dynamic/supervisor routes, WebSocket hub, and background services |
 | Agent registry | `agents/registry.yaml`, `agents/*.md`, `agents/agent-manager.ts` | Registry YAML defines default agents; markdown files define prompt/skill behavior; DB rows are the runtime source |
-| Runtime execution | `agents/agent-runtime.ts`, `agents/ts-agent-loop.ts`, `packages/python-runtime/runtime_runner.py` | Runs tasks, emits events, records traces, applies DLP, tracks cost/tokens, and enforces runtime budgets |
+| Runtime execution | `agents/agent-runtime.ts`, `agents/ts-agent-loop.ts`, `agents/runtime-adapter.ts` | Runs tasks, emits events, records traces, applies DLP, tracks cost/tokens, and enforces runtime budgets |
 | Dynamic workflow | `agents/dynamic-workflow.ts`, `routes/supervisor.ts` | Generates executable plans, dispatches fan-out tasks, watches task events, validates and summarizes runs |
 | Pipeline engine | `pipelines/pipeline-engine.ts`, `templates/*.yaml` | Fixed workflow templates with stage dependencies, artifacts, manual gates, QA loops, and rollback |
 | Model routing | `models/model-registry.ts`, `models/smart-router.ts` | Task-aware routing, fallback groups, retry escalation, long-context selection, health/usage tracking |
@@ -85,10 +85,10 @@ flowchart TB
     Workspace[.agent-factory/workspaces]
   end
 
-  subgraph Python["packages/python-runtime"]
-    Runner[runtime_runner.py]
-    Builder[agents.py]
-    ToolRegistry[agent_tools.py]
+  subgraph Execution["TypeScript Execution"]
+    Loop[ts-agent-loop.ts]
+    Gateway[ModelGateway]
+    Sandbox[tool-sandbox.ts / MCP]
   end
 
   Dashboard -->|HTTP /api| Auth --> Routes
@@ -107,10 +107,10 @@ flowchart TB
   SkillRegistry --> SQLite
   Runtime --> ModelRouter
   Runtime --> Workspace
-  Runtime --> Runner
-  Runner --> Builder
-  Builder --> ToolRegistry
-  Builder --> ModelEndpoint[OpenAI-compatible Model Endpoint]
+  Runtime --> Loop
+  Loop --> Sandbox
+  Loop --> Gateway
+  Gateway --> ModelEndpoint[OpenAI-compatible Endpoint / Copilot SDK]
   DBModels --> SQLite
   EventBus --> WSHub
   Runtime --> EventBus
@@ -181,8 +181,8 @@ sequenceDiagram
   participant Queue as TaskQueue
   participant RT as AgentRuntime
   participant DB as SQLite
-  participant Py as runtime_runner.py
-  participant LLM as Copilot API Proxy
+  participant Loop as TypeScript Agent Loop
+  participant LLM as ModelGateway / Provider
   participant Tool as Built-in Tools
   participant WS as WebSocket Hub
 
@@ -193,11 +193,12 @@ sequenceDiagram
   RT->>DB: create task_execution
   RT->>WS: task:started / execution:started
   RT->>RT: build system prompt<br/>skill file + runtime profile overlay
-  RT->>Py: spawn python3 runtime_runner.py config
-  Py->>Py: build runtime Agent
-  Py->>Tool: optional tool calls
-  Py->>LLM: chat via OpenAI-compatible proxy
-  Py-->>RT: JSONL assistant/result events
+  RT->>Loop: execute with governed task context
+  Loop->>Loop: build prompt and allowed tool definitions
+  Loop->>LLM: model request / streamed text
+  Loop->>Tool: validated sandbox / MCP calls
+  Tool-->>Loop: tool results
+  Loop-->>RT: normalized result / stop reason / usage
   RT->>DB: execution_messages / run_traces / task logs / stats
   RT->>WS: execution:message / task:done
   UI-->>WS: receives live updates
@@ -222,17 +223,15 @@ This keeps file-based skills versionable while allowing Dashboard edits to take 
 
 ## 5. Tools and Skills Architecture
 
-Tools are governed by a server-side Tool Runtime and implemented in `packages/python-runtime/agent_tools.py`. An Agent can request tools through `allowedTools`, but the server filters that list through the tool catalog, enabled flags, per-Agent permissions, disallowed tools, and approval requirements before passing tools to execution.
+Tools are governed by a server-side Tool Runtime and implemented in `packages/server/src/skills/tool-sandbox.ts` or connected MCP services. An Agent can request tools through `allowedTools`, but the server filters that list through the tool catalog, enabled flags, per-Agent permissions, disallowed tools, and approval requirements before passing tools to execution. The optional `browser.query` tool uses a remote browser service configured by `BROWSER_QUERY_URL` and `BROWSER_QUERY_TOKEN`; it does not require a Python Agent runtime.
 
 ```mermaid
 flowchart LR
   Agent[Agent Definition] --> Allowed[allowedTools]
   Allowed --> Policy[Tool Policy Filter]
   Catalog[(tools / tool_permissions)] --> Policy
-  Policy --> RuntimeConfig[Runtime Config JSON]
-  RuntimeConfig --> PythonRuntime[runtime_runner.py]
-  PythonRuntime --> Builder[build_agent]
-  Builder --> ToolRegistry[TOOL_REGISTRY]
+  Policy --> Loop[TypeScript Agent Loop]
+  Loop --> ToolRegistry[Governed Tool Sandbox / MCP]
   ToolRegistry --> WebSearch[web.search]
   ToolRegistry --> WebFetch[web.fetch]
   ToolRegistry --> Crawler[crawler.extract_links]
@@ -342,9 +341,9 @@ flowchart LR
   Router --> Trace[model.route span]
   Router --> Runtime[AgentRuntime config]
   Runtime --> Usage[(model_usage_stats)]
-  Runtime --> Runner[runtime_runner.py]
-  Runner --> LiteLLM[LiteLLM OpenAI-compatible client]
-  LiteLLM --> Proxy[AGENT_FACTORY_BASE_URL<br/>OpenAI-compatible endpoint]
+  Runtime --> Loop[TypeScript Agent Loop]
+  Loop --> Gateway[ModelGateway]
+  Gateway --> Proxy[OpenAI-compatible endpoint / Copilot SDK]
   Proxy --> Model[GPT / Claude / Codex]
 ```
 
@@ -706,9 +705,9 @@ flowchart TB
   Vite -->|proxy /api /ws| Node[Node Express :3000]
   Node --> SQLite[(SQLite file)]
   Node --> Redis[(Redis optional)]
-  Node --> Python[python3 runtime_runner.py]
-  Python --> ModelEndpoint[OpenAI-compatible model endpoint]
-  Python --> Internet[Optional web tools]
+  Node --> TSLoop[TypeScript Agent Loop]
+  TSLoop --> ModelEndpoint[OpenAI-compatible endpoint / Copilot SDK]
+  TSLoop --> Internet[Governed web / MCP tools]
   Node --> Workspace[Workspace files]
 ```
 
@@ -732,14 +731,70 @@ pnpm dev:dashboard
 | --- | --- |
 | In-memory fallback queue | If Redis is absent, `TaskQueue` executes through local memory path |
 | Recovery on startup | Recover running tasks, interrupted pipelines, and quality-loop attempts |
-| Workspace isolation | Task outputs are written under task workspaces |
+| Workspace lifecycle | Registered source and immutable execution binding; isolated preparation or leased shared roots; candidate-only retention |
+| Artifact evidence | Separate hash-verified snapshot storage before completion; reviewed archive/restore/purge and patch apply |
 | Execution messages | Runtime activity is persisted for timeline/history views |
 | Operator controls | Cancel/retry/delete/pipeline controls are recorded and role-gated |
 | Human inbox | Approval/question/input/review entries persist operator decisions |
 | Runtime budgets | Max turns, output length, token budget, tool-call count, cumulative tool runtime, and wall-clock limits |
 | Model fallback | Task route fallback group, role/global routes, retry escalation, and final env fallback |
 
+### Execution directory and artifact layers
+
+The authorization `workspaceId`, filesystem workspace registration and Task
+directory binding are distinct identities. Additive SQLite records persist roots,
+actors, baselines, imports, preparation recipes, fenced leases, operation journals
+and immutable artifact metadata. Follow-ups, child tasks and pipeline stages
+inherit the recorded directory; shared writers serialize even across Agents.
+
+`workspace-manager.ts` prepares pinned Git HEAD worktrees or bounded filtered
+copies without defaulting to the service repository. `task-workspace.ts` verifies
+paused checkpoints. `artifact-snapshot-store.ts` seals fixed bytes independently
+of directory retention. Lifecycle and patch routes recheck actor/workspace scope,
+fresh preview receipts, root identity and blockers at mutation time.
+
+Completion, acceptance, source integration and storage removal are separate
+operations. Retention marks candidates, archive preserves files, purge requires
+owned archived storage and verified coverage. Reviewed Git/non-Git apply supports
+frozen-baseline additions/edits and sealed deletion evidence rather than a
+commit/merge. Legacy adoption and merge-checked task-branch cleanup have separate
+scoped previews. Uncertain effects need explicit lease
+reconciliation; no timeout stealing or write replay.
+
+These host path controls do not imply OS isolation, external-provider working
+directory control, or readonly Shell/MCP support. See
+[Workspace lifecycle](WORKSPACE-LIFECYCLE.md) for API, quotas, legacy compatibility,
+recovery and the exact acceptance boundary.
+
 ## 13.1 Security and Governance Boundaries
+
+### Agent Runtime V2 opt-in boundary
+
+`MYRMECIA_RUNTIME_V2=true` composes the existing control plane with a thin Core
+and Runtime Harness, rather than introducing a second task system:
+
+| Responsibility | Authority |
+| --- | --- |
+| Model/tool iteration and hooks | `agents/core`, normalized `ProviderDriver` |
+| Request and replay context | Scoped append-only session events and pure projections |
+| Steering and queued next task | Durable Inbox, `SessionHarness`, existing `TaskQueue` |
+| Parallel trusted reads and resource exclusion | Core scheduler and shared SQLite tool-resource locks |
+| Durable state writes | Owner lease, fencing token and transactional commit gates |
+| Spend and cumulative limits | Persistent scoped policies, reservations and usage receipts |
+| Stable read-only continuation | Canonical checkpoints and wakeups, same queue/job identity |
+| Outcome and human approval | Submitted completion criteria, evidence hashes, separate acceptance |
+
+Ordinary, structured Skill and summary requests share context preparation.
+SDK-owned internal loops remain capability boundaries; internal model turns
+and unavailable usage/cost are unknown, not inferred from host requests.
+Stable checkpoints replay context only, never external tools. In-flight
+requests and unknown effects stop automatic recovery.
+
+`host_policy` has no OS isolation. The optional `docker_isolated` backend
+protects only supported local tools; remote MCP, external Agent internals and
+host plugins do not inherit it. Unsupported isolated operations fail closed.
+Real enforcement evidence currently covers this host's Colima Docker
+configuration, not every deployment platform. See [AGENT-RUNTIME-V2.md](AGENT-RUNTIME-V2.md).
 
 ![Runtime Governance and Tool Safety](diagrams/runtime-governance.svg)
 
@@ -749,15 +804,48 @@ pnpm dev:dashboard
 | Tenant/workspace | Request workspace context gates REST routes, WebSocket subscriptions, and audit/workflow access |
 | Tool policy | Tool catalog must be enabled, allowed by agent, not approval-required, and pass metadata checks |
 | Tool guardian | Blocks pipe-to-shell, destructive git, unsafe SQL, obvious exfiltration, high-confidence secrets, and unsafe package installs |
-| DLP | Agent output, tool output, cached output, and Python runtime stdout/stderr pass through DLP redaction/blocking |
-| Runtime isolation | Python runtime has resource/output limits; production local executor can be blocked unless explicitly allowed |
+| DLP | Agent output, tool output, and cached output pass through DLP redaction/blocking |
+| Runtime isolation | TS loop enforces turn/token/time/output limits and sandbox-profile permissions; its tools are in-process, not automatically container-isolated by `EXECUTOR_MODE` |
 | Auditability | Execution policy snapshots capture model route, tool policy, runtime limits, workspace scope, DLP mode, and blocked events |
 
 ## 14. Current Limits and Extension Points
 
+### Agent configuration and governance
+
+Agent identity/configuration, a task's pinned configuration, and runtime execution
+state are separate records. Setup drafts belong to the server-resolved actor and
+workspace. Config revisions include instructions, contracts, model policy, Skill
+versions, authorized knowledge bindings, tools and limits; publishing changes the
+activation pointer, never historical task snapshots.
+
+| Surface | Authority and boundary |
+| --- | --- |
+| Setup recovery | Scoped server drafts, revision checks and idempotent creation/test receipts; recovery never auto-runs a terminal test |
+| Evaluation | Saved bounded checks and selected config version; runtime collection persists hashes/provenance, while semantic quality requires human review |
+| Knowledge | Agent-private, explicit Team-shared and session-only scopes; retrieval, citation metadata and file bytes recheck workspace/actor access |
+| Budget editing | `routes/agent-budget.ts`, expected revision, actual legacy defaults and live Agent aggregate policy |
+| Dispatch accounting | `agent-budget.ts` / `budget-service.ts`: task, Agent and workspace policy intersection, transactional reservations, dispatched-unknown retention and idempotent receipts |
+| Concurrent admission | AgentManager claims before async workspace preparation; AgentRuntime checks active executions atomically before insert; queue wakes continuations after admission release |
+| Inline controls | `GET /tasks/:id/controls` computes capabilities; pause/resume/cancel use the existing queue/checkpoint authority, not optimistic browser state |
+| Attempt history | Scoped `agent_debug_task_history`; confirmed rerun and terminal follow-up use fresh task IDs with response-loss idempotency |
+| Acceptance | Current completion evidence and freshness checks plus explicit human decision; failed/unavailable evidence is not accepted |
+
+Task run caps remain pinned, whereas edited Agent aggregate quotas apply to new
+dispatches immediately. Resume does not reset usage or allow reservation replay.
+USD admission relies on configured pricing and conservative estimates; unknown
+pricing/subscription usage is not displayed as measured zero. Opaque external or
+provider-owned loops are rejected when required limits cannot be enforced.
+`utc_day` quotas reset at UTC midnight, not local browser time.
+
+The running application remains synchronous SQLite. `getAsyncDb()` is an
+experimental PostgreSQL boundary, not end-to-end compatibility. The separate
+`plan/refactor-postgres-compatibility-v1.md` covers async caller conversion,
+transaction/locking parity, dispatch outbox, backend tests and controlled data
+migration. This governance work does not switch databases or runtime defaults.
+
 | Area | Current design | Extension |
 | --- | --- | --- |
-| Tools | Built-in Agent Factory Python tools | Add provider-backed image generation, browser automation, MCP tools |
+| Tools | TypeScript sandbox tools and MCP integrations | Add governed provider-backed tools |
 | Model list | Static dashboard dropdown | Fetch model list from the configured OpenAI-compatible endpoint if available |
 | Agent skills | Markdown + dashboard overlay | Versioned skill registry and diff/rollback |
 | Queue | Redis optional, memory fallback | Distributed workers and per-Agent concurrency pools |

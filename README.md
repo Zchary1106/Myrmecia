@@ -67,13 +67,12 @@ For live agent execution, configure a model provider and start the local web ver
 
 ```bash
 test -f .env || cp .env.example .env
-# Edit .env: configure your provider and set AGENT_EXECUTOR=ts for the built-in TS loop.
+# Edit .env: configure your model provider. Built-in Agents use the TS loop by default.
 pnpm start:local
 # Dashboard: http://localhost:5173 · API: http://localhost:3000
 ```
 
-The TypeScript loop does not require Python. Install the Python requirements only
-if you choose `AGENT_EXECUTOR=python`. The seeded demo is a UI walkthrough, not
+Built-in Agent execution does not require Python or CrewAI. The seeded demo is a UI walkthrough, not
 evidence that a model, external Agent, or MCP account is connected.
 
 <div align="center">
@@ -95,6 +94,34 @@ Myrmecia mirrors a real engineering org: specialized agents (PM, design, dev, QA
 ### Agent Pool
 
 A registry of role-specialized agents (`agents/registry.yaml` + skill markdown). Each agent declares a role, model tier with fallback, capabilities, allowed tools, and triggers. Agents are capability templates — runtime state lives in executions, not in long-lived workers.
+
+### Agent setup, versions and evaluation
+
+The Agent directory and Setup Wizard now provide explicit responsibilities,
+system instructions, input/output contracts and completion criteria. Server-side
+drafts are scoped to the current actor/workspace: reloading can recover setup,
+but never automatically starts a new test.
+
+- **Configuration versions** — inspect, preflight, publish and roll back complete
+  configurations. Queued/running tasks retain immutable snapshots; revoked tools
+  and removed knowledge still require reconciliation.
+- **Reusable evaluation suites** — choose individual cases and a saved version;
+  inspect deterministic checks, evidence hashes, actual model provenance and
+  version comparisons. A text match is not proof of external business success.
+- **Scoped knowledge** — Agent-private, explicitly Team-shared and session-only
+  documents remain distinct. Citations and document bytes are authorized by the
+  server, not by client-supplied ownership.
+- **Enforced budgets** — edit turns, timeout, concurrency, tokens, tool calls and
+  optional USD caps; inspect observed, reserved and remaining usage. Unknown
+  costs stay unknown. USD admission uses configured pricing estimates, not a
+  guarantee about a provider's final invoice; unsupported hard caps fail closed.
+- **Inline debugging** — state-aware pause/resume/cancel, confirmed rerun,
+  durable attempt history, follow-up and evidence-gated human acceptance.
+  Pausing remains requested until a safe boundary is recorded.
+
+Local implementation, scripted-model real-backend browser acceptance, dedicated
+Redis recovery and real-provider/MCP acceptance are separate gates. See
+[the governance plan](plan/feature-agent-governance-v2.md) for current evidence.
 
 <p align="center">
   <img src="docs/diagrams/agent-pool.svg" alt="Agent Pool" width="100%">
@@ -149,6 +176,26 @@ and failure are separate states.
 human accepted.** See the [Agent Run contract](docs/contracts/agent-run-contract.md)
 for the state, clarification, cancellation, and recovery boundaries.
 
+### Execution directories and retained artifacts
+
+New writable tasks use isolated directories from an explicitly selected source
+(or an empty directory). Follow-ups inherit the recorded session directory;
+shared writers serialize across Agents. The session displays the source,
+server execution path, baseline, mode and artifact-capture state.
+
+Results and eligible changed files are immutable, hash-verified per-execution
+snapshots. Later file edits do not change historical downloads. Home workspace
+management provides reviewed archive/restore and conservative owned-directory
+purge; retention only marks candidates. Reviewed Git and bounded non-Git changes
+support additions, edits and evidenced deletions against a frozen baseline.
+Legacy sources can be explicitly registered without moving files; purged task
+branches have a separate merge-checked cleanup preview. Completion
+never automatically commits, merges, pushes or removes the workspace.
+
+Path policies are not universal OS isolation; opaque external runtimes and
+legacy mutable artifacts remain explicitly labeled. See
+[Workspace lifecycle](docs/WORKSPACE-LIFECYCLE.md) for limits and recovery.
+
 ### Orchestration Modes
 
 | Mode | What it does |
@@ -200,7 +247,7 @@ A domain is three things:
 
 It plugs into the whole platform, not a corner of it:
 
-- **Everywhere it executes** — the persona overlay + knowledge retrieval inject into both the TypeScript loop and the Python runtime, across **direct, master, and pipeline** modes (pipeline stages inherit the domain; the master propagates it to subtasks).
+- **Everywhere it executes** — the persona overlay + knowledge retrieval inject into the TypeScript loop across **direct, master, and pipeline** modes (pipeline stages inherit the domain; the master propagates it to subtasks).
 - **Pick per task** — a domain dropdown in the launch dialog, or rely on agent bindings; explicit `domainId` always wins.
 - **Built-in + custom** — the example pack lives in YAML; your domains live in the DB and override built-ins of the same id (same model as Agent Teams).
 - **Governed & traceable** — disclaimers are enforced, sources are cited, and a **per-domain usage panel** shows tasks, tokens, and cost for each pack.
@@ -251,10 +298,31 @@ Budget/cost guardrails, DLP redaction, policy snapshots, operator audit, multi-t
 
 The agent harness is built to be governed, observed, and swappable:
 
-- **Runtime adapters** — the built-in TypeScript loop and Python runtime share a `RuntimeAdapter` contract. Select one with `AGENT_EXECUTOR=ts|python`. External HTTP/CLI Agents use a separate adapter layer and expose their outputs in normal Task/Execution conversations; their internal tools do not inherit the TS sandbox automatically.
+- **Runtime adapters** — all built-in Agents use the TypeScript loop through a `RuntimeAdapter` contract. Extensions register before the TS fallback; `AGENT_EXECUTOR=ts` or an exact registered adapter name can override selection. The legacy Python/CrewAI runtime is removed; old Python overrides report migration guidance. External HTTP/CLI Agents use a separate adapter layer and expose their outputs in normal Task/Execution conversations; their internal tools do not inherit the TS sandbox automatically.
 - **Execution ledger** — an ordered, durable record of the key decisions in a run (runtime selected, model selected, tools allowed/blocked, per-tool results, retries, outcome). Read it at `GET /api/v1/executions/:id/ledger` for replay, audit, and debugging.
-- **Sandbox profile** — the in-process tool sandbox resolves a `strict` / `standard` / `permissive` profile (strict by default in production). Shell and network operations require the applicable policy authorization. This is tool-level enforcement, not an OS isolation boundary; use the configured container execution path where stronger isolation is needed.
+- **Sandbox profile** — the in-process tool sandbox resolves a `strict` / `standard` / `permissive` profile (strict by default in production). Shell and network operations require the applicable policy authorization. This is tool-level enforcement, not an OS isolation boundary. `EXECUTOR_MODE=docker` does not move the built-in TS loop or its tools into a container; deploy the server in a controlled environment when stronger isolation is required.
 - **Harness eval** — a deterministic, model-free benchmark over a fixed scenario set that reports success rate, cost, duration, tool calls, turns, and human interventions. Run `pnpm --filter @myrmecia/server harness:eval` or `POST /api/v1/harness/eval`.
+
+### Agent Runtime V2 (opt-in)
+
+`MYRMECIA_RUNTIME_V2=true` enables the strengthened runtime while preserving
+Agent/Skill/Domain/Team/Workflow content and existing provider authentication.
+It adds a thin injectable Core, normalized Provider events and nullable usage,
+layered context preparation, canonical session replay and durable main-composer
+steering/queued follow-up. Trusted reads can use bounded concurrency; writes,
+resource conflicts and MCP-server calls remain governed.
+
+Ownership/fencing, persistent budget reservations and stable read-only
+continuation keep recovery conservative. A pending request or unknown write
+requires reconciliation, not automatic replay. Submitted completion criteria
+link success to artifact/test evidence; human acceptance remains separate.
+Ordinary chat without criteria is not falsely labelled outcome-verified.
+
+`MYRMECIA_EXECUTION_WORLD=docker_isolated` optionally isolates supported local
+tools using an available daemon and preinstalled image. Host policy and external
+MCP/Agent tools are not container isolation, and there is no host fallback when
+isolation is requested. See the [runtime guide](docs/AGENT-RUNTIME-V2.md) for
+flags, compatibility, repeatable tests and intentionally unverified live paths.
 
 ### External Agents and schedules
 
@@ -329,18 +397,18 @@ Most tools in this space give you **one slice** of the problem. Myrmecia package
 - **Governance is built in** — tool registry with per-agent permissions, risk levels, approval gates, parameter constraints, cost guardrails, and audit.
 - **Observability-first** — trace spans, execution scoring, token/cost tracking, and a real-time dashboard for debugging multi-agent runs.
 - **Memory as a designed subsystem** — not a vector store bolted on; it feeds routing and task decomposition so the system gets better at dispatching similar work.
-- **Pluggable runtimes & tools** — TypeScript loop or Python runtime, a provider-agnostic model gateway with token streaming, MCP tools in the loop, and workspace-scoped engineering tools.
+- **Pluggable runtimes & tools** — a built-in TypeScript loop with registered runtime extensions, a provider-agnostic model gateway with token streaming, MCP tools in the loop, and workspace-scoped engineering tools.
 
 **Where it's young (being honest)**
 
 - Smaller community and ecosystem than LangGraph/CrewAI, and less battle-tested at scale.
-- The current default is SQLite for local/self-hosted use. Full PostgreSQL production hardening is planned but intentionally separated from the local-first path.
+- SQLite is the supported application backend. PostgreSQL has an experimental async adapter, but synchronous application callers are not yet compatible; setting `DATABASE_URL` is rejected by the current application. Full compatibility is a [separate migration proposal](plan/refactor-postgres-compatibility-v1.md), not just a production-hardening step.
 - The moat is **integration + governance + observability + memory** combined, not a single novel algorithm; depth in those areas is where Myrmecia keeps its edge.
 
 ## Installation
 
 **Prerequisites:** Node.js `^20.19.0 || >=22.12.0`, pnpm >= 9.
-Python 3 is needed only for the optional Python runtime.
+Python/CrewAI is not needed for built-in Agent execution. Independent integrations such as ComfyUI may have their own optional Python requirements.
 
 ```bash
 git clone https://github.com/Zchary1106/Myrmecia.git
@@ -348,7 +416,7 @@ cd Myrmecia
 
 pnpm install
 test -f .env || cp .env.example .env
-# Configure .env, including AGENT_EXECUTOR=ts for the built-in TypeScript loop.
+# Configure .env with your model provider. The TypeScript loop is the default.
 
 # Start the local API + dashboard (builds shared types before launch)
 pnpm start:local
@@ -360,8 +428,7 @@ such as `better-sqlite3` are built for a specific Node ABI; switching Node
 versions without reinstalling or rebuilding dependencies can cause
 `NODE_MODULE_VERSION` errors.
 
-For the Python runtime, install its requirements and explicitly select
-`AGENT_EXECUTOR=python`. Redis is optional for local exploration; configure it
+Python/CrewAI is not required for built-in tasks. Redis is optional for local exploration; configure it
 when queue persistence and restart recovery are required.
 
 ### One-command launch (install + start)
@@ -389,7 +456,6 @@ Same options on both platforms (use `--flag` for `start.sh`, `-Flag` for `start.
 | `start.sh` | `start.ps1` | Effect |
 |------------|-------------|--------|
 | `--clean-db` | `-CleanDb` | fresh SQLite database |
-| `--install-python` | `-InstallPython` | install the Python runtime deps |
 | `--server-only` | `-ServerOnly` | API server only (port 3000) |
 | `--dashboard-only` | `-DashboardOnly` | dashboard only (port 5173) |
 | `--no-open` | `-NoOpen` | don't open the browser |
@@ -421,14 +487,15 @@ The server image includes the built-in `agents/` registry and `templates/`; the 
 | `MCP_TOOLS_IN_AGENTS` | `false` to hide MCP tools from the agent loop (default on) |
 | `WEB_TOOLS_ENABLED` | `false` to disable built-in web research tools (`web.search`, `web.fetch`, `web.extract`); also flips the sandbox profile's network lever |
 | `SANDBOX_PROFILE` | `strict` / `standard` / `permissive` for the in-process tool sandbox (default: `strict` in production, `standard` otherwise) |
-| `EXECUTOR_MODE` | `local` / `docker` for the agent subprocess executor (`docker` for container isolation) |
-| `AGENT_EXECUTOR` | Force a runtime adapter: `ts` (TS agent loop) or `python` (Python runtime) |
+| `EXECUTOR_MODE` | Generic subprocess executor configuration; does not isolate the built-in TS loop or its tools |
+| `AGENT_EXECUTOR` | Optional runtime override: `ts` or an exact registered adapter name; unset defaults to the TS loop |
+| `BROWSER_QUERY_URL` / `BROWSER_QUERY_TOKEN` | Optional remote browser service endpoint and bearer credential for `browser.query`; both must be configured |
 | `MYRMECIA_EXTERNAL_CALLBACK_TIMEOUT_MS` | External callback-job deadline; default 15 minutes, capped at one day |
 | `ALLOW_LOCAL_SHELL` | `true` to grant a controlled `shell_exec` exception under the strict sandbox profile |
 | `EMBEDDING_BACKEND` | `openai` / `local` / `pseudo` for the memory vector store |
 | `MEMORY_DECAY_INTERVAL_MS` | Periodic memory decay interval (0 disables) |
 | `REDIS_URL` / `REDIS_HOST` | Redis connection (in-memory queue fallback if unset) |
-| `DATABASE_URL` | PostgreSQL connection string (SQLite when unset) |
+| `DATABASE_URL` | Experimental async PostgreSQL adapter only; current application rejects this setting. Leave unset for supported SQLite use. |
 | `PORT` | Server port (default 3000) |
 | `NODE_ENV` | `development` / `production` |
 
@@ -446,8 +513,8 @@ The provider runs only in the server process with the official
 reads, accepts, logs, or sends a GitHub token to the Dashboard. Only the
 TS-loop's explicitly allowed custom tools are exposed; built-in Copilot tools
 remain denied, and all custom tool calls stay within the existing TS validation,
-sandbox, audit, and execution path. This also selects the TS loop before the
-Python fallback for tool-enabled agents. Set `baseDirectory` in an optional
+sandbox, audit, and execution path. All built-in Agents use the TS loop by
+default. Set `baseDirectory` in an optional
 `MODEL_PROVIDERS.copilot` entry (or `COPILOT_SDK_HOME`) only when the server
 needs a non-default local Copilot home; this path is server configuration, not a
 Dashboard setting. With neither set, the adapter passes the local CLI default
@@ -617,14 +684,13 @@ curl -s localhost:3000/api/v1/mcp/tools   # aggregated tools as mcp__fs__*
 
 ## Architecture
 
-This is a **pnpm monorepo** combining a TypeScript orchestrator, a React dashboard, and a Python agent runtime.
+This is a **pnpm monorepo** combining a TypeScript orchestrator and Agent runtime with a React dashboard.
 
 ```
 myrmecia/
 ├── packages/
 │   ├── server/         # Express 5 orchestrator — agents, memory, pipelines, graph engine, MCP, queue, routes, WebSocket
 │   ├── dashboard/      # React 19 SPA — command center, agents, pipelines, Orchestrate canvas, Memory, costs
-│   ├── python-runtime/ # Myrmecia Python Runtime — agent subprocess runtime
 │   ├── cli/            # CLI tool
 │   └── shared/         # Shared TypeScript types
 ├── agents/             # Agent registry + skill markdown
@@ -633,7 +699,7 @@ myrmecia/
 └── docker-compose.yml
 ```
 
-**Runtime flow:** `TaskQueue.enqueue()` → `AgentManager` (capacity/role) → `AgentRuntime` (TypeScript tool-loop or Python runtime; tracks cost/tokens/traces) → `PipelineEngine` / `GraphWorkflowEngine` advance dependent work → `EventBus` → WebSocket hub fans typed events to tenant-aware channels. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+**Runtime flow:** `TaskQueue.enqueue()` → `AgentManager` (capacity/role) → `AgentRuntime` (default TypeScript tool-loop or a registered extension; tracks cost/tokens/traces) → `PipelineEngine` / `GraphWorkflowEngine` advance dependent work → `EventBus` → WebSocket hub fans typed events to tenant-aware channels. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 <p align="center">
   <img src="docs/diagrams/architecture-overview.svg" alt="Architecture Overview" style="width: 100%; height: auto;">
@@ -661,20 +727,18 @@ myrmecia/
 Verification is scoped: implemented code, isolated tests, live model execution,
 browser rendering, CI, and signed desktop releases are different checks.
 
-Local verification recorded on **2026-10-07**, against source commit
-`c6c6dc0`:
+Runtime V2 local results and command exit codes are recorded in
+[`artifacts/agent-runtime-v2/verification.md`](artifacts/agent-runtime-v2/verification.md),
+not inferred from the last source commit (this worktree includes uncommitted
+implementation). Separate evidence covers the full test/build checks, the
+12-category fixture matrix, real-browser/real-backend scripted-model flows,
+dedicated Redis recovery and Docker enforcement.
 
-- Server suite: **770 passed, 1 skipped**; dashboard suite: **154 passed**.
-- Shared, server, and dashboard production builds passed.
-- Live Dev/Copilot conversation checks covered a greeting, two follow-ups,
-  real token-delta delivery, Markdown rendering, and persisted explicit acceptance.
-  These conversation runs made no tool calls or internal QA attempts.
-
-This is a dated local snapshot, not a latency guarantee or a CI badge for every
-runtime. It does not establish live execution for every external CLI/HTTP
-profile, platform login/search, Redis restart recovery, or signed/notarized
-Windows/macOS packaging. The seeded demo and deterministic tests must not be
-described as live external-service evidence.
+The separate opt-in live smoke passed two read-only Copilot cases (chat and a
+real scoped file-read tool call). It never shares fixture scores and does not
+establish live MCP, SDK-resume, remote CI or signed/notarized packaging
+acceptance. Seeded demos and deterministic transports must not be described
+as live external-service evidence.
 
 Known conversation polish gaps: ordinary greetings can still inherit a Domain's
 extra disclaimer, and refreshing returns to Home rather than restoring the

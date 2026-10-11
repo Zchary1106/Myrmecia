@@ -3,7 +3,7 @@ import type { ExternalAgentAdapter } from '@myrmecia/shared';
 import { closeDb } from '../src/db/database.js';
 import { createExternalAgent, listExternalAgentRuns } from '../src/db/models/external-agent.js';
 import { ExternalAgentRuntime } from '../src/agents/external-agent-runtime.js';
-import { getTask } from '../src/db/models/task.js';
+import { createTask, getTask } from '../src/db/models/task.js';
 import { getExecution, listExecutionMessages } from '../src/db/models/execution.js';
 
 beforeEach(() => { process.env.DB_PATH = ':memory:'; });
@@ -28,7 +28,7 @@ describe('external Agent run lifecycle', () => {
     const execute = vi.fn(async () => new Promise<{ status: 'succeeded'; outputSummary: string }>(resolve => { finish = resolve; }));
     const { agent, runtime } = fixture(execute);
     const pending = runtime.run(agent.id, 'default', { objective: 'fixture', constraints: [] });
-    await Promise.resolve(); await Promise.resolve();
+    await expect.poll(() => listExternalAgentRuns({ workspaceId: 'default' }).length).toBeGreaterThan(0);
     const run = listExternalAgentRuns({ workspaceId: 'default' })[0];
     const cancelled = await runtime.cancel(run.id, 'default');
     expect(cancelled.error).toContain('remote operation outcome is unknown');
@@ -64,5 +64,18 @@ describe('external Agent run lifecycle', () => {
     await expect(runtime.completeCallback(run.id, 'default', {
       status: 'succeeded', outputSummary: 'late', externalRunId: 'remote',
     })).rejects.toThrow('settled');
+  });
+  it('preserves callback idempotency when mandatory verification converts remote success into local failure', async () => {
+    const { agent, runtime } = fixture(async () => ({ status: 'waiting_for_callback', externalRunId: 'remote-proof' }));
+    const task = createTask({ title: 'verified external task', input: 'fixture', description: '', mode: 'direct',
+      completionCriteria: [{ id: 'required-report', label: 'Required report', required: true, verifier: 'artifact', relativePath: 'missing.md' }] });
+    const run = await runtime.run(agent.id, 'default', { objective: 'fixture', constraints: [], taskId: task.id });
+    const callback = { status: 'succeeded' as const, outputSummary: 'I am done', externalRunId: 'remote-proof' };
+    const settled = await runtime.completeCallback(run.id, 'default', callback);
+    expect(settled).toMatchObject({ status: 'failed', runState: { verification: { status: 'failed' } } });
+    const count = listExecutionMessages(run.executionId!).length;
+    expect(await runtime.completeCallback(run.id, 'default', callback)).toEqual(settled);
+    expect(listExecutionMessages(run.executionId!)).toHaveLength(count);
+    await expect(runtime.completeCallback(run.id, 'default', { ...callback, outputSummary: 'changed' })).rejects.toThrow('settled');
   });
 });

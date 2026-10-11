@@ -48,6 +48,10 @@ export function resolveAllowedToolsForAgent(agent: AgentDefinition): AgentToolPo
   const allowedTools: string[] = [];
 
   for (const toolId of requestedTools) {
+    if (agent.config.contract && !agent.config.contract.tools.includes(toolId)) {
+      decisions.push({ toolId, allowed: false, reason: 'agent_disallowed' });
+      continue;
+    }
     if (disallowed.has(toolId)) {
       decisions.push({ toolId, allowed: false, reason: 'agent_disallowed' });
       continue;

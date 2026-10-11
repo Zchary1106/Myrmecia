@@ -7,7 +7,6 @@ Use pnpm from the repository root. Node >=20 and pnpm >=9 are expected.
 | Task | Command |
 | --- | --- |
 | Install JS dependencies | `pnpm install` |
-| Install Python agent runtime deps | `pip install -r packages/python-runtime/requirements.txt` |
 | Run server + dashboard in dev | `pnpm dev` |
 | Run only server | `pnpm dev:server` |
 | Run only dashboard | `pnpm dev:dashboard` |
@@ -35,7 +34,7 @@ This is a pnpm monorepo for an autonomous multi-agent orchestration app:
 
 - `packages/server` is an Express 5 + TypeScript orchestrator. `src/index.ts` wires SQLite, agent registry loading, queueing, pipeline templates, notification/self-healing/quality services, REST routes, and the WebSocket hub.
 - `packages/dashboard` is a React 19 + Vite dashboard. Vite proxies `/api` and `/ws` to the server on port 3000 during local development.
-- `packages/python-runtime` is the Agent Factory Python Runtime used by the server runtime. `agent-runtime.ts` spawns `python3 packages/python-runtime/runtime_runner.py` and parses JSON-line events from stdout.
+- `packages/server/src/agents/ts-agent-loop.ts` is the built-in Agent runtime for all tool/provider combinations. It uses the model gateway and governed sandbox/MCP tools; Python/CrewAI is not required.
 - `agents/registry.yaml` defines agent capability templates and points to skill markdown files in `agents/*.md`.
 - `templates/*.yaml` defines pipeline stage sequences. `PipelineEngine.loadTemplates()` reads `prompt_template` fields and persists them as `promptTemplate` in SQLite.
 
@@ -43,7 +42,7 @@ Runtime flow:
 
 1. `TaskQueue.enqueue()` creates a task row, emits `task:created`, and either queues it in BullMQ when Redis is configured or runs the in-memory path.
 2. `AgentManager.executeTask()` checks active execution capacity and delegates to `AgentRuntime`.
-3. `AgentRuntime.execute()` creates a task execution row, runs the TypeScript loop or Agent Factory Python Runtime, updates task/execution state, records logs/messages, tracks cost through guardrails, and emits task/execution events.
+3. `AgentRuntime.execute()` creates a task execution row, selects a registered extension or the default TypeScript loop, updates task/execution state, records logs/messages, tracks cost through guardrails, and emits task/execution events.
 4. `PipelineEngine` listens for `task:done`, writes stage artifacts, and advances stages. Manual gate mode pauses between stages; auto mode starts the next stage immediately.
 5. `eventBus` emits typed events and a wildcard copy. `WSHub` maps events to channels such as `tasks`, `task:{id}`, `agents`, `agent:{id}`, `pipelines`, `pipeline:{id}`, `executions`, and `execution:{id}`.
 

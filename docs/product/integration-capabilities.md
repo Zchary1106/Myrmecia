@@ -28,6 +28,11 @@ The audit must be refreshed after the maintainer selects the implementation
 baseline. A result below applies only to the named execution path and
 verification scope.
 
+Runtime update, 2026-10-07: the Python/CrewAI fallback recorded in this historical
+audit has been removed. All built-in Agents now default to the TypeScript loop;
+registered runtime extensions keep priority. The historical matrix below is
+not evidence of a currently available Python execution path.
+
 ## Verification levels
 
 | Level | Meaning |

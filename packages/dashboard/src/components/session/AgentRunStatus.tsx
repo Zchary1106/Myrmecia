@@ -24,7 +24,7 @@ export function AgentRunStatus({ execution, agentName, task, sessionStatus = tas
   const blocked = ['failed', 'cancelled'].includes(task.status) || ['failed', 'cancelled'].includes(sessionStatus);
   const waiting = request && !request.firstOutputAt;
   const elapsed = request ? Math.max(0, Math.floor((now - Date.parse(request.startedAt)) / 1000)) : 0;
-  const label = blocked ? '整体任务未完成'
+  const label = state.userPaused ? '用户暂停 · 继续前将核对检查点' : blocked ? '整体任务未完成'
     : internal ? '质量检查子步骤'
     : waiting ? '等待模型首条输出'
     : request ? '正在生成回复'
@@ -47,10 +47,28 @@ export function AgentRunStatus({ execution, agentName, task, sessionStatus = tas
         {state.turn > 0 && <span>第 {state.turn} 轮</span>}
         {!blocked && !internal && state.stopReason && <span>{AGENT_STOP_REASON_LABELS[state.stopReason]}</span>}
         {state.resumedFromExecutionId && <span>已从检查点恢复</span>}
+        {state.providerContinuity && <span>{state.providerContinuity === 'resumed' ? 'Provider 会话延续' : '新 Provider 会话'}</span>}
+        {state.executionWorld && <span title={state.executionWorld.mode === 'host_policy'
+          ? '宿主策略检查，不是文件系统、进程、网络或凭证隔离。'
+          : '本地工具在容器隔离世界内；外部 MCP 不受此边界保护。'}>
+          {state.executionWorld.mode === 'host_policy' ? 'Host policy · 无隔离' : 'Docker · 本地隔离'}
+        </span>}
         {state.phase === 'waiting_for_tool' && state.deadlineAt && <span>
           等待截止 {new Date(state.deadlineAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
         </span>}
       </div>
+      {state.metrics && <p className="mt-2 text-app-muted">
+        请求 {state.metrics.requestCount} · 模型轮次 {state.metrics.modelTurnCount ?? 'unknown'}
+        {' · '}输入 Tokens {state.metrics.inputTokens ?? 'unknown'} · 输出 Tokens {state.metrics.outputTokens ?? 'unknown'}
+      </p>}
+      {state.verification && <div className="mt-2 text-app-muted" aria-label="Task outcome verification">
+        <p>{state.verification.status === 'not_requested' ? '未提交任务结果验收标准；本次仅表示回答结束。'
+          : state.verification.status === 'passed' ? '提交的结果验收标准已通过，仍待你的接受。'
+            : state.verification.status === 'failed' ? '结果验收未通过，保留部分产物。' : '验收所需证据或执行环境不可用。'}</p>
+        {state.verification.criteria.map(item => <p key={item.criterionId}>
+          {item.criterionId} · {item.status} · {item.message}
+        </p>)}
+      </div>}
       {waiting && <p className="mt-2 text-app-muted" role="status">
         {request.modelId} · 已等待 {Number.isFinite(elapsed) ? elapsed : 0} 秒
         {elapsed >= 30 && '。模型暂未返回正文，这不是任务完成进度。'}

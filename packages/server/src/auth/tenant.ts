@@ -174,7 +174,10 @@ export function requireRole(minRole: Role): RequestHandler {
 export function tenantMiddleware(): RequestHandler {
   return (req, res, next) => {
     const authContext = (req as any).authContext as { kind?: string; userId?: string; workspaceId?: string; scopes?: string[] } | undefined;
-    const userId = req.header('x-user-id') || authContext?.userId || 'local-admin';
+    // Development headers may select a local profile, never impersonate a
+    // different user once a token/API key has authenticated the request.
+    const authenticated = !!authContext && authContext.kind !== 'disabled';
+    const userId = authenticated ? authContext.userId : req.header('x-user-id') || authContext?.userId || 'local-admin';
     const requestedWorkspaceId = req.header('x-workspace-id') || authContext?.workspaceId || 'default';
 
     if (authContext?.kind === 'api-key' && authContext.workspaceId !== requestedWorkspaceId) {
@@ -198,7 +201,8 @@ export function tenantMiddleware(): RequestHandler {
           userId,
           workspaceId: requestedWorkspaceId,
           orgId: membership.org_id,
-          role: membership.role,
+          role: authenticated && ROLE_HIERARCHY[roleFromScopes(authContext!.scopes || [])] < ROLE_HIERARCHY[membership.role]
+            ? roleFromScopes(authContext!.scopes || []) : membership.role,
         } as TenantContext;
       } else if (authContext) {
         (req as any).tenantContext = {

@@ -6,7 +6,8 @@ import { closeDb, getDb } from '../src/db/database.js';
 import { createAgent } from '../src/db/models/agent.js';
 import { createTask } from '../src/db/models/task.js';
 import { createExecution } from '../src/db/models/execution.js';
-import { syncBuiltinTools, updateToolPolicy, setToolPermission, getTool } from '../src/tools/tool-registry.js';
+import { BUILTIN_TOOLS, syncBuiltinTools, updateToolPolicy, setToolPermission, getTool } from '../src/tools/tool-registry.js';
+import { buildSandboxToolDefinition, isSandboxTool } from '../src/skills/tool-sandbox.js';
 import { createToolExecution, completeToolExecution, listToolExecutions } from '../src/tools/tool-execution.js';
 import { resolveAllowedToolsForAgent } from '../src/tools/tool-policy.js';
 
@@ -57,6 +58,31 @@ describe('tool runtime', () => {
     setToolPermission({ toolId: 'browser.query', agentId: agent.id, enabled: true });
     const policy = resolveAllowedToolsForAgent(agent);
     expect(policy.allowedTools).toContain('browser.query');
+  });
+
+  it('exposes all catalog tools in TS and preserves catalog schemas for migrated tools', () => {
+    for (const tool of BUILTIN_TOOLS) {
+      expect(isSandboxTool(tool.id), tool.id).toBe(true);
+    }
+    for (const [tool, parameter] of [
+      ['crawler.extract_links', 'url'], ['content.wechat_layout', 'markdown'],
+      ['content.hashtag_plan', 'topic'], ['image.generate_svg', 'spec'],
+    ]) {
+      expect(buildSandboxToolDefinition(tool).function.parameters.required, tool).toContain(parameter);
+    }
+  });
+
+  it('updates legacy implementation refs without enabling disabled tools or losing permissions', () => {
+    const db = getDb();
+    createAgent({ id: 'preserved-agent', name: 'Fixture', role: 'researcher' });
+    updateToolPolicy('web.search', { enabled: false, approvalRequired: true });
+    setToolPermission({ toolId: 'web.search', agentId: 'preserved-agent', enabled: false });
+    db.run("UPDATE tool_versions SET implementation_ref = 'legacy-python-tool' WHERE tool_id = ?", 'web.search');
+    syncBuiltinTools();
+    expect(getTool('web.search')).toMatchObject({ enabled: false, approvalRequired: true });
+    expect(db.get<{ implementation_ref: string }>("SELECT implementation_ref FROM tool_versions WHERE tool_id = ?", 'web.search')?.implementation_ref)
+      .toBe('packages/server/src/skills/tool-sandbox.ts:executeTool');
+    expect(db.get<{ enabled: number }>("SELECT enabled FROM tool_permissions WHERE tool_id = ? AND agent_id = ?", 'web.search', 'preserved-agent')?.enabled).toBe(0);
   });
 
   it('registers deterministic social compliance and media inspection tools', () => {

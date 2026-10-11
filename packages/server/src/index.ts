@@ -117,6 +117,7 @@ import { ExternalAgentScheduleWorker, ExternalAgentTaskEventWorker } from './wor
 import { GitHubFixService } from './github/github-fix-service.js';
 import { createGitHubFixRoutes } from './routes/github-fixes.js';
 import { createWorkspaceSourceRoutes } from './routes/workspace-sources.js';
+import { createManagedWorkspaceRoutes } from './routes/managed-workspaces.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3000;
@@ -373,6 +374,7 @@ async function main() {
   app.use('/api/v1/graph-workflows', createGraphWorkflowRoutes(graphWorkflowEngine));
   app.use('/api/v1/teams', createTeamRoutes(teamCoordinator));
   app.use('/api/v1/workspaces', createWorkspaceSourceRoutes());
+  app.use('/api/v1/managed-workspaces', createManagedWorkspaceRoutes());
   app.use('/api/v1/domains', createDomainRoutes());
   app.use('/api/v1/mcp', createMcpRoutes());
   app.use('/api/v1/audit', createAuditRoutes());

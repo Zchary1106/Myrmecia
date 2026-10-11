@@ -15,11 +15,14 @@
  */
 
 import OpenAI from 'openai';
+import { currentWorkspaceAccessMode } from '../workspace/workspace-lease.js';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { logger } from '../lib/logger.js';
 import { modelBaseURL, modelApiKey } from '../lib/brand-config.js';
 import { CopilotProvider, type CopilotToolCall } from './copilot-provider.js';
+import type { ProviderSessionOptions } from './provider-session.js';
+import { defaultRuntimeCapabilities, type RuntimeCapabilities } from '@myrmecia/shared';
 
 export interface OpenAIProviderConfig {
   type: 'openai';
@@ -60,6 +63,10 @@ export interface StreamAccumulation {
     billing_multiplier?: number;
     cost_type?: 'exact' | 'estimated' | 'subscription' | 'unavailable';
     cost_usd?: number | null;
+    input_tokens_observed?: boolean;
+    output_tokens_observed?: boolean;
+    ai_units_observed?: boolean;
+    session_cleanup_confirmed?: boolean;
   };
 }
 
@@ -174,6 +181,15 @@ export class ModelGateway {
     return resolveProviderName(modelId, readProviders(), readModelMap());
   }
 
+  /** Routing mode, not a guess from a user-configurable provider name. */
+  runtimeCapabilitiesFor(modelId?: string): RuntimeCapabilities {
+    const providers = readProviders();
+    const name = resolveProviderName(modelId, providers, readModelMap());
+    const config = providers[name] || providers[DEFAULT_PROVIDER];
+    return { ...defaultRuntimeCapabilities(config.type === 'copilot' ? 'provider_loop' : 'host_loop'),
+      providerSessionResume: config.type === 'copilot' && this.copilotProviderFor(name, config).supportsSessionResume() };
+  }
+
   supportsTools(modelId?: string): boolean {
     void modelId;
     return true;
@@ -228,6 +244,7 @@ export class ModelGateway {
       signal?: AbortSignal;
       timeoutMs?: number;
       idleTimeoutMs?: number;
+      providerSession?: ProviderSessionOptions;
     },
   ): Promise<StreamAccumulation | any> {
     const providers = readProviders();
@@ -260,6 +277,7 @@ export class ModelGateway {
   }
 
   private copilotProviderFor(provider: string, cfg: CopilotProviderConfig): CopilotProvider {
+    if (currentWorkspaceAccessMode() === 'shared_readonly') throw new Error('WORKSPACE_READONLY_RUNTIME_UNSUPPORTED: provider-owned execution is not a readonly filesystem boundary');
     let adapter = this.copilotProviders.get(provider);
     if (!adapter) {
       adapter = new CopilotProvider({ baseDirectory: cfg.baseDirectory, cliPath: cfg.cliPath });
@@ -281,10 +299,13 @@ export async function accumulateStream(
   let content = '';
   let finishReason: string | null = null;
   const toolCalls: any[] = [];
-  let usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
+  let usage: StreamAccumulation['usage'] = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0,
+    input_tokens_observed: false, output_tokens_observed: false };
 
   for await (const chunk of stream) {
-    if (chunk?.usage) usage = chunk.usage;
+    if (chunk?.usage) usage = { ...chunk.usage,
+      input_tokens_observed: typeof chunk.usage.prompt_tokens === 'number' && Number.isFinite(chunk.usage.prompt_tokens) && chunk.usage.prompt_tokens >= 0,
+      output_tokens_observed: typeof chunk.usage.completion_tokens === 'number' && Number.isFinite(chunk.usage.completion_tokens) && chunk.usage.completion_tokens >= 0 };
     const choice = chunk?.choices?.[0];
     if (!choice) continue;
     const delta = choice.delta || {};

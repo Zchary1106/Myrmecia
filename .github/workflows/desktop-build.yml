@@ -21,7 +21,6 @@ on:
       - 'packages/shared/**'
       - 'packages/server/**'
       - 'packages/dashboard/**'
-      - 'packages/python-runtime/**'
       - 'agents/**'
       - 'templates/**'
       - 'skills/**'

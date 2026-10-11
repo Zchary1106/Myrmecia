@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { getDb } from '../db/database.js';
 import { getTask } from '../db/models/task.js';
 import { getExecutionContext } from '../db/models/execution-context.js';
@@ -32,6 +32,12 @@ export function sessionDocument(task: Task, id: string) {
     'SELECT id, name, passages, original FROM session_documents WHERE id = ? AND workspace_id = ? AND session_key = ?',
     id, task.workspaceId || 'default', documentSessionKey(task),
   );
+}
+
+/** Content-derived version for legacy uploads without mutating historical rows. */
+export function sessionDocumentHashes(doc: { passages: string; original: Buffer }) {
+  const hash = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
+  return { sourceHash: hash(doc.original), passageHash: hash(doc.passages), version: 1 };
 }
 
 export function storeSessionDocument(task: Task, name: string, bytes: Buffer, passages: DocumentPassage[]) {

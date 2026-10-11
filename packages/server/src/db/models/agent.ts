@@ -39,6 +39,7 @@ export function createAgent(data: {
   disallowedTools?: string[];
   model?: string;
   maxTurns?: number;
+  workspaceId?: string;
 }): AgentDefinition {
   const db = getDb();
   const id = data.id || uuid();
@@ -60,6 +61,7 @@ export function createAgent(data: {
     data.maxTurns || null,
     stats
   );
+  if (data.workspaceId) db.run('UPDATE agents SET workspace_id = ? WHERE id = ?', data.workspaceId, id);
 
   return getAgent(id)!;
 }

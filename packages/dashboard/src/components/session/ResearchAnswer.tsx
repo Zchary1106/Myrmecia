@@ -37,23 +37,23 @@ export function splitResearchAnswer(content: string) {
   return { body: body.join('\n').trim(), appendix: appendix.join('\n').trim(), limitations: limitations.join('\n\n').trim() };
 }
 
-export function ResearchAnswer({ content, request, agentId, conversationInput }: { content: string; request: string; agentId?: string; conversationInput?: string }) {
+export function ResearchAnswer({ content, request, agentId, conversationInput, executionId }: { content: string; request: string; agentId?: string; conversationInput?: string; executionId?: string }) {
   const legacyResearch = agentId === 'xiaohongshu-writer' && !isPublicationRequest(request, conversationInput);
   const parts = useMemo(() => legacyResearch ? splitResearchAnswer(content) : null, [content, legacyResearch]);
-  if (!parts || (!parts.appendix && !parts.limitations)) return <MarkdownMessage content={content} />;
+  if (!parts || (!parts.appendix && !parts.limitations)) return <MarkdownMessage content={content} executionId={executionId} />;
   return <div className="space-y-4">
     {parts.limitations && <aside aria-label="Response evidence limitations" className="rounded-xl border border-amber-500/25 bg-amber-500/[0.05] px-4 py-3">
       <h3 className="mb-2 text-xs font-semibold text-app-primary">资料限制 · 原回答说明</h3>
-      <MarkdownMessage content={parts.limitations} />
+      <MarkdownMessage content={parts.limitations} executionId={executionId} />
     </aside>}
-    <MarkdownMessage content={parts.body} />
+    <MarkdownMessage content={parts.body} executionId={executionId} />
     {parts.appendix && <details className="rounded-lg border border-border px-3 py-2 text-xs text-app-muted">
       <summary className="app-focus cursor-pointer">创作附录（原回答中的发布模板）</summary>
-      <div className="mt-3"><MarkdownMessage content={parts.appendix} /></div>
+      <div className="mt-3"><MarkdownMessage content={parts.appendix} executionId={executionId} /></div>
     </details>}
     <details className="text-xs text-app-muted">
       <summary className="app-focus cursor-pointer">查看完整原始回答</summary>
-      <div className="mt-3"><MarkdownMessage content={content} /></div>
+      <div className="mt-3"><MarkdownMessage content={content} executionId={executionId} /></div>
     </details>
   </div>;
 }

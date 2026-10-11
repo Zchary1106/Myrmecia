@@ -15,7 +15,7 @@
 
 ## 资源、配置与打包
 
-开发模式从仓库的 `packages/shared/dist`、`packages/server/dist`、`packages/dashboard/dist`、`agents/`、`templates/` 和 `packages/python-runtime/` 读取。打包模式用 electron-builder `extraResources` 将它们分别放在 `resources/server`、`dashboard`、`agents`、`templates`、`python-runtime`；`stage-resources.mjs` 先构建 shared/server/dashboard，再以 `pnpm deploy --prod` 生成仅供打包的 `packages/desktop/.stage/server`。它同时写入构建 Node 的版本、ABI、平台和架构元数据；启动时会拒绝不匹配的系统 Node，防止 `better-sqlite3` 发生原生 ABI 崩溃。electron-builder 默认忽略 `extraResources` 内的 `node_modules`，所以 `after-pack.mjs` 会在签名前将 staged 的生产依赖显式复制到 `resources/server/node_modules`。这避免把 server 的 `better-sqlite3` 按 Electron ABI 重编译：它由系统 Node.js 执行，随 deploy 的 Node 依赖一起使用。
+开发模式从仓库的 `packages/shared/dist`、`packages/server/dist`、`packages/dashboard/dist`、`agents/` 和 `templates/` 读取。打包模式用 electron-builder `extraResources` 将它们分别放在 `resources/server`、`dashboard`、`agents` 和 `templates`；`stage-resources.mjs` 先构建 shared/server/dashboard，再以 `pnpm deploy --prod` 生成仅供打包的 `packages/desktop/.stage/server`。它同时写入构建 Node 的版本、ABI、平台和架构元数据；启动时会拒绝不匹配的系统 Node，防止 `better-sqlite3` 发生原生 ABI 崩溃。electron-builder 默认忽略 `extraResources` 内的 `node_modules`，所以 `after-pack.mjs` 会在签名前将 staged 的生产依赖显式复制到 `resources/server/node_modules`。这避免把 server 的 `better-sqlite3` 按 Electron ABI 重编译：它由系统 Node.js 执行，随 deploy 的 Node 依赖一起使用。
 
 ```bash
 pnpm dev:desktop          # 构建 server/dashboard，启动 Electron
@@ -36,10 +36,10 @@ pnpm package:desktop      # stage + electron-builder
 
 如需给已经存在的 Release 回填安装包，手动运行 workflow 时在 `release_tag` 输入对应标签（例如 `v0.1.0`）；留空则只生成 Actions Artifact，不修改 Release。
 
-当前默认关闭代码签名（`CSC_IDENTITY_AUTO_DISCOVERY=false`），不需要仓库 Secrets 即可构建。未签名包适合内部测试，但 macOS Gatekeeper 和 Windows SmartScreen 会显示安全提示。正式发布时应配置 Apple Developer ID/Notarization 与 Windows Code Signing 证书，再移除该设置或增加签名步骤。构建产物仍要求用户安装与构建 ABI 兼容的 Node.js 20；Python 能力仍取决于用户本机 Python 环境。
+当前默认关闭代码签名（`CSC_IDENTITY_AUTO_DISCOVERY=false`），不需要仓库 Secrets 即可构建。未签名包适合内部测试，但 macOS Gatekeeper 和 Windows SmartScreen 会显示安全提示。正式发布时应配置 Apple Developer ID/Notarization 与 Windows Code Signing 证书，再移除该设置或增加签名步骤。构建产物仍要求用户安装与构建 ABI 兼容的 Node.js 20；内置 Agent 使用 TypeScript Runtime，不需要 Python/CrewAI。
 
-用户数据（SQLite、日志与工作区）均在 Electron `userData`，不会写入安装目录。每次启动都会先显示 Provider 选择页，可选择 **GitHub Copilot**、**DeepSeek** 或通用 OpenAI-compatible Provider；保存的配置只会预选相应 Provider，不会绕过选择页直接启动。Copilot 使用本机已登录的 Copilot CLI/SDK 凭据，不保存 GitHub Token，也不要求 API Key；DeepSeek 默认直连 `https://api.deepseek.com` 和 `deepseek-v4-flash`，其 API Key 仅在 Electron 主进程使用系统凭据库加密后保存于 `runtime-config.json`，不暴露给 Dashboard。Copilot 启动时使用账号自适应的 `auto` 模型，进入 Dashboard 后可在 Models 页面发现并切换当前账号实际可用的模型；用户需先在本机完成 Copilot GitHub 登录并具有有效订阅。配置 JSON 损坏或凭据无法解密时，splash 会回到可编辑的恢复状态，允许用户直接覆盖配置。若 Linux 缺少受支持的凭据库，应用拒绝保存 API Key，并提示通过环境变量提供。`MYRMECIA_DESKTOP_USER_DATA` 可为测试或受控部署指定单独的绝对用户数据目录。`MYRMECIA_NODE_PATH` 可指定系统 Node 可执行文件；否则从继承的 `PATH` 和常见系统安装位置寻找 `node`。`MYRMECIA_PYTHON_PATH` 可指定 Python 可执行文件；未指定时 Windows 按 `py -3`、`python`、`python3` 依次探测，其他系统使用 `python3`。doctor 检查 Node、Python 和 `crewai/litellm/yaml`；Python 检查为可选，不阻止仪表板启动，也不提供不透明的 pip 安装按钮。
+用户数据（SQLite、日志与工作区）均在 Electron `userData`，不会写入安装目录。每次启动都会先显示 Provider 选择页，可选择 **GitHub Copilot**、**DeepSeek** 或通用 OpenAI-compatible Provider；保存的配置只会预选相应 Provider，不会绕过选择页直接启动。Copilot 使用本机已登录的 Copilot CLI/SDK 凭据，不保存 GitHub Token，也不要求 API Key；DeepSeek 默认直连 `https://api.deepseek.com` 和 `deepseek-v4-flash`，其 API Key 仅在 Electron 主进程使用系统凭据库加密后保存于 `runtime-config.json`，不暴露给 Dashboard。Copilot 启动时使用账号自适应的 `auto` 模型，进入 Dashboard 后可在 Models 页面发现并切换当前账号实际可用的模型；用户需先在本机完成 Copilot GitHub 登录并具有有效订阅。配置 JSON 损坏或凭据无法解密时，splash 会回到可编辑的恢复状态，允许用户直接覆盖配置。若 Linux 缺少受支持的凭据库，应用拒绝保存 API Key，并提示通过环境变量提供。`MYRMECIA_DESKTOP_USER_DATA` 可为测试或受控部署指定单独的绝对用户数据目录。`MYRMECIA_NODE_PATH` 可指定系统 Node 可执行文件；否则从继承的 `PATH` 和常见系统安装位置寻找 `node`。doctor 检查 Node 运行时与桌面启动依赖，不再探测 Python 或 CrewAI 包。
 
 ## v1 限制
 
-安装包**不捆绑** Node.js 或 Python：需要系统 Node.js 20+，且 Node ABI、平台和架构必须匹配该安装包随附的 `desktop-runtime.json`（启动诊断会明确报告不匹配）。使用 GitHub Copilot SDK 时，Node.js 还必须为 20.19+ 或 22.12+。由于 server 带有原生 Node 模块，electron-builder 的 `beforePack` 会拒绝跨 OS 或跨架构构建；发布构建必须在每个目标系统/架构的 CI runner 上分别生成。Python agent runtime 还需要 `python3` 及 `packages/python-runtime/requirements.txt` 中的依赖。首次启动时间取决于现有 server 初始化；当前 MVP 仅支持本机 HTTP 回环地址、没有自动更新和没有跨机器服务模式。
+安装包**不捆绑** Node.js：需要系统 Node.js 20+，且 Node ABI、平台和架构必须匹配该安装包随附的 `desktop-runtime.json`（启动诊断会明确报告不匹配）。使用 GitHub Copilot SDK 时，Node.js 还必须为 20.19+ 或 22.12+。由于 server 带有原生 Node 模块，electron-builder 的 `beforePack` 会拒绝跨 OS 或跨架构构建；发布构建必须在每个目标系统/架构的 CI runner 上分别生成。内置 Agent 不再依赖 Python/CrewAI。首次启动时间取决于现有 server 初始化；当前 MVP 仅支持本机 HTTP 回环地址、没有自动更新和没有跨机器服务模式。

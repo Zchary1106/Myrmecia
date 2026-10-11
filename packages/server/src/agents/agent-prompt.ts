@@ -13,8 +13,7 @@ export function usesResearchAnswerContract(agent: AgentDefinition, task?: Pick<T
 }
 
 /**
- * Build the base system prompt for an agent execution — shared by the TypeScript
- * loop and the Python runtime so the two paths can't drift.
+ * Build the base system prompt for a TypeScript Agent execution.
  *
  * Layers (highest priority last): a runtime profile derived from the agent's
  * DB-editable fields, overridden by a resolved skill (an assigned skill version's
@@ -32,6 +31,18 @@ export function buildAgentSystemPrompt(
     agent.description ? `Mission: ${agent.description}` : '',
     agent.whenToUse ? `When to use: ${agent.whenToUse}` : '',
     agent.capabilities?.length ? `Capabilities: ${agent.capabilities.join(', ')}` : '',
+    agent.config?.systemInstructions ? `## System instructions\n${agent.config.systemInstructions}` : '',
+    agent.config?.contract ? `## Responsibility and delivery contract
+Mission: ${agent.config.contract.responsibility.summary}
+Owns: ${agent.config.contract.responsibility.owns.join('; ')}
+Does not own: ${agent.config.contract.responsibility.doesNotOwn.join('; ') || 'No additional exclusions declared'}
+Escalation targets (never automatic authorization): ${agent.config.contract.responsibility.escalatesTo?.join(', ') || 'Ask the user'}
+Input requirements: ${JSON.stringify(agent.config.contract.inputs)}
+Output declarations: ${JSON.stringify(agent.config.contract.outputs)}
+Definition of Done (instructions, NOT verified evidence): ${agent.config.contract.quality.definitionOfDone.join('; ')}
+If a required input is absent, request it using the runtime input-request protocol.
+Never fabricate an artifact, completed check, input, or approval. Unverified requirements remain unverified.
+Contract and Skill tools cannot grant additional permissions; only the runtime permitted-tool list applies.` : '',
     allowedTools.length
       ? `Allowed tools: ${allowedTools.join(', ')}. Use them when they improve factual accuracy, research depth, formatting, or generated assets.`
       : '',

@@ -4,6 +4,9 @@ import { getTask } from '../db/models/task.js';
 import { getTool } from './tool-registry.js';
 import { XHS_READ_TOOLS } from './xiaohongshu-read-adapter.js';
 import type { Task } from '../types.js';
+import { withToolResourceLock } from '../agents/tool-resource-lock.js';
+import { fencedRunWrite } from '../agents/run-coordinator.js';
+import { assertWorkspaceToolAllowed } from '../workspace/workspace-lease.js';
 
 function canonical(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonical);
@@ -16,6 +19,13 @@ function canonical(value: unknown): unknown {
 
 /** Journal before dispatch. Unknown effects are never silently replayed. */
 export async function runWriteOnce<T extends { status: 'done' | 'failed' }>(
+  task: Task, executionId: string, toolId: string, input: Record<string, unknown>, operation: () => Promise<T>, signal?: AbortSignal,
+): Promise<T> {
+  assertWorkspaceToolAllowed(toolId);
+  return withToolResourceLock(task, executionId, toolId, input, () => executeWriteOnce(task, executionId, toolId, input, operation), signal);
+}
+
+async function executeWriteOnce<T extends { status: 'done' | 'failed' }>(
   task: Task, executionId: string, toolId: string, input: Record<string, unknown>, operation: () => Promise<T>,
 ): Promise<T> {
   const current = getTask(task.id);
@@ -25,20 +35,20 @@ export async function runWriteOnce<T extends { status: 'done' | 'failed' }>(
   }
   const inputHash = createHash('sha256').update(JSON.stringify(canonical({ input, workdir: task.workdir }))).digest('hex');
   const db = getDb();
-  const claimed = db.run(
+  const claimed = fencedRunWrite(task.id, () => db.run(
     `INSERT INTO agent_tool_invocations (task_id, tool_id, input_hash, execution_id, outcome, updated_at)
       VALUES (?, ?, ?, ?, 'running', ?) ON CONFLICT DO NOTHING`,
     task.id, toolId, inputHash, executionId, new Date().toISOString(),
-  );
+  ));
   if (claimed.changes !== 1) {
     throw new Error('TOOL_REPLAY_BLOCKED: this write was already attempted; verify the prior outcome or request a new task instead of repeating it');
   }
   try {
     const result = await operation();
-    db.run(
+    fencedRunWrite(task.id, () => db.run(
       'UPDATE agent_tool_invocations SET outcome = ?, updated_at = ? WHERE task_id = ? AND tool_id = ? AND input_hash = ?',
       result.status === 'done' ? 'done' : 'unknown', new Date().toISOString(), task.id, toolId, inputHash,
-    );
+    ));
     return result;
   } catch (error) {
     db.run(

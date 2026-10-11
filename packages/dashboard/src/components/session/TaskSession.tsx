@@ -1,13 +1,14 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowDown, ArrowUp, ArrowUpRight, Bot, Check, CheckCheck, ChevronDown, ChevronRight, ChevronUp, CircleAlert, Clock3, Copy, FolderOpen, Menu, MessageSquareText, Plus, Sparkles, Wrench, X } from 'lucide-react';
-import type { AgentSummary, ExecutionMessage, Task, TaskExecution } from '@myrmecia/shared';
-import { isWaitingForAgentInput } from '@myrmecia/shared';
+import type { AgentInboxMode, AgentSummary, ExecutionMessage, Task, TaskExecution } from '@myrmecia/shared';
+import { isWaitingForAgentInput, parseAgentInputRequest } from '@myrmecia/shared';
 import { cn } from '../../lib/utils';
 import { useStore } from '../../stores/store';
 import { StructuredTaskResult, looksLikeStructuredResult } from '../common/StructuredTaskResult';
 import { api } from '../../lib/api';
 import { MarkdownMessage } from '../common/MarkdownMessage';
+import { ExecutionKnowledgeSources } from '../common/ExecutionKnowledgeSources';
 import { SessionDocuments } from './SessionDocuments';
 import { ExecutionFailure } from './ExecutionFailure';
 import { ResearchAnswer } from './ResearchAnswer';
@@ -16,6 +17,7 @@ import { conversationIdForTask, useConversationStore, workflowConversationLabel 
 import { SessionHistory } from './SessionHistory';
 import { LiquidLens } from '../common/LiquidLens';
 import { AgentRunStatus } from './AgentRunStatus';
+import { ExecutionWorkspacePanel } from './ExecutionWorkspacePanel';
 
 type ConversationEntry = {
   id: string;
@@ -240,6 +242,7 @@ function messageLabel(entry: ConversationEntry): string {
 }
 
 export function TaskSession() {
+  const [sessionJournal, setSessionJournal] = useState<Awaited<ReturnType<typeof api.executions.session>> | null>(null);
   const conversationStates = useConversationStore(state => state.states);
   const conversationIds = useConversationStore(state => state.conversationIds);
   const xiaohongshuAuthenticated = useConnectionsStore(state => state.xiaohongshu?.authenticated === true);
@@ -330,6 +333,8 @@ export function TaskSession() {
   const streamingEntries = useMemo(() => relatedExecutions
     .map(execution => {
       const content = streamingResponses[execution.id];
+      if (sessionJournal?.items?.some(item => item.runId === execution.id && item.role === 'assistant'
+        && item.state !== 'streaming' && item.content === content)) return null;
       const task = tasksById.get(execution.taskId);
       if (!content || !task) return null;
       return {
@@ -340,7 +345,7 @@ export function TaskSession() {
       };
     })
     .filter((entry): entry is StreamingEntry => Boolean(entry)),
-  [agents, relatedExecutions, streamingResponses, tasksById]);
+  [agents, relatedExecutions, streamingResponses, tasksById, sessionJournal]);
   const activeTask = useMemo(() => {
     for (const status of activeStatuses) {
       const match = relatedTasks.find(task => task.status === status && task.id !== root?.id);
@@ -354,10 +359,35 @@ export function TaskSession() {
   const activeExecution = activeTask ? taskExecutionFor(activeTask.id, relatedExecutions) : undefined;
   const externalRunning = activeExecution?.status === 'running' && activeExecution.agentDefId.startsWith('external:');
   const [followUp, setFollowUp] = useState('');
+  const [deliveryMode, setDeliveryMode] = useState<AgentInboxMode>('steer');
+  const submissionRef = useRef<{ content: string; mode: AgentInboxMode; key: string } | null>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const composingRef = useRef(false);
   const [followUpBusy, setFollowUpBusy] = useState(false);
   const [followUpError, setFollowUpError] = useState<string | null>(null);
+  const [pauseBusy, setPauseBusy] = useState(false);
+  const [pauseError, setPauseError] = useState('');
+  const [stateSyncError, setStateSyncError] = useState('');
+  const heldPipeline = root?.pipelineId ? pipelines.find(pipeline => pipeline.id === root.pipelineId) : undefined;
+  const pauseControl = heldPipeline?.pauseControl || root?.pauseControl || activeTask?.pauseControl;
+  const pausing = relatedTasks.some(task => task.pauseControl?.state === 'requested'
+    && relatedExecutions.some(execution => execution.taskId === task.id && execution.status === 'running'));
+  const canPause = Boolean(heldPipeline && !['done', 'failed'].includes(heldPipeline.status)
+    || relatedTasks.some(task => ['pending', 'queued', 'assigned', 'running', 'waiting_for_tool'].includes(task.status)));
+  const controlPause = async () => {
+    if (!root || pauseBusy) return;
+    setPauseBusy(true); setPauseError('');
+    try {
+      if (heldPipeline) {
+        const updated = pauseControl ? await api.pipelines.resume(heldPipeline.id) : await api.pipelines.pause(heldPipeline.id);
+        useStore.getState().upsertPipeline(updated);
+      } else {
+        upsertTask(pauseControl ? await api.tasks.resume(root.id) : await api.tasks.pause(root.id));
+      }
+      await Promise.all([loadTasks(), loadExecutions(), useStore.getState().loadPipelines()]);
+    } catch (error) { setPauseError(error instanceof Error ? error.message : '暂停操作失败'); }
+    finally { setPauseBusy(false); }
+  };
   const [retryingTaskId, setRetryingTaskId] = useState<string | null>(null);
   const [documentsParsing, setDocumentsParsing] = useState(false);
   const [mobileSessionsOpen, setMobileSessionsOpen] = useState(false);
@@ -406,6 +436,62 @@ export function TaskSession() {
     void Promise.all([loadTasks(), loadAgents(), loadExecutions(), useConversationStore.getState().load()]);
   }, [loadAgents, loadExecutions, loadTasks]);
 
+  const sessionTaskIds = [...relatedTaskIds].sort().join('|');
+  const needsStateRefresh = canPause || Boolean(pauseControl)
+    || relatedExecutions.some(execution => execution.status === 'running');
+  useEffect(() => {
+    if (!sessionTaskIds) return;
+    let disposed = false;
+    let refreshing = false;
+    setStateSyncError('');
+    const refresh = async () => {
+      if (disposed || refreshing) return;
+      refreshing = true;
+      const before = useStore.getState();
+      const taskSnapshot = new Map(before.tasks.map(task => [task.id, task]));
+      const executionSnapshot = new Map(before.executions.map(execution => [execution.id, execution]));
+      const pipelineSnapshot = before.pipelines.find(pipeline => pipeline.id === heldPipeline?.id);
+      try {
+        const [taskStates, executionStates, pipeline] = await Promise.all([
+          Promise.all(sessionTaskIds.split('|').map(id => api.tasks.get(id))),
+          Promise.all(sessionTaskIds.split('|').map(taskId => api.executions.list({ taskId }))),
+          heldPipeline ? api.pipelines.get(heldPipeline.id) : undefined,
+        ]);
+        if (disposed) return;
+        const store = useStore.getState();
+        // Do not overwrite a newer WebSocket update with an in-flight REST snapshot.
+        for (const task of taskStates) {
+          if (store.tasks.find(current => current.id === task.id) === taskSnapshot.get(task.id)) store.upsertTask(task);
+        }
+        for (const execution of executionStates.flat()) {
+          if (store.executions.find(current => current.id === execution.id) === executionSnapshot.get(execution.id)) {
+            store.upsertExecution(execution);
+          }
+        }
+        if (pipeline && store.pipelines.find(current => current.id === pipeline.id) === pipelineSnapshot) {
+          store.upsertPipeline(pipeline);
+        }
+        setStateSyncError('');
+      } catch {
+        if (!disposed) setStateSyncError('状态同步失败，当前显示可能已过期；连接恢复后将重新核对。');
+      } finally {
+        refreshing = false;
+      }
+    };
+    const onVisible = () => { if (document.visibilityState === 'visible') void refresh(); };
+    const timer = needsStateRefresh ? window.setInterval(() => {
+      if (document.visibilityState !== 'hidden') void refresh();
+    }, 2500) : undefined;
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      disposed = true;
+      if (timer !== undefined) window.clearInterval(timer);
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [sessionTaskIds, selectedSessionId, heldPipeline?.id, needsStateRefresh]);
+
   useEffect(() => {
     if (root?.assigneeId !== 'xiaohongshu-writer') return;
     const check = () => { void useConnectionsStore.getState().checkXiaohongshu().catch(() => undefined); };
@@ -416,16 +502,36 @@ export function TaskSession() {
 
   const executionIds = relatedExecutions.map(execution => execution.id).join('|');
   useEffect(() => {
+    const executionId = activeExecution?.id;
+    setSessionJournal(null);
+    if (!executionId) return;
+    let disposed = false;
+    const refresh = async () => {
+      try {
+        const journal = await api.executions.session(executionId);
+        if (!disposed) setSessionJournal(journal);
+      } catch {
+        // Older servers keep using the existing message adapter. No fake canonical events.
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 1500);
+    return () => { disposed = true; window.clearInterval(timer); };
+  }, [activeExecution?.id]);
+  useEffect(() => {
     if (!executionIds) return;
     void Promise.all(relatedExecutions.map(execution => loadExecutionMessages(execution.id)));
   }, [executionIds, loadExecutionMessages, relatedExecutions]);
 
   const conversation = useMemo(() => {
     const entries: ConversationEntry[] = [];
+    const canonicalInputs = sessionJournal?.items?.filter(item => item.role === 'user' && item.id.startsWith('inbox:')) || [];
+    const canonicalInputIds = new Set(canonicalInputs.map(item => item.id.slice(6)));
     // A continuation's execution input contains inherited context. Show only
     // the user's new instruction, never that internal prompt.
     for (const task of relatedTasks) {
       if (task.parentTaskId && task.createdBy === 'user') {
+        if (sessionJournal?.inbox?.some(entry => entry.assignedTaskId === task.id && canonicalInputIds.has(entry.id))) continue;
         entries.push({
           id: `turn-input:${task.id}`, task,
           message: {
@@ -439,10 +545,26 @@ export function TaskSession() {
       const task = tasksById.get(execution.taskId);
       if (!task) continue;
       const agent = agents.find(item => item.id === execution.agentDefId || item.id === task.assigneeId);
+      const canonicalReplies = sessionJournal?.items?.filter(item => item.runId === execution.id && item.role === 'assistant') || [];
       for (const message of executionMessages[execution.id] || []) {
         if (message.type === 'user_input') continue;
+        if (message.type === 'user_follow_up' && sessionJournal?.inbox?.some(entry =>
+          entry.userMessageId === message.id && canonicalInputIds.has(entry.id))) continue;
+        if (message.type === 'agent_text' && canonicalReplies.some(item => item.state !== 'streaming'
+          && (item.content === message.content || item.content === parseAgentInputRequest(message.content)))) continue;
         entries.push({ id: `${execution.id}:${message.id}`, task, execution, agent, message });
       }
+      for (const item of canonicalReplies.filter(item => item.state !== 'streaming' || !streamingResponses[execution.id])) entries.push({
+        id: item.id, task, execution, agent,
+        message: { id: -1, executionId: execution.id, type: 'agent_text', content: item.content, createdAt: item.createdAt },
+      });
+    }
+    for (const item of canonicalInputs) {
+      const execution = relatedExecutions.find(run => run.id === item.runId);
+      const task = execution && tasksById.get(execution.taskId);
+      if (!execution || !task) continue;
+      entries.push({ id: item.id, task, execution,
+        message: { id: -1, executionId: execution.id, type: 'user_follow_up', content: item.content, createdAt: item.createdAt } });
     }
 
     const finalOutputTasks = relatedTasks.filter(task => task.output || task.error);
@@ -485,7 +607,7 @@ export function TaskSession() {
     }
 
     return entries.sort((left, right) => sessionDate(left.message.createdAt).getTime() - sessionDate(right.message.createdAt).getTime());
-  }, [agents, executionMessages, relatedExecutions, relatedTasks, tasksById]);
+  }, [agents, executionMessages, relatedExecutions, relatedTasks, tasksById, sessionJournal, streamingResponses]);
 
   const conversationItems = useMemo(() => {
     const items: ConversationItem[] = [];
@@ -516,7 +638,7 @@ export function TaskSession() {
     () => ['turn-root', ...conversation.filter(entry => entry.message.type === 'user_follow_up').map(entry => `turn-${entry.id}`)],
     [conversation],
   );
-  const streamingFingerprint = streamingEntries.map(entry => `${entry.execution.id}:${entry.content.length}`).join('|');
+  const streamingFingerprint = `${sessionJournal?.cursor || 0}|${streamingEntries.map(entry => `${entry.execution.id}:${entry.content.length}`).join('|')}`;
 
   const scrollConversationToEnd = (behavior: ScrollBehavior = 'smooth') => {
     const element = messageScrollRef.current;
@@ -591,8 +713,13 @@ export function TaskSession() {
     setFollowUpError(null);
     try {
       if (running && activeExecution) {
-        await api.executions.sendMessage(activeExecution.id, content, 'user_follow_up');
+        if (!submissionRef.current || submissionRef.current.content !== content || submissionRef.current.mode !== deliveryMode) {
+          submissionRef.current = { content, mode: deliveryMode, key: crypto.randomUUID() };
+        }
+        await api.executions.sendMessage(activeExecution.id, content, 'user_follow_up', deliveryMode, submissionRef.current.key);
         await loadExecutionMessages(activeExecution.id);
+        try { setSessionJournal(await api.executions.session(activeExecution.id)); }
+        catch { /* Optional replay refresh must not turn an accepted instruction into a false send failure. */ }
       } else {
         const next = await api.tasks.continue(activeTask?.id || root.id, content);
         upsertTask(next);
@@ -601,6 +728,7 @@ export function TaskSession() {
         await loadExecutions();
       }
       setFollowUp('');
+      submissionRef.current = null;
     } catch (error) {
       setFollowUpError(error instanceof Error ? error.message : 'Unable to send follow-up instruction.');
     } finally {
@@ -640,7 +768,8 @@ export function TaskSession() {
       : canContinue
         ? 'Continues this session with its previous context.'
         : activeExecution?.status === 'running'
-          ? `Sent to ${recipient || 'the current Agent'} on its next turn.`
+          ? deliveryMode === 'follow_up' ? '当前任务完成后创建新任务，不修改正在执行的请求。'
+            : `发给 ${recipient || '当前 Agent'}；在下个可用宿主请求边界应用，不打断 SDK 内部循环。`
           : 'You can draft the next instruction while this run settles.';
   const sessionHeader = (
     <div aria-label="Conversation header" className="grid min-w-0 grid-cols-1 xl:grid-cols-[280px_minmax(0,1fr)]">
@@ -655,11 +784,18 @@ export function TaskSession() {
             </span>
             <span aria-hidden="true" className="text-app-muted">·</span>
             <span className={cn('shrink-0', workflowStatus && ['paused', 'awaiting_retry', 'blocked'].includes(workflowStatus) ? 'text-amber-500' : workflowStatus === 'failed' || sessionStatus === 'failed' ? 'text-red-500' : workflowStatus !== 'running' && sessionStatus === 'done' ? 'text-emerald-500' : 'text-app-muted')}>
-              {displayStatus}
+              {pauseControl ? pausing ? '正在暂停 · 等待当前回合结束' : '已暂停' : displayStatus}
             </span>
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1">
+          {(canPause || pauseControl) && <button type="button" onClick={() => void controlPause()}
+            disabled={pauseBusy || pausing || externalRunning}
+            aria-label={pauseControl ? 'Resume conversation' : 'Pause conversation'}
+            title={externalRunning ? '此外部 Agent 不支持安全暂停' : pausing ? '当前模型/工具回合结束后保存检查点' : undefined}
+            className="app-focus rounded-lg border border-border px-2.5 py-2 text-xs text-app-secondary disabled:opacity-40">
+            {pauseBusy ? '处理中…' : pausing ? '正在暂停…' : pauseControl ? '继续' : '暂停'}
+          </button>}
           <button type="button" onClick={() => setMobileSessionsOpen(true)} aria-label="Open task sessions" title="Open task sessions" className="app-focus rounded-lg p-2 text-app-muted transition hover:bg-surface-hover hover:text-app-primary xl:hidden">
             <Menu size={16} />
           </button>
@@ -676,6 +812,8 @@ export function TaskSession() {
 
   return (
     <main data-agent-chat-shell className="glass-chat flex h-full min-h-0 w-full flex-col overflow-y-auto bg-background xl:overflow-hidden">
+      {pauseError && <p role="alert" className="px-4 py-2 text-xs text-red-500">{pauseError}</p>}
+      {stateSyncError && <p role="status" className="px-4 py-2 text-xs text-amber-600">{stateSyncError}</p>}
       {headerHost ? createPortal(sessionHeader, headerHost) : <header className="mb-4 shrink-0 border-b border-border pb-3">{sessionHeader}</header>}
       {mobileSessionsOpen && <button type="button" aria-label="Close task sessions" onClick={() => setMobileSessionsOpen(false)} className="fixed inset-0 z-30 bg-black/35 backdrop-blur-[2px] xl:hidden" />}
       <div className="grid min-h-0 flex-1 xl:grid-cols-[280px_minmax(0,1fr)] xl:overflow-hidden">
@@ -743,11 +881,14 @@ export function TaskSession() {
 
               if (!isAgentReply) {
                 if (entry.message.type === 'progress') {
+                  const live = entry.execution?.status === 'running';
                   return (
-                    <details key={entry.id} className="group rounded-xl bg-surface-hover/55 text-xs">
+                    <details key={entry.id} aria-label={live ? 'Live Agent activity' : 'Historical Agent activity'} className="group rounded-xl bg-surface-hover/55 text-xs">
                       <summary className="app-focus flex cursor-pointer list-none items-center gap-2 px-3 py-2.5 text-app-muted [&::-webkit-details-marker]:hidden">
-                        <span className="agent-thinking-dots" aria-hidden="true"><i /><i /><i /></span>
-                        <span className="min-w-0 flex-1 truncate">{messageLabel(entry)}</span>
+                        {live
+                          ? <span className="agent-thinking-dots" aria-hidden="true"><i /><i /><i /></span>
+                          : <Clock3 size={13} aria-hidden="true" />}
+                        <span className="min-w-0 flex-1 truncate">{live ? messageLabel(entry) : '历史活动 · 此次执行已结束'}</span>
                         <ChevronRight size={13} className="transition-transform group-open:rotate-90" />
                       </summary>
                       <p className="border-t border-border/60 px-3 py-3 whitespace-pre-wrap text-app-secondary">{content}</p>
@@ -777,8 +918,9 @@ export function TaskSession() {
                   {looksLikeStructuredResult(content) ? (
                     <div className="mt-3"><StructuredTaskResult output={content} /></div>
                   ) : (
-                    <div className="mt-2"><ResearchAnswer content={content} request={entry.task.description || entry.task.input} conversationInput={entry.task.input} agentId={entry.execution?.agentDefId || entry.task.assigneeId} /></div>
+                    <div className="mt-2"><ResearchAnswer content={content} request={entry.task.description || entry.task.input} conversationInput={entry.task.input} agentId={entry.execution?.agentDefId || entry.task.assigneeId} executionId={entry.execution?.id || entry.message.executionId} /></div>
                   )}
+                  {entry.execution?.id && <ExecutionKnowledgeSources executionId={entry.execution.id} />}
                   <div className="mt-2 flex min-h-7 items-center gap-1 opacity-100 transition sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
                     <button type="button" onClick={() => void copyResponse(entry.id, content)} className="app-focus inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[10px] text-app-muted transition hover:bg-surface-hover hover:text-app-primary" aria-label={`Copy response from ${messageLabel(entry)}`}>
                       {copiedMessageId === entry.id ? <CheckCheck size={13} className="text-emerald-500" /> : <Copy size={13} />}
@@ -798,15 +940,17 @@ export function TaskSession() {
                   <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-accent/12 text-accent-light"><Bot size={13} /></span>
                   <div className="min-w-0">
                     <div className="truncate text-xs font-semibold text-app-primary">{entry.execution.runState?.agentName || entry.agent?.name || 'Agent'}</div>
-                    <div className="flex items-center gap-1.5 text-[10px] text-accent-light"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" /> Writing a response</div>
+                    {entry.execution.status === 'running'
+                      ? <div className="flex items-center gap-1.5 text-[10px] text-accent-light"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" /> Writing a response</div>
+                      : <div className="text-[10px] text-app-muted">已停止 · 保留已收到的部分回复</div>}
                   </div>
                 </div>
                 {looksLikeStructuredResult(entry.content) ? (
                   <div className="mt-3"><StructuredTaskResult output={entry.content} compact /></div>
                 ) : (
                   <div className="mt-2">
-                    <MarkdownMessage content={entry.content} />
-                    <span className="streaming-caret ml-0.5 inline-block h-4 w-[2px] bg-accent" aria-label="Generating" />
+                    <MarkdownMessage content={entry.content} executionId={entry.execution.id} />
+                    {entry.execution.status === 'running' && <span className="streaming-caret ml-0.5 inline-block h-4 w-[2px] bg-accent" aria-label="Generating" />}
                   </div>
                 )}
               </article>
@@ -814,10 +958,15 @@ export function TaskSession() {
 
             {conversation.length === 0 && streamingEntries.length === 0 && (
               <div className="message-enter flex max-w-full items-center gap-3 py-4 text-sm text-app-secondary">
-                <span className="agent-thinking-dots" aria-hidden="true"><i /><i /><i /></span>
-                <span>{activeTask?.status === 'failed' ? 'The task stopped before an Agent response was recorded.'
+                {activeExecution?.status === 'running'
+                  ? <span className="agent-thinking-dots" aria-hidden="true"><i /><i /><i /></span>
+                  : <MessageSquareText size={16} aria-hidden="true" />}
+                <span>{['done', 'failed', 'cancelled'].includes(sessionStatus) || activeExecution && activeExecution.status !== 'running'
+                  ? '此次执行已结束，但未记录可展示的回复。请查看执行详情或继续追问。'
                   : activeExecution?.runState?.modelRequest ? '模型首条输出尚未到达，等待时间与请求时限见上方执行状态。'
-                  : 'Waiting for the first real Agent update…'}</span>
+                  : pauseControl ? '会话已暂停，尚未记录 Agent 回复。'
+                  : activeExecution?.status === 'running' ? 'Waiting for the first real Agent update…'
+                  : '等待分配执行，尚未记录 Agent 回复。'}</span>
               </div>
             )}
             </div>
@@ -859,6 +1008,27 @@ export function TaskSession() {
               )}
               <form onSubmit={event => void submitFollowUp(event)} aria-label="Send follow-up instruction" className="agent-composer">
                 <LiquidLens radius={22} />
+                {sessionJournal?.enabled && activeExecution?.status === 'running' && !externalRunning && (
+                  <label className="mb-2 flex items-center gap-2 text-xs text-app-secondary">
+                    投递方式
+                    <select aria-label="Instruction delivery mode" value={deliveryMode}
+                      onChange={event => setDeliveryMode(event.target.value as AgentInboxMode)}
+                      className="app-focus rounded-lg border border-border bg-surface px-2 py-1">
+                      <option value="steer">调整当前任务</option>
+                      <option value="follow_up">完成后继续</option>
+                    </select>
+                  </label>
+                )}
+                {!!sessionJournal?.inbox?.length && <div aria-label="Instruction delivery status" className="mb-2 text-xs text-app-muted" role="status">
+                  {sessionJournal.inbox.slice(-3).map(entry => <div key={entry.id}>
+                    {entry.content.slice(0, 60)} · {entry.assignedTaskId ? entry.status === 'acknowledged' ? '后续任务已收到回执' : '已创建后续任务'
+                      : entry.status === 'pending' || entry.status === 'claimed' ? entry.mode === 'follow_up' ? '当前任务结束后继续' : '待下个可用边界'
+                        : entry.status === 'applied' ? '已加入请求 · 回执尚未确认'
+                          : entry.status === 'acknowledged' ? '已观测到模型回执'
+                            : '已拒绝'}
+                    {entry.reason && <span> · {entry.reason}</span>}
+                  </div>)}
+                </div>}
                 <SessionDocuments key={root.id} taskId={root.id} onParsingChange={busy => {
                   if (documentTaskRef.current === root.id) setDocumentsParsing(busy);
                 }} actions={<div className="session-composer-actions">
@@ -866,7 +1036,7 @@ export function TaskSession() {
                     <Bot size={13} aria-hidden="true" />
                     <span className="truncate" title={recipient || 'Master Agent'}>{recipient || 'Master Agent'}</span>
                     <span className="session-composer-delivery">
-                      {conversationStates[selectedSessionId || ''] === 'archived' ? 'Archived' : externalRunning ? 'Working' : canContinue ? 'Follow-up' : activeExecution?.status === 'running' ? 'Next turn' : 'Waiting'}
+                      {conversationStates[selectedSessionId || ''] === 'archived' ? 'Archived' : externalRunning ? 'Working' : canContinue ? 'Follow-up' : activeExecution?.status === 'running' ? deliveryMode === 'follow_up' ? 'Queued follow-up' : 'Next turn' : 'Waiting'}
                     </span>
                     <span className="sr-only">{composerDeliveryHint}</span>
                   </div>
@@ -954,6 +1124,7 @@ export function TaskSession() {
             </div>
           </section>
 
+          <ExecutionWorkspacePanel key={activeTask?.id || root.id} taskId={activeTask?.id || root.id} />
           <section className="p-4">
             <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-app-muted">Context</div>
             <div className="mt-3 space-y-3 text-xs">

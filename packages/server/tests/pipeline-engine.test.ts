@@ -16,6 +16,10 @@ import {
 import { PUBLISH_RECONFIRMATION_ERROR, TaskQueue } from '../src/queue/task-queue.js';
 import { workspaceManager } from '../src/workspace/workspace-manager.js';
 import { buildMcpPolicyContext } from '../src/agents/ts-agent-loop.js';
+import { createExecution } from '../src/db/models/execution.js';
+import { listExecutionArtifacts } from '../src/db/models/execution-artifact.js';
+import { readArtifactSnapshot, snapshotHash } from '../src/artifacts/artifact-snapshot-store.js';
+import { eventBus, type BusEvent } from '../src/events/event-bus.js';
 
 describe('Douyin video input parsing', () => {
   it('extracts quoted and unquoted video paths without consuming later lines', () => {
@@ -60,14 +64,31 @@ describe('PipelineEngine durable task resolution', () => {
       currentStageIndex: 0,
     });
     updateTask(task.id, { status: 'done', output: 'built' });
+    const agent = createAgent({ id: 'pipeline-snapshot-fixture', name: 'Fixture', role: 'dev', systemPrompt: 'Fixture' });
+    createExecution({ taskId: task.id, agentDefId: agent.id, workspaceId: pipeline.workspaceId });
 
     const engine = new PipelineEngine({} as TaskQueue, {} as AgentManager);
-    await (engine as any).onTaskComplete(task.id);
+    let sealedBeforeDone = false;
+    const onDone = (event: BusEvent) => {
+      const { pipelineId } = event.payload as { pipelineId: string };
+      if (pipelineId !== pipeline.id) return;
+      sealedBeforeDone = listExecutionArtifacts({ taskId: task.id }).some(artifact => {
+        if (!artifact.relativePath.startsWith('reports/pipeline-run-snapshot-')) return false;
+        const report = JSON.parse(readArtifactSnapshot(artifact)!.toString());
+        return report.stages[0]?.outputHash === snapshotHash('built');
+      });
+    };
+    eventBus.on('pipeline:done', onDone);
+    try { await (engine as any).onTaskComplete(task.id); }
+    finally { eventBus.off('pipeline:done', onDone); }
 
     const updated = getPipeline(pipeline.id)!;
     expect(updated.status).toBe('done');
     expect(updated.stages[0].status).toBe('done');
     expect(updated.stages[0].output).toBe('built');
+    expect(sealedBeforeDone).toBe(true);
+    const output = listExecutionArtifacts({ taskId: task.id }).find(artifact => artifact.relativePath.endsWith('/output.md'));
+    expect(readArtifactSnapshot(output!)?.toString()).toBe('built');
   });
 
   it('syncs changed YAML templates without replacing their persisted IDs', async () => {
@@ -185,7 +206,9 @@ describe('PipelineEngine autonomous-publish safety guard', () => {
 
   afterEach(async () => {
     for (const pipelineId of createdPipelineIds) {
-      await workspaceManager.cleanupWorkspace(pipelineId);
+      // Lifecycle retains output; test-owned directories are removed by tests/setup.ts.
+      const info = workspaceManager.getWorkspaceInfo(pipelineId);
+      if (info) expect(info.path).toContain(process.env.MYRMECIA_WORKSPACE_ROOT);
     }
     closeDb();
     delete process.env.DB_PATH;

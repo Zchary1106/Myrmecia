@@ -6,6 +6,7 @@ import { recordLedgerEntry } from '../db/models/execution-ledger.js';
 import { appendExecutionAuditEvent } from '../audit/execution-audit.js';
 import { eventBus } from '../events/event-bus.js';
 import type { RuntimeLimits } from './runtime-limits.js';
+import { assertRuntimeKnowledgeCurrent } from '../knowledge/runtime-knowledge.js';
 
 type ToolStatus = 'done' | 'failed';
 
@@ -68,6 +69,7 @@ export class ExecutionMiddlewareChain {
     turn: number;
     compacted?: boolean;
   }): void {
+    assertRuntimeKnowledgeCurrent(this.executionId);
     this.turnCount = Math.max(this.turnCount, input.turn);
     const maxContextTokens = input.maxContextTokens || this.limits.maxExecutionTokens;
     if (input.estimatedContextTokens > maxContextTokens) {
@@ -81,6 +83,7 @@ export class ExecutionMiddlewareChain {
   }
 
   beforeToolCall(toolName: string, input: Record<string, unknown>, workdir: string): ToolMiddlewareDecision {
+    assertRuntimeKnowledgeCurrent(this.executionId);
     const callFingerprint = fingerprint(toolName, input);
     if (callFingerprint === this.lastFingerprint) this.repeatedCalls++;
     else {

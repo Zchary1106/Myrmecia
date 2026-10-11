@@ -55,7 +55,7 @@ function PipelineFlow({ pipeline }: { pipeline: Pipeline }) {
   const [selectedStageIndex, setSelectedStageIndex] = useState<number | null>(null);
   const canControl = runtimeControlsAllowed(diagnostics);
 
-  const runAction = async (action: 'approve' | 'skip' | 'cancel') => {
+  const runAction = async (action: 'approve' | 'skip' | 'cancel' | 'pause' | 'resume') => {
     if (action === 'cancel' && !window.confirm(`Cancel pipeline "${pipeline.name}"? Running stages will be stopped.`)) return;
     setBusyAction(action);
     setError(null);
@@ -63,6 +63,8 @@ function PipelineFlow({ pipeline }: { pipeline: Pipeline }) {
       if (action === 'approve') await api.pipelines.approve(pipeline.id);
       if (action === 'skip') await api.pipelines.skip(pipeline.id);
       if (action === 'cancel') await api.pipelines.cancel(pipeline.id, true);
+      if (action === 'pause') await api.pipelines.pause(pipeline.id);
+      if (action === 'resume') await api.pipelines.resume(pipeline.id);
       await Promise.all([loadPipelines(), loadTasks()]);
     } catch (err: any) {
       setError(err.message);
@@ -89,9 +91,13 @@ function PipelineFlow({ pipeline }: { pipeline: Pipeline }) {
             pipeline.status === 'failed' ? 'bg-red-500/20 text-red-400' :
             'bg-gray-500/20 text-gray-400'
           )}>
-            {pipeline.status}
+            {pipeline.pauseControl ? 'User paused' : pipeline.status}
           </span>
-          {pipeline.status === 'paused' && (
+          {pipeline.pauseControl ? <button type="button" onClick={() => runAction('resume')}
+            disabled={!!busyAction || !canControl} className="ui-button text-xs">Resume</button>
+            : ['running', 'blocked'].includes(pipeline.status) && <button type="button" onClick={() => runAction('pause')}
+              disabled={!!busyAction || !canControl} className="ui-button text-xs">Pause</button>}
+          {pipeline.status === 'paused' && !pipeline.pauseControl && (
               <button
                 onClick={() => runAction('approve')}
                 disabled={!!busyAction || !canControl}

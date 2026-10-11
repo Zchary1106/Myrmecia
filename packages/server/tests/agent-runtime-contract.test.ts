@@ -8,6 +8,9 @@ import { closeDb } from '../src/db/database.js';
 import { createAgent } from '../src/db/models/agent.js';
 import { createTask, getTask, updateTask } from '../src/db/models/task.js';
 import { listExecutions } from '../src/db/models/execution.js';
+import { listExecutionArtifacts } from '../src/db/models/execution-artifact.js';
+import { readArtifactSnapshot } from '../src/artifacts/artifact-snapshot-store.js';
+import { tsAgentLoop } from '../src/agents/ts-agent-loop.js';
 import type { RuntimeAdapterResult } from '../src/agents/runtime-adapter.js';
 
 let directory: string;
@@ -39,6 +42,56 @@ async function execute(adapter: (taskId: string) => Promise<RuntimeAdapterResult
 }
 
 describe('Agent Runtime completion contract', () => {
+  it('requests a required scoped document before calling the model/adapter', async () => {
+    const runtime = new AgentRuntime();
+    vi.spyOn(runtime as any, 'recordTrajectory').mockImplementation(() => {});
+    const adapter = vi.fn(async () => result());
+    runtime.registerRuntimeAdapter({ name: 'contract-fixture', canHandle: () => true, execute: adapter });
+    const agent = createAgent({ name: 'Inputs', role: 'analyst', config: {
+      contract: { schemaVersion: '1.0', agentId: 'input-agent', role: 'analyst',
+        responsibility: { summary: 'Analyze', owns: ['analysis'], doesNotOwn: [] },
+        inputs: [{ name: 'brief.md', kind: 'document', required: true }],
+        outputs: [{ name: 'Answer', kind: 'markdown', required: true }], skills: [], tools: [],
+        quality: { definitionOfDone: ['Answer grounded in brief'] } },
+    } });
+    const task = createTask({ title: 'Analyze', description: 'Analyze', input: 'Analyze the brief', mode: 'direct',
+      assigneeId: agent.id, workspacePath: directory, workdir: directory });
+    const answer = await runtime.execute(agent, task);
+    expect(adapter).not.toHaveBeenCalled();
+    expect(answer.stopReason).toBe('needs_input');
+    expect(getTask(task.id)?.status).toBe('review');
+    expect(answer.output).toContain('brief.md');
+  });
+  it.each([[], ['shell_exec'], ['browser.query'], ['mcp__fixture__search']].map(allowedTools => ({ allowedTools })))('routes built-in tools $allowedTools to the TS adapter', async ({ allowedTools }) => {
+    delete process.env.AGENT_EXECUTOR;
+    const loop = vi.spyOn(tsAgentLoop, 'execute').mockResolvedValue({ ...result(), costType: 'unavailable', provider: 'openai', aiUnits: 0, executionId: 'fixture' });
+    const runtime = new AgentRuntime();
+    vi.spyOn(runtime as any, 'recordTrajectory').mockImplementation(() => {});
+    const agent = createAgent({ id: 'ts-fixture', name: 'Fixture', role: 'dev', allowedTools });
+    const task = createTask({ title: 'fixture', description: 'fixture', mode: 'direct', input: 'fixture',
+      workspaceId: 'default', workspacePath: directory, workdir: directory, assigneeId: agent.id });
+    await runtime.execute(agent, task);
+    expect(loop).toHaveBeenCalledOnce();
+    expect(listExecutions({ taskId: task.id })[0].runState?.runtime).toBe('ts-agent-loop');
+  });
+
+  it('keeps registered adapters ahead of the universal TS fallback without an override', async () => {
+    delete process.env.AGENT_EXECUTOR;
+    const loop = vi.spyOn(tsAgentLoop, 'execute');
+    const { promise } = await execute(async () => result());
+    await promise;
+    expect(loop).not.toHaveBeenCalled();
+  });
+
+  it('records a removed Python override as a failed execution without calling a model', async () => {
+    process.env.AGENT_EXECUTOR = 'python';
+    const loop = vi.spyOn(tsAgentLoop, 'execute');
+    const { task, promise } = await execute(async () => result());
+    await expect(promise).rejects.toThrow('Python/CrewAI runtime has been removed');
+    expect(getTask(task.id)?.status).toBe('failed');
+    expect(loop).not.toHaveBeenCalled();
+  });
+
   it('validates the output without automatically accepting it', async () => {
     const { task, promise } = await execute(async () => result());
     await promise;
@@ -79,5 +132,8 @@ describe('Agent Runtime completion contract', () => {
     expect(output).toMatchObject({ output: '请提供目标工作区', stopReason: 'needs_input' });
     expect(getTask(task.id)).toMatchObject({ status: 'review', output: '请提供目标工作区' });
     expect(listExecutions({ taskId: task.id })[0].runState).toMatchObject({ phase: 'waiting_for_user', acceptance: 'pending' });
+    const question = listExecutionArtifacts({ taskId: task.id }).find(artifact => artifact.source === 'result');
+    expect(question?.metadata).toMatchObject({ immutable: true, captureState: 'partial' });
+    expect(readArtifactSnapshot(question!)?.toString()).toContain('请提供目标工作区');
   });
 });

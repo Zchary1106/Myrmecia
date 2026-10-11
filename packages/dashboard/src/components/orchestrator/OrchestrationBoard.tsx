@@ -16,12 +16,14 @@ interface Orchestration {
   createdAt: string;
   completedAt?: string;
   tasks?: any[];
+  pauseControl?: { state: 'requested' | 'paused' };
 }
 
 const statusConfig: Record<string, { bg: string; text: string; icon: string }> = {
   planning: { bg: 'bg-yellow-500/20', text: 'text-yellow-400', icon: '🧠' },
   dispatching: { bg: 'bg-blue-500/20', text: 'text-blue-400', icon: '📡' },
   running: { bg: 'bg-blue-500/20', text: 'text-blue-400', icon: '⚡' },
+  paused: { bg: 'bg-yellow-500/20', text: 'text-yellow-400', icon: '⏸' },
   done: { bg: 'bg-green-500/20', text: 'text-green-400', icon: '✅' },
   failed: { bg: 'bg-red-500/20', text: 'text-red-400', icon: '❌' },
 };
@@ -32,6 +34,17 @@ export function OrchestrationBoard() {
   const [selectedOrch, setSelectedOrch] = useState<Orchestration | null>(null);
   const [messages, setMessages] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [controlBusy, setControlBusy] = useState(false);
+  const [controlError, setControlError] = useState('');
+  const control = async () => {
+    if (!selectedOrch || controlBusy) return;
+    setControlBusy(true); setControlError('');
+    try {
+      await api.controlOrchestration(selectedOrch.id, selectedOrch.status === 'paused' ? 'resume' : 'pause');
+      await Promise.all([loadOrchestrations(), loadDetail(selectedOrch.id)]);
+    } catch (error) { setControlError(error instanceof Error ? error.message : 'Plan control failed'); }
+    finally { setControlBusy(false); }
+  };
 
   const loadOrchestrations = async () => {
     try {
@@ -92,6 +105,11 @@ export function OrchestrationBoard() {
 
   return (
     <div className="p-4 space-y-4 h-full overflow-y-auto">
+      {selectedOrch && (selectedOrch.status === 'running' || selectedOrch.pauseControl) && <button type="button"
+        disabled={controlBusy || selectedOrch.pauseControl?.state === 'requested'} onClick={() => void control()} className="ui-button">
+        {controlBusy ? '处理中…' : selectedOrch.pauseControl?.state === 'requested' ? '正在暂停…' : selectedOrch.status === 'paused' ? '继续计划' : '暂停计划'}
+      </button>}
+      {controlError && <p role="alert" className="text-xs text-red-500">{controlError}</p>}
       {/* Header */}
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-bold flex items-center gap-2">

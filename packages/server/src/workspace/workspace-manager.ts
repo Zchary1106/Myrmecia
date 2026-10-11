@@ -1,326 +1,169 @@
-import { execFileSync } from 'child_process';
-import { mkdirSync, existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'fs';
-import { join } from 'path';
-import { eventBus } from '../events/event-bus.js';
-import { addTaskLog } from '../db/models/task.js';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, existsSync, readdirSync, writeFileSync } from 'node:fs';
+import { join, relative } from 'node:path';
+import type { ExecutionWorkspaceBinding, WorkspaceAccessMode } from '@myrmecia/shared';
+import { assertWorkspaceIdentity, bindWorkspace, getManagedWorkspace, getWorkspaceBinding, markWorkspaceCandidates, registerManagedWorkspace, type WorkspaceScope } from '../db/models/managed-workspace.js';
+import { excludedWorkspacePath, ownGitRoot, readWorkspaceBytes, safeWorkspacePath, WORKSPACE_LIMITS } from './path-policy.js';
+import { withWorkspaceLease } from './workspace-lease.js';
+import type { Task } from '../types.js';
+import { captureWorkspaceBaseline } from './workspace-baseline.js';
 
-/**
- * Workspace Manager
- * Provides isolated working directories for pipelines and tasks
- * using git worktrees (when in a git repo) or plain directories.
- */
+/** Filesystem preparation is separate from output acceptance and Git integration. */
 export class WorkspaceManager {
-  private baseDir: string;    // Root project directory
   private workspacesDir: string;
-
-  constructor(baseDir?: string) {
-    this.baseDir = baseDir || process.env.MYRMECIA_WORKSPACE_ROOT || process.cwd();
-    this.workspacesDir = join(this.baseDir, '.agent-factory', 'workspaces');
+  constructor(private baseDir = process.env.MYRMECIA_WORKSPACE_ROOT || process.cwd()) {
+    this.workspacesDir = join(baseDir, '.agent-factory', 'workspaces');
     mkdirSync(this.workspacesDir, { recursive: true });
   }
-
-  /**
-   * Create an isolated workspace for a pipeline.
-   * Uses git worktree if in a git repo, otherwise creates a plain directory.
-   */
-  async createPipelineWorkspace(pipelineId: string): Promise<WorkspaceInfo> {
-    const wsPath = join(this.workspacesDir, `pipeline-${pipelineId}`);
-    const branchName = `agent-factory/pipeline-${pipelineId}`;
-
-    if (this.isGitRepo()) {
-      return this.createGitWorktree(wsPath, branchName, pipelineId, 'pipeline');
-    } else {
-      return this.createPlainWorkspace(wsPath, pipelineId, 'pipeline');
+  async createPipelineWorkspace(id: string, options?: WorkspaceScope & { sourceWorkspaceId?: string; accessMode?: WorkspaceAccessMode }): Promise<WorkspaceInfo> {
+    if (!options) return this.createEmpty(id, 'pipeline');
+    const source = options.sourceWorkspaceId ? getManagedWorkspace(options.sourceWorkspaceId, options) : undefined;
+    const prepare = () => this.prepareExecutionWorkspace({ ...options, taskId: `pipeline_${id}` });
+    const binding = source && (options.accessMode || 'isolated') === 'isolated'
+      ? await withWorkspaceLease({ id: `pipeline_${id}`, workdir: source.canonicalPath, workspaceId: options.workspaceId } as Task, prepare)
+      : await prepare();
+    return { id, type: 'pipeline', path: binding.executionPath, isGitWorktree: !!binding.baseline.head, branchName: binding.baseline.branch, accessMode: binding.accessMode };
+  }
+  async createTaskWorkspace(id: string): Promise<WorkspaceInfo> { return this.createEmpty(id, 'task'); }
+  private createEmpty(id: string, type: 'pipeline' | 'task'): WorkspaceInfo {
+    if (!/^[a-zA-Z0-9_-]+$/.test(id)) throw new Error('INVALID_WORKSPACE_ID');
+    const path = safeWorkspacePath(this.workspacesDir, `${type}-${id}`);
+    mkdirSync(join(path, 'output'), { recursive: true });
+    return this.getWorkspaceInfo(id, type)!;
+  }
+  async prepareExecutionWorkspace(data: WorkspaceScope & {
+    taskId: string; sourceWorkspaceId?: string; accessMode?: WorkspaceAccessMode;
+  }): Promise<ExecutionWorkspaceBinding> {
+    const existing = getWorkspaceBinding(data.taskId);
+    if (existing) {
+      const workspace = getManagedWorkspace(existing.filesystemWorkspaceId, data);
+      if (!workspace || !['active', 'candidate'].includes(workspace.lifecycle)) throw new Error('WORKSPACE_NOT_WRITABLE');
+      assertWorkspaceIdentity(workspace);
+      return existing;
     }
-  }
-
-  /**
-   * Create an isolated workspace for a standalone task.
-   */
-  async createTaskWorkspace(taskId: string): Promise<WorkspaceInfo> {
-    const wsPath = join(this.workspacesDir, `task-${taskId}`);
-
-    if (this.isGitRepo()) {
-      const branchName = `agent-factory/task-${taskId}`;
-      return this.createGitWorktree(wsPath, branchName, taskId, 'task');
-    } else {
-      return this.createPlainWorkspace(wsPath, taskId, 'task');
+    const mode = data.accessMode || 'isolated';
+    const source = data.sourceWorkspaceId ? getManagedWorkspace(data.sourceWorkspaceId, data) : undefined;
+    if (data.sourceWorkspaceId && !source) throw new Error('WORKSPACE_SOURCE_NOT_FOUND');
+    if (source) {
+      assertWorkspaceIdentity(source);
+      if (!['active', 'candidate'].includes(source.lifecycle)) throw new Error('WORKSPACE_SOURCE_ARCHIVED');
     }
-  }
-
-  /**
-   * Create a stage directory within a pipeline workspace.
-   */
-  createStageDir(pipelineWorkspace: string, stageIndex: number, stageName: string): string {
-    const stageDir = join(pipelineWorkspace, `stage-${stageIndex}-${stageName.toLowerCase().replace(/\s+/g, '-')}`);
-    mkdirSync(stageDir, { recursive: true });
-    return stageDir;
-  }
-
-  /**
-   * Write stage output as artifact files.
-   */
-  writeStageArtifact(stageDir: string, output: string, fileName: string = 'output.md'): string {
-    const artifactPath = join(stageDir, fileName);
-    writeFileSync(artifactPath, output, 'utf-8');
-    return artifactPath;
-  }
-
-  /**
-   * Read stage artifact.
-   */
-  readStageArtifact(stageDir: string, fileName: string = 'output.md'): string | null {
-    const artifactPath = join(stageDir, fileName);
-    try {
-      return readFileSync(artifactPath, 'utf-8');
-    } catch {
-      return null;
-    }
-  }
-
-  /**
-   * Merge a pipeline workspace back into the main branch.
-   */
-  async mergePipelineWorkspace(pipelineId: string, commitMessage?: string): Promise<{ success: boolean; error?: string }> {
-    const wsPath = join(this.workspacesDir, `pipeline-${pipelineId}`);
-    const branchName = `agent-factory/pipeline-${pipelineId}`;
-
-    if (!existsSync(wsPath)) {
-      return { success: false, error: 'Workspace not found' };
-    }
-
-    if (!this.isGitRepo()) {
-      return { success: true }; // Nothing to merge for plain workspaces
-    }
-
-    try {
-      // Commit any uncommitted changes in the worktree
-      try {
-        execFileSync('git', ['-C', wsPath, 'add', '-A'], { stdio: 'pipe' });
-        execFileSync(
-          'git',
-          ['-C', wsPath, 'commit', '-m', commitMessage || `Agent Factory: pipeline ${pipelineId} output`, '--allow-empty'],
-          { stdio: 'pipe' },
-        );
-      } catch {
-        // No changes to commit, that's fine
-      }
-
-      // Merge the pipeline branch into main
-      execFileSync('git', ['-C', this.baseDir, 'merge', branchName, '--no-edit'], { stdio: 'pipe' });
-
-      return { success: true };
-    } catch (err: any) {
-      return { success: false, error: `Merge failed: ${err.message}` };
-    }
-  }
-
-  /**
-   * Clean up a workspace (remove worktree and branch).
-   */
-  async cleanupWorkspace(id: string, type: 'pipeline' | 'task' = 'pipeline'): Promise<void> {
-    const wsPath = join(this.workspacesDir, `${type}-${id}`);
-    const branchName = `agent-factory/${type}-${id}`;
-
-    if (!existsSync(wsPath)) return;
-
-    if (this.isGitRepo()) {
-      try {
-        execFileSync('git', ['-C', this.baseDir, 'worktree', 'remove', wsPath, '--force'], { stdio: 'pipe' });
-      } catch {
-        // Force remove if worktree remove fails
-        rmSync(wsPath, { recursive: true, force: true });
-      }
-
-      try {
-        execFileSync('git', ['-C', this.baseDir, 'branch', '-D', branchName], { stdio: 'pipe' });
-      } catch {
-        // Branch might not exist
-      }
-    } else {
-      rmSync(wsPath, { recursive: true, force: true });
-    }
-  }
-
-  /**
-   * Get workspace info.
-   */
-  getWorkspaceInfo(id: string, type: 'pipeline' | 'task' = 'pipeline'): WorkspaceInfo | null {
-    const wsPath = join(this.workspacesDir, `${type}-${id}`);
-    if (!existsSync(wsPath)) return null;
-
-    return {
-      path: wsPath,
-      type,
-      id,
-      isGitWorktree: this.isGitRepo(),
-      branchName: this.isGitRepo() ? `agent-factory/${type}-${id}` : undefined,
-    };
-  }
-
-  /**
-   * Get the output directory for a workspace.
-   */
-  getOutputDir(id: string, type: 'pipeline' | 'task' = 'task'): string | null {
-    const wsPath = join(this.workspacesDir, `${type}-${id}`);
-    if (!existsSync(wsPath)) return null;
-    const outputDir = join(wsPath, 'output');
-    mkdirSync(outputDir, { recursive: true });
-    return outputDir;
-  }
-
-  /**
-   * List all active workspaces.
-   */
-  listWorkspaces(): WorkspaceInfo[] {
-    try {
-      const entries = readdirSync(this.workspacesDir, { withFileTypes: true });
-      return entries
-        .filter((e: any) => e.isDirectory())
-        .map((e: any) => {
-          const match = e.name.match(/^(pipeline|task)-(.+)$/);
-          if (!match) return null;
-          return this.getWorkspaceInfo(match[2], match[1] as 'pipeline' | 'task');
-        })
-        .filter(Boolean) as WorkspaceInfo[];
-    } catch {
-      return [];
-    }
-  }
-
-  /**
-   * Remove terminal/orphaned workspaces after the configured retention window.
-   * Active task and pipeline ids must be supplied as `task:<id>` or
-   * `pipeline:<id>` keys so a long-running job is never deleted.
-   */
-  async cleanupExpiredWorkspaces(options: {
-    retentionMs: number;
-    protectedWorkspaceKeys?: ReadonlySet<string>;
-    now?: number;
-  }): Promise<WorkspaceCleanupResult> {
-    const protectedWorkspaceKeys = options.protectedWorkspaceKeys ?? new Set<string>();
-    const now = options.now ?? Date.now();
-    const result: WorkspaceCleanupResult = { removed: 0, protected: 0, retained: 0, errors: [] };
-
-    if (!Number.isFinite(options.retentionMs) || options.retentionMs < 0) {
-      throw new Error('Workspace retention must be a non-negative number of milliseconds');
-    }
-
-    const entries = (() => {
-      try {
-        return readdirSync(this.workspacesDir, { withFileTypes: true, encoding: 'utf8' });
-      } catch {
-        return [];
-      }
-    })();
-
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      const match = entry.name.match(/^(pipeline|task)-(.+)$/);
-      if (!match) continue;
-      const type = match[1] as 'pipeline' | 'task';
-      const id = match[2];
-      const key = `${type}:${id}`;
-      if (protectedWorkspaceKeys.has(key)) {
-        result.protected++;
-        continue;
-      }
-
-      const path = join(this.workspacesDir, entry.name);
-      try {
-        const ageMs = Math.max(0, now - statSync(path).mtimeMs);
-        if (ageMs < options.retentionMs) {
-          result.retained++;
-          continue;
+    if (mode !== 'isolated' && !source) throw new Error('SHARED_MODE_REQUIRES_SOURCE');
+    let workspace = source;
+    if (mode === 'isolated') {
+      if (!/^[a-zA-Z0-9_-]+$/.test(data.taskId)) throw new Error('INVALID_WORKSPACE_ID');
+      const path = safeWorkspacePath(this.workspacesDir, `task-${data.taskId}`);
+      if (existsSync(path)) throw new Error('WORKSPACE_PATH_NEEDS_RECONCILIATION');
+      let baseline: ExecutionWorkspaceBinding['baseline'] = { provenance: 'empty', excluded: [] };
+      if (source) {
+        let head: string | undefined;
+        try { if (ownGitRoot(source.canonicalPath)) head = execFileSync('git', ['-C', source.canonicalPath, 'rev-parse', '--verify', 'HEAD'], { encoding: 'utf8', stdio: 'pipe' }).trim(); }
+        catch { if (existsSync(join(source.canonicalPath, '.git'))) throw new Error('GIT_BASELINE_UNAVAILABLE'); }
+        if (head) {
+          const tracked = execFileSync('git', ['-C', source.canonicalPath, 'ls-tree', '-r', '--name-only', '-z', head], { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
+          const excluded = tracked.split('\0').filter(Boolean).filter(excludedWorkspacePath);
+          if (excluded.some(path => /[\n\r*?\[\]!\\]/.test(path))) throw new Error('GIT_EXCLUSION_PATH_UNSUPPORTED');
+          const branch = `codex/task-${data.taskId}`;
+          const dirty = execFileSync('git', ['-C', source.canonicalPath, 'status', '--porcelain'], { encoding: 'utf8' }).trim();
+          baseline = { head, branch, provenance: 'head_only', excluded: [...excluded, ...(dirty ? ['Uncommitted/untracked source changes excluded (HEAD only)'] : [])] };
+          // Fail closed: no retry with a stale branch, no empty-folder fallback.
+          execFileSync('git', ['-C', source.canonicalPath, 'worktree', 'add', '--no-checkout', '-b', branch, path, head], { stdio: 'pipe' });
+          execFileSync('git', ['-C', path, 'sparse-checkout', 'set', '--no-cone', '--stdin'], {
+            input: `/*\n${excluded.map(file => `!/${file}`).join('\n')}\n`, stdio: ['pipe', 'pipe', 'pipe'],
+          });
+          execFileSync('git', ['-C', path, 'read-tree', '-mu', 'HEAD'], { stdio: 'pipe' });
+        } else {
+          mkdirSync(path, { recursive: true });
+          baseline = { provenance: 'filtered_copy', excluded: [] };
+          let total = 0, count = 0;
+          const walk = (dir: string, depth: number) => {
+            for (const entry of readdirSync(dir, { withFileTypes: true })) {
+              const rel = relative(source.canonicalPath, join(dir, entry.name));
+              if (excludedWorkspacePath(rel) || entry.isSymbolicLink()) { baseline.excluded.push(rel); continue; }
+              if (depth > WORKSPACE_LIMITS.depth) throw new Error('WORKSPACE_COPY_DEPTH_QUOTA');
+              if (entry.isDirectory()) walk(join(dir, entry.name), depth + 1);
+              else if (entry.isFile()) {
+                const bytes = readWorkspaceBytes(source.canonicalPath, rel);
+                total += bytes.length;
+                if (++count > WORKSPACE_LIMITS.files || total > WORKSPACE_LIMITS.totalBytes) throw new Error('WORKSPACE_COPY_QUOTA');
+                const target = safeWorkspacePath(path, rel);
+                mkdirSync(join(target, '..'), { recursive: true });
+                writeFileSync(target, bytes, { flag: 'wx' });
+              }
+            }
+          };
+          walk(source.canonicalPath, 0);
         }
-        await this.cleanupWorkspace(id, type);
-        result.removed++;
-      } catch (error) {
-        result.errors.push({
-          key,
-          message: error instanceof Error ? error.message : String(error),
-        });
-      }
+      } else mkdirSync(path, { recursive: true });
+      if (source && !baseline.head) baseline.snapshotId = captureWorkspaceBaseline(path);
+      mkdirSync(safeWorkspacePath(path, 'output'), { recursive: true });
+      workspace = registerManagedWorkspace({ ...data, canonicalPath: path, sourcePath: source?.canonicalPath,
+        sourceKind: baseline.head ? 'git' : source ? 'directory' : 'empty', ownership: 'managed_execution', accessMode: mode, baseline });
     }
-
-    return result;
-  }
-
-  // === Private Methods ===
-
-  private isGitRepo(): boolean {
-    try {
-      execFileSync('git', ['-C', this.baseDir, 'rev-parse', '--git-dir'], { stdio: 'pipe' });
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  private createGitWorktree(
-    wsPath: string,
-    branchName: string,
-    id: string,
-    type: 'pipeline' | 'task',
-  ): WorkspaceInfo {
-    if (existsSync(wsPath)) {
-      return { path: wsPath, type, id, isGitWorktree: true, branchName };
-    }
-
-    try {
-      // Create a new branch from HEAD and set up worktree
-      execFileSync('git', ['-C', this.baseDir, 'worktree', 'add', '-b', branchName, wsPath, 'HEAD'], { stdio: 'pipe' });
-    } catch (err: any) {
-      // Branch might already exist; try without -b
+    let bindingBaseline = workspace!.baseline;
+    if (mode !== 'isolated') {
+      bindingBaseline = { provenance: 'shared_live', excluded: [] };
       try {
-        execFileSync('git', ['-C', this.baseDir, 'worktree', 'add', wsPath, branchName], { stdio: 'pipe' });
-      } catch {
-        // Fall back to plain workspace
-        return this.createPlainWorkspace(wsPath, id, type);
-      }
+        if (ownGitRoot(workspace!.canonicalPath)) {
+          bindingBaseline.head = execFileSync('git', ['-C', workspace!.canonicalPath, 'rev-parse', 'HEAD'], { stdio: 'pipe', encoding: 'utf8' }).trim();
+          bindingBaseline.branch = execFileSync('git', ['-C', workspace!.canonicalPath, 'branch', '--show-current'], { stdio: 'pipe', encoding: 'utf8' }).trim();
+        }
+      } catch { /* A shared non-Git directory is a live source, not a pinned copy. */ }
     }
-
-    // Create shared context dir and output dir in workspace
-    mkdirSync(join(wsPath, '.agent-factory', 'shared'), { recursive: true });
-    mkdirSync(join(wsPath, 'output'), { recursive: true });
-
-    return {
-      path: wsPath,
-      type,
-      id,
-      isGitWorktree: true,
-      branchName,
-    };
+    const binding: ExecutionWorkspaceBinding = { taskId: data.taskId, workspaceId: data.workspaceId,
+      filesystemWorkspaceId: workspace!.id, sourceWorkspaceId: source?.id, executionPath: workspace!.canonicalPath,
+      accessMode: mode, baseline: bindingBaseline };
+    bindWorkspace(binding);
+    return binding;
   }
-
-  private createPlainWorkspace(wsPath: string, id: string, type: 'pipeline' | 'task'): WorkspaceInfo {
-    mkdirSync(wsPath, { recursive: true });
-    mkdirSync(join(wsPath, '.agent-factory', 'shared'), { recursive: true });
-    mkdirSync(join(wsPath, 'output'), { recursive: true });
-
-    return {
-      path: wsPath,
-      type,
-      id,
-      isGitWorktree: false,
-    };
+  createStageDir(root: string, index: number, name: string): string {
+    const path = safeWorkspacePath(root, `stage-${index}-${name.toLowerCase().replace(/[^a-z0-9-]/g, '-')}`);
+    mkdirSync(path, { recursive: true }); return path;
+  }
+  writeStageArtifact(root: string, output: string, fileName = 'output.md'): string {
+    const path = safeWorkspacePath(root, fileName); writeFileSync(path, output, 'utf8'); return path;
+  }
+  readStageArtifact(root: string, fileName = 'output.md'): string | null {
+    try { return readWorkspaceBytes(root, fileName).toString('utf8'); } catch { return null; }
+  }
+  /** Removed unsafe API. Explicit preview/apply lives in workspace-changes. */
+  async mergePipelineWorkspace(_id: string, _message?: string): Promise<{ success: boolean; error?: string }> {
+    return { success: false, error: 'EXPLICIT_REVIEWED_CHANGESET_REQUIRED' };
+  }
+  async cleanupWorkspace(_id: string, _type: 'pipeline' | 'task' = 'pipeline'): Promise<void> {
+    throw new Error('EXPLICIT_WORKSPACE_PURGE_REQUIRED');
+  }
+  getWorkspaceInfo(id: string, type: 'pipeline' | 'task' = 'pipeline'): WorkspaceInfo | null {
+    if (!/^[a-zA-Z0-9_-]+$/.test(id)) return null;
+    const binding = getWorkspaceBinding(type === 'pipeline' ? `pipeline_${id}` : id);
+    if (binding && existsSync(binding.executionPath)) return { id, type, path: binding.executionPath, isGitWorktree: !!binding.baseline.head, branchName: binding.baseline.branch, accessMode: binding.accessMode };
+    const path = join(this.workspacesDir, `${type}-${id}`);
+    if (!existsSync(path)) return null;
+    let branchName: string | undefined;
+    // Parent Git discovery alone is not evidence that this entry is a worktree.
+    if (existsSync(join(path, '.git'))) {
+      try { branchName = execFileSync('git', ['-C', path, 'branch', '--show-current'], { encoding: 'utf8' }).trim(); } catch { /* legacy */ }
+    }
+    return { id, type, path, isGitWorktree: !!branchName, branchName };
+  }
+  getOutputDir(id: string, type: 'pipeline' | 'task' = 'task'): string | null {
+    const workspace = this.getWorkspaceInfo(id, type);
+    if (!workspace) return null;
+    const path = safeWorkspacePath(workspace.path, 'output'); mkdirSync(path, { recursive: true }); return path;
+  }
+  listWorkspaces(): WorkspaceInfo[] {
+    return readdirSync(this.workspacesDir, { withFileTypes: true }).filter(entry => entry.isDirectory()).flatMap(entry => {
+      const match = entry.name.match(/^(pipeline|task)-(.+)$/);
+      const info = match ? this.getWorkspaceInfo(match[2], match[1] as 'pipeline' | 'task') : null;
+      return info ? [info] : [];
+    });
+  }
+  async cleanupExpiredWorkspaces(options: { retentionMs: number; protectedWorkspaceKeys?: ReadonlySet<string>; now?: number }): Promise<WorkspaceCleanupResult> {
+    if (!Number.isFinite(options.retentionMs) || options.retentionMs < 0) throw new Error('Invalid workspace retention');
+    const candidates = markWorkspaceCandidates(options.retentionMs, options.now);
+    return { removed: 0, candidates, protected: options.protectedWorkspaceKeys?.size || 0, retained: this.listWorkspaces().length, errors: [] };
   }
 }
-
-export interface WorkspaceInfo {
-  path: string;
-  type: 'pipeline' | 'task';
-  id: string;
-  isGitWorktree: boolean;
-  branchName?: string;
-}
-
-export interface WorkspaceCleanupResult {
-  removed: number;
-  protected: number;
-  retained: number;
-  errors: Array<{ key: string; message: string }>;
-}
-
-// Singleton
+export interface WorkspaceInfo { path: string; type: 'pipeline' | 'task'; id: string; isGitWorktree: boolean; branchName?: string; accessMode?: WorkspaceAccessMode }
+export interface WorkspaceCleanupResult { removed: number; candidates: number; protected: number; retained: number; errors: Array<{ key: string; message: string }> }
 export const workspaceManager = new WorkspaceManager();

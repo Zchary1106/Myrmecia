@@ -1,5 +1,7 @@
 import { v4 as uuid } from 'uuid';
 import { getDb } from '../database.js';
+import { getAgentSetupSnapshot } from '../../agents/agent-setup-snapshot.js';
+import { getWorkspaceBinding } from './managed-workspace.js';
 import type { ExecutionContext, ExecutionContextInput, TaskCheckpoint, TaskCheckpointInput } from '../../types.js';
 
 function parseJson<T>(value: unknown, fallback: T): T {
@@ -41,7 +43,9 @@ function rowToExecutionContext(row: any): ExecutionContext {
     constraints: parseJson<string[]>(row.constraints, []),
     parentTaskId: row.parent_task_id || undefined,
     codeBaseline: parseJson(row.code_baseline, {}),
+    filesystemBinding: getWorkspaceBinding(row.task_id),
     contextUsage: parseContextUsage(row.context_usage),
+    agentSetup: getAgentSetupSnapshot(row.task_id),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

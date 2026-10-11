@@ -9,7 +9,6 @@ All commands use pnpm from the repo root. Node >=20, pnpm >=9 required.
 | Task | Command |
 |------|---------|
 | Install all deps | `pnpm install` |
-| Install Python runtime deps | `pip install -r packages/python-runtime/requirements.txt` |
 | Dev server + dashboard | `pnpm dev` |
 | Dev server only | `pnpm dev:server` |
 | Dev dashboard only | `pnpm dev:dashboard` |
@@ -23,7 +22,7 @@ All commands use pnpm from the repo root. Node >=20, pnpm >=9 required.
 | Run dashboard tests | `pnpm --filter @myrmecia/dashboard test` |
 | Run dashboard e2e | `pnpm --filter @myrmecia/dashboard test:e2e` |
 | Preview dashboard build | `pnpm --filter @myrmecia/dashboard preview` |
-| Start via script | `./start.sh` (pass `--clean-db`, `--install-python`, `--server-only`, `--dashboard-only`) |
+| Start via script | `./start.sh` (pass `--clean-db`, `--server-only`, `--dashboard-only`) |
 
 The dashboard Vite dev server proxies `/api` and `/ws` to `localhost:3000`. Start the server before using Playwright e2e tests.
 
@@ -35,7 +34,7 @@ This is a **pnpm monorepo** for an autonomous multi-agent orchestration platform
 
 - **`packages/server`** — Express 5 + TypeScript orchestrator. Entry point: `src/index.ts`. Wires up SQLite, agent registry, task queue (BullMQ with Redis, or in-memory fallback), pipeline engine, WebSocket hub, and ~30 REST route modules under `/api/v1/`.
 - **`packages/dashboard`** — React 19 + Vite + Tailwind + shadcn/ui. State managed via Zustand stores (`src/stores/`), API calls through `src/lib/api.ts`. Vite proxies `/api` and `/ws` to the server.
-- **`packages/python-runtime`** — Agent Factory Python Runtime. `agent-runtime.ts` spawns `python3 packages/python-runtime/runtime_runner.py` as a subprocess, reading JSON-line events from stdout.
+- **Built-in runtime** — `packages/server/src/agents/ts-agent-loop.ts` runs all built-in Agents with sandbox/MCP tools through the model gateway (OpenAI-compatible endpoints or Copilot SDK). No Python/CrewAI dependencies are required.
 - **`packages/shared`** — TypeScript type definitions shared between server and dashboard. ESM package.
 - **`agents/`** — Agent definition YAML (`registry.yaml`) and skill markdown files (`pm.md`, `dev.md`, etc.).
 - **`templates/`** — Pipeline template YAML files (`full-product.yaml`, `bugfix.yaml`, `feature.yaml`).
@@ -44,7 +43,7 @@ This is a **pnpm monorepo** for an autonomous multi-agent orchestration platform
 
 1. `TaskQueue.enqueue()` creates a task row, emits `task:created`, and either enqueues in BullMQ (Redis) or runs in-memory.
 2. `AgentManager.executeTask()` checks concurrent execution capacity, delegates to `AgentRuntime`.
-3. `AgentRuntime.execute()` creates an execution row, runs the TypeScript loop or Agent Factory Python Runtime, tracks progress/cost/tokens, records trace spans, and emits events.
+3. `AgentRuntime.execute()` creates an execution row, selects a registered extension or the default TypeScript loop, tracks progress/cost/tokens, records trace spans, and emits events.
 4. `PipelineEngine` listens for `task:done`, writes stage artifacts, and advances to the next ready stage(s). Supports parallel stages via `dependsOn`, manual gating, and rollback.
 5. `EventBus` (singleton `eventBus` in `events/event-bus.ts`) emits typed events + a wildcard `*` copy. The WebSocket hub maps events to channels (`tasks`, `task:{id}`, `agents`, `agent:{id}`, `pipelines`, `pipeline:{id}`, `executions`, `execution:{id}`).
 

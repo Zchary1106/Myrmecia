@@ -1,10 +1,13 @@
 import { getDb } from '../database.js';
+import { fencedRunWrite } from '../../agents/run-coordinator.js';
+import { getPauseControl } from '../../agents/pause-control.js';
 import { v4 as uuid } from 'uuid';
 import type { ReasoningEffort, Task, TaskMode, TaskStatus, Priority, LogEntry } from '../../types.js';
 
 function rowToTask(row: any): Task {
   return {
     ...row,
+    pauseControl: getPauseControl('task', row.id),
     dependsOn: JSON.parse(row.depends_on || '[]'),
     assigneeId: row.assignee_id,
     createdBy: row.created_by,
@@ -22,6 +25,7 @@ function rowToTask(row: any): Task {
     createdAt: row.created_at,
     startedAt: row.started_at,
     completedAt: row.completed_at,
+    completionCriteria: row.completion_criteria ? JSON.parse(row.completion_criteria) : [],
   };
 }
 
@@ -45,6 +49,7 @@ export function createTask(data: {
   domainId?: string;
   dependsOn?: string[];
   maxRetries?: number;
+  completionCriteria?: Task['completionCriteria'];
 }): Task {
   const db = getDb();
   const id = `task_${uuid().slice(0, 8)}`;
@@ -52,8 +57,8 @@ export function createTask(data: {
   db.run(`
     INSERT INTO tasks (id, title, description, mode, priority, assignee_id, created_by,
       parent_task_id, pipeline_id, stage_index, input, model_id, reasoning_effort, requested_reasoning_effort, context_length,
-      workdir, workspace_path, workspace_id, domain_id, depends_on, max_retries)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      workdir, workspace_path, workspace_id, domain_id, depends_on, max_retries, completion_criteria)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
     id, data.title, data.description, data.mode,
     data.priority || 'normal', data.assigneeId || null, data.createdBy || 'user',
@@ -62,7 +67,7 @@ export function createTask(data: {
     data.reasoningEffort || null, data.contextLength || null,
     data.workdir || null, data.workspacePath || null,
     data.workspaceId || 'default', data.domainId || null,
-    JSON.stringify(data.dependsOn || []), data.maxRetries ?? 2
+    JSON.stringify(data.dependsOn || []), data.maxRetries ?? 2, JSON.stringify(data.completionCriteria || [])
   );
 
   return getTask(id)!;
@@ -129,11 +134,13 @@ export function updateTask(id: string, updates: Partial<{
   assigneeId: string | null;
   output: string | null;
   workspacePath: string | null;
+  workdir: string | null;
   error: string | null;
   retryCount: number;
   startedAt: string | null;
   completedAt: string | null;
 }>): Task | undefined {
+  return fencedRunWrite(id, () => {
   const db = getDb();
   const sets: string[] = [];
   const params: any[] = [];
@@ -142,6 +149,7 @@ export function updateTask(id: string, updates: Partial<{
   if (updates.assigneeId !== undefined) { sets.push('assignee_id = ?'); params.push(updates.assigneeId); }
   if (updates.output !== undefined) { sets.push('output = ?'); params.push(updates.output); }
   if (updates.workspacePath !== undefined) { sets.push('workspace_path = ?'); params.push(updates.workspacePath); }
+  if (updates.workdir !== undefined) { sets.push('workdir = ?'); params.push(updates.workdir); }
   if (updates.error !== undefined) { sets.push('error = ?'); params.push(updates.error); }
   if (updates.retryCount !== undefined) { sets.push('retry_count = ?'); params.push(updates.retryCount); }
   if (updates.startedAt !== undefined) { sets.push('started_at = ?'); params.push(updates.startedAt); }
@@ -151,6 +159,7 @@ export function updateTask(id: string, updates: Partial<{
   params.push(id);
   db.run(`UPDATE tasks SET ${sets.join(', ')} WHERE id = ?`, ...params);
   return getTask(id);
+  });
 }
 
 export function deleteTask(id: string): boolean {

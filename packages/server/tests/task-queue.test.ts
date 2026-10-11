@@ -8,6 +8,8 @@ import { eventBus } from '../src/events/event-bus.js';
 import { closeDb } from '../src/db/database.js';
 import { createAgent } from '../src/db/models/agent.js';
 import { createTask, getTask, getTaskLogs, updateTask, listDependents } from '../src/db/models/task.js';
+import { createExecution } from '../src/db/models/execution.js';
+import { saveLoopCheckpoint } from '../src/agents/loop-checkpoint.js';
 
 describe('TaskQueue failure state handling', () => {
   beforeEach(() => {
@@ -15,11 +17,54 @@ describe('TaskQueue failure state handling', () => {
     delete process.env.REDIS_URL;
     delete process.env.REDIS_HOST;
   });
+  it('requires reconciliation instead of silently restarting an in-flight model request', async () => {
+    const agent = createAgent({ id: 'pending-request-agent', name: 'Pending Request Agent', role: 'analyst' });
+    const task = createTask({ title: 'pending request', description: '', input: 'fixture', mode: 'direct', assigneeId: agent.id });
+    updateTask(task.id, { status: 'running' });
+    const run = createExecution({ taskId: task.id, agentDefId: agent.id });
+    saveLoopCheckpoint(task, run.id, 'fingerprint', { schemaVersion: 1, boundary: 'request_pending', messages: [],
+      turn: 1, inputTokens: 100, outputTokens: 100, toolCallCount: 0, toolRuntimeMs: 0, elapsedMs: 10, finalOutput: '' });
+    const manager = { executeTask: vi.fn() } as unknown as AgentManager;
+    const queue = new TaskQueue(manager);
+    await queue.recoverRunningTasks();
+    expect(getTask(task.id)).toMatchObject({ status: 'failed', error: expect.stringContaining('prior model request') });
+    expect(manager.executeTask).not.toHaveBeenCalled();
+  });
 
   afterEach(() => {
     closeDb();
     delete process.env.DB_PATH;
     vi.restoreAllMocks();
+  });
+
+  it('dispatches a queued continuation after the completed run releases admission', async () => {
+    const agent = createAgent({ id: 'handoff-agent', name: 'Handoff Agent', role: 'analyst' });
+    const first = createTask({ title: 'first', description: '', input: 'first', mode: 'direct', assigneeId: agent.id });
+    const next = createTask({ title: 'continuation', description: '', input: 'next', mode: 'direct', assigneeId: agent.id });
+    updateTask(next.id, { status: 'queued' });
+    let occupied = false;
+    let release!: () => void;
+    const completed = new Promise<void>(resolve => { release = resolve; });
+    const manager = {
+      hasCapacity: vi.fn(() => !occupied),
+      executeTask: vi.fn(async (_agentId: string, task: { id: string }) => {
+        if (task.id === first.id) {
+          occupied = true;
+          await completed;
+          occupied = false;
+        } else updateTask(task.id, { status: 'done' });
+        return '';
+      }),
+    } as unknown as AgentManager;
+    const queue = new TaskQueue(manager);
+    await (queue as any).tryExecute(first);
+    updateTask(first.id, { status: 'done' });
+    await (queue as any).processNext();
+    expect(getTask(next.id)?.status).toBe('queued');
+    expect(manager.executeTask).toHaveBeenCalledTimes(1);
+    release();
+    await vi.waitFor(() => expect(manager.executeTask).toHaveBeenCalledTimes(2));
+    expect(getTask(next.id)?.status).toBe('done');
   });
 
   it('marks pre-runtime BullMQ failures as failed after the final attempt', async () => {

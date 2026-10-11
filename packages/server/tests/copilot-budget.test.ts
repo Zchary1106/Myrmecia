@@ -29,6 +29,18 @@ const params = {
 };
 
 describe('Copilot execution budgets', () => {
+  it('does not hang forever after successful output when SDK disconnect never settles', async () => {
+    vi.useFakeTimers();
+    const session: CopilotSessionLike = {
+      on: () => () => {}, sendAndWait: async () => ({ data: { content: 'Answer' } }),
+      abort: async () => {}, disconnect: () => new Promise(() => {}),
+    };
+    const provider = new CopilotProvider({}, () => ({ start: async () => {}, stop: async () => [], createSession: async () => session }));
+    const pending = provider.complete({ model: 'fixture', messages: [{ role: 'user', content: 'hello' }] });
+    await vi.advanceTimersByTimeAsync(5001);
+    expect((await pending).usage.session_cleanup_confirmed).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+  });
   it('bounds session startup and disposes a late session without sending the prompt', async () => {
     vi.useFakeTimers();
     let finish!: (session: CopilotSessionLike) => void;

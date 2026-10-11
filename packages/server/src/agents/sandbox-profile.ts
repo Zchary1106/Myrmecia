@@ -4,7 +4,8 @@
  *
  * The in-process tools (`shell_exec`, `web.*`, `crawler.*`) always run inside the
  * server process on the host, regardless of EXECUTOR_MODE (which only governs the
- * agent/python subprocess executor). So the real host-safety lever is here:
+ * generic subprocess executor). Built-in Agents use the TS loop, so the real
+ * host-safety lever is here:
  *
  *   - strict     → production default: no host shell, network tools gated, high-risk
  *                  tools require approval. Suitable when agents are untrusted.
@@ -80,7 +81,7 @@ export function assertLocalShellAllowed(): void {
   if (!profile.allowLocalShell) {
     throw new Error(
       `shell_exec is disabled by the "${profile.name}" sandbox profile (${profile.reason}). ` +
-      'Run agents under EXECUTOR_MODE=docker, or grant a controlled exception with ALLOW_LOCAL_SHELL=true.',
+      'EXECUTOR_MODE=docker does not isolate TS tools. Configure MYRMECIA_EXECUTION_WORLD=docker_isolated with a verified backend, or explicitly grant ALLOW_LOCAL_SHELL=true.',
     );
   }
 }

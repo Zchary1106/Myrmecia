@@ -21,10 +21,13 @@ import { getAgent } from '../db/models/agent.js';
 import { getActiveExecutionCount } from '../db/models/execution.js';
 import type { TaskIntent } from './intent-classifier.js';
 import type { Task } from '../types.js';
+import { getPipeline } from '../db/models/pipeline.js';
+import { getPauseControl } from './pause-control.js';
+import type { TaskPauseControl } from '@myrmecia/shared';
 
 // ---------- Types ----------
 
-export type OrchestrationStatus = 'planning' | 'dispatching' | 'running' | 'done' | 'failed';
+export type OrchestrationStatus = 'planning' | 'dispatching' | 'running' | 'paused' | 'done' | 'failed';
 
 export interface Orchestration {
   id: string;
@@ -32,6 +35,8 @@ export interface Orchestration {
   intent: TaskIntent;
   status: OrchestrationStatus;
   taskIds: string[];
+  pipelineId?: string;
+  pauseControl?: TaskPauseControl;
   result?: string;
   createdAt: string;
   completedAt?: string;
@@ -47,6 +52,9 @@ export type OrchestrationOptions = Pick<Task, 'modelId' | 'reasoningEffort' | 'c
   workspacePath?: string;
   workspaceId?: string;
   domainId?: string;
+  workspaceActorId?: string;
+  filesystemWorkspaceId?: string;
+  workspaceAccessMode?: import('@myrmecia/shared').WorkspaceAccessMode;
 };
 
 // ---------- Schema ----------
@@ -69,12 +77,23 @@ CREATE INDEX IF NOT EXISTS idx_orchestrations_status ON orchestrations(status);
 // ---------- DB Helpers ----------
 
 function rowToOrchestration(row: any): Orchestration {
+  const taskIds: string[] = JSON.parse(row.task_ids);
+  const pipeline = row.pipeline_id ? getPipeline(row.pipeline_id) : undefined;
+  const holds = taskIds.map(id => getPauseControl('task', id)).filter(Boolean) as TaskPauseControl[];
+  const hold = pipeline?.pauseControl || holds[0];
+  const pauseControl = hold ? { ...hold, state: holds.some(item => item.state === 'requested') ? 'requested' as const : hold.state } : undefined;
+  const status = ['done', 'failed'].includes(row.status) ? row.status
+    : pipeline && ['done', 'failed'].includes(pipeline.status) ? pipeline.status
+    : pauseControl || pipeline?.status === 'paused' ? 'paused'
+    : row.status === 'paused' ? 'running' : row.status;
   return {
     id: row.id,
     input: row.input,
     intent: JSON.parse(row.intent),
-    status: row.status,
-    taskIds: JSON.parse(row.task_ids),
+    status,
+    taskIds,
+    pipelineId: row.pipeline_id || undefined,
+    pauseControl,
     result: row.result || undefined,
     createdAt: row.created_at,
     completedAt: row.completed_at || undefined,
@@ -94,6 +113,40 @@ export function listOrchestrations(limit = 50, offset = 0): Orchestration[] {
     limit, offset
   );
   return rows.map(rowToOrchestration);
+}
+
+/** Startup reconciliation only uses explicit ownership, never guesses by title. */
+export function reconcileOrchestrations(): void {
+  for (const row of getDb().all<any>("SELECT * FROM orchestrations WHERE status IN ('running','paused')")) {
+    const orch = rowToOrchestration(row);
+    if (orch.pipelineId) {
+      const pipeline = getPipeline(orch.pipelineId);
+      if (pipeline) {
+        const tasks = listTasks({ pipelineId: pipeline.id, workspaceId: pipeline.workspaceId });
+        const status = ['done', 'failed'].includes(pipeline.status) ? pipeline.status
+          : pipeline.pauseControl || pipeline.status === 'paused' ? 'paused' : 'running';
+        updateOrchestration(orch.id, {
+          taskIds: tasks.map(task => task.id), status: status as OrchestrationStatus,
+          ...(['done', 'failed'].includes(status) ? { completedAt: pipeline.completedAt || new Date().toISOString() } : {}),
+        });
+        continue;
+      }
+    }
+    const tasks = orch.taskIds.map(id => getTask(id)).filter(Boolean) as Task[];
+    if (!tasks.length) {
+      updateOrchestration(orch.id, {
+        status: 'failed', completedAt: new Date().toISOString(),
+        result: 'ORCHESTRATION_OWNER_MISSING: no persisted task or pipeline owner; prior result unknown, manual review required',
+      });
+    } else if (tasks.every(task => ['done', 'failed', 'cancelled'].includes(task.status))) {
+      updateOrchestration(orch.id, {
+        status: tasks.every(task => task.status === 'done') ? 'done' : 'failed',
+        completedAt: new Date().toISOString(),
+      });
+    } else if (tasks.some(task => getPauseControl('task', task.id))) {
+      updateOrchestration(orch.id, { status: 'paused' });
+    } else updateOrchestration(orch.id, { status: 'running' });
+  }
 }
 
 function updateOrchestration(id: string, updates: Partial<Pick<Orchestration, 'status' | 'taskIds' | 'result' | 'completedAt'>>): void {
@@ -123,11 +176,21 @@ export class Orchestrator {
     this.taskQueue = taskQueue;
     this.pipelineEngine = pipelineEngine;
     this.masterAgent = new MasterAgent(taskQueue);
+    reconcileOrchestrations();
 
     // Listen for task completions to advance orchestrations
     eventBus.on('task:done', (event) => this.onTaskDone(event));
     eventBus.on('task:failed', (event) => this.onTaskFailed(event));
     eventBus.on('task:cancelled', (event) => this.onTaskFailed(event));
+    eventBus.on('task:created', (event: any) => {
+      const task = getTask((event.payload || event).taskId);
+      if (!task?.pipelineId) return;
+      const row = getDb().get<any>('SELECT * FROM orchestrations WHERE pipeline_id = ?', task.pipelineId);
+      if (row) updateOrchestration(row.id, { taskIds: listTasks({ pipelineId: task.pipelineId }).map(task => task.id) });
+    });
+    eventBus.on('pipeline:done', () => reconcileOrchestrations());
+    eventBus.on('pipeline:failed', () => reconcileOrchestrations());
+    eventBus.on('task:updated', () => reconcileOrchestrations());
   }
 
   /**
@@ -175,7 +238,11 @@ export class Orchestrator {
       }
 
       const taskIds = tasks.map(t => t.id);
-      updateOrchestration(id, { status: 'running', taskIds });
+      // A task can finish during dispatch; never replace its settled result.
+      if (!['done', 'failed'].includes(getOrchestration(id)!.status)) {
+        updateOrchestration(id, { status: 'running', taskIds });
+      }
+      reconcileOrchestrations();
 
       const orchestration = getOrchestration(id)!;
       return { orchestration, tasks };
@@ -205,6 +272,7 @@ export class Orchestrator {
       priority: 'normal',
       workdir: options.workspacePath,
       workspacePath: options.workspacePath,
+      workspaceActorId: options.workspaceActorId, filesystemWorkspaceId: options.filesystemWorkspaceId, workspaceAccessMode: options.workspaceAccessMode,
       workspaceId: options.workspaceId,
       domainId: options.domainId,
       modelId: options.modelId,
@@ -241,6 +309,9 @@ export class Orchestrator {
       modelId: options.modelId,
       reasoningEffort: options.reasoningEffort,
       contextLength: options.contextLength,
+      orchestrationId,
+      filesystemWorkspaceId: options.filesystemWorkspaceId,
+      workspaceAccessMode: options.workspaceAccessMode, workspaceActorId: options.workspaceActorId,
     });
 
     // Pipeline creates its own tasks internally; get them
@@ -271,6 +342,7 @@ export class Orchestrator {
       priority: intent.complexity === 'epic' ? 'high' : 'normal',
       workdir: options.workspacePath,
       workspacePath: options.workspacePath,
+      workspaceActorId: options.workspaceActorId, filesystemWorkspaceId: options.filesystemWorkspaceId, workspaceAccessMode: options.workspaceAccessMode,
       workspaceId: options.workspaceId,
       domainId: options.domainId,
       modelId: options.modelId,
@@ -390,6 +462,7 @@ export class Orchestrator {
 
   /** Check if orchestration is complete (all tasks done or failed) */
   private checkCompletion(orch: Orchestration): void {
+    if (orch.pipelineId) { reconcileOrchestrations(); return; }
     const tasks = orch.taskIds.map(id => getTask(id)).filter(Boolean) as Task[];
     if (tasks.length === 0) return;
 

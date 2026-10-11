@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'codex/workspace-completion-*']
   pull_request:
 
 permissions:
@@ -78,16 +78,6 @@ jobs:
   redis-recovery:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    services:
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 10
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -98,9 +88,25 @@ jobs:
           node-version: 20
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Start dedicated restart-safe Redis fixture
+        run: |
+          docker run -d --name myrmecia-runtime-v2-redis-acceptance-6388 \
+            --label myrmecia.runtime-v2.fixture=redis \
+            -p 127.0.0.1:6388:6379 \
+            --health-cmd "redis-cli ping" --health-interval 1s --health-retries 30 \
+            redis:7-alpine
+          for attempt in $(seq 1 30); do
+            if [ "$(docker inspect --format '{{.State.Health.Status}}' myrmecia-runtime-v2-redis-acceptance-6388)" = "healthy" ]; then
+              exit 0
+            fi
+            sleep 1
+          done
+          exit 1
       - run: pnpm --filter @myrmecia/server exec vitest run tests/task-queue.redis.test.ts
         env:
-          REDIS_URL: redis://127.0.0.1:6379
+          REDIS_URL: redis://127.0.0.1:6388
+          MYRMECIA_REDIS_RECOVERY_TEST: 'true'
+          MYRMECIA_REDIS_TEST_CONTAINER: myrmecia-runtime-v2-redis-acceptance-6388
 
   e2e:
     runs-on: ubuntu-latest
@@ -120,6 +126,18 @@ jobs:
       - run: pnpm --filter @myrmecia/dashboard test:e2e
         env:
           DB_PATH: ${{ runner.temp }}/myrmecia-e2e.db
+      - name: Workspace lifecycle real-backend browser acceptance
+        run: pnpm --filter @myrmecia/dashboard exec playwright test --config playwright.runtime-v2.config.ts
+        env:
+          RUNTIME_V2_REAL_BACKEND: 'true'
+          MYRMECIA_WORKSPACE_ACCEPTANCE: 'true'
+      - name: Upload workspace acceptance report
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: workspace-browser-report
+          path: artifacts/workspace-lifecycle
+          if-no-files-found: ignore
       - name: Upload Playwright report
         if: always()
         uses: actions/upload-artifact@v6

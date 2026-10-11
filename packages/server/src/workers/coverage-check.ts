@@ -6,6 +6,8 @@ import { createNotification } from '../db/models/notification.js';
 import { listExecutions } from '../db/models/execution.js';
 import { logger } from '../lib/logger.js';
 import type { CoverageCheckConfig } from '../types.js';
+import { ownGitRoot } from '../workspace/path-policy.js';
+import { getWorkspaceBinding } from '../db/models/managed-workspace.js';
 
 const DEFAULT_CONFIG: CoverageCheckConfig = {
   enabled: true,
@@ -35,12 +37,16 @@ export class CoverageChecker {
     const task = getTask(taskId);
     if (!task) return false;
     if (!task.workspacePath) return false;
+    if (getWorkspaceBinding(taskId)?.accessMode === 'shared_readonly') return false;
 
     try {
+      // An import/empty directory must not inspect or test the parent service repo.
+      if (!ownGitRoot(task.workspacePath)) return false;
       const diff = execSync('git diff --name-only HEAD~1', {
         cwd: task.workspacePath,
         encoding: 'utf-8',
         timeout: 10000,
+        stdio: ['pipe', 'pipe', 'pipe'],
       });
       const patterns = this.config.filePatterns;
       const hasCodeChanges = diff.split('\n').some(file =>

@@ -1,7 +1,7 @@
 /**
  * Runtime Adapter — a uniform contract for "the thing that actually runs an
- * agent turn loop". Today there are two built-in adapters (the TypeScript agent
- * loop and the Python runtime); this interface lets new runtimes (Claude Code,
+ * agent turn loop". The built-in adapter uses the TypeScript agent loop;
+ * this interface lets new runtimes (Claude Code,
  * Codex CLI, Gemini CLI, OpenCode, a remote worker, …) be plugged in without
  * touching the orchestration, governance, ledger, or trace plumbing around them.
  *
@@ -16,7 +16,6 @@ import type {
   SkillDefinition,
   SkillVersion,
 } from '../types.js';
-import { isMcpTool } from '../tools/mcp-manager.js';
 import type { ExecutionMiddlewareChain } from './execution-middleware.js';
 import type { AgentStopReason } from '@myrmecia/shared';
 
@@ -48,7 +47,7 @@ export interface RuntimeAdapterResult {
 }
 
 export interface RuntimeAdapter {
-  /** Stable identifier, e.g. 'ts-agent-loop', 'python-runtime', 'claude-code'. */
+  /** Stable identifier, e.g. 'ts-agent-loop' or 'claude-code'. */
   readonly name: string;
   /** Whether this adapter is able to run the given agent. */
   canHandle(agent: AgentDefinition): boolean;
@@ -59,7 +58,6 @@ export interface RuntimeAdapter {
 /** Map the AGENT_EXECUTOR override to a concrete adapter name. */
 function aliasForOverride(value: string): string {
   if (value === 'ts') return 'ts-agent-loop';
-  if (value === 'python') return 'python-runtime';
   return value;
 }
 
@@ -77,29 +75,15 @@ export function selectRuntimeAdapter(
   agent: AgentDefinition,
   adapters: RuntimeAdapter[],
 ): RuntimeAdapter | undefined {
-  const forced = process.env.AGENT_EXECUTOR;
+  const forced = process.env.AGENT_EXECUTOR?.trim();
   if (forced) {
+    if (forced === 'python' || forced === 'python-runtime') {
+      throw new Error('The Python/CrewAI runtime has been removed. Unset AGENT_EXECUTOR or set AGENT_EXECUTOR=ts.');
+    }
     const alias = aliasForOverride(forced);
     const match = adapters.find(adapter => adapter.name === alias);
-    if (match) return match;
+    if (!match) throw new Error(`Unknown AGENT_EXECUTOR "${forced}". Unset it, use "ts", or select a registered runtime adapter.`);
+    return match;
   }
   return adapters.find(adapter => adapter.canHandle(agent));
-}
-
-/** True when an agent declares no tools (the TS loop default). */
-export function agentHasNoTools(agent: AgentDefinition): boolean {
-  const tools = agent.allowedTools || agent.config.allowedTools || [];
-  return tools.length === 0;
-}
-
-/**
- * Copilot tool calls are bridged into the TypeScript loop's existing validated
- * sandbox/audit path. Select that loop before the Python catch-all whenever
- * the server-side provider switch explicitly selects Copilot.
- */
-export function shouldUseTsAgentLoop(agent: AgentDefinition): boolean {
-  const tools = agent.allowedTools || agent.config.allowedTools || [];
-  return agentHasNoTools(agent)
-    || tools.some(isMcpTool)
-    || process.env.MYRMECIA_MODEL_PROVIDER?.trim().toLowerCase() === 'copilot';
 }

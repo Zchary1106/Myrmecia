@@ -2,11 +2,14 @@ import type { AgentDefinition, DomainPack, Task } from '../types.js';
 import { resolveDomainForAgent } from './domain-registry.js';
 import { searchKnowledge } from '../knowledge/rag.js';
 import { logger } from '../lib/logger.js';
+import { getAgentSetupSnapshot } from './agent-setup-snapshot.js';
+import { getDomain } from './domain-registry.js';
+import { validateConfigReferences } from '../db/models/agent-config-version.js';
 
 /**
  * Domain context helpers — turn a Domain Pack into prompt material.
  *
- * Two injection points (shared by the TS loop and the Python runtime):
+ * Two injection points used by the TypeScript loop:
  *  - buildDomainOverlay(): persona + guidelines + terminology + disclaimer,
  *    prepended to the system prompt.
  *  - buildDomainKnowledgeBlock(): top-K retrieved knowledge-base chunks for the
@@ -15,6 +18,16 @@ import { logger } from '../lib/logger.js';
 
 /** Resolve the domain pack that applies to this execution (explicit task.domainId wins). */
 export function resolveDomainForTask(agent: AgentDefinition, task: Task): DomainPack | undefined {
+  const setup = getAgentSetupSnapshot(task.id);
+  if (setup?.completeConfig) {
+    validateConfigReferences(setup.completeConfig, task.workspaceId || 'default');
+    const reference = setup.domainOverride || setup.completeConfig.domain;
+    if (task.domainId && task.domainId !== reference?.id) {
+      throw new Error('CONFIG_DOMAIN_OVERRIDE_INCOMPATIBLE: task domain differs from pinned Agent configuration');
+    }
+    if (setup.domainOverride) validateConfigReferences({ ...setup.completeConfig, domain: setup.domainOverride }, task.workspaceId || 'default');
+    return reference ? getDomain(reference.id, task.workspaceId || 'default') : undefined;
+  }
   try {
     return resolveDomainForAgent(agent.id, task.domainId, task.workspaceId);
   } catch {

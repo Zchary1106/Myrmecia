@@ -1,0 +1,178 @@
+diff --git a/xiaohongshu/search.go b/xiaohongshu/search.go
+index 2da7902..e4a9f85 100644
+--- a/xiaohongshu/search.go
++++ b/xiaohongshu/search.go
+@@ -110,14 +110,18 @@ func (s *SearchAction) Search(ctx context.Context, keyword string, filters ...Fi
+ 		return nil, err
+ 	}
+ 
+-	// 注意 .Context(ctx) 会替换掉 NewSearchAction 里设的 60s deadline，必须在其后重新 Timeout，
+-	// 否则搜索页不 stable 时 MustWaitStable/MustWait 会永久挂起（无 deadline 可依赖）。
+-	page := s.page.Context(ctx).Timeout(60 * time.Second)
++	// Wait for the data actually consumed below, not whole-page network/DOM
++	// stability. Search results can be ready while images/notifications continue
++	// updating indefinitely. Keep this inside the host's 55s read deadline.
++	page := s.page.Context(ctx).Timeout(45 * time.Second)
+ 
+ 	searchURL := makeSearchURL(keyword)
+-	page.MustNavigate(searchURL)
+-	page.MustWaitStable()
+-	page.MustWait(`() => window.__INITIAL_STATE__ !== undefined`)
++	if err := page.Navigate(searchURL); err != nil {
++		return nil, fmt.Errorf("XHS_SEARCH_NAVIGATION_FAILED: %w", err)
++	}
++	if err := waitSearchFeedsReady(page); err != nil {
++		return nil, fmt.Errorf("XHS_SEARCH_DATA_NOT_READY: %w", err)
++	}
+ 	humanize.Delay(ctx, humanize.AfterNavigate)
+ 
+ 	if len(pending) > 0 {
+@@ -163,18 +167,11 @@ func (s *SearchAction) Search(ctx context.Context, keyword string, filters ...Fi
+ 		waitFeedsChanged(page, before, 15*time.Second)
+ 	}
+ 
+-	result := page.MustEval(`() => {
+-		if (window.__INITIAL_STATE__ &&
+-		    window.__INITIAL_STATE__.search &&
+-		    window.__INITIAL_STATE__.search.feeds) {
+-			const feeds = window.__INITIAL_STATE__.search.feeds;
+-			const feedsData = feeds.value !== undefined ? feeds.value : feeds._value;
+-			if (feedsData) {
+-				return JSON.stringify(feedsData);
+-			}
+-		}
+-		return "";
+-	}`).String()
++	value, err := page.Eval(searchFeedsJSON)
++	if err != nil {
++		return nil, fmt.Errorf("XHS_SEARCH_EXTRACTION_FAILED: %w", err)
++	}
++	result := value.Value.Str()
+ 
+ 	if result == "" {
+ 		return nil, errors.ErrNoFeeds
+@@ -188,6 +185,24 @@ func (s *SearchAction) Search(ctx context.Context, keyword string, filters ...Fi
+ 	return onlyNotes(feeds), nil
+ }
+ 
++// Supports both reactive wrappers used by the site, and direct arrays. An
++// initially empty store is not evidence that the asynchronous search finished.
++const searchFeedsReadyJS = `() => {
++	const f = window.__INITIAL_STATE__?.search?.feeds;
++	const v = Array.isArray(f) ? f : f?.value ?? f?._value;
++	return Array.isArray(v) && v.length > 0;
++}`
++
++const searchFeedsJSON = `() => {
++	const f = window.__INITIAL_STATE__?.search?.feeds;
++	const v = Array.isArray(f) ? f : f?.value ?? f?._value;
++	return Array.isArray(v) ? JSON.stringify(v) : "";
++}`
++
++func waitSearchFeedsReady(page *rod.Page) error {
++	return page.Wait(rod.Eval(searchFeedsReadyJS))
++}
++
+ // feedIDsJS 读当前结果集的 id 列表，用来判断数据有没有换一批。
+ const feedIDsJS = `() => {
+ 	const f = window.__INITIAL_STATE__?.search?.feeds;
+diff --git a/xiaohongshu/search_readiness_test.go b/xiaohongshu/search_readiness_test.go
+new file mode 100644
+index 0000000..3165b7e
+--- /dev/null
++++ b/xiaohongshu/search_readiness_test.go
+@@ -0,0 +1,94 @@
++package xiaohongshu
++
++import (
++	"context"
++	"errors"
++	"net/http"
++	"net/http/httptest"
++	"os"
++	"testing"
++	"time"
++
++	"github.com/go-rod/rod"
++	"github.com/go-rod/rod/lib/launcher"
++)
++
++// Local fixtures only. Do not use the application's browser helper: it loads
++// the real account's cookies. An explicit already-installed browser is required.
++func readinessPage(t *testing.T, document string) *rod.Page {
++	t.Helper()
++	binary := os.Getenv("XHS_TEST_BROWSER_BIN")
++	if binary == "" {
++		t.Skip("set XHS_TEST_BROWSER_BIN to an already installed browser for offline readiness tests")
++	}
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
++		w.Header().Set("Content-Type", "text/html")
++		_, _ = w.Write([]byte(document))
++	}))
++	t.Cleanup(server.Close)
++	launch := launcher.New().Bin(binary).Headless(true)
++	url, err := launch.Launch()
++	if err != nil {
++		t.Fatal(err)
++	}
++	t.Cleanup(launch.Cleanup)
++	browser := rod.New().ControlURL(url)
++	if err := browser.Connect(); err != nil {
++		t.Fatal(err)
++	}
++	t.Cleanup(func() { _ = browser.Close() })
++	page := browser.MustPage(server.URL)
++	return page
++}
++
++func TestSearchReadinessDoesNotRequireStableDOM(t *testing.T) {
++	page := readinessPage(t, `<!doctype html><body><div id="counter"></div><script>
++		window.__INITIAL_STATE__ = {search: {feeds: {value: []}}};
++		setInterval(() => document.getElementById("counter").textContent = String(Date.now()), 10);
++		setTimeout(() => window.__INITIAL_STATE__.search.feeds.value = [{id:"fixture", noteCard:{title:"fixture"}}], 150);
++	</script>`)
++	if err := waitSearchFeedsReady(page.Timeout(3 * time.Second)); err != nil {
++		t.Fatal(err)
++	}
++	value, err := page.Eval(searchFeedsJSON)
++	if err != nil || value.Value.Str() == "" {
++		t.Fatalf("ready data must remain extractable: %v", err)
++	}
++}
++
++func TestSearchReadinessSupportsReactiveWrappersAndDirectArray(t *testing.T) {
++	for _, expression := range []string{
++		`{value:[{id:"fixture"}]}`,
++		`{_value:[{id:"fixture"}]}`,
++		`[{id:"fixture"}]`,
++	} {
++		t.Run(expression, func(t *testing.T) {
++			page := readinessPage(t, "<script>window.__INITIAL_STATE__={search:{feeds:"+expression+"}};</script>")
++			if err := waitSearchFeedsReady(page.Timeout(3 * time.Second)); err != nil {
++				t.Fatal(err)
++			}
++		})
++	}
++}
++
++func TestSearchReadinessEmptyOrMissingDataRemainsBounded(t *testing.T) {
++	for _, expression := range []string{`undefined`, `{search:{feeds:{value:[]}}}`} {
++		t.Run(expression, func(t *testing.T) {
++			page := readinessPage(t, "<script>window.__INITIAL_STATE__="+expression+";</script>")
++			err := waitSearchFeedsReady(page.Timeout(200 * time.Millisecond))
++			if !errors.Is(err, context.DeadlineExceeded) {
++				t.Fatalf("missing/empty data must not be mistaken for ready: %v", err)
++			}
++		})
++	}
++}
++
++func TestSearchReadinessHonorsCallerCancellation(t *testing.T) {
++	page := readinessPage(t, "<script>window.__INITIAL_STATE__={search:{feeds:{value:[]}}};</script>")
++	ctx, cancel := context.WithCancel(context.Background())
++	cancel()
++	err := waitSearchFeedsReady(page.Context(ctx).Timeout(3 * time.Second))
++	if !errors.Is(err, context.Canceled) {
++		t.Fatalf("caller cancellation must remain authoritative: %v", err)
++	}
++}

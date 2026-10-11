@@ -8,6 +8,7 @@ import { ServiceConnections } from './ServiceConnections';
 import { compactTaskTitle, homeConversations, type HomeConversation } from './homeActivity';
 import { useConversationStore, workflowConversationLabel } from '../../stores/conversations';
 import { LiquidLens } from '../common/LiquidLens';
+import { WorkspaceManagement } from '../common/WorkspaceManagement';
 import type { ProviderModelOption, Task } from '@myrmecia/shared';
 
 const starterPrompts = [
@@ -101,6 +102,7 @@ export function HomeView() {
   const [modelPreferencesLoaded, setModelPreferencesLoaded] = useState(false);
   const [modelOptionsOpen, setModelOptionsOpen] = useState(false);
   const [providerModels, setProviderModels] = useState<ProviderModelOption[] | null>(null);
+  const [providerModelsLoading, setProviderModelsLoading] = useState(true);
   const [providerName, setProviderName] = useState('');
   const [providerSource, setProviderSource] = useState<'provider' | 'registry'>('registry');
   const taskInputRef = useRef<HTMLTextAreaElement>(null);
@@ -146,7 +148,12 @@ export function HomeView() {
   }));
   const selectedModel = enabledModels.find(model => model.id === modelId);
   const selectedProviderModel = availableModels.find(model => model.id === modelId);
-  const selectedModelLabel = selectedModel?.displayName || selectedProviderModel?.name || 'Auto';
+  const selectedModelLabel = selectedProviderModel?.name || selectedModel?.displayName || modelId;
+  const selectedModelUnavailable = modelId !== 'auto' && providerModels !== null
+    && (!selectedProviderModel || !selectedProviderModel.selectable);
+  const modelSelectionError = selectedModelUnavailable
+    ? `所选模型 ${selectedModelLabel} 当前不可用，请重新选择。不会自动切换到默认模型。`
+    : null;
   const supportedReasoningEfforts = selectedProviderModel?.supportedReasoningEfforts || [];
   const reasoningLabel = reasoningEffort === 'auto'
     ? 'Default'
@@ -177,17 +184,19 @@ export function HomeView() {
 
   useEffect(() => {
     let cancelled = false;
+    setProviderModelsLoading(true);
     api.models.providerSettings().then(settings => {
       if (cancelled) return;
       setProviderModels(settings.models);
       setProviderName(settings.provider);
       setProviderSource(settings.source || 'registry');
-      setModelId(current => current !== 'auto' && settings.models.length > 0 && !settings.models.some(model => model.id === current)
-        ? settings.selectedModelId || 'auto'
-        : current);
+      // Provider refreshes must never replace an explicit composer choice.
+      // An unavailable model stays selected until the user chooses another one.
       void loadModels();
     }).catch(() => {
       if (!cancelled) setProviderModels(null);
+    }).finally(() => {
+      if (!cancelled) setProviderModelsLoading(false);
     });
     return () => { cancelled = true; };
   }, [loadModels]);
@@ -313,7 +322,11 @@ export function HomeView() {
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     const goal = input.trim();
-    if (!goal || launchBusy) return;
+    if (!goal || launchBusy || !modelPreferencesLoaded || providerModelsLoading) return;
+    if (modelSelectionError) {
+      setLaunchError(modelSelectionError);
+      return;
+    }
     setLaunchBusy(true);
     setLaunchMessage(null);
     setLaunchError(null);
@@ -473,9 +486,10 @@ export function HomeView() {
                     </div>
                     <label className="mt-3 block text-[11px] text-app-secondary">
                       Model
-                      <select value={modelId} onChange={event => setModelId(event.target.value)} aria-label="Model choice" className="mt-1 w-full rounded-lg border border-border bg-background px-2.5 py-2 text-xs text-app-primary outline-none transition focus:border-accent">
+                      <select value={modelId} onChange={event => { setModelId(event.target.value); setLaunchError(null); }} aria-label="Model choice" className="mt-1 w-full rounded-lg border border-border bg-background px-2.5 py-2 text-xs text-app-primary outline-none transition focus:border-accent">
                         <option value="auto">Route by task</option>
-                        {availableModels.map(model => <option key={model.id} value={model.id}>{providerModelLabel(model)}</option>)}
+                        {modelId !== 'auto' && !selectedProviderModel && <option value={modelId} disabled>{selectedModelLabel} · Unavailable</option>}
+                        {availableModels.filter(model => model.id !== 'auto').map(model => <option key={model.id} value={model.id} disabled={!model.selectable}>{providerModelLabel(model)}{!model.selectable && ' · Unavailable'}</option>)}
                       </select>
                     </label>
                     <label className="mt-3 block text-[11px] text-app-secondary">
@@ -499,12 +513,12 @@ export function HomeView() {
                 )}
               </div>
             </div>
-            <button type="submit" disabled={!input.trim() || launchBusy} className="home-primary-button app-focus inline-flex w-full items-center justify-center gap-2 rounded-xl px-5 py-3 text-xs font-semibold text-white transition duration-200 hover:-translate-y-0.5 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-40 sm:w-auto">
+            <button type="submit" disabled={!input.trim() || launchBusy || !modelPreferencesLoaded || providerModelsLoading || Boolean(modelSelectionError)} className="home-primary-button app-focus inline-flex w-full items-center justify-center gap-2 rounded-xl px-5 py-3 text-xs font-semibold text-white transition duration-200 hover:-translate-y-0.5 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-40 sm:w-auto">
               {launchBusy ? 'Sending…' : selectedTeam ? `Send to ${selectedTeam.name}` : 'Send to Master Agent'} <ArrowUpRight size={14} />
             </button>
           </div>
           {workspace && <div className="truncate px-2 pt-2 text-[10px] text-app-muted">Working in {workspace.name}</div>}
-          {launchError && <p className="px-2 pt-2 text-[11px] text-red-500">{launchError}</p>}
+          {(modelSelectionError || launchError) && <p role="alert" className="px-2 pt-2 text-[11px] text-red-500">{modelSelectionError || launchError}</p>}
           {workspacePickerOpen && (
             <div className="glass-popup absolute left-0 top-full z-30 mt-2 max-h-[50dvh] w-full overflow-y-auto rounded-xl border border-border bg-surface p-4 text-left shadow-xl sm:w-[460px]" role="dialog" aria-label="Set workspace">
               <div className="flex items-start justify-between gap-3">
@@ -574,6 +588,10 @@ export function HomeView() {
         </section>
       )}
 
+      <details className="mt-8">
+        <summary className="app-focus cursor-pointer text-sm text-app-secondary">目录与存储管理</summary>
+        <div className="mt-3"><WorkspaceManagement /></div>
+      </details>
       <section aria-label="Recent conversations" className="mt-8">
         <PanelHeader title="Recent conversations" action="View all" onClick={() => setActiveView('session')} />
         <div className="divide-y divide-border/60 border-y border-border/60">

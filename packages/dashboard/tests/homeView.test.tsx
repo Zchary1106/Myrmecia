@@ -2,7 +2,7 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Task } from '@myrmecia/shared';
+import type { ModelProviderSettings, Task } from '@myrmecia/shared';
 import { api } from '../src/lib/api';
 import { useStore } from '../src/stores/store';
 import { useConnectionsStore } from '../src/stores/connections';
@@ -19,6 +19,28 @@ const task: Task = {
 };
 let root: Root;
 let container: HTMLDivElement;
+
+const providerSettings: ModelProviderSettings = {
+  provider: 'copilot',
+  selectedModelId: 'claude-haiku-4.5',
+  source: 'provider',
+  models: [
+    { id: 'claude-haiku-4.5', name: 'Claude Haiku 4.5', supportsReasoningEffort: false, selectable: true },
+    { id: 'gpt-5.6-terra', name: 'GPT-5.6 Terra', supportsReasoningEffort: true, selectable: true },
+  ],
+};
+
+async function enterGoal() {
+  const input = container.querySelector<HTMLTextAreaElement>('[aria-label="Describe work for your Agent Team"]')!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(input, 'Test selected model');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+}
+
+async function submitGoal() {
+  await act(async () => container.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+}
 
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -45,6 +67,117 @@ afterEach(async () => {
 });
 
 describe('Home workspace', () => {
+  it('submits the model chosen in the composer instead of the provider default', async () => {
+    vi.mocked(api.models.providerSettings).mockResolvedValue(providerSettings);
+    const dispatch = vi.spyOn(api.supervisor, 'dispatch').mockResolvedValue({
+      tasks: [{ ...task, modelId: 'gpt-5.6-terra' }],
+    } as Awaited<ReturnType<typeof api.supervisor.dispatch>>);
+    await act(async () => root.render(<HomeView />));
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Model settings"]')!.click());
+    const choice = container.querySelector<HTMLSelectElement>('[aria-label="Model choice"]')!;
+    await act(async () => {
+      choice.value = 'gpt-5.6-terra';
+      choice.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    expect(container.querySelector('[aria-label="Model settings"]')?.textContent).toContain('GPT-5.6 Terra');
+    await enterGoal();
+    await submitGoal();
+    expect(dispatch).toHaveBeenCalledWith('Test selected model', expect.objectContaining({ modelId: 'gpt-5.6-terra' }));
+    expect(useStore.getState().selectedTaskId).toBe(task.id);
+  });
+
+  it('preserves an unavailable saved model and blocks sending instead of replacing it with Haiku', async () => {
+    window.localStorage.setItem('myrmecia.model-preferences', JSON.stringify({ modelId: 'gpt-5.6-sol' }));
+    vi.mocked(api.models.providerSettings).mockResolvedValue(providerSettings);
+    const dispatch = vi.spyOn(api.supervisor, 'dispatch');
+    await act(async () => root.render(<HomeView />));
+    expect(JSON.parse(window.localStorage.getItem('myrmecia.model-preferences')!).modelId).toBe('gpt-5.6-sol');
+    expect(container.querySelector('[aria-label="Model settings"]')?.textContent).toContain('gpt-5.6-sol');
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('不会自动切换');
+    await enterGoal();
+    expect(container.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled).toBe(true);
+    await submitGoal();
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it('does not send with a saved model that the provider has disabled', async () => {
+    window.localStorage.setItem('myrmecia.model-preferences', JSON.stringify({ modelId: 'gpt-5.6-terra' }));
+    vi.mocked(api.models.providerSettings).mockResolvedValue({
+      ...providerSettings,
+      models: providerSettings.models.map(model => ({ ...model, selectable: model.id !== 'gpt-5.6-terra' })),
+    });
+    const dispatch = vi.spyOn(api.supervisor, 'dispatch');
+    await act(async () => root.render(<HomeView />));
+    await enterGoal();
+    await submitGoal();
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('GPT-5.6 Terra');
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Model settings"]')!.click());
+    expect(container.querySelector<HTMLOptionElement>('option[value="gpt-5.6-terra"]')?.disabled).toBe(true);
+  });
+
+  it('lets the user explicitly replace an unavailable model before sending', async () => {
+    window.localStorage.setItem('myrmecia.model-preferences', JSON.stringify({ modelId: 'gpt-5.6-sol' }));
+    vi.mocked(api.models.providerSettings).mockResolvedValue(providerSettings);
+    const dispatch = vi.spyOn(api.supervisor, 'dispatch').mockResolvedValue({
+      tasks: [{ ...task, modelId: 'gpt-5.6-terra' }],
+    } as Awaited<ReturnType<typeof api.supervisor.dispatch>>);
+    await act(async () => root.render(<HomeView />));
+    await enterGoal();
+    await submitGoal();
+    expect(dispatch).not.toHaveBeenCalled();
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Model settings"]')!.click());
+    const choice = container.querySelector<HTMLSelectElement>('[aria-label="Model choice"]')!;
+    expect(choice.value).toBe('gpt-5.6-sol');
+    await act(async () => {
+      choice.value = 'gpt-5.6-terra';
+      choice.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(container.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled).toBe(false);
+    await submitGoal();
+    expect(dispatch).toHaveBeenCalledWith('Test selected model', expect.objectContaining({ modelId: 'gpt-5.6-terra' }));
+  });
+
+  it('waits for model availability before accepting a submission', async () => {
+    window.localStorage.setItem('myrmecia.model-preferences', JSON.stringify({ modelId: 'gpt-5.6-terra' }));
+    let resolveSettings!: (value: ModelProviderSettings) => void;
+    vi.mocked(api.models.providerSettings).mockReturnValue(new Promise(resolve => { resolveSettings = resolve; }));
+    const dispatch = vi.spyOn(api.supervisor, 'dispatch').mockResolvedValue({
+      tasks: [{ ...task, modelId: 'gpt-5.6-terra' }],
+    } as Awaited<ReturnType<typeof api.supervisor.dispatch>>);
+    await act(async () => root.render(<HomeView />));
+    await enterGoal();
+    expect(container.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled).toBe(true);
+    await submitGoal();
+    expect(dispatch).not.toHaveBeenCalled();
+    await act(async () => resolveSettings(providerSettings));
+    await submitGoal();
+    expect(dispatch).toHaveBeenCalledWith('Test selected model', expect.objectContaining({ modelId: 'gpt-5.6-terra' }));
+  });
+
+  it('passes the same composer model when dispatching to a selected team', async () => {
+    window.localStorage.setItem('myrmecia.model-preferences', JSON.stringify({ modelId: 'gpt-5.6-terra' }));
+    vi.mocked(api.models.providerSettings).mockResolvedValue(providerSettings);
+    vi.mocked(api.teams.list).mockResolvedValue([{
+      id: 'team-alpha', name: 'Alpha Team', emoji: '', lead: 'dev', members: ['dev'], triggers: [], blurb: '',
+    }]);
+    const dispatch = vi.spyOn(api.teams, 'dispatch').mockResolvedValue({
+      run: { parentTaskId: task.id },
+    } as Awaited<ReturnType<typeof api.teams.dispatch>>);
+    vi.spyOn(api.tasks, 'get').mockResolvedValue({ ...task, modelId: 'gpt-5.6-terra' });
+    const supervisor = vi.spyOn(api.supervisor, 'dispatch');
+    await act(async () => root.render(<HomeView />));
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-controls="team-picker"]')!.click());
+    await act(async () => [...container.querySelectorAll<HTMLButtonElement>('#team-picker button')]
+      .find(button => button.textContent?.includes('Alpha Team'))!.click());
+    await enterGoal();
+    await submitGoal();
+    expect(dispatch).toHaveBeenCalledWith('team-alpha', 'Test selected model', undefined,
+      expect.objectContaining({ modelId: 'gpt-5.6-terra' }));
+    expect(supervisor).not.toHaveBeenCalled();
+  });
+
   it.each([
     { hour: 9, greeting: 'Good morning' },
     { hour: 15, greeting: 'Good afternoon' },

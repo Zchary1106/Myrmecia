@@ -1,4 +1,6 @@
 import { Router } from 'express';
+import { reconcileOrchestrations } from '../agents/orchestrator.js';
+import { HttpError, requireOperatorRole, sendError } from './http.js';
 import { existsSync, statSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
 import { z } from 'zod';
@@ -19,11 +21,14 @@ import { getDb } from '../db/database.js';
 import { listTasks, getTask } from '../db/models/task.js';
 import { requestCanAccessWorkspace, workspaceIdFromRequest } from '../auth/tenant.js';
 import { getModel } from '../models/model-registry.js';
+import type { Task } from '../types.js';
 
 const dispatchSchema = z.object({
   input: z.string().trim().min(1),
   workspacePath: z.string().trim().min(1).max(16_384).optional(),
   workspaceMode: z.boolean().optional(),
+  filesystemWorkspaceId: z.string().max(100).optional(),
+  workspaceAccessMode: z.enum(['isolated', 'shared_readonly', 'shared_write']).optional(),
   modelId: z.string().trim().min(1).max(200).optional(),
   reasoningEffort: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).optional(),
   contextLength: z.number().int().min(8_000).max(10_000_000).optional(),
@@ -51,6 +56,7 @@ export function createSupervisorRoutes(taskQueue: TaskQueue, pipelineEngine: Pip
   router.post('/dispatch', async (req, res) => {
     try {
       const body = dispatchSchema.parse(req.body);
+      const workspaceActor = requireOperatorRole(req, 'task.dispatch', ['admin', 'operator']);
       const input = body.input;
       const workspacePath = validateWorkspacePath(body.workspacePath);
       const modelId = body.modelId === 'auto' ? undefined : body.modelId;
@@ -82,6 +88,7 @@ export function createSupervisorRoutes(taskQueue: TaskQueue, pipelineEngine: Pip
       // 3. Orchestrate (unified entry — handles trivial, pipeline, and complex)
       const result = await orchestrator.plan(input, intent, {
         workspacePath,
+        filesystemWorkspaceId: body.filesystemWorkspaceId, workspaceAccessMode: body.workspaceAccessMode, workspaceActorId: workspaceActor.id,
         workspaceId: workspaceIdFromRequest(req),
         modelId,
         reasoningEffort: body.reasoningEffort,
@@ -248,6 +255,40 @@ export function createSupervisorRoutes(taskQueue: TaskQueue, pipelineEngine: Pip
     const tasks = orch.taskIds.map(id => getTask(id)).filter(Boolean);
     res.json({ ...orch, tasks });
   });
+
+  for (const action of ['pause', 'resume'] as const) {
+    router.post(`/orchestrations/:id/${action}`, async (req, res) => {
+      try {
+        requireOperatorRole(req, `orchestration.${action}`, ['admin', 'operator']);
+        const orch = getOrchestration(req.params.id);
+        if (!orch) return res.status(404).json({ error: { message: 'Orchestration not found' } });
+        const pipeline = orch.pipelineId ? getDb().get<any>('SELECT workspace_id FROM pipelines WHERE id = ?', orch.pipelineId) : undefined;
+        const family = orch.taskIds.map(id => getTask(id)).filter(Boolean) as Task[];
+        if (pipeline && !requestCanAccessWorkspace(req, pipeline.workspace_id || 'default')
+          || family.some(task => !requestCanAccessWorkspace(req, task.workspaceId || 'default'))) {
+          return res.status(403).json({ error: { message: 'Workspace access denied' } });
+        }
+        if (orch.pipelineId) {
+          if (action === 'pause') await pipelineEngine.pause(orch.pipelineId);
+          else await pipelineEngine.resume(orch.pipelineId);
+        } else {
+          if (!family.length) return res.status(409).json({ error: { message: 'No recoverable plan owner; review the orphan record' } });
+          const fullFamily = family.flatMap(task => taskQueue.taskFamily(task.id));
+          if (action === 'pause') taskQueue.assertPauseSupported(fullFamily);
+          else taskQueue.assertResumeSupported(fullFamily);
+          for (const task of family) {
+            if (action === 'pause') await taskQueue.pauseTask(task.id);
+            else if (getTask(task.id)?.pauseControl) await taskQueue.resumeTask(task.id);
+          }
+        }
+        reconcileOrchestrations();
+        res.json(getOrchestration(orch.id));
+      } catch (error) {
+        if (error instanceof HttpError) return sendError(res, error);
+        res.status(409).json({ error: { message: error instanceof Error ? error.message : 'Plan control failed' } });
+      }
+    });
+  }
 
   /** GET /api/orchestrations/:id/messages — agent messages for this orchestration */
   router.get('/orchestrations/:id/messages', (req, res) => {

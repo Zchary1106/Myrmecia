@@ -1,10 +1,12 @@
 import { getDb } from '../database.js';
+import { getPauseControl } from '../../agents/pause-control.js';
 import { v4 as uuid } from 'uuid';
 import type { Pipeline, PipelineStage, PipelineStatus, PipelineTemplate, ReasoningEffort } from '../../types.js';
 
 function rowToPipeline(row: any): Pipeline {
   return {
     ...row,
+    pauseControl: getPauseControl('pipeline', row.id),
     stages: JSON.parse(row.stages),
     currentStageIndex: row.current_stage_index,
     gateMode: row.gate_mode,

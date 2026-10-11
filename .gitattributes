@@ -1,0 +1,3 @@
+# Unified patches intentionally prefix context lines with a space; preserve
+# their embedded source indentation and empty context lines.
+*.patch whitespace=-blank-at-eol,-space-before-tab

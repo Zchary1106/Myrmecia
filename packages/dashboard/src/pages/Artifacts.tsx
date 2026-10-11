@@ -129,6 +129,7 @@ export function ArtifactsPage() {
                 <span className="block truncate text-sm font-medium">{artifact.name}</span>
                 <span className="mt-1 block truncate text-[10px] text-gray-600">{artifact.relativePath}</span>
                 <span className="mt-1 block text-[9px] uppercase tracking-wide text-gray-700">{artifact.kind} · {formatBytes(artifact.sizeBytes)}</span>
+                <span className="mt-1 block text-[10px] text-app-muted">{artifact.metadata?.immutable ? '不可变快照' : '旧版可变引用'} · {String(artifact.metadata?.captureState || 'legacy_live')} · {artifact.executionId}</span>
               </span>
             </button>
           ))}

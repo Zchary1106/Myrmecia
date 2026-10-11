@@ -8,6 +8,18 @@ import { resolveAllowedToolsForAgent } from '../src/tools/tool-policy.js';
 import { setToolPermission, syncBuiltinTools } from '../src/tools/tool-registry.js';
 
 describe('tool policy hardening', () => {
+  it('intersects a configured contract with declared tools rather than granting more tools', () => {
+    const agent = createAgent({ name: 'Contract', role: 'dev', allowedTools: ['file_read', 'file_write'], config: {
+      contract: { schemaVersion: '1.0', agentId: 'contract', role: 'dev',
+        responsibility: { summary: 'Read', owns: ['reading'], doesNotOwn: ['writing'] },
+        inputs: [], outputs: [{ name: 'Answer', kind: 'markdown', required: true }], skills: [],
+        tools: ['file_read', 'shell_exec'], quality: { definitionOfDone: ['Explain findings'] } },
+    } });
+    const policy = resolveAllowedToolsForAgent(agent);
+    expect(policy.allowedTools).toEqual(['file_read']);
+    expect(policy.decisions.find(item => item.toolId === 'file_write')?.allowed).toBe(false);
+    expect(policy.allowedTools).not.toContain('shell_exec');
+  });
   beforeEach(() => {
     closeDb();
     process.env.DB_PATH = join(mkdtempSync(join(tmpdir(), 'agent-factory-tools-')), 'test.db');

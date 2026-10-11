@@ -142,7 +142,7 @@ test('task session renders structured review output as a readable result', async
   await expect(page.getByText(/"approved":false/)).toHaveCount(0);
 });
 
-test('task session sends a follow-up to the live Agent mailbox', async ({ page }) => {
+test('legacy mailbox follow-up rendering preserves the user turn without claiming a model receipt', async ({ page }) => {
   const task = {
     id: 'e2e-running-task',
     title: 'Implement profile upload',
@@ -195,7 +195,9 @@ test('task session sends a follow-up to the live Agent mailbox', async ({ page }
   await page.getByRole('button', { name: 'Send follow-up', exact: true }).click();
 
   await expect(page.getByRole('article', { name: 'Your message' }).filter({ hasText: 'Please validate image MIME types too.' })).toBeVisible();
-  await expect(page.getByText(/Sent to .* on its next turn\./)).toBeVisible();
+  await expect.poll(() => followUpSent).toBe(true);
+  await expect(page.getByRole('textbox', { name: 'Follow-up instruction' })).toHaveValue('');
+  await expect(page.locator('#follow-up-recipient-hint')).toContainText('发给');
 });
 
 test('task sessions can be searched without changing the active conversation', async ({ page }) => {

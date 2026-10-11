@@ -54,4 +54,20 @@ describe('read-only stable-turn recovery', () => {
     expect(loopFingerprint(base)).toBe(loopFingerprint({ ...base, tools: ['a', 'b'] }));
     expect(loopFingerprint(base)).not.toBe(loopFingerprint({ ...base, modelId: 'other' }));
   });
+  it('rebuilds V2 recovery from canonical history rather than a mutated checkpoint message buffer', () => {
+    process.env.MYRMECIA_RUNTIME_V2 = 'true';
+    try {
+      const { task, old, current } = fixture();
+      saveLoopCheckpoint(task, old.id, 'fingerprint', { ...snapshot, boundary: 'stable' });
+      const row = getDb().get<any>('SELECT snapshot FROM agent_loop_checkpoints WHERE execution_id = ?', old.id);
+      const changed = JSON.parse(row.snapshot);
+      changed.messages = [{ role: 'user', content: 'tampered compatibility buffer' }];
+      getDb().run('UPDATE agent_loop_checkpoints SET snapshot = ? WHERE execution_id = ?', JSON.stringify(changed), old.id);
+      const restored = readLoopCheckpoint(task, 'fingerprint', current.id)!;
+      expect(restored.snapshot.messages).toEqual(snapshot.messages);
+      changed.journalCheckpointId = 'nonexistent';
+      getDb().run('UPDATE agent_loop_checkpoints SET snapshot = ? WHERE execution_id = ?', JSON.stringify(changed), old.id);
+      expect(readLoopCheckpoint(task, 'fingerprint', current.id)).toBeUndefined();
+    } finally { delete process.env.MYRMECIA_RUNTIME_V2; }
+  });
 });

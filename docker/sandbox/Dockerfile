@@ -1,14 +1,11 @@
 # Agent Factory Sandbox Image
-# Minimal Python environment for agent execution with security hardening
+# Generic Node subprocess environment with security hardening.
+# Built-in Agents run in the server's TypeScript loop, not this container.
 
-FROM python:3.12-slim
+FROM node:20-slim
 
 # Security: run as non-root user
 RUN groupadd -r agent && useradd -r -g agent -d /workspace -s /bin/bash agent
-
-# Install minimal dependencies for the Agent Factory Python runtime
-RUN pip install --no-cache-dir crewai anthropic openai && \
-    rm -rf /root/.cache
 
 # Security: remove package managers to prevent escape
 RUN apt-get purge -y --auto-remove && \
@@ -24,4 +21,4 @@ USER agent
 HEALTHCHECK --interval=30s --timeout=3s CMD echo ok
 
 ENTRYPOINT []
-CMD ["python3"]
+CMD ["node"]

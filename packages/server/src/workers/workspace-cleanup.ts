@@ -36,11 +36,11 @@ export const workspaceCleanupWorker: BackgroundWorker = {
       protectedWorkspaceKeys: activeWorkspaceKeys(),
     });
     if (result.errors.length > 0) {
-      ctx.logger.warn({ errors: result.errors }, 'Some expired workspaces could not be removed');
+      ctx.logger.warn({ errors: result.errors }, 'Workspace candidate assessment failed');
     }
     return {
       success: result.errors.length === 0,
-      message: `Removed ${result.removed} expired workspaces; retained ${result.retained}; protected ${result.protected}`,
+      message: `Marked ${result.candidates} cleanup candidates (no files deleted); retained ${result.retained}; protected ${result.protected}`,
       data: result,
     };
   },

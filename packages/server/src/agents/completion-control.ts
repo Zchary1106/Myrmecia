@@ -1,13 +1,7 @@
 /** A narrow completion protocol, not a guess based on question marks/prose. */
+import { parseAgentInputRequest } from '@myrmecia/shared';
 export function requestedAgentInput(output: string): string | undefined {
-  try {
-    const value = JSON.parse(output.trim());
-    if (!value || value.kind !== 'myrmecia.request_input'
-      || typeof value.question !== 'string' || !value.question.trim()
-      || value.question.length > 8000
-      || Object.keys(value).some(key => !['kind', 'question'].includes(key))) return undefined;
-    return value.question.trim();
-  } catch { return undefined; }
+  return parseAgentInputRequest(output);
 }
 
 export function withInputRequestProtocol(prompt: string, task?: { mode?: string; pipelineId?: string }): string {

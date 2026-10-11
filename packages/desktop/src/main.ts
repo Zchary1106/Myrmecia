@@ -101,7 +101,6 @@ interface ResourceLayout {
   dashboardDir: string;
   agentsDir: string;
   templatesDir: string;
-  pythonRuntimeDir: string;
   splashPath: string;
   iconPath: string;
   preloadPath: string;
@@ -154,7 +153,6 @@ function getResourceLayout(): ResourceLayout {
       dashboardDir: join(resources, 'dashboard'),
       agentsDir: join(resources, 'agents'),
       templatesDir: join(resources, 'templates'),
-      pythonRuntimeDir: join(resources, 'python-runtime'),
       splashPath: join(resources, 'desktop', 'splash.html'),
       iconPath: join(app.getAppPath(), 'dist', 'icon.png'),
       preloadPath: join(app.getAppPath(), 'dist', 'preload.cjs'),
@@ -170,7 +168,6 @@ function getResourceLayout(): ResourceLayout {
     dashboardDir: join(repositoryRoot, 'packages', 'dashboard', 'dist'),
     agentsDir: join(repositoryRoot, 'agents'),
     templatesDir: join(repositoryRoot, 'templates'),
-    pythonRuntimeDir: join(repositoryRoot, 'packages', 'python-runtime'),
     splashPath: join(desktopRoot, 'src', 'splash', 'splash.html'),
     iconPath: join(desktopRoot, 'dist', 'icon.png'),
     preloadPath: join(desktopRoot, 'dist', 'preload.cjs'),
@@ -700,21 +697,6 @@ function commonNodeExecutablePaths(): string[] {
   ].filter((path): path is string => Boolean(path));
 }
 
-function commonPythonExecutablePaths(): string[] {
-  if (process.platform === 'win32') {
-    return [
-      process.env.LOCALAPPDATA && join(process.env.LOCALAPPDATA, 'Programs', 'Python', 'Python313', 'python.exe'),
-      process.env.LOCALAPPDATA && join(process.env.LOCALAPPDATA, 'Programs', 'Python', 'Python312', 'python.exe'),
-      process.env.LOCALAPPDATA && join(process.env.LOCALAPPDATA, 'Programs', 'Python', 'Python311', 'python.exe'),
-      process.env.ProgramFiles && join(process.env.ProgramFiles, 'Python313', 'python.exe'),
-      process.env.ProgramFiles && join(process.env.ProgramFiles, 'Python312', 'python.exe'),
-      process.env.ProgramFiles && join(process.env.ProgramFiles, 'Python311', 'python.exe'),
-    ].filter((path): path is string => Boolean(path));
-  }
-
-  return ['/opt/homebrew/bin/python3', '/usr/local/bin/python3', '/usr/bin/python3'];
-}
-
 function resolveExecutable(command: string, fallbacks: string[]): string | undefined {
   return executableOnPath(command) ?? fallbacks.find(existsSync);
 }
@@ -847,37 +829,6 @@ function resolveNodeExecutable(): NodeRuntime {
   const runtime = inspectNodeRuntime(executable);
   assertCompatibleNodeRuntime(runtime);
   return runtime;
-}
-
-interface PythonInvocation {
-  command: string;
-  argsPrefix: string[];
-}
-
-function resolvePythonInvocation(): PythonInvocation | undefined {
-  const configured = process.env.MYRMECIA_PYTHON_PATH?.trim();
-  if (configured) return { command: configured, argsPrefix: [] };
-
-  const candidates: PythonInvocation[] = process.platform === 'win32'
-    ? [
-      { command: 'py', argsPrefix: ['-3'] },
-      { command: 'python', argsPrefix: [] },
-      { command: 'python3', argsPrefix: [] },
-    ]
-    : [{ command: 'python3', argsPrefix: [] }];
-
-  for (const candidate of candidates) {
-    const executable = resolveExecutable(candidate.command, commonPythonExecutablePaths());
-    if (!executable) continue;
-    const result = spawnSync(executable, [...candidate.argsPrefix, '--version'], {
-      encoding: 'utf8',
-      windowsHide: true,
-    });
-    if (result.status === 0) {
-      return { ...candidate, command: executable };
-    }
-  }
-  return undefined;
 }
 
 async function isPortAvailable(port: number): Promise<boolean> {
@@ -1035,7 +986,6 @@ async function startServer(): Promise<void> {
         SERVE_DASHBOARD_DIR: layout.dashboardDir,
         MYRMECIA_RESOURCE_ROOT: layout.resourceRoot,
         MYRMECIA_WORKSPACE_ROOT: serverWorkingDirectory,
-        MYRMECIA_PYTHON_RUNTIME_DIR: layout.pythonRuntimeDir,
         MYRMECIA_DESKTOP_HEALTH_TOKEN: healthToken,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -1155,29 +1105,6 @@ async function runDoctor(): Promise<DoctorCheck[]> {
     checks.push({ name: 'Node.js', status: 'fail', detail: error instanceof Error ? error.message : '未找到 Node.js。' });
   }
 
-  const python = resolvePythonInvocation();
-  if (!python) {
-    checks.push({ name: 'python3', status: 'warn', detail: '未找到（可选；仅 Python agent runtime 需要）。' });
-    checks.push({ name: 'Python 包', status: 'warn', detail: '未检查：python3 不可用。' });
-    return checks;
-  }
-
-  const pythonVersion = await runCommand(python.command, [...python.argsPrefix, '--version']);
-  checks.push({
-    name: 'python3',
-    status: pythonVersion.ok ? 'pass' : 'warn',
-    detail: pythonVersion.ok ? pythonVersion.output : '无法运行（可选）。',
-  });
-  const packages = await runCommand(python.command, [
-    ...python.argsPrefix,
-    '-c',
-    'import crewai, litellm, yaml; print("crewai, litellm, yaml: ready")',
-  ]);
-  checks.push({
-    name: 'Python 包',
-    status: packages.ok ? 'pass' : 'warn',
-    detail: packages.ok ? packages.output : '缺少 crewai、litellm 或 PyYAML（不影响仪表板启动）。',
-  });
   return checks;
 }
 

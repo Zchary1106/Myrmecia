@@ -192,8 +192,10 @@ ${isExecutionTimeout(error)
 
 export function isNonRetryableExecutionError(error: string): boolean {
   return [
+    /BUDGET_(?:EXHAUSTED|UNCERTAIN|RUNTIME_UNSUPPORTED|POLICY_INVALID|DISPATCH_REPLAY_BLOCKED|RESERVATION_RELEASED)/i,
     /AGENT_(?:MAX_TURNS|MODEL_TRUNCATED|MODEL_BLOCKED|EMPTY_OUTPUT|STOPPED)/i,
-    /TOOL_REPLAY_BLOCKED|RECOVERY_REQUIRES_REVIEW/i,
+    /TOOL_REPLAY_BLOCKED|RECOVERY_REQUIRES_REVIEW|PAUSE_CHECKPOINT_INCOMPATIBLE|PAUSE_RECONCILIATION_REQUIRED/i,
+    /WORKSPACE_(?:ARCHIVED|FENCE_LOST|ROOT_CHANGED|BINDING_|PREPARATION_|PAUSE_BASELINE_CHANGED|PATH_NEEDS_RECONCILIATION|READONLY_RUNTIME_UNSUPPORTED|OPERATION_NEEDS_RECONCILIATION)|ARTIFACT_CAPTURE_FAILED/i,
     /(?:exceeded.*(?:monthly|quota)|insufficient_quota|quota.*(?:exceeded|exhausted)|billing.*(?:limit|disabled)|payment required)/i,
     /(?:invalid api key|incorrect api key|unauthorized|forbidden|permission denied)/i,
     /exceeded token budget/i,

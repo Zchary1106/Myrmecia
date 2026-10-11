@@ -1,5 +1,23 @@
 import type {
+  ManagedWorkspace, WorkspaceOperationPreview, ExecutionWorkspaceBinding, WorkspaceAccessMode,
+  AgentBudgetLimits, AgentBudgetState, BudgetUsageSummary, TaskControlCapabilities,
   AgentSummary,
+  AgentSetupPreflight,
+  AgentSetupDraft,
+  AgentSetupForm,
+  AgentConfigHistory,
+  AgentConfigVersion,
+  AgentConfigRunAttribution,
+  AgentEvaluationSuite,
+  AgentEvaluationSuiteInput,
+  AgentEvaluationRun,
+  AgentKnowledgeCatalog,
+  AgentKnowledgeSource,
+  KnowledgeCitationManifest,
+  ResolvedKnowledgeCitation,
+  AgentInboxEntry,
+  AgentInboxMode,
+  SessionConversationItem,
   ExecutionMessage,
   HealthSummary,
   InboxEntry,
@@ -60,6 +78,9 @@ import type {
 import { getApiAuthToken } from './auth';
 
 const BASE = '/api/v1';
+export class ApiError extends Error {
+  constructor(message: string, public status: number, public code?: string) { super(message); }
+}
 
 async function request<T>(path: string, opts?: RequestInit): Promise<T> {
   const token = getApiAuthToken();
@@ -68,16 +89,16 @@ async function request<T>(path: string, opts?: RequestInit): Promise<T> {
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       const res = await fetch(`${BASE}${path}`, {
+        ...opts,
         headers: {
           'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
           ...opts?.headers,
         },
-        ...opts,
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: { message: res.statusText } }));
-        throw new Error(err.error?.message || res.statusText);
+        throw new ApiError(err.error?.message || res.statusText, res.status, err.error?.code);
       }
       if (res.status === 204) return undefined as T;
       return await res.json();
@@ -126,7 +147,22 @@ export interface SessionDocument {
   createdAt: string;
 }
 
+export interface WorkspaceChangePreview {
+  sourceId: string; targetId: string; sourcePath: string; targetPath: string; targetHead: string; targetBranch: string;
+  files: string[]; patch: string; diffHash: string; blockers: string[]; reconciliation: string;
+  changes?: Array<{ path: string; operation: 'add' | 'modify' | 'delete' }>;
+}
+export interface DirtySourcePreview {
+  sourceId: string; head: string; selectedFiles: string[]; previewId: string; manifestHash: string; expiresAt: string;
+  excluded: string[]; files: Array<{ path: string; sizeBytes: number; sha256: string }>;
+}
+export interface WorkspaceLeaseRecoveryPreview {
+  workspaceId: string; filesystemWorkspaceId: string; previewId: string; manifestHash: string; expiresAt: string; revision: number; blockers: string[];
+  claims: Array<{ id: string; taskId: string; mode: string; fence: number; owner: string; state: string }>;
+}
 export const api = {
+  controlOrchestration: (id: string, action: 'pause' | 'resume') =>
+    request(`/supervisor/orchestrations/${encodeURIComponent(id)}/${action}`, { method: 'POST' }),
   /** Generic GET for any path (relative to /api/v1 if starts with /, or absolute) */
   get: <T = any>(path: string) => request<T>(path.startsWith('/api/') ? path.replace('/api/v1', '') : path),
   conversations: {
@@ -137,6 +173,11 @@ export const api = {
       ),
   },
   tasks: {
+    controls: (id: string) => request<TaskControlCapabilities>(`/tasks/${id}/controls`),
+    debugHistory: (id: string) => request<string[]>(`/tasks/${id}/debug-history`),
+    budget: (id: string) => request<BudgetUsageSummary[]>(`/tasks/${id}/budget`),
+    rerun: (id: string, idempotencyKey: string) => request<Task>(`/tasks/${id}/rerun`,
+      { method: 'POST', body: JSON.stringify({ confirm: true, idempotencyKey }) }),
     documents: (id: string) => request<SessionDocument[]>(`/tasks/${id}/documents`),
     document: (taskId: string, id: string) =>
       request<{ id: string; name: string; passages: { locator: string; text: string }[] }>(`/tasks/${taskId}/documents/${id}`),
@@ -159,14 +200,15 @@ export const api = {
     list: (params?: Record<string, string>) =>
       request<Task[]>(`/tasks${params ? '?' + new URLSearchParams(params) : ''}`),
     get: (id: string) => request<Task>(`/tasks/${id}`),
-    create: (data: Partial<Task> & { title: string; mode: Task['mode']; input?: string }) =>
+    create: (data: Partial<Task> & { title: string; mode: Task['mode']; input?: string; filesystemWorkspaceId?: string; workspaceAccessMode?: WorkspaceAccessMode }) =>
       request<Task>('/tasks', { method: 'POST', body: JSON.stringify(data) }),
     update: (id: string, data: Partial<Task>) => request<Task>(`/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
     cancel: (id: string, confirmed = false) =>
       request<Task>(`/tasks/${id}/cancel`, { method: 'POST', body: JSON.stringify({ confirm: confirmed }) }),
     retry: (id: string) => request<Task>(`/tasks/${id}/retry`, { method: 'POST' }),
-    continue: (id: string, content: string) =>
-      request<Task>(`/tasks/${id}/continue`, { method: 'POST', body: JSON.stringify({ content }) }),
+    pause: (id: string) => request<Task>(`/tasks/${id}/pause`, { method: 'POST' }),
+    continue: (id: string, content: string, idempotencyKey?: string) =>
+      request<Task>(`/tasks/${id}/continue`, { method: 'POST', body: JSON.stringify({ content, idempotencyKey }) }),
     delete: (id: string, confirmed = false) =>
       request<{ success: boolean }>(`/tasks/${id}`, { method: 'DELETE', body: JSON.stringify({ confirm: confirmed }) }),
     logs: (id: string) => request<LogEntry[]>(`/tasks/${id}/logs`),
@@ -189,11 +231,106 @@ export const api = {
       body: JSON.stringify({ url, branch }),
     }),
   },
+  managedWorkspaces: {
+    maintenancePreview: (id: string, action: 'adopt_source' | 'delete_branch') => request<{
+      filesystemWorkspaceId: string; action: 'adopt_source' | 'delete_branch'; previewId: string; manifestHash: string;
+      targetPath: string; branch: string; blockers: string[]; expiresAt: string;
+    }>(`/managed-workspaces/${encodeURIComponent(id)}/maintenance/preview`, { method: 'POST', body: JSON.stringify({ action }) }),
+    maintenance: (id: string, preview: { action: 'adopt_source' | 'delete_branch'; previewId: string; manifestHash: string }) =>
+      request<{ completed: boolean }>(`/managed-workspaces/${encodeURIComponent(id)}/maintenance`,
+        { method: 'POST', body: JSON.stringify({ action: preview.action, previewId: preview.previewId, manifestHash: preview.manifestHash, confirm: true }) }),
+    previewLeaseRecovery: (id: string) => request<WorkspaceLeaseRecoveryPreview>(`/managed-workspaces/${encodeURIComponent(id)}/leases/preview`, { method: 'POST' }),
+    reconcileLeases: (preview: WorkspaceLeaseRecoveryPreview) => request<{ released: number; replayed: false }>(`/managed-workspaces/${encodeURIComponent(preview.filesystemWorkspaceId)}/leases/reconcile`,
+      { method: 'POST', body: JSON.stringify({ previewId: preview.previewId, manifestHash: preview.manifestHash, effectsStopped: true, confirm: true }) }),
+    previewSourceSnapshot: (id: string, selectedFiles: string[]) => request<DirtySourcePreview>(`/managed-workspaces/${encodeURIComponent(id)}/source-snapshot/preview`,
+      { method: 'POST', body: JSON.stringify({ selectedFiles }) }),
+    captureSourceSnapshot: (preview: DirtySourcePreview) => request<ManagedWorkspace>(`/managed-workspaces/${encodeURIComponent(preview.sourceId)}/source-snapshot`,
+      { method: 'POST', body: JSON.stringify({ selectedFiles: preview.selectedFiles, previewId: preview.previewId, manifestHash: preview.manifestHash, confirm: true }) }),
+    list: () => request<Array<ManagedWorkspace & { blockers: string[]; snapshotBytes: number; directoryBytes?: number; sizeTruncated?: boolean; occupants: Array<{ taskId: string; mode: string; state: string }> }>>('/managed-workspaces'),
+    register: (path: string) => request<ManagedWorkspace>('/managed-workspaces/register', { method: 'POST', body: JSON.stringify({ path }) }),
+    task: (taskId: string) => request<{ legacy?: boolean; executionPath?: string; binding?: ExecutionWorkspaceBinding; workspace?: ManagedWorkspace;
+      source?: ManagedWorkspace; occupants?: Array<{ taskId: string; mode: string; state?: string }>; diagnostics: string[] }>(`/managed-workspaces/task/${encodeURIComponent(taskId)}`),
+    preview: (id: string, operation: WorkspaceOperationPreview['operation']) => request<WorkspaceOperationPreview>(`/managed-workspaces/${encodeURIComponent(id)}/preview`,
+      { method: 'POST', body: JSON.stringify({ operation }) }),
+    operate: (preview: WorkspaceOperationPreview) => request<{ operationId: string; lifecycle: string }>(`/managed-workspaces/${encodeURIComponent(preview.workspace.id)}/operations`,
+      { method: 'POST', body: JSON.stringify({ operation: preview.operation, expectedRevision: preview.workspace.revision, manifestHash: preview.manifestHash, expiresAt: preview.expiresAt, previewId: preview.previewId, confirm: true }) }),
+    changes: (id: string, targetWorkspaceId: string, files: string[]) => request<WorkspaceChangePreview>(`/managed-workspaces/${encodeURIComponent(id)}/changes/preview`,
+      { method: 'POST', body: JSON.stringify({ targetWorkspaceId, files }) }),
+    applyChanges: (preview: WorkspaceChangePreview) => request<{ applied: boolean; committed: boolean }>(`/managed-workspaces/${encodeURIComponent(preview.sourceId)}/changes/apply`,
+      { method: 'POST', body: JSON.stringify({ targetWorkspaceId: preview.targetId, files: preview.files, diffHash: preview.diffHash, targetHead: preview.targetHead, targetBranch: preview.targetBranch, confirm: true }) }),
+  },
   agents: {
+    budget: {
+      get: (id: string) => request<AgentBudgetState>(`/agents/${id}/budget`),
+      save: (id: string, expectedRevision: number, limits: AgentBudgetLimits) => request<AgentBudgetState>(`/agents/${id}/budget`,
+        { method: 'PUT', body: JSON.stringify({ expectedRevision, limits }) }),
+    },
+    knowledge: {
+      list: (id: string) => request<AgentKnowledgeCatalog>(`/agents/${id}/knowledge`),
+      bind: (id: string, sourceId: string) => request<AgentKnowledgeSource>(`/agents/${id}/knowledge/bindings`, {
+        method: 'POST', body: JSON.stringify({ sourceId }),
+      }),
+      unbind: (id: string, bindingId: string) => request<{ ok: boolean }>(`/agents/${id}/knowledge/bindings/${bindingId}`, {
+        method: 'DELETE', body: JSON.stringify({ confirm: true }),
+      }),
+      remove: (id: string, sourceId: string) => request<{ ok: boolean }>(`/agents/${id}/knowledge/sources/${sourceId}`, {
+        method: 'DELETE', body: JSON.stringify({ confirm: true }),
+      }),
+      upload: async (id: string, file: File, scope: 'agent_private' | 'team_shared', teamId?: string): Promise<AgentKnowledgeSource> => {
+        const token = getApiAuthToken();
+        const query = new URLSearchParams({ scope, ...(teamId ? { teamId } : {}) });
+        const response = await fetch(`${BASE}/agents/${id}/knowledge/upload?${query}`, {
+          method: 'POST', headers: { 'Content-Type': 'application/octet-stream', 'X-Document-Name': encodeURIComponent(file.name),
+            ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: file,
+        });
+        if (!response.ok) {
+          const error = await response.json().catch(() => null);
+          throw new ApiError(error?.error?.message || 'Upload failed; maximum file size is 5 MB', response.status, error?.error?.code);
+        }
+        return response.json();
+      },
+    },
+    evaluations: {
+      suites: (id: string) => request<AgentEvaluationSuite[]>(`/agents/${id}/evaluation-suites`),
+      save: (id: string, suiteId: string, data: AgentEvaluationSuiteInput & { expectedRevision: number }) =>
+        request<AgentEvaluationSuite>(`/agents/${id}/evaluation-suites/${suiteId}`, { method: 'PUT', body: JSON.stringify(data) }),
+      history: (id: string, offset = 0) => request<AgentEvaluationRun[]>(`/agents/${id}/evaluation-runs?offset=${offset}`),
+      get: (id: string, runId: string) => request<AgentEvaluationRun>(`/agents/${id}/evaluation-runs/${runId}`),
+      start: (id: string, suiteId: string, data: { selectedCaseIds: string[]; expectedSuiteRevision: number; configVersionId: string }, key: string) =>
+        request<AgentEvaluationRun>(`/agents/${id}/evaluation-suites/${suiteId}/runs`, {
+          method: 'POST', headers: { 'Idempotency-Key': key }, body: JSON.stringify(data),
+        }),
+      next: (id: string, runId: string, caseId: string) => request<AgentEvaluationRun>(`/agents/${id}/evaluation-runs/${runId}/next`, {
+        method: 'POST', body: JSON.stringify({ caseId }),
+      }),
+    },
+    versions: {
+      list: (id: string) => request<AgentConfigHistory>(`/agents/${id}/config-versions`),
+      get: (id: string, versionId: string) => request<AgentConfigVersion>(`/agents/${id}/config-versions/${versionId}`),
+      preflight: (id: string, versionId: string) => request<AgentSetupPreflight>(`/agents/${id}/config-versions/${versionId}/preflight`, { method: 'POST' }),
+      publish: (id: string, data: { expectedCurrentVersionId: string | null; expectedConfigHash: string }) =>
+        request<AgentConfigVersion>(`/agents/${id}/config-versions/publish`, { method: 'POST', body: JSON.stringify(data) }),
+      rollback: (id: string, versionId: string, data: { expectedCurrentVersionId: string | null; expectedConfigHash: string }) =>
+        request<AgentConfigVersion>(`/agents/${id}/config-versions/${versionId}/rollback`, { method: 'POST', body: JSON.stringify(data) }),
+    },
+    drafts: {
+      list: () => request<AgentSetupDraft[]>('/agents/setup-drafts'),
+      get: (id: string) => request<AgentSetupDraft>(`/agents/setup-drafts/${id}`),
+      save: (id: string, data: { expectedRevision: number; form: AgentSetupForm; step: number; locked: boolean; testSubmitted: boolean }) =>
+        request<AgentSetupDraft>(`/agents/setup-drafts/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+      discard: (id: string) => request<void>(`/agents/setup-drafts/${id}`, { method: 'DELETE' }),
+    },
     list: () => request<AgentSummary[]>('/agents'),
     get: (id: string) => request<AgentSummary>(`/agents/${id}`),
-    create: (data: Partial<AgentSummary> & { name: string; role: string }) =>
-      request<AgentSummary>('/agents', { method: 'POST', body: JSON.stringify(data) }),
+    create: (data: Partial<AgentSummary> & { name: string; role: string }, idempotencyKey?: string) =>
+      request<AgentSummary>('/agents', { method: 'POST', body: JSON.stringify(data),
+        ...(idempotencyKey ? { headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey } } : {}) }),
+    preflight: (data: Partial<AgentSummary> & { name: string; role: string; skillVersionId?: string }) =>
+      request<AgentSetupPreflight>('/agents/preflight', { method: 'POST', body: JSON.stringify(data) }),
+    preflightSaved: (id: string) => request<AgentSetupPreflight>(`/agents/${id}/preflight`, { method: 'POST' }),
+    test: (id: string, prompt: string, idempotencyKey: string) =>
+      request<{ taskId: string; status: string; replayed: boolean }>(`/agents/${id}/test`, { method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey }, body: JSON.stringify({ prompt }) }),
     update: (id: string, data: Partial<AgentSummary>) =>
       request<AgentSummary>(`/agents/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
     // New: execute creates a task execution instance
@@ -349,22 +486,27 @@ export const api = {
     },
   },
   executions: {
+    knowledge: (id: string) => request<KnowledgeCitationManifest | null>(`/executions/${id}/knowledge`),
+    citation: (id: string, citationId: string) => request<ResolvedKnowledgeCitation>(`/executions/${id}/knowledge/${citationId}`),
+    agentConfig: (id: string) => request<AgentConfigRunAttribution>(`/executions/${id}/agent-config`),
     list: (params?: Record<string, string>) =>
       request<TaskExecution[]>(`/executions${params ? '?' + new URLSearchParams(params) : ''}`),
     get: (id: string) => request<TaskExecution>(`/executions/${id}`),
     messages: (id: string, afterId?: number) =>
       request<ExecutionMessage[]>(`/executions/${id}/messages${afterId ? `?afterId=${afterId}` : ''}`),
+    session: (id: string) => request<{ enabled: boolean; projectionVersion: 1; sessionId: string; cursor: number;
+      source: 'canonical' | 'legacy'; items: SessionConversationItem[]; inbox: AgentInboxEntry[] }>(`/executions/${id}/session`),
     trace: (id: string) => request<RunTrace | null>(`/executions/${id}/trace`),
     cancel: (id: string) => request<{ ok: boolean }>(`/executions/${id}/cancel`, { method: 'POST' }),
     review: (id: string, decision: 'accepted' | 'rejected', note?: string) =>
       request<TaskExecution>(`/executions/${id}/acceptance`, { method: 'POST', body: JSON.stringify({ decision, note }) }),
-    sendMessage: (id: string, content: string, messageType = 'text') =>
-      request<unknown>(`/executions/${id}/message`, { method: 'POST', body: JSON.stringify({ content, messageType }) }),
+    sendMessage: (id: string, content: string, messageType = 'text', mode: AgentInboxMode = 'steer', idempotencyKey?: string) =>
+      request<unknown>(`/executions/${id}/message`, { method: 'POST', body: JSON.stringify({ content, messageType, mode, idempotencyKey }) }),
   },
   pipelines: {
     list: () => request<Pipeline[]>('/pipelines'),
     get: (id: string) => request<Pipeline>(`/pipelines/${id}`),
-    create: (data: { name: string; templateId: string; input: string; gateMode?: Pipeline['gateMode']; confirmAutonomousPublish?: boolean; domainId?: string }) =>
+    create: (data: { name: string; templateId: string; input: string; gateMode?: Pipeline['gateMode']; confirmAutonomousPublish?: boolean; domainId?: string; filesystemWorkspaceId?: string; workspaceAccessMode?: WorkspaceAccessMode }) =>
       request<Pipeline>('/pipelines', { method: 'POST', body: JSON.stringify(data) }),
     artifacts: (id: string) => request<PipelineArtifact[]>(`/pipelines/${id}/artifacts`),
     approve: (id: string, confirmPublish = false) =>
@@ -382,6 +524,8 @@ export const api = {
         method: 'POST',
       }),
     skip: (id: string) => request<{ success: boolean }>(`/pipelines/${id}/skip`, { method: 'POST' }),
+    pause: (id: string) => request<Pipeline>(`/pipelines/${id}/pause`, { method: 'POST' }),
+    resume: (id: string) => request<Pipeline>(`/pipelines/${id}/resume`, { method: 'POST' }),
     cancel: (id: string, confirmed = false) =>
       request<{ success: boolean }>(`/pipelines/${id}/cancel`, { method: 'POST', body: JSON.stringify({ confirm: confirmed }) }),
   },
@@ -465,7 +609,7 @@ export const api = {
       request<InboxEntry>(`/inbox/${id}/respond`, { method: 'POST', body: JSON.stringify(data) }),
   },
   supervisor: {
-    dispatch: (input: string, options?: Pick<Task, 'modelId' | 'reasoningEffort' | 'contextLength'> & { workspacePath?: string; workspaceMode?: boolean }) =>
+    dispatch: (input: string, options?: Pick<Task, 'modelId' | 'reasoningEffort' | 'contextLength'> & { workspacePath?: string; workspaceMode?: boolean; filesystemWorkspaceId?: string; workspaceAccessMode?: WorkspaceAccessMode }) =>
       request<{ orchestrationId: string; mode: string; intent: unknown; orchestration: unknown; tasks: Task[] }>('/supervisor/dispatch', {
         method: 'POST',
         body: JSON.stringify({ input, ...options }),
@@ -633,7 +777,7 @@ export const api = {
     update: (id: string, data: Partial<TeamInputDTO>) =>
       request<TeamDTO>(`/teams/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
     remove: (id: string) => request<{ ok: boolean; reverted: boolean }>(`/teams/${id}`, { method: 'DELETE' }),
-    dispatch: (id: string, goal: string, workdir?: string, preferences?: Pick<Task, 'modelId' | 'reasoningEffort' | 'contextLength'>) =>
+    dispatch: (id: string, goal: string, workdir?: string, preferences?: Pick<Task, 'modelId' | 'reasoningEffort' | 'contextLength'> & { filesystemWorkspaceId?: string; workspaceAccessMode?: WorkspaceAccessMode }) =>
       request<{ run: TeamRunDTO; team: TeamDTO; board: TeamBoardItem[] }>(`/teams/${id}/dispatch`, {
         method: 'POST',
         body: JSON.stringify({ goal, workdir, ...preferences }),

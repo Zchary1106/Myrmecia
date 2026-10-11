@@ -162,6 +162,9 @@ describe('CopilotProvider', () => {
       billing_multiplier: 1,
       cost_type: 'subscription',
       cost_usd: null,
+      input_tokens_observed: true,
+      output_tokens_observed: true,
+      ai_units_observed: true,
     });
     expect(deltas).toEqual(['Hello']);
     expect(aborts).toBe(0);

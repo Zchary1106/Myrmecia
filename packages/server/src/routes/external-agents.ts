@@ -191,8 +191,8 @@ export function createExternalAgentRoutes(): Router {
 
   router.post('/:id/runs', async (req, res) => {
     try {
-      requireOperatorRole(req, 'external-agent.run', ['admin', 'operator']);
-      const result = await runtime.run(req.params.id, workspace(req), invocation(req.body?.invocation), 'manual');
+      const actor = requireOperatorRole(req, 'external-agent.run', ['admin', 'operator']);
+      const result = await runtime.run(req.params.id, workspace(req), invocation(req.body?.invocation), 'manual', actor.id);
       return res.status(201).json(result);
     } catch (error) {
       sendError(res, error);

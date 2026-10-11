@@ -23,6 +23,7 @@ export interface SkillExecutorOptions {
   onStepDone?: (stepIndex: number, step: SkillStep, output: string) => void;
   onStepFailed?: (stepIndex: number, step: SkillStep, error: string) => void;
   onStepWarning?: (stepIndex: number, step: SkillStep, message: string) => void;
+  onCheckpoint?: (steps: readonly StepResult[]) => void;
   abortSignal?: AbortSignal;
 }
 
@@ -51,6 +52,7 @@ export class SkillExecutor {
   private onStepFailed?: SkillExecutorOptions['onStepFailed'];
   private onStepWarning?: SkillExecutorOptions['onStepWarning'];
   private abortSignal?: AbortSignal;
+  private onCheckpoint?: SkillExecutorOptions['onCheckpoint'];
 
   constructor(options: SkillExecutorOptions) {
     this.config = options.config;
@@ -62,16 +64,20 @@ export class SkillExecutor {
     this.onStepFailed = options.onStepFailed;
     this.onStepWarning = options.onStepWarning;
     this.abortSignal = options.abortSignal;
+    this.onCheckpoint = options.onCheckpoint;
   }
 
-  async run(taskInput: string): Promise<ExecutorResult> {
-    const steps: StepResult[] = [];
-    let previousOutputs: string[] = [];
-    let totalRetries = 0;
+  async run(taskInput: string, completedSteps: readonly StepResult[] = []): Promise<ExecutorResult> {
+    if (completedSteps.length > this.config.steps.length || completedSteps.some((step, index) =>
+      step.status !== 'done' || step.name !== this.config.steps[index].name
+      || !Number.isInteger(step.retries) || step.retries < 0)) throw new Error('SKILL_CHECKPOINT_INVALID');
+    const steps: StepResult[] = structuredClone([...completedSteps]);
+    let previousOutputs = steps.map(step => `[${step.name}]: ${step.output || ''}${step.validationOutput ? `\n(note: validation advisory: ${step.validationOutput})` : ''}`);
+    let totalRetries = steps.reduce((sum, step) => sum + step.retries, 0);
     const maxTotalRetries = this.config.recovery?.maxTotalRetries ?? 10;
     const failurePolicy = this.config.recovery?.onStepFailure ?? 'retry_then_fail';
 
-    for (let i = 0; i < this.config.steps.length; i++) {
+    for (let i = steps.length; i < this.config.steps.length; i++) {
       if (this.abortSignal?.aborted) {
         steps.push({ name: this.config.steps[i].name, status: 'skipped', retries: 0 });
         continue;
@@ -150,6 +156,7 @@ export class SkillExecutor {
         }
         previousOutputs.push(`[${step.name}]: SKIPPED - ${lastError}`);
       }
+      this.onCheckpoint?.(structuredClone(steps));
     }
 
     const finalOutput = steps

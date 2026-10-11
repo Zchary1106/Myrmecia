@@ -25,6 +25,18 @@ import { getEmbeddingService } from '../memory/embedding.js';
 import { getMemoryStore } from '../memory/memory-store.js';
 import { Router } from 'express';
 import { PgVectorStore } from './pgvector-store.js';
+import type { DocumentPassage } from './session-document-parser.js';
+
+/** Deterministic bounded ranking after authorization, without external embedding
+ * calls or private document promotion into the workspace vector/memory index. */
+export function rankAuthorizedPassages<T extends DocumentPassage>(passages: T[], query: string): T[] {
+  const words = query.toLowerCase().match(/[\p{L}\p{N}]+/gu) || [];
+  const terms = [...new Set(words.flatMap(word => /[\u3400-\u9fff]/.test(word)
+    ? Array.from({ length: Math.min(120, Math.max(0, word.length - 1)) }, (_, i) => word.slice(i, i + 2)) : [word]))].slice(0, 120);
+  return passages.map((passage, index) => ({ passage, index,
+    score: terms.reduce((score, term) => score + Number(passage.text.toLowerCase().includes(term)), 0) }))
+    .sort((a, b) => b.score - a.score || a.index - b.index).map(item => item.passage);
+}
 
 // ---------- Types ----------
 
@@ -261,13 +273,16 @@ export async function searchKnowledge(workspaceId: string, query: string, topK =
   const getDoc = (docId: string) => {
     let doc = docCache.get(docId);
     if (!doc) {
-      doc = (db.get('SELECT title, metadata, content FROM knowledge_documents WHERE id = ?', docId) as any) || {};
+      doc = (db.get('SELECT title, metadata, content FROM knowledge_documents WHERE id = ? AND workspace_id = ?', docId, workspaceId) as any) || {};
       docCache.set(docId, doc!);
     }
     return doc!;
   };
 
-  return results.map(r => {
+  return results.filter(r => {
+    const [docId] = r.id.split('_chunk_');
+    return !!getDoc(docId).content;
+  }).map(r => {
     const [docId] = r.id.split('_chunk_');
     const chunkIndex = parseInt(r.id.split('_chunk_')[1] || '0');
     const doc = getDoc(docId);

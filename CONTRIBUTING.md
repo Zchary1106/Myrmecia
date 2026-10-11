@@ -9,7 +9,6 @@ By participating, you agree to keep interactions respectful and constructive.
 
 - **Node.js ≥ 20**
 - **pnpm ≥ 9** (auto-provisioned by the launcher via corepack)
-- **Python 3** (optional — only needed to run live agents via the Python runtime)
 
 ## Quick setup
 
@@ -29,7 +28,6 @@ Or step by step:
 
 ```bash
 pnpm install
-pip install -r packages/python-runtime/requirements.txt   # optional, for live agents
 pnpm dev                                                   # API :3000 + dashboard :5173
 ```
 
@@ -45,7 +43,6 @@ This is a **pnpm monorepo** (`"type": "module"` / ESM everywhere):
 | `packages/dashboard` | `@myrmecia/dashboard` — React 19 + Vite + Tailwind control center |
 | `packages/cli` | `@myrmecia/cli` — command-line client |
 | `packages/shared` | `@myrmecia/shared` — TypeScript types shared across packages |
-| `packages/python-runtime` | Python agent runtime (spawned as a subprocess) |
 | `agents/` | Agent registry (`registry.yaml`) + skill markdown |
 | `templates/` | Pipeline templates |
 
