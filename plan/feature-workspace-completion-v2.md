@@ -3,7 +3,7 @@ goal: Complete remaining reviewed workspace operations and publish validated sou
 version: 2.0
 date_created: 2026-10-12
 last_updated: 2026-10-12
-status: 'In progress'
+status: Completed
 ---
 
 # Introduction
@@ -33,7 +33,7 @@ directory deletion, credential modification or silent legacy migration is author
 | W2-001 | Frozen non-Git baselines, execution deletion evidence and reviewed Git/non-Git additions/deletions | Implemented and locally verified |
 | W2-002 | Explicit legacy source adoption and reviewed task-branch deletion API/UI | Implemented and locally verified |
 | W2-003 | Live public HTTPS clone, external working-directory probe and desktop staging/package checks where available | Passed within available environment; MCP/Docker unavailable |
-| W2-004 | Full build/unit/browser/contract gates, documentation and selective publication | Local gates passed; publication in progress |
+| W2-004 | Full build/unit/browser/contract gates, documentation and selective publication | Local gates passed; source published to origin |
 
 ## 3. Alternatives
 
@@ -86,3 +86,14 @@ No old directory moves or automatic ownership promotion.
 - `plan/refactor-workspace-lifecycle-v1.md`
 - `docs/WORKSPACE-LIFECYCLE.md`
 - `artifacts/workspace-lifecycle/delivery.md`
+
+## Publication and remaining environment gates
+
+Implementation commit `7aa28eabce0f1435a7e3b80762977c9ca42d55ee` was verified
+on `origin/codex/workspace-completion-20261012` using the Zchary1106 account.
+CI run `38160332768` started; remote gates were still running when publication
+was recorded. No PR or main merge was performed.
+
+Completed means the scoped code/local acceptance/publication tasks above.
+It does not mark unavailable MCP, Docker/Redis, signed release, PostgreSQL
+migration or universal external-tool isolation as passed.

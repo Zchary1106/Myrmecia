@@ -47,3 +47,12 @@ Publication is a new `codex/workspace-completion-*` branch to
 `Zchary1106/Myrmecia`. No force push or main merge is authorized. Existing local
 runtime/governance/setup/CrewAI-removal source dependencies are included so the
 published checkout is buildable; unrelated private runtime artifacts stay local.
+
+Publication verified: implementation commit
+`7aa28eabce0f1435a7e3b80762977c9ca42d55ee` is on
+`origin/codex/workspace-completion-20261012`. Account: Zchary1106.
+CI run `38160332768` began and was still in progress at the read-only check;
+remote success is not claimed. No PR was created and main was not merged.
+Final post-checkpoint targeted regression: 28 tests passed. This includes the
+last artifact-indexer deletion fix; earlier full-suite counts are from the
+preceding complete local run, not a re-run after the one-line test formatting fix.
