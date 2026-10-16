@@ -10,6 +10,15 @@ import { CopilotClient, RuntimeConnection, type ModelInfo } from '@github/copilo
 import { logger } from '../lib/logger.js';
 import type { StreamAccumulation } from './gateway.js';
 import type { ProviderSessionOptions } from './provider-session.js';
+import { AgentRunStopped } from '../agents/run-state.js';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { attachFailedRequestUsage } from './failed-request-usage.js';
+
+export interface CopilotContextBudget {
+  limits: { maxExecutionTokens: number };
+  inputTokens: number;
+  outputTokens: number;
+}
 
 export interface CopilotToolCall {
   id: string;
@@ -175,6 +184,7 @@ export class CopilotProvider {
       timeoutMs?: number;
       idleTimeoutMs?: number;
       providerSession?: ProviderSessionOptions;
+      contextBudget?: CopilotContextBudget;
     },
   ): Promise<StreamAccumulation> {
     if (params.tools?.length && !options?.onToolCall) {
@@ -183,6 +193,10 @@ export class CopilotProvider {
     if (options?.signal?.aborted) throw new Error('Request aborted');
 
     const { system, prompt } = formatPrompt(params.messages);
+    // Shared SDK transports deliver callbacks in their creation context, not
+    // necessarily this request's workspace/run lease. Restore the original
+    // caller context; never clear/bypass a fence to accommodate the transport.
+    const inRequestContext = AsyncLocalStorage.snapshot();
     const controller = new AbortController();
     const wallClockMs = Math.max(1, options?.timeoutMs ?? (params.tools?.length ? 600_000 : 120_000));
     const idleMs = Math.max(1, Math.min(options?.idleTimeoutMs ?? 180_000, wallClockMs));
@@ -202,12 +216,18 @@ export class CopilotProvider {
       if (idleTimer) clearTimeout(idleTimer);
       idleTimer = setTimeout(() => stop(new Error(`EXECUTION_IDLE_TIMEOUT: no model or tool progress for ${idleMs}ms`)), idleMs);
     };
-    const tools = this.toCopilotTools(params.tools, options?.onToolCall ? async call => {
+    const tools = this.toCopilotTools(params.tools, options?.onToolCall ? call => inRequestContext(async () => {
       if (controller.signal.aborted) throw new Error('Request aborted');
       touch();
       try { return await options.onToolCall!({ ...call, signal: controller.signal }); }
+      catch (error) {
+        // SDK tools normally return errors to the model. A terminal host stop
+        // must instead stop the inner loop and retain its original reason.
+        if (error instanceof AgentRunStopped) stop(error);
+        throw error;
+      }
       finally { touch(); }
-    } : undefined);
+    }) : undefined);
     const abort = () => stop(new Error('Request aborted'));
     options?.signal?.addEventListener('abort', abort, { once: true });
     if (options?.signal?.aborted) abort();
@@ -260,14 +280,14 @@ export class CopilotProvider {
     let actualModelId: string | undefined;
     let aiUnits = 0;
     let billingMultiplier: number | undefined;
-    const unsubscribeDelta = session.on('assistant.message_delta', event => {
+    const unsubscribeDelta = session.on('assistant.message_delta', event => inRequestContext(() => {
       if (controller.signal.aborted) return;
       if (event.data.deltaContent) {
         touch();
         options?.onDelta?.(event.data.deltaContent);
       }
-    });
-    const unsubscribeUsage = session.on('assistant.usage', event => {
+    }));
+    const unsubscribeUsage = session.on('assistant.usage', event => inRequestContext(() => {
       if (controller.signal.aborted) return;
       touch();
       if (typeof event.data.inputTokens === 'number' && Number.isFinite(event.data.inputTokens) && event.data.inputTokens >= 0) {
@@ -284,7 +304,12 @@ export class CopilotProvider {
         aiUnits += event.data.copilotUsage.totalNanoAiu / 1_000_000_000;
         aiUnitsObserved = true;
       }
-    });
+      const budget = options?.contextBudget;
+      if (budget && budget.inputTokens + budget.outputTokens + inputTokens + outputTokens > budget.limits.maxExecutionTokens) {
+        stop(new AgentRunStopped('token_budget',
+          `COPILOT_TOKEN_BUDGET: observed SDK usage exceeded execution allowance (${budget.inputTokens + budget.outputTokens + inputTokens + outputTokens}/${budget.limits.maxExecutionTokens})`));
+      }
+    }));
     const abortSession = () => { void session.abort().catch(() => undefined); };
     controller.signal.addEventListener('abort', abortSession, { once: true });
 
@@ -320,6 +345,14 @@ export class CopilotProvider {
       };
       return result;
     } catch (err) {
+      if (err && typeof err === 'object') attachFailedRequestUsage(err, {
+        prompt_tokens: inputTokens, completion_tokens: outputTokens, total_tokens: inputTokens + outputTokens,
+        provider: 'copilot', actual_model_id: actualModelId,
+        ai_units: aiUnits, billing_multiplier: billingMultiplier,
+        cost_type: 'subscription', cost_usd: null,
+        input_tokens_observed: inputTokensObserved, output_tokens_observed: outputTokensObserved,
+        ai_units_observed: aiUnitsObserved,
+      });
       stop(err instanceof Error ? err : new Error(String(err)));
       throw err;
     } finally {

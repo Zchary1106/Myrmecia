@@ -19,13 +19,6 @@ interface BuiltinModel {
 const PROVIDER = 'copilot-api';
 const COPILOT_PROVIDER = 'copilot';
 const COPILOT_DEFAULT_MODEL = 'auto';
-export const COPILOT_COMPATIBILITY_MODEL_IDS = [
-  'gpt-5.3-codex',
-  'gpt-5.4-mini',
-  'gpt-5.4',
-  'gpt-5.5',
-] as const;
-const COPILOT_COMPATIBILITY_MODEL_ID_SET = new Set<string>(COPILOT_COMPATIBILITY_MODEL_IDS);
 const DEEPSEEK_PROVIDER = 'deepseek';
 const DEEPSEEK_DEFAULT_MODEL = 'deepseek-v4-flash';
 const DEEPSEEK_STRONG_MODEL = 'deepseek-v4-pro';
@@ -353,6 +346,13 @@ export function syncProviderModels(
 ): ModelDefinition[] {
   const db = getDb();
   db.transaction(() => {
+    const currentIds = new Set(models.map(model => model.id));
+    for (const previous of listModels().filter(model => model.provider === provider && model.costProfile.source === 'provider-discovery')) {
+      if (!currentIds.has(previous.id)) {
+        db.run('UPDATE model_registry SET cost_profile = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+          JSON.stringify({ ...previous.costProfile, available: false }), previous.id);
+      }
+    }
     for (const model of models) {
       db.run(`
         INSERT INTO model_registry (
@@ -366,6 +366,7 @@ export function syncProviderModels(
           description = excluded.description,
           capability_tags = excluded.capability_tags,
           cost_profile = excluded.cost_profile,
+          max_tokens = excluded.max_tokens,
           fallback_group = excluded.fallback_group,
           model_tier = excluded.model_tier,
           updated_at = CURRENT_TIMESTAMP
@@ -380,6 +381,7 @@ export function syncProviderModels(
         ]),
         JSON.stringify({
           source: 'provider-discovery',
+          available: (model.policy as { state?: string } | undefined)?.state !== 'disabled',
           capabilities: model.capabilities || {},
           policy: model.policy || {},
           billing: model.billing || {},
@@ -394,6 +396,18 @@ export function syncProviderModels(
   return models.map(model => getModel(model.id)).filter((model): model is ModelDefinition => Boolean(model));
 }
 
+export function isModelSelectable(model: ModelDefinition): boolean {
+  return model.enabled && model.costProfile.available !== false
+    && (model.costProfile.policy as { state?: string } | undefined)?.state !== 'disabled';
+}
+
+export function isCopilotAccountModel(model: ModelDefinition): boolean {
+  return model.provider === COPILOT_PROVIDER
+    && model.costProfile.source === 'provider-discovery'
+    && model.costProfile.available === true
+    && isModelSelectable(model);
+}
+
 export function listModels(filter?: { enabled?: boolean }): ModelDefinition[] {
   const db = getDb();
   let sql = 'SELECT * FROM model_registry';
@@ -403,7 +417,8 @@ export function listModels(filter?: { enabled?: boolean }): ModelDefinition[] {
     params.push(filter.enabled ? 1 : 0);
   }
   sql += ' ORDER BY enabled DESC, fallback_group ASC, priority DESC, display_name ASC';
-  return (db.all(sql, ...params) as any[]).map(rowToModel);
+  const models = (db.all(sql, ...params) as any[]).map(rowToModel);
+  return filter?.enabled === true ? models.filter(isModelSelectable) : models;
 }
 
 export function getModel(id: string): ModelDefinition | undefined {
@@ -488,35 +503,22 @@ export function getModelRoute(routeKey: string): ModelRoute | undefined {
 }
 
 function bestEnabledModel(fallbackGroup?: string): ModelDefinition | undefined {
-  const db = getDb();
-  const row = fallbackGroup
-    ? db.get(`
-        SELECT * FROM model_registry
-        WHERE enabled = 1 AND fallback_group = ?
-        ORDER BY priority DESC LIMIT 1
-      `, fallbackGroup) as any
-    : db.get(`
-        SELECT * FROM model_registry
-        WHERE enabled = 1
-        ORDER BY priority DESC LIMIT 1
-      `) as any;
-  return row ? rowToModel(row) : undefined;
+  return listModels({ enabled: true })
+    .filter(model => !fallbackGroup || model.fallbackGroup === fallbackGroup)
+    .sort((left, right) => right.priority - left.priority)[0];
 }
 
 function bestEnabledModelByTier(tier?: ModelTier): ModelDefinition | undefined {
   if (!tier) return undefined;
-  const row = getDb().get(`
-    SELECT * FROM model_registry
-    WHERE enabled = 1 AND model_tier = ?
-    ORDER BY priority DESC LIMIT 1
-  `, tier) as any;
-  return row ? rowToModel(row) : undefined;
+  return listModels({ enabled: true })
+    .filter(model => model.tier === tier)
+    .sort((left, right) => right.priority - left.priority)[0];
 }
 
 function enabledModel(id: string | undefined): ModelDefinition | undefined {
   if (!id) return undefined;
   const model = getModel(id);
-  return model?.enabled ? model : undefined;
+  return model && isModelSelectable(model) ? model : undefined;
 }
 
 function enabledProviderModel(id: string | undefined, provider: string): ModelDefinition | undefined {
@@ -648,10 +650,12 @@ function selectCopilotModel(
   const enabledCopilotModel = (modelId: string | undefined) => {
     const model = enabledModel(modelId);
     if (!model) return undefined;
-    return model.provider === COPILOT_PROVIDER || COPILOT_COMPATIBILITY_MODEL_ID_SET.has(model.id)
-      ? model
-      : undefined;
+    return isCopilotAccountModel(model) ? model : undefined;
   };
+  const preferred = persisted || configured;
+  if (preferred && preferred !== COPILOT_DEFAULT_MODEL && !enabledCopilotModel(preferred)) {
+    throw new Error(`Copilot default model "${preferred}" is not available for the current account. Refresh the model list and select a new default.`);
+  }
   const selected = enabledCopilotModel(persisted)
     ?? enabledCopilotModel(configured)
     ?? enabledProviderModel(COPILOT_DEFAULT_MODEL, COPILOT_PROVIDER);
@@ -677,7 +681,12 @@ function selectCopilotModel(
 }
 
 export function selectModelForAgent(agent: AgentDefinition, task?: ModelRouteTask, options?: { promptText?: string }): ModelSelection {
+  const provider = process.env.MYRMECIA_MODEL_PROVIDER?.trim().toLowerCase();
   const taskModel = task?.modelId && task.modelId !== 'auto' ? enabledModel(task.modelId) : undefined;
+  if (task?.modelId && task.modelId !== 'auto'
+    && (!taskModel || (provider === COPILOT_PROVIDER && !isCopilotAccountModel(taskModel)))) {
+    throw new Error(`Selected model "${task.modelId}" is not available for the current provider. Please choose an available model.`);
+  }
   if (taskModel) {
     const policy = agent.config.modelPolicy || {};
     return {
@@ -690,7 +699,6 @@ export function selectModelForAgent(agent: AgentDefinition, task?: ModelRouteTas
       reason: 'using the model selected for this task',
     };
   }
-  const provider = process.env.MYRMECIA_MODEL_PROVIDER?.trim().toLowerCase();
   if (provider === DEEPSEEK_PROVIDER) {
     return selectDeepSeekModel(agent, task, options);
   }

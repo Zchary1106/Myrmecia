@@ -441,8 +441,18 @@ export const api = {
         body: JSON.stringify(data),
       }),
     diff: (id: string) => request<GitHubFixDiff>(`/github-fixes/${encodeURIComponent(id)}/diff`),
+    verify: (id: string, data: { confirm: true; diffHash: string; files: string[]; command: string }) =>
+      request<GitHubFixDiff>(`/github-fixes/${encodeURIComponent(id)}/verify`, { method: 'POST', body: JSON.stringify(data) }),
+    cancelVerification: (id: string) =>
+      request<{ requested: true }>(`/github-fixes/${encodeURIComponent(id)}/verification/cancel`, { method: 'POST', body: JSON.stringify({ confirm: true }) }),
+    reconcile: (id: string, data: { confirm: true; operationId: string; expectedState: string; effectsStopped: true }) =>
+      request<GitHubFixDiff>(`/github-fixes/${encodeURIComponent(id)}/reconcile`, { method: 'POST', body: JSON.stringify(data) }),
     createPullRequest: (id: string, data: {
       confirm: true;
+      acceptDelivery: true;
+      allowFork?: boolean;
+      diffHash: string;
+      files: string[];
       title?: string;
       body?: string;
       commitMessage?: string;

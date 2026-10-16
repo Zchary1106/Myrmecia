@@ -58,6 +58,25 @@ async function withApi(fn: (send: (id: string, content: string, role?: string) =
 }
 
 describe('conversation continuation', () => {
+  it('inherits the submitted root criteria through a legacy follow-up that lost them', async () => {
+    const old = previous();
+    const criteria = [{ id: 'page', label: 'Actual page', required: true,
+      verifier: 'artifact' as const, relativePath: 'public/index.html' }];
+    // Persist the immutable submission; simulate an older broken child.
+    const { getDb } = await import('../src/db/database.js');
+    getDb().run('UPDATE tasks SET completion_criteria=? WHERE id=?', JSON.stringify(criteria), old.id);
+    const legacy = createTask({ title: 'Previous user turn', description: 'Continue same implementation', input: 'Continue same implementation',
+      mode: 'direct', assigneeId: 'continuation-writer', parentTaskId: old.id, createdBy: 'user' });
+    updateTask(legacy.id, { status: 'done', output: 'Earlier answer' });
+    persistExecutionContext(legacy, loadExecutionContext(old));
+    await withApi(async send => {
+      const response = await send(old.id, 'Continue the original implementation');
+      expect(response.status).toBe(201);
+      const task = await response.json() as Task;
+      expect(task.completionCriteria).toEqual(criteria);
+      expect(getTask(legacy.id)?.completionCriteria).toEqual([]);
+    });
+  });
   it('keeps external follow-ups on the same Agent instead of silently rerouting to Master', async () => {
     const old = previous();
     const agent = createExternalAgent({ workspaceId: 'default', name: 'Continuation fixture', adapter: { kind: 'http', endpoint: 'https://fixture.invalid' } });

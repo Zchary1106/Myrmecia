@@ -23,6 +23,7 @@ import { clearPauseControl, getPauseControl, setPauseControl, taskSchedulingPaus
 import { getExternalAgent } from '../db/models/external-agent.js';
 import { collectEvaluationTask } from '../agents/agent-evaluation.js';
 import { bindTaskKnowledgeTeam } from '../db/models/agent-knowledge.js';
+import { isGitHubVerificationTask } from '../db/models/github-fix.js';
 
 const QUEUE_NAME = 'agent-factory-tasks';
 export const PUBLISH_RECONFIRMATION_ERROR = 'Interrupted publish task requires renewed pipeline confirmation';
@@ -227,40 +228,57 @@ export class TaskQueue {
     workspaceActorId?: string;
     selectedWorkspaceSource?: boolean;
   }): Promise<Task> {
-    const task = createTask({
-      ...data,
-      createdBy: data.createdBy || (data.parentTaskId ? 'master' : 'user'),
-    });
     const workspaceOptions = { sourceWorkspaceId: data.filesystemWorkspaceId, accessMode: data.workspaceAccessMode,
       actorId: data.workspaceActorId, selectedSource: data.selectedWorkspaceSource ?? (!!(data.workspacePath || data.workdir) && !data.pipelineId) };
-    getDb().run('INSERT INTO workspace_preparation_requests (task_id,workspace_id,options) VALUES (?,?,?)', task.id, task.workspaceId || 'default', JSON.stringify(workspaceOptions));
-    if (!data.parentTaskId || data.filesystemWorkspaceId || data.selectedWorkspaceSource) {
-      try { await prepareTaskWorkspace(task, workspaceOptions); }
-      catch (error: any) {
-        if (error instanceof WorkspaceBusyError) {
-          updateTask(task.id, { status: 'queued' });
-          addTaskLog(task.id, 'info', 'Waiting for selected source directory; preparation request retained', 'system');
-        } else {
-        updateTask(task.id, { status: 'failed', error: `WORKSPACE_PREPARATION_FAILED: ${error.message}`, completedAt: new Date().toISOString() });
-        addTaskLog(task.id, 'error', 'Workspace preparation stopped; any partial directory is retained for reconciliation', 'system');
-        throw error;
-        }
-      }
-      Object.assign(task, getTask(task.id));
-    }
-    if (data.knowledgeTeamId) bindTaskKnowledgeTeam(task.id, data.knowledgeTeamId, task.workspaceId || 'default');
-    const contextParentId = data.inheritContextFromTaskId || data.parentTaskId;
-    const parent = contextParentId ? getTask(contextParentId) : undefined;
-    const context = parent
-      ? persistInheritedExecutionContext(loadExecutionContext(parent), task)
-      : persistExecutionContext(task);
-    checkpointExecutionContext(context, {
-      phase: 'queued',
-      completed: [],
-      pending: ['agent execution'],
-      blocked: [],
-      resumeHint: 'Run the queued task with its durable execution context.',
+    // A preparation-record failure must not expose orphan runnable work.
+    const task = getDb().transaction(() => {
+      const created = createTask({
+        ...data,
+        createdBy: data.createdBy || (data.parentTaskId ? 'master' : 'user'),
+      });
+      getDb().run('INSERT INTO workspace_preparation_requests (task_id,workspace_id,options) VALUES (?,?,?)',
+        created.id, created.workspaceId || 'default', JSON.stringify(workspaceOptions));
+      return created;
     });
+    try {
+      if (!data.parentTaskId || data.filesystemWorkspaceId || data.selectedWorkspaceSource) {
+        try { await prepareTaskWorkspace(task, workspaceOptions); }
+        catch (error: any) {
+          if (error instanceof WorkspaceBusyError) {
+            updateTask(task.id, { status: 'queued' });
+            addTaskLog(task.id, 'info', 'Waiting for selected source directory; preparation request retained', 'system');
+          } else {
+            updateTask(task.id, { status: 'failed', error: `WORKSPACE_PREPARATION_FAILED: ${error.message}`, completedAt: new Date().toISOString() });
+            addTaskLog(task.id, 'error', 'Workspace preparation stopped; any partial directory is retained for reconciliation', 'system');
+            throw error;
+          }
+        }
+        Object.assign(task, getTask(task.id));
+      }
+      if (data.knowledgeTeamId) bindTaskKnowledgeTeam(task.id, data.knowledgeTeamId, task.workspaceId || 'default');
+      const contextParentId = data.inheritContextFromTaskId || data.parentTaskId;
+      const parent = contextParentId ? getTask(contextParentId) : undefined;
+      const context = parent
+        ? persistInheritedExecutionContext(loadExecutionContext(parent), task)
+        : persistExecutionContext(task);
+      checkpointExecutionContext(context, {
+        phase: 'queued',
+        completed: [],
+        pending: ['agent execution'],
+        blocked: [],
+        resumeHint: 'Run the queued task with its durable execution context.',
+      });
+    } catch (error) {
+      const stored = getTask(task.id);
+      if (stored?.status !== 'failed') {
+        const message = error instanceof Error ? error.message : String(error);
+        updateTask(task.id, { status: 'failed', error: `TASK_INITIALIZATION_FAILED: ${message}`, completedAt: new Date().toISOString() });
+        addTaskLog(task.id, 'error', 'Task initialization failed before dispatch; any prepared directory is retained for inspection', 'system');
+      }
+      const failed = getTask(task.id)!;
+      eventBus.emit('task:failed', { taskId: task.id, task: failed, error: failed.error, workspaceId: failed.workspaceId });
+      throw error;
+    }
 
     eventBus.emit('task:created', { taskId: task.id, task, workspaceId: task.workspaceId });
     addTaskLog(task.id, 'info', `Task created: ${task.title}`, 'system');
@@ -271,6 +289,7 @@ export class TaskQueue {
 
   /** Resume dispatch of the same persisted task after an uncertain HTTP/queue result. */
   async dispatchExisting(taskId: string): Promise<Task> {
+    if (isGitHubVerificationTask(taskId)) throw new Error('OPERATOR_VERIFIER_ONLY: repository checks cannot be dispatched to a model Agent');
     const task = getTask(taskId);
     if (!task) throw new Error('Task not found');
     if (!['pending', 'queued'].includes(task.status) || taskSchedulingPaused(taskId)
@@ -295,6 +314,7 @@ export class TaskQueue {
 
   /** Process a BullMQ job */
   private async processJob(taskId: string, job?: Job) {
+    if (isGitHubVerificationTask(taskId)) return;
     const task = getTask(taskId);
     if (!task) throw new Error(`Task ${taskId} not found`);
     if (taskSchedulingPaused(taskId)) return;
@@ -445,6 +465,7 @@ export class TaskQueue {
 
   /** In-memory mode: try to execute a task */
   private async tryExecute(task: Task) {
+    if (isGitHubVerificationTask(task.id)) return;
     if (taskSchedulingPaused(task.id)) return;
     if (getTask(task.id)?.status !== 'pending' || queueOwnsRetry(task.id)) return;
     if (listExecutions({ taskId: task.id, status: 'running' }).length > 0) return;
@@ -703,6 +724,8 @@ export class TaskQueue {
     logger.info({ count: toRecover.length }, 'Recovering interrupted tasks');
 
     for (const task of toRecover) {
+      // Explicit operator verification never becomes a new model task on restart.
+      if (isGitHubVerificationTask(task.id)) continue;
       if (taskSchedulingPaused(task.id)) {
         // Never auto-run held work after restart. A running request lacks a safe
         // boundary until the existing recovery review verifies it.

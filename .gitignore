@@ -16,5 +16,9 @@ packages/desktop/.stage/
 packages/desktop/release/
 packages/dashboard/test-results/
 
+# Local operator state and coordination locks (not source or delivery evidence)
+/.workagent/
+/..workagent-operator-locks/
+
 # Sample pipeline run artifacts (kept locally, not tracked)
 reviews/

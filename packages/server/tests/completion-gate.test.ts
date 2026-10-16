@@ -9,6 +9,7 @@ import { createExecution } from '../src/db/models/execution.js';
 import { upsertExecutionArtifact } from '../src/db/models/execution-artifact.js';
 import { completionCriteriaSchema, completionEvidenceIsFresh, verifyCompletionCriteria } from '../src/agents/completion-gate.js';
 import type { CompletionCriterion } from '@myrmecia/shared';
+import { parseVerificationCommand } from '@myrmecia/shared';
 beforeEach(() => { process.env.DB_PATH = ':memory:'; });
 afterEach(() => { closeDb(); delete process.env.DB_PATH; });
 const hash = (text: string) => createHash('sha256').update(text).digest('hex');
@@ -20,6 +21,24 @@ function fixture(criteria: CompletionCriterion[] = []) {
   return { root, task, run };
 }
 describe('criterion-linked completion verification', () => {
+  it('does not pass a mandatory npm test criterion when no cases executed', async () => {
+    const f = fixture([{ id: 'tests', label: 'Real tests', required: true,
+      verifier: 'test_command', command: 'npm test', timeoutMs: 5000 }]);
+    writeFileSync(join(f.root, 'package.json'), '{"private":true,"scripts":{"test":"node --test empty/*.test.mjs"}}');
+    const report = await verifyCompletionCriteria(f.task, f.run.id, 'Claimed complete');
+    expect(report.status).toBe('unavailable');
+    expect(report.criteria[0].message).toContain('without verifiable executed cases');
+  });
+  it('verifies a real test_command despite an npm package-version banner ending in 0 test', async () => {
+    const f = fixture([{ id: 'tests', label: 'Real tests', required: true,
+      verifier: 'test_command', command: 'npm test', timeoutMs: 5000 }]);
+    writeFileSync(join(f.root, 'package.json'), JSON.stringify({ name: 'pilot', version: '1.0.0',
+      private: true, scripts: { test: 'node --test check.test.mjs' } }));
+    writeFileSync(join(f.root, 'check.test.mjs'), "import test from 'node:test'; test('real fixture case', () => {});");
+    const report = await verifyCompletionCriteria(f.task, f.run.id, 'Validated');
+    expect(report.status).toBe('passed');
+    expect(report.criteria[0].evidence).toHaveLength(1);
+  });
   it('keeps ordinary chat unblocked without pretending its outcome was verified', async () => {
     const f = fixture();
     expect(await verifyCompletionCriteria(f.task, f.run.id, 'Answer')).toMatchObject({ status: 'not_requested', criteria: [] });
@@ -76,4 +95,14 @@ describe('criterion-linked completion verification', () => {
     expect(completionCriteriaSchema.safeParse([{ ...base, verifier: 'artifact', relativePath: '../secret' }]).success).toBe(false);
     expect(completionCriteriaSchema.safeParse([{ ...base, verifier: 'output_contains', text: 'one' }, { ...base, verifier: 'output_contains', text: 'two' }]).success).toBe(false);
   });
+  it.each(['pnpm --filter @app/server test', 'pnpm build', 'npm run lint', 'python -m pytest -q tests/test_api.py',
+    'go test ./... -race', 'cargo test --package app', 'node --test tests/app.test.js'])(
+    'accepts bounded project validation: %s', command => {
+      expect(completionCriteriaSchema.safeParse([{ id: 'check', label: 'check', required: true, verifier: 'test_command', command }]).success).toBe(true);
+      expect(parseVerificationCommand(command)?.shellCommand).not.toContain(';');
+    });
+  it.each(['npm install', 'pnpm exec deploy', 'python -c evil', 'pytest; touch stolen', 'go test ../outside',
+    'cargo test --manifest-path /outside/Cargo.toml', 'pnpm --filter ../other test', 'npm test $(curl evil)',
+    'pnpm test\nnpm publish', 'pytest /outside/test.py', 'cargo test --package'])(
+    'rejects unauthorized shell/paths: %s', command => expect(parseVerificationCommand(command)).toBeUndefined());
 });

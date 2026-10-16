@@ -20,6 +20,7 @@ import { captureArtifactBaseline } from '../src/artifacts/execution-artifact-ind
 import { prepareTaskWorkspace } from '../src/workspace/task-workspace.js';
 import { createTask } from '../src/db/models/task.js';
 import { setPauseControl } from '../src/agents/pause-control.js';
+import { eventBus, type BusEvent } from '../src/events/event-bus.js';
 const roots: string[] = [], scope = { workspaceId: 'default', actorId: 'local-admin' };
 function root() { const path = mkdtempSync(join(tmpdir(), 'myrmecia-storage-')); roots.push(path); return path; }
 afterEach(() => { for (const path of roots.splice(0)) rmSync(path, { recursive: true, force: true }); });
@@ -117,6 +118,32 @@ describe('workspace storage authority', () => {
     expect(() => claimWorkspaceLease(task('still-blocked', path))).toThrow('WORKSPACE_BUSY');
     expect(reconcileWorkspaceLeases(scope, workspace.id, { ...preview, effectsStopped: true, confirm: true })).toMatchObject({ released: 1, replayed: false });
     const next = claimWorkspaceLease(task('fresh', path)); expect(next.fence).toBeGreaterThan(lease.fence); releaseWorkspaceLease(next);
+  });
+  it('notifies waiting queue consumers only after a successful audited lease release commits', () => {
+    const path = root();
+    const workspace = registerManagedWorkspace({ ...scope, canonicalPath: path, ownership: 'user_source',
+      sourceKind: 'directory', accessMode: 'shared_write', baseline: { provenance: 'filtered_copy', excluded: [] } });
+    const lease = claimWorkspaceLease(task('recover-queue-owner', path));
+    getDb().run("UPDATE workspace_leases SET state='uncertain' WHERE id=?", lease.id);
+    const preview = previewLeaseReconciliation(scope, workspace.id);
+    const events: unknown[] = [];
+    const listener = (event: BusEvent) => {
+      const payload = event.payload as { taskId?: string };
+      if (payload.taskId !== lease.taskId) return;
+      events.push(event.payload);
+      expect(getDb().get<{ state: string }>('SELECT state FROM workspace_leases WHERE id=?', lease.id)?.state).toBe('released');
+      expect(getDb().get<{ state: string }>('SELECT state FROM workspace_operation_journal WHERE id=?', preview.previewId)?.state).toBe('complete');
+    };
+    eventBus.on('task:updated', listener);
+    try {
+      expect(() => reconcileWorkspaceLeases(scope, workspace.id, { ...preview, confirm: true, effectsStopped: false })).toThrow('ATTESTATION');
+      expect(events).toEqual([]);
+      reconcileWorkspaceLeases(scope, workspace.id, { ...preview, confirm: true, effectsStopped: true });
+      expect(events).toEqual([{ taskId: lease.taskId, workspaceId: scope.workspaceId,
+        workspaceLeaseReleased: true, workspaceLeaseReconciled: true }]);
+      expect(() => reconcileWorkspaceLeases(scope, workspace.id, { ...preview, confirm: true, effectsStopped: true })).toThrow('PREVIEW_NOT_FOUND');
+      expect(events).toHaveLength(1);
+    } finally { eventBus.off('task:updated', listener); }
   });
   it('captures changed outputs instead of freshly copied inputs and exports unsupported non-Git patches', async () => {
     const base = root(), sourcePath = join(base, 'source'); mkdirSync(sourcePath);

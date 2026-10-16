@@ -1,5 +1,6 @@
 import { Check, CircleAlert, FileSearch, TerminalSquare } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { testExecutionStatus, type TestRunStatus } from '@myrmecia/shared';
 
 type ReviewFinding = {
   severity?: string;
@@ -22,6 +23,7 @@ type ValidationResult = {
   cwd?: string;
   exitCode: number;
   failedTests: string[];
+  verificationStatus: TestRunStatus;
 };
 
 type StructuredResult = ReviewResult | ValidationResult;
@@ -91,6 +93,10 @@ export function parseStructuredTaskResult(value: string): StructuredResult | nul
       cwd: typeof record?.cwd === 'string' ? record.cwd : partialString(value, 'cwd'),
       exitCode,
       failedTests: stringList(record?.failedTests),
+      verificationStatus: record && typeof record.command === 'string'
+        ? testExecutionStatus({ command: record.command, exitCode,
+          stdout: typeof record.stdout === 'string' ? record.stdout : undefined,
+          stderr: typeof record.stderr === 'string' ? record.stderr : undefined }) : 'unknown',
     };
   }
 
@@ -109,7 +115,7 @@ export function structuredResultSummary(output: string): string | null {
   }
 
   if (result.kind === 'validation') {
-    const passed = result.exitCode === 0 && result.failedTests.length === 0;
+    const passed = result.verificationStatus === 'passed' && result.failedTests.length === 0;
     const label = passed ? 'Validation passed' : 'Validation needs attention';
     const failures = result.failedTests.length > 0
       ? ` · ${result.failedTests.length} failed test${result.failedTests.length === 1 ? '' : 's'}`
@@ -143,7 +149,7 @@ export function StructuredTaskResult({ output, compact = false }: { output: stri
   }
 
   if (result.kind === 'validation') {
-    const passed = result.exitCode === 0 && result.failedTests.length === 0;
+    const passed = result.verificationStatus === 'passed' && result.failedTests.length === 0;
     return (
       <div className={cn('rounded-xl border px-3.5 py-3', passed ? 'border-emerald-400/25 bg-emerald-400/[0.045]' : 'border-red-400/25 bg-red-400/[0.05]')}>
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -159,6 +165,11 @@ export function StructuredTaskResult({ output, compact = false }: { output: stri
           </p>
         )}
         {!compact && result.command && <div className="mt-3 rounded-lg bg-background/55 px-3 py-2 font-mono text-[11px] text-app-secondary">{result.command}</div>}
+        {!compact && ['skipped', 'unknown'].includes(result.verificationStatus) && (
+          <p className="mt-2 text-xs text-app-secondary">
+            {result.verificationStatus === 'skipped' ? '没有执行测试用例，不能作为验收通过依据。' : '缺少可核验的测试执行证据，不能仅凭退出码判定通过。'}
+          </p>
+        )}
         {!compact && result.failedTests.length > 0 && (
           <div className="mt-3">
             <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-red-500">Failed tests</div>

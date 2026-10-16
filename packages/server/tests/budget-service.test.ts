@@ -3,7 +3,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { closeDb, getDb } from '../src/db/database.js';
-import { markBudgetDispatched, reserveBudget, releaseUndispatchedBudget, setBudgetPolicy, settleUsage, type BudgetReservation } from '../src/agents/budget-service.js';
+import { markBudgetDispatched, reserveBudget, releaseUndispatchedBudget, setBudgetPolicy, settleUsage, retainFailedRequestBudget, budgetUsage, type BudgetReservation } from '../src/agents/budget-service.js';
 beforeEach(() => { process.env.DB_PATH = ':memory:'; });
 afterEach(() => { closeDb(); delete process.env.DB_PATH; });
 const reserve = (key: string, extra: Partial<BudgetReservation> = {}, now?: number) => reserveBudget({
@@ -11,6 +11,23 @@ const reserve = (key: string, extra: Partial<BudgetReservation> = {}, now?: numb
   costType: 'unavailable', costUSD: null, ...extra,
 }, now);
 describe('persistent atomic budget authority', () => {
+  it('retains partial failed SDK usage as an idempotent conservative hold with an unknown tail', () => {
+    setBudgetPolicy({ workspaceId: 'w', scope: 'task', scopeId: 't', period: 'lifetime', maxTokens: 150 });
+    reserve('1'); markBudgetDispatched('w', '1');
+    const receipt = { workspaceId: 'w', key: '1', eventKey: 'failed-observation', observedTokensLowerBound: 170 };
+    retainFailedRequestBudget(receipt); retainFailedRequestBudget(receipt);
+    expect(getDb().get<any>('SELECT * FROM agent_budget_reservations')).toMatchObject({
+      status: 'dispatched', tokens: 170, observed_tokens: null, observed_cost_usd: null,
+    });
+    expect(budgetUsage('w', 'a', 't')[0]).toMatchObject({
+      observed: { tokens: 0 }, reserved: { tokens: 170 }, remaining: { tokens: 0 }, unknownTokens: 1,
+    });
+    releaseUndispatchedBudget('w', '1');
+    expect(() => reserve('2')).toThrow('EXHAUSTED');
+    expect(() => retainFailedRequestBudget({ ...receipt, observedTokensLowerBound: 180 })).toThrow('IDEMPOTENCY_CONFLICT');
+    retainFailedRequestBudget({ ...receipt, eventKey: 'older-observation', observedTokensLowerBound: 140 });
+    expect(getDb().get<any>('SELECT tokens FROM agent_budget_reservations').tokens).toBe(170);
+  });
   it('deduplicates reservations, rolls back rejected dispatches and prevents concurrent oversubscription', () => {
     setBudgetPolicy({ workspaceId: 'w', scope: 'task', scopeId: 't', period: 'lifetime', maxTokens: 150 });
     reserve('1'); reserve('1');

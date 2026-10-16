@@ -25,6 +25,7 @@ export interface SkillExecutorOptions {
   onStepWarning?: (stepIndex: number, step: SkillStep, message: string) => void;
   onCheckpoint?: (steps: readonly StepResult[]) => void;
   abortSignal?: AbortSignal;
+  testCommand?: string;
 }
 
 export interface StepResult {
@@ -53,12 +54,14 @@ export class SkillExecutor {
   private onStepWarning?: SkillExecutorOptions['onStepWarning'];
   private abortSignal?: AbortSignal;
   private onCheckpoint?: SkillExecutorOptions['onCheckpoint'];
+  private testCommand?: string;
 
   constructor(options: SkillExecutorOptions) {
     this.config = options.config;
     this.promptContent = options.promptContent;
     this.workdir = options.workdir;
     this.llmCall = options.llmCall;
+    this.testCommand = options.testCommand;
     this.onStepStart = options.onStepStart;
     this.onStepDone = options.onStepDone;
     this.onStepFailed = options.onStepFailed;
@@ -114,16 +117,15 @@ export class SkillExecutor {
             workdir: this.workdir,
             output: lastOutput,
             stepName: step.name,
+            testCommand: this.testCommand,
           });
 
           if (validationResult.pass) {
             passed = true;
             break;
           } else {
-            lastError = step.validation.failMessage
-              || validationResult.error
-              || validationResult.stderr
-              || 'Validation failed';
+            lastError = [step.validation.failMessage,
+              validationResult.error || validationResult.stderr || 'Validation failed'].filter(Boolean).join(': ');
           }
         } else {
           passed = true;

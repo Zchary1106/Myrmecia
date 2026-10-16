@@ -23,7 +23,7 @@ import { createAgent } from '../src/db/models/agent.js';
 import { createTemplate } from '../src/db/models/pipeline.js';
 import { getDb } from '../src/db/database.js';
 import { syncBuiltinTools } from '../src/tools/tool-registry.js';
-import { getModelRoute, syncBuiltinModels, syncProviderModels } from '../src/models/model-registry.js';
+import { getModelRoute, syncBuiltinModels, syncProviderModels, upsertModelRoute } from '../src/models/model-registry.js';
 import { getModelGateway } from '../src/models/gateway.js';
 import type { TaskQueue } from '../src/queue/task-queue.js';
 import { isPipelinePublisherTask } from '../src/queue/task-queue.js';
@@ -552,7 +552,7 @@ describe('control routes', () => {
     });
   });
 
-  it('keeps cached Copilot models selectable when live discovery temporarily returns only Auto', async () => {
+  it('uses only the live Auto result and refuses cached or builtin compatibility models', async () => {
     process.env.MYRMECIA_MODEL_PROVIDER = 'copilot';
     process.env.GH_CLI_PATH = process.execPath;
     syncBuiltinModels();
@@ -580,21 +580,75 @@ describe('control routes', () => {
     await withApp(app, async (baseUrl) => {
       const discovered = await jsonFetch<any>(baseUrl, '/models/provider-settings');
       expect(discovered.status).toBe(200);
-      expect(discovered.body.models.map((model: any) => model.id)).toEqual(expect.arrayContaining([
-        'auto',
-        'gpt-cached',
-        'gpt-5.3-codex',
-        'gpt-5.4',
-      ]));
-      expect(discovered.body.error).toContain('showing the last discovered');
+      expect(discovered.body.models.map((model: any) => model.id)).toEqual(['auto']);
+      expect(discovered.body.source).toBe('provider');
+      expect(discovered.body.error).toBeUndefined();
 
       const selected = await jsonFetch<any>(baseUrl, '/models/provider-settings', {
         method: 'PUT',
         body: JSON.stringify({ modelId: 'gpt-cached' }),
         headers: { 'x-operator-id': 'ops1', 'x-operator-role': 'operator' },
       });
-      expect(selected.status).toBe(200);
-      expect(selected.body.selectedModelId).toBe('gpt-cached');
+      expect(selected.status).toBe(404);
+      expect(selected.body.error.code).toBe('MODEL_NOT_FOUND');
+      expect(getModelRoute('provider:copilot')).toBeUndefined();
+      const compatibility = await jsonFetch<any>(baseUrl, '/models/provider-settings', {
+        method: 'PUT',
+        body: JSON.stringify({ modelId: 'gpt-5.4' }),
+        headers: { 'x-operator-id': 'ops1', 'x-operator-role': 'operator' },
+      });
+      expect(compatibility.status).toBe(404);
+    });
+  });
+
+  it('returns no selectable cached models on discovery failure without claiming logout', async () => {
+    process.env.MYRMECIA_MODEL_PROVIDER = 'copilot';
+    process.env.GH_CLI_PATH = process.execPath;
+    syncProviderModels('copilot', [{ id: 'old-model', name: 'Previously discovered' }]);
+    vi.spyOn(getModelGateway(), 'copilotAuthStatus').mockResolvedValue({ authenticated: true, login: 'test-user' });
+    vi.spyOn(getModelGateway(), 'listProviderModels').mockRejectedValue(new Error('Model catalog unavailable'));
+    const app = express();
+    app.use(express.json());
+    app.use('/models', createModelRoutes());
+    await withApp(app, async baseUrl => {
+      const result = await jsonFetch<any>(baseUrl, '/models/provider-settings');
+      expect(result.body.models).toEqual([]);
+      expect(result.body.source).toBe('registry');
+      expect(result.body.account).toMatchObject({ authenticated: true, login: 'test-user' });
+      expect(result.body.error).toContain('Model catalog unavailable');
+    });
+  });
+
+  it('rechecks the current Copilot catalog before enqueuing an explicitly selected model', async () => {
+    process.env.MYRMECIA_MODEL_PROVIDER = 'copilot';
+    syncBuiltinModels();
+    syncProviderModels('copilot', [{ id: 'old-model', name: 'Old Model' }]);
+    const discovery = vi.spyOn(getModelGateway(), 'listProviderModels').mockResolvedValue([{ id: 'auto', name: 'Auto' }] as any);
+    const enqueue = vi.fn();
+    const app = express();
+    app.use(express.json());
+    app.use('/tasks', createTaskRoutes({ enqueue } as unknown as TaskQueue));
+    await withApp(app, async baseUrl => {
+      for (const modelId of ['old-model', 'gpt-5.4', 'deepseek-v4-pro']) {
+        const result = await jsonFetch<any>(baseUrl, '/tasks', {
+          method: 'POST', body: JSON.stringify({ title: 'Invalid model', mode: 'direct', modelId }),
+        });
+        expect(result.status).toBe(400);
+        expect(result.body.error.code).toBe('INVALID_MODEL');
+      }
+      upsertModelRoute({ routeKey: 'provider:copilot', defaultModelId: 'old-model', fallbackGroup: 'copilot' });
+      const staleDefault = await jsonFetch<any>(baseUrl, '/tasks', {
+        method: 'POST', body: JSON.stringify({ title: 'Stale default', mode: 'direct' }),
+      });
+      expect(staleDefault.status).toBe(400);
+      expect(staleDefault.body.error.code).toBe('INVALID_MODEL');
+      discovery.mockRejectedValue(new Error('Offline'));
+      const offline = await jsonFetch<any>(baseUrl, '/tasks', {
+        method: 'POST', body: JSON.stringify({ title: 'Offline', mode: 'direct', modelId: 'old-model' }),
+      });
+      expect(offline.status).toBe(503);
+      expect(offline.body.error.code).toBe('MODEL_DISCOVERY_UNAVAILABLE');
+      expect(enqueue).not.toHaveBeenCalled();
     });
   });
 
@@ -1009,6 +1063,11 @@ describe('control routes', () => {
       expect(result.body.database).not.toHaveProperty('path');
       expect(result.body.database.migrations.length).toBeGreaterThan(0);
       expect(result.body.runtime.nodeVersion).toMatch(/^v/);
+      expect(result.body.runtime.capabilities).toMatchObject({ automaticRecovery: 'read_only_checkpoints', pauseBoundary: 'complete_turn' });
+      expect(result.body.runtime.capabilities.runtimeVersion).toMatch(/legacy|v2/);
+      expect(result.body.runtime.capabilities.warnings).toEqual(expect.arrayContaining([
+        expect.stringContaining('Unknown writes require explicit reconciliation'),
+      ]));
     });
   });
 

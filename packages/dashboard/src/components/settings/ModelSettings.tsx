@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { ModelDefinition, ModelProviderSettings } from '@myrmecia/shared';
 import { api } from '../../lib/api';
 import { cn } from '../../lib/utils';
+import { currentAccountModels } from '../../lib/modelCatalog';
 
 const inputClass = 'mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-accent';
 
@@ -29,12 +30,13 @@ export function ModelSettings() {
   const [newModel, setNewModel] = useState({
     id: '', displayName: '', provider: 'openai-compatible', fallbackGroup: 'balanced', tier: 'balanced' as const,
   });
+  const accountModels = currentAccountModels(models, providerSettings);
+  const archivedModels = models.filter(item => !accountModels.some(current => current.id === item.id));
 
   const refresh = async () => {
     setError(null);
-    const [runtimeConfig, modelList, providerModelSettings] = await Promise.all([
+    const [runtimeConfig, providerModelSettings] = await Promise.all([
       desktop?.getRuntimeConfig(),
-      api.models.list(),
       api.models.providerSettings(),
     ]);
     if (runtimeConfig) {
@@ -43,7 +45,7 @@ export function ModelSettings() {
       setBaseUrl(runtimeConfig.baseUrl);
       setModel(runtimeConfig.model);
     }
-    setModels(modelList);
+    setModels(await api.models.list());
     setProviderSettings(providerModelSettings);
     setProviderModelId(providerModelSettings.selectedModelId || providerModelSettings.models[0]?.id || '');
     setAccountLogin(providerModelSettings.account?.login || providerModelSettings.accounts?.find(account => account.active)?.login || '');
@@ -83,6 +85,7 @@ export function ModelSettings() {
     try {
       const next = await api.models.providerSettings();
       setProviderSettings(next);
+      setModels(await api.models.list());
       setProviderModelId(next.selectedModelId || next.models[0]?.id || '');
       setAccountLogin(next.account?.login || next.accounts?.find(account => account.active)?.login || '');
       setMessage(next.error || '已从当前 Provider 刷新模型列表。');
@@ -124,6 +127,7 @@ export function ModelSettings() {
     try {
       const next = await api.models.switchCopilotAccount(accountLogin);
       setProviderSettings(next);
+      setModels(await api.models.list());
       setAccountLogin(next.account?.login || accountLogin);
       setProviderModelId(next.selectedModelId || next.models[0]?.id || '');
       setMessage(`已切换到 GitHub 账号 @${next.account?.login || accountLogin}。`);
@@ -307,10 +311,11 @@ export function ModelSettings() {
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <h4 className="text-xs font-semibold text-app-primary">模型选择</h4>
-              <p className="mt-1 text-[11px] leading-relaxed text-gray-500">模型来自当前 Copilot 账号；暂时无法读取的项目会明确标记为回退，不会冒充账号模型。</p>
+              <p className="mt-1 text-[11px] leading-relaxed text-gray-500">只允许选择当前 Copilot 账号实时返回的可用模型；获取失败时请刷新，不会补入历史或内置模型。</p>
             </div>
             <div className="flex min-w-0 gap-2">
               <select value={providerModelId} onChange={event => setProviderModelId(event.target.value)} disabled={providerBusy !== null} aria-label="Copilot account model" className="min-w-0 flex-1 rounded-lg border border-border bg-background px-3 py-2 text-xs outline-none focus:border-accent lg:w-64">
+                {providerModelId && !providerSettings.models.some(item => item.id === providerModelId) && <option value={providerModelId} disabled>{providerModelId} · 当前不可用</option>}
                 {providerSettings.models.map(modelItem => <option key={modelItem.id} value={modelItem.id} disabled={!modelItem.selectable}>{modelItem.name}{modelItem.source === 'provider' ? ' · account' : ' · fallback'}{modelItem.id === 'auto' ? ' · dynamic' : ''}</option>)}
               </select>
               <button type="button" onClick={() => void applyProviderModel()} disabled={!providerModelId || providerBusy !== null || !providerSettings.models.find(modelItem => modelItem.id === providerModelId)?.selectable} className="rounded-lg bg-accent px-3 py-2 text-xs font-semibold text-white hover:bg-accent-light disabled:opacity-50">
@@ -365,7 +370,7 @@ export function ModelSettings() {
         </div>
 
         <div className="mt-4 grid gap-2 md:grid-cols-2">
-          {models.map(item => (
+          {accountModels.map(item => (
             <div key={item.id} className={cn('flex items-center gap-3 rounded-lg border px-3 py-2.5', item.enabled ? 'border-border bg-background' : 'border-red-500/20 bg-red-500/5 opacity-70')}>
               <div className="min-w-0 flex-1">
                 <div className="truncate text-xs font-medium">{item.displayName}</div>
@@ -376,6 +381,22 @@ export function ModelSettings() {
             </div>
           ))}
         </div>
+        <details className="mt-4 rounded-lg border border-border p-3">
+          <summary className="cursor-pointer text-xs text-app-secondary">历史、内置及其他 Provider 模型（{archivedModels.length}）</summary>
+          <p className="mt-2 text-[11px] text-app-muted">仅为模型库记录，不代表当前账户可用；启用记录也不会让它出现在任务模型列表中。</p>
+          <div className="mt-3 grid gap-2 md:grid-cols-2">
+            {archivedModels.map(item => (
+              <div key={item.id} className="flex items-center gap-3 rounded-lg border border-border px-3 py-2">
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-xs text-app-secondary">{item.displayName}</div>
+                  <div className="mt-1 truncate text-[10px] text-app-muted">{item.provider} · {item.id} · 当前不可选</div>
+                </div>
+                <button type="button" onClick={() => void toggleModel(item)} disabled={busy} className="text-[10px] text-app-muted">{item.enabled ? '停用记录' : '启用记录'}</button>
+                {item.costProfile.source === 'custom' && <button type="button" onClick={() => void removeModel(item)} disabled={busy} className="text-[10px] text-red-300">删除</button>}
+              </div>
+            ))}
+          </div>
+        </details>
       </div>
 
       {message && <div className="text-xs text-emerald-300">{message}</div>}

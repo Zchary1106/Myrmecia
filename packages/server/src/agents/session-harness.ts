@@ -122,4 +122,8 @@ export class SessionHarness {
   legacyMessages(): any[] {
     return toGatewayRequest({ modelId: 'journal', messages: this.messages() }, defaultRuntimeCapabilities('host_loop')).messages;
   }
+  /** Real claimed/applied inbox entries, never user-role compaction summaries. */
+  appliedInstructions(): string[] {
+    return this.applied.map(entry => entry.content);
+  }
 }

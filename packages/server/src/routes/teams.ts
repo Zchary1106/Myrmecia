@@ -18,7 +18,7 @@ import {
   publishTeamTemplateVersion,
 } from '../db/models/team-template-version.js';
 import { createGraphWorkflow } from '../agents/graph-workflow.js';
-import { getModel } from '../models/model-registry.js';
+import { validateRequestedModelId } from './model-selection.js';
 import { getDb } from '../db/database.js';
 
 const dispatchSchema = z.object({
@@ -40,13 +40,6 @@ function validateWorkdir(value: string | undefined): string | undefined {
     throw new HttpError(400, 'INVALID_WORKDIR', 'Workspace directory does not exist');
   }
   return workdir;
-}
-
-function validateModelId(value: string | undefined): string | undefined {
-  if (!value || value === 'auto') return undefined;
-  const model = getModel(value);
-  if (!model || !model.enabled) throw new HttpError(400, 'INVALID_MODEL', 'Selected model is not enabled');
-  return model.id;
 }
 
 const messageSchema = z.object({
@@ -341,7 +334,7 @@ export function createTeamRoutes(coordinator: TeamCoordinator): Router {
       const body = parseBody(dispatchSchema, req);
       const actor = requireOperatorRole(req, 'team.dispatch', ['admin', 'operator']);
       const result = await coordinator.dispatch(team!.id, body.goal, ws(req), validateWorkdir(body.workdir), {
-        modelId: validateModelId(body.modelId),
+        modelId: await validateRequestedModelId(body.modelId),
         reasoningEffort: body.reasoningEffort,
         contextLength: body.contextLength,
         filesystemWorkspaceId: body.filesystemWorkspaceId, workspaceAccessMode: body.workspaceAccessMode, workspaceActorId: actor.id,

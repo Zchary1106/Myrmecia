@@ -1,4 +1,5 @@
 import type { TestReport, TestReportStatus } from '../types.js';
+import { testExecutionStatus } from '@myrmecia/shared';
 
 /**
  * Evidence emitted by a test runner.  It is deliberately kept alongside the
@@ -33,7 +34,8 @@ function unique(values: string[]): string[] {
 
 function truncate(value: string | undefined, limit = MAX_EVIDENCE_TEXT): string | undefined {
   if (!value) return undefined;
-  return value.length > limit ? `${value.slice(0, limit)}\n…[truncated]` : value;
+  return value.length > limit
+    ? `${value.slice(0, limit / 2)}\n…[middle truncated]\n${value.slice(-limit / 2)}` : value;
 }
 
 function asStringArray(value: unknown): string[] {
@@ -114,7 +116,7 @@ function extractCoverageNotes(output: string): string | undefined {
 
 export function createTestReportFromOutput(output: string, fallbackSummary = 'QA validation completed'): TestReportWithEvidence {
   const evidence = extractStructuredTestEvidence(output);
-  const status = evidence ? (evidence.exitCode === 0 ? 'passed' : 'failed') : inferStatus(output);
+  const status = evidence ? testExecutionStatus(evidence) : inferStatus(output);
   const failures = unique([
     ...(evidence?.failedTests || []),
     ...extractFailures(evidence?.stderr || ''),
@@ -138,7 +140,8 @@ export function createTestReportFromOutput(output: string, fallbackSummary = 'QA
 /** A passed legacy text report is informative, but not sufficient for a hard QA gate. */
 export function hasVerifiedTestEvidence(report: TestReportWithEvidence): boolean {
   return report.status === 'passed' && Boolean(
-    report.evidence && report.evidence.command && report.evidence.cwd && Number.isFinite(report.evidence.exitCode),
+    report.evidence && report.evidence.command && report.evidence.cwd && Number.isFinite(report.evidence.exitCode)
+      && testExecutionStatus(report.evidence) === 'passed',
   );
 }
 

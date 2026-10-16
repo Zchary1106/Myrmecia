@@ -44,10 +44,10 @@ function RuleEditor({ check, onChange }: { check: CompletionCriterion; onChange:
         onChange={event => onChange({ ...check, text: event.target.value })} />}
     {check.verifier === 'artifact' && <input aria-label="产物相对路径" value={check.relativePath} maxLength={500}
       className={inputClass} onChange={event => onChange({ ...check, relativePath: event.target.value })} />}
-    {check.verifier === 'test_command' && <><select aria-label="测试命令" value={check.command} className={inputClass}
-      onChange={event => onChange({ ...check, command: event.target.value as typeof check.command })}>
-      <option>pnpm test</option><option>pnpm build</option><option>npm test</option>
-    </select><p className="text-xs text-amber-600">会在本用例的任务工作目录执行已有测试脚本，有副作用；任务目录不等同操作系统隔离，运行前需确认。</p></>}
+    {check.verifier === 'test_command' && <><input aria-label="测试命令" value={check.command} maxLength={500} className={inputClass}
+      placeholder="pnpm --filter @app/server test / python -m pytest / go test ./... / cargo test"
+      onChange={event => onChange({ ...check, command: event.target.value })} />
+    <p className="text-xs text-amber-600">只接受有界的测试、构建、lint/typecheck 命令，不允许任意 Shell、安装或部署。会执行项目代码，有副作用；任务目录不等同操作系统隔离，运行前需确认。</p></>}
     {check.verifier === 'human_review' && <textarea aria-label="人工审查标准" value={check.rubric} maxLength={2000}
       rows={2} className={inputClass} onChange={event => onChange({ ...check, rubric: event.target.value })} />}
     {check.verifier === 'output_json_schema' && <><textarea aria-label="JSON Schema" value={schemaText} maxLength={16000}

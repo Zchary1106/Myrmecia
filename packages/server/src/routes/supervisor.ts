@@ -20,7 +20,7 @@ import {
 import { getDb } from '../db/database.js';
 import { listTasks, getTask } from '../db/models/task.js';
 import { requestCanAccessWorkspace, workspaceIdFromRequest } from '../auth/tenant.js';
-import { getModel } from '../models/model-registry.js';
+import { validateRequestedModelId } from './model-selection.js';
 import type { Task } from '../types.js';
 
 const dispatchSchema = z.object({
@@ -59,10 +59,7 @@ export function createSupervisorRoutes(taskQueue: TaskQueue, pipelineEngine: Pip
       const workspaceActor = requireOperatorRole(req, 'task.dispatch', ['admin', 'operator']);
       const input = body.input;
       const workspacePath = validateWorkspacePath(body.workspacePath);
-      const modelId = body.modelId === 'auto' ? undefined : body.modelId;
-      if (modelId && (!getModel(modelId) || !getModel(modelId)?.enabled)) {
-        return res.status(400).json({ error: { code: 'INVALID_MODEL', message: 'Selected model is not enabled' } });
-      }
+      const modelId = await validateRequestedModelId(body.modelId);
 
       // 1. Check budget
       const budget = guardrails.checkBudget();

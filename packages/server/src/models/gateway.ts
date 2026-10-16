@@ -245,6 +245,7 @@ export class ModelGateway {
       timeoutMs?: number;
       idleTimeoutMs?: number;
       providerSession?: ProviderSessionOptions;
+      contextBudget?: import('./copilot-provider.js').CopilotContextBudget;
     },
   ): Promise<StreamAccumulation | any> {
     const providers = readProviders();

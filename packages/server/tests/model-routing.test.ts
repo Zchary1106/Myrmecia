@@ -169,7 +169,7 @@ describe('model registry and routing', () => {
     expect(selection.source).toBe('task.requestedModel');
   });
 
-  it('allows a Copilot compatibility model selected in Dashboard', () => {
+  it('does not use a builtin compatibility model as a Copilot account model', () => {
     process.env.MYRMECIA_MODEL_PROVIDER = 'copilot';
     upsertModelRoute({
       routeKey: 'provider:copilot',
@@ -182,10 +182,31 @@ describe('model registry and routing', () => {
       role: 'developer',
     });
 
-    const selection = selectModelForAgent(agent);
+    expect(() => selectModelForAgent(agent)).toThrow('not available for the current account');
+  });
 
-    expect(selection.modelId).toBe('gpt-5.4');
-    expect(selection.reason).toContain('selected in Dashboard');
+  it('retires missing provider models without deleting history or overwriting operator toggles', () => {
+    syncProviderModels('copilot', [
+      { id: 'retired-model', name: 'Retired', maxTokens: 32_000 },
+      { id: 'active-model', name: 'Active', maxTokens: 32_000 },
+    ]);
+    updateModel('active-model', { enabled: false });
+    syncProviderModels('copilot', [{ id: 'active-model', name: 'Active', maxTokens: 128_000 }]);
+    expect(getModel('retired-model')?.costProfile.available).toBe(false);
+    expect(listModels({ enabled: true }).map(model => model.id)).not.toContain('retired-model');
+    expect(getModel('active-model')).toMatchObject({ enabled: false, maxTokens: 128_000 });
+    syncProviderModels('copilot', [{ id: 'retired-model', name: 'Available again' }]);
+    expect(getModel('retired-model')?.costProfile.available).toBe(true);
+    expect(getModel('active-model')).toMatchObject({ enabled: false });
+  });
+
+  it('refuses a removed explicit task model rather than silently selecting a fallback', () => {
+    process.env.MYRMECIA_MODEL_PROVIDER = 'copilot';
+    syncProviderModels('copilot', [{ id: 'removed-model', name: 'Removed' }]);
+    syncProviderModels('copilot', [{ id: 'auto', name: 'Auto' }]);
+    const agent = createAgent({ id: 'removed-model-agent', name: 'Agent', role: 'developer' });
+    expect(() => selectModelForAgent(agent, { modelId: 'removed-model' })).toThrow('not available');
+    expect(() => selectModelForAgent(agent, { modelId: 'gpt-5.4' })).toThrow('not available');
   });
 
   it('does not overwrite account-discovered models during builtin sync', () => {

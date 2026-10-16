@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { getDb } from '../db/database.js';
 import { assertWorkspaceIdentity, getManagedWorkspace, workspaceHash, type WorkspaceScope } from '../db/models/managed-workspace.js';
+import { eventBus } from '../events/event-bus.js';
 export function previewLeaseReconciliation(scope: WorkspaceScope, id: string) {
   const workspace = getManagedWorkspace(id, scope);
   if (!workspace) throw new Error('WORKSPACE_NOT_FOUND');
@@ -19,7 +20,7 @@ export function previewLeaseReconciliation(scope: WorkspaceScope, id: string) {
 }
 export function reconcileWorkspaceLeases(scope: WorkspaceScope, id: string, data: { previewId: string; manifestHash: string; effectsStopped: boolean; confirm: boolean }) {
   if (!data.confirm || !data.effectsStopped) throw new Error('EXPLICIT_STOPPED_EFFECTS_ATTESTATION_REQUIRED');
-  return getDb().transaction(() => {
+  const { result, taskIds } = getDb().transaction(() => {
     const receipt = getDb().get<any>("SELECT * FROM workspace_operation_journal WHERE id=? AND workspace_id=? AND actor_id=? AND filesystem_workspace_id=? AND operation='reconcile_leases' AND state='preview'",
       data.previewId, scope.workspaceId, scope.actorId, id);
     if (!receipt) throw new Error('WORKSPACE_RECONCILIATION_PREVIEW_NOT_FOUND');
@@ -33,6 +34,13 @@ export function reconcileWorkspaceLeases(scope: WorkspaceScope, id: string, data
     getDb().run("UPDATE workspace_operation_journal SET state='complete', updated_at=? WHERE id=?", new Date().toISOString(), data.previewId);
     getDb().run('UPDATE managed_workspaces SET revision=revision+1 WHERE id=?', id);
     // No process is killed, and no unknown Shell/MCP operation is replayed or marked successful.
-    return { released: current.length, replayed: false, effectsStopped: 'operator_attested' };
+    return { result: { released: current.length, replayed: false, effectsStopped: 'operator_attested' },
+      taskIds: [...new Set(current.map(claim => String(claim.taskId)))] };
   });
+  // Wake the in-memory queue only after the audited release transaction commits.
+  // No event is emitted on a refused/stale preview, nor are unknown effects replayed.
+  for (const taskId of taskIds) eventBus.emit('task:updated', {
+    taskId, workspaceId: scope.workspaceId, workspaceLeaseReleased: true, workspaceLeaseReconciled: true,
+  });
+  return result;
 }

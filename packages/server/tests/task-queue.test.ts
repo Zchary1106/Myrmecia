@@ -1,15 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
-import { join } from 'path';
+import { dirname, join } from 'path';
 import { AgentManager } from '../src/agents/agent-manager.js';
 import { TaskQueue } from '../src/queue/task-queue.js';
 import { eventBus } from '../src/events/event-bus.js';
-import { closeDb } from '../src/db/database.js';
+import { closeDb, getDb } from '../src/db/database.js';
 import { createAgent } from '../src/db/models/agent.js';
-import { createTask, getTask, getTaskLogs, updateTask, listDependents } from '../src/db/models/task.js';
+import { createTask, getTask, getTaskLogs, updateTask, listDependents, listTasks } from '../src/db/models/task.js';
 import { createExecution } from '../src/db/models/execution.js';
 import { saveLoopCheckpoint } from '../src/agents/loop-checkpoint.js';
+import * as executionContext from '../src/agents/execution-context.js';
 
 describe('TaskQueue failure state handling', () => {
   beforeEach(() => {
@@ -35,6 +36,42 @@ describe('TaskQueue failure state handling', () => {
     closeDb();
     delete process.env.DB_PATH;
     vi.restoreAllMocks();
+  });
+
+  it('rolls back a new task when preparation request persistence fails', async () => {
+    const existing = createTask({ title: 'Keep existing', description: '', input: 'fixture', mode: 'direct' });
+    getDb().exec('DROP TABLE workspace_preparation_requests');
+    const manager = { executeTask: vi.fn() } as unknown as AgentManager;
+    const queue = new TaskQueue(manager);
+    const emit = vi.spyOn(eventBus, 'emit');
+    await expect(queue.enqueue({ title: 'Broken creation', description: '', input: 'fixture', mode: 'direct' }))
+      .rejects.toThrow('workspace_preparation_requests');
+    expect(listTasks().map(task => task.id)).toEqual([existing.id]);
+    expect(manager.executeTask).not.toHaveBeenCalled();
+    expect(emit.mock.calls.some(([type]) => type === 'task:created')).toBe(false);
+    await queue.shutdown();
+  });
+
+  it('records a terminal failure instead of leaving pending work when context initialization fails', async () => {
+    const manager = { executeTask: vi.fn() } as unknown as AgentManager;
+    const queue = new TaskQueue(manager);
+    vi.spyOn(executionContext, 'persistExecutionContext').mockImplementation(() => {
+      throw new Error('Fixture context persistence failed');
+    });
+    const emit = vi.spyOn(eventBus, 'emit');
+    await expect(queue.enqueue({ title: 'Context failure', description: '', input: 'fixture', mode: 'direct',
+      workdir: dirname(process.env.DB_PATH!), workspaceAccessMode: 'shared_write', selectedWorkspaceSource: false }))
+      .rejects.toThrow('Fixture context persistence failed');
+    const task = listTasks()[0];
+    expect(task).toMatchObject({ status: 'failed', error: expect.stringContaining('Fixture context persistence failed') });
+    expect(task.completedAt).toBeTruthy();
+    expect(getTaskLogs(task.id).some(log => log.level === 'error')).toBe(true);
+    expect(emit.mock.calls).toEqual(expect.arrayContaining([
+      ['task:failed', expect.objectContaining({ taskId: task.id, task: expect.objectContaining({ status: 'failed' }) })],
+    ]));
+    expect(emit.mock.calls.some(([type]) => type === 'task:created')).toBe(false);
+    expect(manager.executeTask).not.toHaveBeenCalled();
+    await queue.shutdown();
   });
 
   it('dispatches a queued continuation after the completed run releases admission', async () => {
@@ -91,6 +128,25 @@ describe('TaskQueue failure state handling', () => {
     expect(stored.status).toBe('failed');
     expect(stored.error).toContain('max concurrency');
     expect(getTaskLogs(task.id).some(log => log.message.includes('Execution failed after 1/1 attempts'))).toBe(true);
+  });
+  it.each(['memory', 'bullmq'])('does not automatically replay a read-only SDK token-budget stop in %s dispatch', async mode => {
+    const agent = createAgent({ id: `budget-agent-${mode}`, name: 'Budget Agent', role: 'analyst' });
+    const task = createTask({ title: 'Budget terminal', description: '', input: 'Read-only fixture', mode: 'direct',
+      assigneeId: agent.id, maxRetries: 2 });
+    const error = 'COPILOT_TOKEN_BUDGET: observed SDK usage exceeded execution allowance (211217/200000)';
+    const manager = { executeTask: vi.fn(async () => { throw new Error(error); }) } as unknown as AgentManager;
+    const queue = new TaskQueue(manager);
+    try {
+      if (mode === 'bullmq') {
+        await expect((queue as any).processJob(task.id, { attemptsMade: 0, opts: { attempts: 3 } })).rejects.toThrow(error);
+      } else {
+        await queue.dispatchExisting(task.id);
+        await vi.waitFor(() => expect(getTask(task.id)?.status).toBe('failed'));
+      }
+      expect(manager.executeTask).toHaveBeenCalledOnce();
+      expect(getTask(task.id)).toMatchObject({ status: 'failed', retryCount: 0, error });
+      expect(getTask(task.id)?.completedAt).toBeTruthy();
+    } finally { await queue.shutdown(); }
   });
 
   it('returns pre-runtime BullMQ failures to queued while retries remain', async () => {

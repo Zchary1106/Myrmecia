@@ -345,12 +345,16 @@ export const BUILTIN_TOOLS: BuiltinToolDefinition[] = [
   {
     id: 'grep',
     name: 'Workspace Grep',
-    description: 'Search workspace text files for a pattern.',
+    description: 'Search bounded workspace text across all languages. Literal by default; excludes secret paths and symlinks. Narrow path/glob if a scan is partial.',
     category: 'engineering',
     riskLevel: 'low',
     version: '1.0.0',
     implementationRef: 'packages/server/src/skills/tool-sandbox.ts:executeTool',
-    inputSchema: { type: 'object', required: ['pattern'], properties: { pattern: { type: 'string', minLength: 1 }, glob: { type: 'string' } } },
+    inputSchema: { type: 'object', required: ['pattern'], properties: {
+      pattern: { type: 'string', minLength: 1, maxLength: 500 }, glob: { type: 'string', maxLength: 150 },
+      path: { type: 'string' }, regex: { type: 'boolean' }, ignoreCase: { type: 'boolean' },
+      maxMatches: { type: 'integer', minimum: 1, maximum: 500 },
+    } },
     outputSchema: { type: 'string' },
     metadata: { readOnly: true, network: false, writesWorkspace: false, writesOutsideWorkspace: false, destructive: false },
   },

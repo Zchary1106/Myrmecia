@@ -9,7 +9,7 @@ import { fencedRunWrite } from './run-coordinator.js';
 import { runtimeV2Enabled } from './runtime-version.js';
 import { agentSessionForTask, appendSessionEvent, listSessionEvents } from '../db/models/agent-session-event.js';
 import { normalizeGatewayRequest, toGatewayRequest } from '../models/provider-driver.js';
-import { defaultRuntimeCapabilities } from '@myrmecia/shared';
+import { defaultRuntimeCapabilities, type DevelopmentStageState } from '@myrmecia/shared';
 import { deriveModelMessages } from './session-projector.js';
 
 export interface AgentLoopCheckpoint {
@@ -27,6 +27,7 @@ export interface AgentLoopCheckpoint {
   journalCheckpointId?: string;
   pendingRequestId?: string;
   ownerToken?: number;
+  developmentStage?: DevelopmentStageState;
   skillSteps?: Array<{ name: string; status: 'done' | 'failed' | 'skipped'; output?: string; retries: number; validationOutput?: string }>;
 }
 
@@ -82,6 +83,7 @@ export function readLoopCheckpoint(task: Task, fingerprint: string, currentExecu
       }
       snapshot.messages = messages;
       snapshot.skillSteps = structuredClone(event.payload.skillSteps);
+      snapshot.developmentStage = structuredClone(event.payload.developmentStage);
     }
     return { executionId: row.execution_id, snapshot };
   } catch { return unavailable(); }
@@ -106,9 +108,10 @@ export function saveLoopCheckpoint(task: Task, executionId: string, fingerprint:
     const safeSnapshot = JSON.parse(serialized) as AgentLoopCheckpoint;
     if (runtimeV2Enabled() && snapshot.boundary !== 'request_pending') {
       const event = appendSessionEvent({ workspaceId: task.workspaceId || 'default', sessionId: agentSessionForTask(task),
-        runId: executionId, eventKey: `checkpoint:${executionId}:${snapshot.turn}`,
+        runId: executionId, eventKey: `checkpoint:${executionId}:${snapshot.turn}${snapshot.developmentStage ? `:stage-${snapshot.developmentStage.revision}` : ''}`,
         payload: { type: 'context.checkpoint', projectionVersion: 1,
           messages: normalizeGatewayRequest({ model: 'checkpoint', messages: safeSnapshot.messages }).messages,
+          ...(safeSnapshot.developmentStage ? { developmentStage: safeSnapshot.developmentStage } : {}),
           ...(safeSnapshot.skillSteps ? { skillSteps: safeSnapshot.skillSteps } : {}) } });
       safeSnapshot.journalCursor = event.sequence;
       safeSnapshot.journalCheckpointId = event.eventId;

@@ -189,6 +189,28 @@ export function SettingsView() {
           : 'Using in-memory queue; set REDIS_URL for persistent distributed queueing.',
       },
       {
+        label: 'Active Agent runtime',
+        ok: diagnostics?.runtime.capabilities?.runtimeVersion === 'v2',
+        detail: !diagnostics?.runtime.capabilities ? 'Runtime capabilities have not been reported; refresh diagnostics before assuming features are enabled.'
+          : diagnostics.runtime.capabilities.runtimeVersion === 'v2'
+          ? 'Runtime V2 is enabled for the running server.'
+          : 'Current server uses the compatibility runtime. Implemented V2 features are not automatically enabled.',
+      },
+      {
+        label: 'Execution isolation',
+        ok: false,
+        detail: !diagnostics?.runtime.capabilities || diagnostics.runtime.capabilities.executionWorld === 'invalid'
+          ? 'Execution world diagnostics are missing or invalid; do not assume a working isolation backend.'
+          : diagnostics.runtime.capabilities.executionWorld === 'docker_isolated'
+          ? 'Docker isolation is configured, not certified here. Inspect execution evidence; external MCP/Agents are outside this boundary.'
+          : 'Host policy mode is not OS isolation. Workspace path checks do not isolate processes, network or credentials.',
+      },
+      {
+        label: 'Pause / recovery boundary',
+        ok: false,
+        detail: 'Pause waits for a complete model/tool turn. Automatic recovery requires a confirmed read-only checkpoint; uncertain writes need operator reconciliation.',
+      },
+      {
         label: 'Schema migrations',
         ok: (diagnostics?.database.migrations.length || 0) > 0,
         detail: `${diagnostics?.database.migrations.length || 0} migrations recorded in schema_migrations.`,

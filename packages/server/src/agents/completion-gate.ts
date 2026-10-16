@@ -8,12 +8,13 @@ import { getExecutionArtifact, listExecutionArtifacts, upsertExecutionArtifact, 
 import { executeTool } from '../skills/tool-sandbox.js';
 import { dlpCheck } from '../security/dlp.js';
 import { runWriteOnce } from '../tools/write-once.js';
-import { withToolResourceLock } from './tool-resource-lock.js';
 import { runtimeV2Enabled } from './runtime-version.js';
 import { markBudgetDispatched, reserveBudget, settleUsage } from './budget-service.js';
 import { getExecution } from '../db/models/execution.js';
 import { boundedJsonSchema, outputMatchesSchema, MAX_EVALUATION_OUTPUT_BYTES } from './completion-json-schema.js';
 import { readArtifactSnapshot, saveArtifactSnapshot } from '../artifacts/artifact-snapshot-store.js';
+import { parseVerificationCommand } from '@myrmecia/shared';
+import { testExecutionStatus } from '@myrmecia/shared';
 
 const base = { id: z.string().regex(/^[a-zA-Z0-9._:-]{1,80}$/), label: z.string().min(1).max(200), required: z.boolean() };
 export const completionCriteriaSchema = z.array(z.discriminatedUnion('verifier', [
@@ -24,7 +25,7 @@ export const completionCriteriaSchema = z.array(z.discriminatedUnion('verifier',
   z.object({ ...base, verifier: z.literal('output_not_contains'), text: z.string().min(1).max(2000) }).strict(),
   z.object({ ...base, verifier: z.literal('output_json_schema'), schema: z.record(z.unknown()).refine(boundedJsonSchema, 'Unsupported or unbounded JSON schema') }).strict(),
   z.object({ ...base, verifier: z.literal('human_review'), rubric: z.string().trim().min(1).max(2000) }).strict(),
-  z.object({ ...base, verifier: z.literal('test_command'), command: z.enum(['pnpm test', 'pnpm build', 'npm test']),
+  z.object({ ...base, verifier: z.literal('test_command'), command: z.string().max(500).refine(value => !!parseVerificationCommand(value), 'Unsupported validation command; use bounded test/build/lint/typecheck commands without shell source'),
     timeoutMs: z.number().int().min(1).max(120_000).optional() }).strict(),
   z.object({ ...base, verifier: z.literal('external'), verifierId: z.string().min(1).max(100) }).strict(),
 ])).max(20).refine(values => new Set(values.map(item => item.id)).size === values.length, 'Criterion IDs must be unique');
@@ -100,6 +101,8 @@ export async function verifyCompletionCriteria(task: Task, executionId: string, 
           message: 'Literal output assertion only; not proof of external task success',
           evidence: [{ ref: `execution://${executionId}/output`, sha256: sha(output) }] });
       } else if (criterion.verifier === 'test_command') {
+        const command = parseVerificationCommand(criterion.command);
+        if (!command) throw new Error('VERIFICATION_COMMAND_DENIED');
         const root = persisted.workdir || persisted.workspacePath;
         if (!root || root === '/' || root === process.env.HOME) throw new Error('Submitted verifier workspace unavailable');
         const timeoutMs = criterion.timeoutMs || 60_000;
@@ -111,15 +114,16 @@ export async function verifyCompletionCriteria(task: Task, executionId: string, 
           markBudgetDispatched(workspaceId, budgetKey);
         }
         const startedAt = Date.now();
-        const result = await runWriteOnce(persisted, executionId, 'shell_exec', { command: criterion.command, criterionId: criterion.id },
-          () => withToolResourceLock(persisted, executionId, 'shell_exec', { command: criterion.command },
-            () => executeTool('shell_exec', { command: criterion.command }, root,
-              { signal, timeoutMs, maxOutputChars: 8000, allowedTools: ['shell_exec'] }), signal), signal);
+        const result = await runWriteOnce(persisted, executionId, 'shell_exec', { command: command.shellCommand, criterionId: criterion.id },
+          () => executeTool('shell_exec', { command: command.shellCommand }, root,
+            { signal, timeoutMs, maxOutputChars: 8000, allowedTools: ['shell_exec'] }), signal);
         if (runtimeV2Enabled()) settleUsage({ workspaceId, key: budgetKey, eventKey: `${budgetKey}:receipt`, mode: 'cumulative',
           tokens: 0, runtimeMs: Date.now() - startedAt, costType: 'exact', costUSD: 0 });
         const checked = dlpCheck(result.output, { taskId: task.id, workspaceId: task.workspaceId });
         const body = checked.redactedContent || result.output;
         const blocked = checked.violations.some(item => item.action === 'block');
+        const validationStatus = result.status === 'done'
+          ? testExecutionStatus({ command: criterion.command, exitCode: 0, stdout: body }) : 'failed';
         const artifact = blocked ? undefined : upsertExecutionArtifact({
           workspaceId: task.workspaceId || 'default', taskId: task.id, executionId,
           name: `Verifier ${criterion.id}`, kind: 'text', mimeType: 'text/plain', source: 'output',
@@ -129,8 +133,12 @@ export async function verifyCompletionCriteria(task: Task, executionId: string, 
         if (artifact) saveArtifactSnapshot(artifact, Buffer.from(body));
         const evidence = artifact ? [{ ref: `artifact://${artifact.id}`, sha256: sha(body) }] : [];
         results.push({ ...common, scope: 'workspace',
-          status: blocked || /UNAVAILABLE|UNSUPPORTED|disabled|timed out|TIMEOUT|not found|aborted/i.test(result.output) ? 'unavailable' : result.status === 'done' ? 'passed' : 'failed',
-          message: result.status === 'done' ? 'Submitted bounded test command exited successfully' : 'Submitted test command failed or could not be enforced',
+          status: blocked || validationStatus === 'unknown' || validationStatus === 'skipped'
+            || result.status !== 'done' && /UNAVAILABLE|UNSUPPORTED|disabled|timed out|TIMEOUT|not found|aborted/i.test(result.output)
+            ? 'unavailable' : validationStatus,
+          message: validationStatus === 'passed' ? 'Submitted bounded validation command executed successfully'
+            : validationStatus === 'unknown' || validationStatus === 'skipped'
+              ? 'Test command exited without verifiable executed cases' : 'Submitted test command failed or could not be enforced',
           evidence });
       } else if (criterion.verifier === 'human_review') {
         results.push({ ...common, scope: 'external', status: 'unavailable',

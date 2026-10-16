@@ -18,6 +18,7 @@ export function CopilotModelSwitcher() {
       setSettings(next);
       setError(next.error || '');
     } catch (err) {
+      setSettings(current => current ? { ...current, models: [], source: 'registry' } : current);
       setError(err instanceof Error ? err.message : '模型列表加载失败');
     } finally {
       setRefreshing(false);
@@ -70,7 +71,7 @@ export function CopilotModelSwitcher() {
         aria-label="当前执行模型"
         aria-haspopup="listbox"
         aria-expanded={open}
-        disabled={saving || refreshing}
+        disabled={saving || refreshing || settings.source !== 'provider'}
         onClick={() => setOpen(current => !current)}
         className="flex min-w-[112px] max-w-[190px] items-center justify-between gap-2 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-left text-xs outline-none hover:border-blue-400/60 focus:border-blue-400 disabled:opacity-50 sm:min-w-[150px] sm:max-w-[240px]"
         title={selected?.id === 'auto' ? 'Auto 会由 Copilot 在每次请求时动态选择实际模型' : selected?.name}
@@ -84,6 +85,9 @@ export function CopilotModelSwitcher() {
           aria-label="可用 Copilot 模型"
           className="absolute right-0 top-[calc(100%+8px)] z-[100] max-h-[360px] w-[min(340px,calc(100vw-2rem))] overflow-y-auto rounded-xl border border-border bg-surface p-1.5 shadow-2xl"
         >
+          {settings.selectedModelId && !selected && (
+            <div role="option" aria-selected="true" aria-disabled="true" className="px-3 py-2 text-xs text-app-muted">{settings.selectedModelId} · 当前不可用，请重新选择</div>
+          )}
           {settings.models.map(model => {
             const active = model.id === settings.selectedModelId;
             return (
@@ -128,7 +132,7 @@ export function CopilotModelSwitcher() {
         className={`hidden max-w-[180px] truncate text-[10px] xl:inline ${error ? 'text-amber-300' : 'text-gray-500'}`}
         title={error || undefined}
       >
-        {saving ? '切换中…' : error ? '⚠ 使用缓存模型列表' : (selected?.id === 'auto' ? '新任务动态选模' : `新任务 · ${selected?.id}`)}
+        {saving ? '切换中…' : error ? '⚠ 模型列表不可用，请刷新' : (selected?.id === 'auto' ? '新任务动态选模' : `新任务 · ${selected?.id}`)}
       </span>
     </div>
   );

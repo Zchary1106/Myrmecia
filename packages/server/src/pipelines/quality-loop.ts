@@ -11,8 +11,17 @@ import { loadExecutionContext, persistInheritedExecutionContext } from '../agent
 import { isSimpleConversation } from '../agents/conversation-intent.js';
 import { resolveAllowedToolsForAgent } from '../tools/tool-policy.js';
 import { ownGitRoot } from '../workspace/path-policy.js';
+import { readWorkspaceBytes, excludedWorkspacePath } from '../workspace/path-policy.js';
+import { taskTestAuthorization, runAuthorizedTaskTest } from '../testing/task-test-authorization.js';
+import { upsertExecutionArtifact } from '../db/models/execution-artifact.js';
+import { saveArtifactSnapshot } from '../artifacts/artifact-snapshot-store.js';
+import { bindQualityInput } from '../testing/quality-input-artifacts.js';
+import { dlpCheck } from '../security/dlp.js';
 
 const MAX_PROMPT_EVIDENCE_CHARS = 12_000;
+// Bounded complete implementation evidence. Do not silently turn omitted code
+// into a developer repair request or let a reviewer approve a partial snapshot.
+const MAX_IMPLEMENTATION_EVIDENCE_CHARS = 64_000;
 const MAX_REVIEW_OUTPUT_CHARS = 10_000;
 
 export interface ReviewFinding {
@@ -56,7 +65,7 @@ export function isQualityChildTask(task: Pick<Task, 'title' | 'parentTaskId'>): 
   return Boolean(task.parentTaskId && /^(Test|Review|Fix):\s/.test(task.title));
 }
 
-function workspaceEvidence(task: Task): { diff: string; changedFiles: string[] } {
+export function collectQualityWorkspaceEvidence(task: Task): { diff: string; changedFiles: string[] } {
   const cwd = task.workdir || task.workspacePath;
   if (!cwd) return { diff: '(workspace path unavailable)', changedFiles: [] };
   try { if (!ownGitRoot(cwd)) return { diff: '(non-Git execution workspace)', changedFiles: [] }; }
@@ -67,10 +76,44 @@ function workspaceEvidence(task: Task): { diff: string; changedFiles: string[] }
   if (changed.error || diff.error || changed.status !== 0 || diff.status !== 0) {
     return { diff: '(git diff unavailable for this workspace)', changedFiles: [] };
   }
-  return {
-    diff: clip(diff.stdout, MAX_PROMPT_EVIDENCE_CHARS),
-    changedFiles: changed.stdout.split('\n').map(file => file.trim()).filter(Boolean).slice(0, 100),
-  };
+  const untracked = runGit(['ls-files', '--others', '--exclude-standard', '-z']);
+  if (untracked.error || untracked.status !== 0) return { diff: '(untracked diff unavailable)', changedFiles: [] };
+  const files = untracked.stdout.split('\0').filter(Boolean)
+    .filter(file => file !== 'output/summary.md' && !/^output\/executions\/exec_[a-z0-9]+\.md$/.test(file));
+  const changedFiles = [...changed.stdout.split('\n').filter(Boolean), ...files];
+  if (changedFiles.some(excludedWorkspacePath)) throw new Error('QUALITY_IMPLEMENTATION_UNSAFE_PATH');
+  if (changedFiles.length > 100) throw new Error('QUALITY_IMPLEMENTATION_FILE_QUOTA');
+  let combined = diff.stdout;
+  if (combined.length > MAX_IMPLEMENTATION_EVIDENCE_CHARS) throw new Error('QUALITY_IMPLEMENTATION_EVIDENCE_QUOTA');
+  for (const file of files) {
+    let bytes: Buffer;
+    try { bytes = readWorkspaceBytes(cwd, file, 256_000); }
+    catch { throw new Error('QUALITY_IMPLEMENTATION_FILE_UNAVAILABLE'); }
+    combined += `\nNew file: ${file}\n${bytes.toString('utf8')}\n`;
+    if (combined.length > MAX_IMPLEMENTATION_EVIDENCE_CHARS) throw new Error('QUALITY_IMPLEMENTATION_EVIDENCE_QUOTA');
+  }
+  return { diff: combined, changedFiles };
+}
+
+function attachReviewInputs(parent: Task, child: Task, evidence: ReturnType<typeof collectQualityWorkspaceEvidence>, report: TestReportWithEvidence): void {
+  const execution = listExecutions({ taskId: parent.id, status: 'done', limit: 1 })[0];
+  if (!execution || !evidence.diff.trim() || evidence.diff.startsWith('(')) throw new Error('QUALITY_IMPLEMENTATION_UNAVAILABLE');
+  for (const [name, kind, raw] of [
+    ['implementation', 'code', evidence.diff],
+    ['test-report', 'json', JSON.stringify(report)],
+  ] as const) {
+    const checked = dlpCheck(raw, { taskId: parent.id, workspaceId: parent.workspaceId });
+    if (checked.violations.some(item => item.action === 'block')) throw new Error('QUALITY_INPUT_DLP_BLOCKED');
+    const content = checked.redactedContent || raw;
+    const artifact = upsertExecutionArtifact({
+      taskId: parent.id, executionId: execution.id, workspaceId: parent.workspaceId,
+      name, kind, mimeType: 'text/plain', source: 'workspace',
+      relativePath: `.quality/${child.id}/${name}.txt`, content, sizeBytes: Buffer.byteLength(content),
+      metadata: { source: 'host-quality-handoff', childTaskId: child.id, bounded: true },
+    });
+    saveArtifactSnapshot(artifact, Buffer.from(content));
+    bindQualityInput(child, name, artifact);
+  }
 }
 
 /** Parse only an explicit JSON decision; strings such as "NOT APPROVED" never pass. */
@@ -110,10 +153,12 @@ export function parseReviewDecision(output: string): ReviewParseResult {
 }
 
 export function createReviewPrompt(task: Task, testReport: TestReportWithEvidence, evidence: { diff: string; changedFiles: string[] }): string {
+  if (evidence.diff.length > MAX_IMPLEMENTATION_EVIDENCE_CHARS) throw new Error('QUALITY_IMPLEMENTATION_EVIDENCE_QUOTA');
   const changedFiles = Array.from(new Set([...evidence.changedFiles, ...testReport.changedFiles])).slice(0, 100);
   return `Review this implementation using the supplied code and test evidence. Do not infer a pass from the developer's prose.
 
-Return ONLY valid JSON in this exact shape:
+Use only the supplied code/test snapshot; do not use network tools, install packages or publish changes.
+Return ONLY one valid JSON object inside a \`\`\`json fenced block, in this exact shape:
 {"approved":boolean,"summary":"string","findings":[{"severity":"low|medium|high|critical","file":"optional","line":1,"evidence":"string","requiredFix":"string"}]}
 If approved is true, findings MUST be an empty array. If the evidence is insufficient, set approved false and include one finding explaining what is missing.
 
@@ -122,7 +167,7 @@ Changed files:\n${changedFiles.join('\n') || '(none available)'}
 
 Verified test evidence:\n${clip(JSON.stringify(testReport, null, 2), MAX_PROMPT_EVIDENCE_CHARS)}
 
-Git diff:\n${clip(evidence.diff, MAX_PROMPT_EVIDENCE_CHARS)}
+Git diff and complete bounded new-file snapshot:\n${evidence.diff}
 
 Developer output (supplementary only):\n${clip(task.output, 8_000) || '(empty output)'}`;
 }
@@ -208,7 +253,8 @@ export class QualityLoop {
       }
       const commandPolicy = resolveAllowedToolsForAgent(testAgent).decisions.find(decision =>
         decision.toolId === 'shell_exec' && !decision.allowed && decision.reason === 'approval_required');
-      if (commandPolicy) {
+      const scopedAuthorization = commandPolicy ? taskTestAuthorization(task) : undefined;
+      if (commandPolicy && !scopedAuthorization) {
         this.failAttempt(attempt, taskId, 'blocked: Test/QA command execution requires approval; validation was not run. Configure scoped command authorization before retrying.');
         return;
       }
@@ -227,7 +273,26 @@ export class QualityLoop {
         ...inheritExecutionContext(task),
       });
       persistInheritedExecutionContext(loadExecutionContext(task), testTask);
-      const testResult = await agentRuntime.execute(testAgent, testTask);
+      let testResult: { output: string };
+      if (scopedAuthorization) {
+        // Explicit operator grant executes one fixed command, not a newly
+        // permitted model shell tool. The verifier records its own receipt.
+        updateTask(testTask.id, { status: 'running', startedAt: new Date().toISOString() });
+        try {
+          const evidence = await runAuthorizedTaskTest(testTask);
+          testResult = { output: JSON.stringify({ ...evidence, source: 'authorized-host-verifier' }) };
+          const verified = hasVerifiedTestEvidence(createTestReportFromOutput(testResult.output));
+          const tested = updateTask(testTask.id, { status: verified ? 'done' : 'failed',
+            output: testResult.output, error: verified ? null : evidence.exitCode !== 0
+              ? `npm test exited ${evidence.exitCode}` : 'npm test executed no verifiable test cases',
+            completedAt: new Date().toISOString() });
+          eventBus.emit('task:updated', { taskId: testTask.id, task: tested, workspaceId: task.workspaceId });
+        } catch (error) {
+          updateTask(testTask.id, { status: 'failed', error: error instanceof Error ? error.message : String(error),
+            completedAt: new Date().toISOString() });
+          throw error;
+        }
+      } else testResult = await agentRuntime.execute(testAgent, testTask);
       const testReport = createTestReportFromOutput(testResult.output, `Validation for ${task.title}`);
       if (!testReport.evidence) {
         this.failAttempt(attempt, taskId, 'blocked: Test/QA agent did not return structured command, cwd, and exitCode evidence');
@@ -250,7 +315,12 @@ export class QualityLoop {
         return;
       }
 
-      const reviewPrompt = createReviewPrompt(task, testReport, workspaceEvidence(task));
+      const evidence = collectQualityWorkspaceEvidence(task);
+      if (reviewAgent.config.contract && (!evidence.diff.trim() || evidence.diff.startsWith('(')
+        || !listExecutions({ taskId: task.id, status: 'done', limit: 1 })[0])) {
+        throw new Error('QUALITY_IMPLEMENTATION_UNAVAILABLE');
+      }
+      const reviewPrompt = createReviewPrompt(task, testReport, evidence);
 
       const reviewTask = createTask({
         title: `Review: ${task.title}`,
@@ -264,8 +334,9 @@ export class QualityLoop {
         createdBy: 'master',
         ...inheritExecutionContext(task),
       });
-      persistInheritedExecutionContext(loadExecutionContext(task), reviewTask);
       attempt = updateQualityLoopAttempt(attempt.id, { reviewTaskId: reviewTask.id }) || attempt;
+      persistInheritedExecutionContext(loadExecutionContext(task), reviewTask);
+      if (reviewAgent.config.contract) attachReviewInputs(task, reviewTask, evidence, testReport);
       eventBus.emit('quality:updated', { taskId, attempt });
 
       const reviewResult = await agentRuntime.execute(reviewAgent, reviewTask);
@@ -298,6 +369,16 @@ export class QualityLoop {
           output: getTask(taskId)?.output,
           qualityApproved: true,
         });
+        return;
+      }
+
+      // A staged run already owns its bounded repair allowance. Independent
+      // review remains authoritative, but cannot silently start a second
+      // child-task repair budget outside that same execution.
+      if (listExecutions({ taskId }).some(run => run.runState?.developmentStage)) {
+        this.failAttempt(attempt, taskId,
+          'blocked: independent review rejected a staged development run; explicit new scope/authority required for further repair',
+          reviewResult.output);
         return;
       }
 
@@ -363,6 +444,16 @@ ${task.output?.slice(0, 8000) || ''}`;
   }
 
   private failAttempt(attempt: QualityLoopAttempt, taskId: string, error: string, reviewOutput?: string) {
+    // Only our not-yet-dispatched child can be settled here. Never bypass an
+    // active writer or rewrite completed review history.
+    if (attempt.reviewTaskId) {
+      const child = getTask(attempt.reviewTaskId);
+      if (child?.status === 'pending' && child.parentTaskId === taskId && child.createdBy === 'master') {
+        const settled = updateTask(child.id, { status: 'failed', error,
+          completedAt: new Date().toISOString() });
+        eventBus.emit('task:updated', { taskId: child.id, task: settled, workspaceId: child.workspaceId });
+      }
+    }
     const failed = updateQualityLoopAttempt(attempt.id, {
       status: 'failed',
       error,

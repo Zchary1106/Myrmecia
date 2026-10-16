@@ -1,5 +1,6 @@
 import type { AgentContract, ArtifactDeclaration, ArtifactRequirement } from './contracts.js';
 import type { CompletionCriterion } from './completion-protocol.js';
+export * from './verification-command.js';
 import type { AgentSetupSnapshot } from './agent-setup.js';
 export * from './completion-protocol.js';
 export * from './agent-setup.js';
@@ -558,6 +559,23 @@ export interface GitHubFixDiff {
   stat: string;
   patch: string;
   hasChanges: boolean;
+  diffHash: string;
+  baseHead: string;
+  branch: string;
+  files: { path: string; change: 'added' | 'modified' | 'deleted'; sha256: string | null; bytes: number; mode?: number }[];
+  blockers: string[];
+  truncated: boolean;
+  validation?: {
+    status: 'passed' | 'failed' | 'unavailable';
+    command: string;
+    diffHash: string;
+    executionId: string;
+    outputArtifactId?: string;
+    checkedAt: string;
+  };
+  publicationState?: string;
+  suggestedCommand?: string;
+  reconciliationKey?: string;
 }
 
 export interface GitHubConnectionStatus {
@@ -869,6 +887,14 @@ export interface RuntimeDiagnostics {
     pid: number;
     uptime: number;
     environment: string;
+    capabilities?: {
+      runtimeVersion: 'legacy' | 'v2';
+      executionWorld: 'host_policy' | 'docker_isolated' | 'invalid';
+      isolation: 'none' | 'configured_not_verified';
+      automaticRecovery: 'read_only_checkpoints';
+      pauseBoundary: 'complete_turn';
+      warnings: string[];
+    };
   };
 }
 
@@ -1380,3 +1406,4 @@ export { isPublicationRequest } from './delivery-intent.js';
 export * from './runtime-protocol.js';
 export * from './session-protocol.js';
 export * from './workspace-lifecycle.js';
+export * from './test-execution.js';

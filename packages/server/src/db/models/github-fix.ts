@@ -2,6 +2,11 @@ import { getDb } from '../database.js';
 import { getTask } from './task.js';
 import type { GitHubFixRun, GitHubFixStatus } from '../../types.js';
 
+/** These tasks belong to an explicit operator verifier, never the model queue. */
+export function isGitHubVerificationTask(taskId: string): boolean {
+  return !!getDb().get("SELECT 1 FROM github_fix_deliveries WHERE json_extract(data_json, '$.verificationTaskId') = ?", taskId);
+}
+
 function rowToRun(row: any): GitHubFixRun {
   const task = row.task_id ? getTask(row.task_id) : undefined;
   const effectiveStatus: GitHubFixStatus = row.status === 'running' && task?.status === 'done'

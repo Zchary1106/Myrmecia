@@ -5,6 +5,7 @@ export type AgentSessionPayload =
   | { type: 'context.recorded'; projectionVersion: 1; kind: 'host_request' | 'provider_envelope';
     modelId: string; messages: RuntimeMessage[]; toolsFingerprint: string; configFingerprint: string }
   | { type: 'context.checkpoint'; projectionVersion: 1; messages: RuntimeMessage[];
+    developmentStage?: DevelopmentStageState;
     skillSteps?: Array<{ name: string; status: 'done' | 'failed' | 'skipped'; output?: string; retries: number; validationOutput?: string }> }
   | { type: 'model.message'; role: 'assistant' | 'tool'; content: NormalizedContentBlock[];
     toolCalls?: RuntimeToolCall[]; toolCallId?: string }
@@ -61,3 +62,4 @@ export interface SessionConversationItem {
   state?: string;
   createdAt: string;
 }
+import type { DevelopmentStageState } from './agent-run.js';

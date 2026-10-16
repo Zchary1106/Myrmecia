@@ -12,9 +12,9 @@ import {
   listGitHubFixRuns,
   updateGitHubFixRun,
 } from '../db/models/github-fix.js';
+import { GitHubFixDelivery, type GitHubCommandRunner, type GitHubReviewInput, type GitHubPublicationInput } from './github-fix-delivery.js';
 
 const execFileAsync = promisify(execFile);
-const WRITE_PERMISSIONS = new Set(['ADMIN', 'MAINTAIN', 'WRITE']);
 const MAX_COMMAND_OUTPUT = 2_000_000;
 
 interface RepoInfo {
@@ -42,11 +42,7 @@ export interface CreateGitHubFixInput {
   workspaceId?: string;
 }
 
-export interface CreatePullRequestInput {
-  title?: string;
-  body?: string;
-  commitMessage?: string;
-}
+export type CreatePullRequestInput = GitHubPublicationInput;
 
 function commandOptions(cwd?: string, timeoutMs = 120_000) {
   return {
@@ -170,18 +166,21 @@ Safety:
 
 export class GitHubFixService {
   private readonly root: string;
+  private readonly delivery: GitHubFixDelivery;
 
   constructor(
     private readonly teamCoordinator: TeamCoordinator,
     root?: string,
+    private readonly commandRunner: GitHubCommandRunner = run,
   ) {
     const workspaceRoot = root || process.env.MYRMECIA_WORKSPACE_ROOT || process.cwd();
     this.root = join(workspaceRoot, '.agent-factory', 'github-fixes');
+    this.delivery = new GitHubFixDelivery(commandRunner);
   }
 
   async connectionStatus(): Promise<GitHubConnectionStatus> {
     try {
-      const login = await run('gh', ['api', 'user', '--jq', '.login'], undefined, 20_000);
+      const login = await this.commandRunner('gh', ['api', 'user', '--jq', '.login'], undefined, 20_000);
       return { authenticated: true, login };
     } catch (error) {
       return {
@@ -291,83 +290,29 @@ export class GitHubFixService {
   async diff(id: string): Promise<GitHubFixDiff> {
     const fixRun = getGitHubFixRun(id);
     if (!fixRun) throw new Error('GitHub fix run not found');
-    const status = await run('git', ['status', '--short'], fixRun.localPath, 15_000);
-    const stat = await run('git', ['diff', '--stat', 'HEAD'], fixRun.localPath, 15_000);
-    const patch = await run('git', ['diff', '--no-ext-diff', '--unified=3', 'HEAD'], fixRun.localPath, 30_000);
-    return {
-      status,
-      stat,
-      patch: patch.slice(0, 500_000),
-      hasChanges: Boolean(status.trim()),
-    };
+    return this.delivery.diff(fixRun);
   }
 
-  async createPullRequest(id: string, input: CreatePullRequestInput): Promise<GitHubFixRun> {
+  async verify(id: string, input: GitHubReviewInput & { command: string }, actorId: string): Promise<GitHubFixDiff> {
     const fixRun = getGitHubFixRun(id);
     if (!fixRun) throw new Error('GitHub fix run not found');
-    if (fixRun.status !== 'ready') throw new Error('The fix task must complete before creating a pull request');
-    const diff = await this.diff(id);
-    if (!diff.hasChanges) throw new Error('No repository changes are available to commit');
+    return this.delivery.verify(fixRun, input, actorId);
+  }
+  cancelVerification(id: string) {
+    const fix = getGitHubFixRun(id); if (!fix) throw new Error('GitHub fix run not found');
+    return this.delivery.cancelVerification(fix);
+  }
+  async reconcile(id: string, input: { operationId: string; expectedState: string; effectsStopped: true }) {
+    const fix = getGitHubFixRun(id); if (!fix) throw new Error('GitHub fix run not found');
+    return this.delivery.reconcile(fix, input);
+  }
 
+  async createPullRequest(id: string, input: CreatePullRequestInput, actorId = 'local'): Promise<GitHubFixRun> {
+    const fixRun = getGitHubFixRun(id);
+    if (!fixRun) throw new Error('GitHub fix run not found');
     const connection = await this.connectionStatus();
     if (!connection.authenticated || !connection.login) throw new Error('GitHub CLI is not authenticated');
-    const title = input.title?.trim() || `fix: ${fixRun.issueTitle || 'resolve reported bug'}`;
-    const issueReference = fixRun.issueNumber ? `\n\nFixes #${fixRun.issueNumber}` : '';
-    const body = (input.body?.trim() || [
-      '## Summary',
-      '',
-      '- Fixes the reported bug.',
-      '- Adds or updates regression coverage.',
-      '',
-      '## Validation',
-      '',
-      '- See task output and repository checks.',
-    ].join('\n')) + issueReference;
-    const commitMessage = input.commitMessage?.trim() || title;
-
-    await run('git', ['add', '-A'], fixRun.localPath, 30_000);
-    await run('git', [
-      '-c', `user.name=${connection.login}`,
-      '-c', `user.email=${connection.login}@users.noreply.github.com`,
-      'commit', '-m', commitMessage,
-    ], fixRun.localPath, 60_000);
-
-    let head = fixRun.workBranch;
-    let forkRepository: string | undefined;
-    if (WRITE_PERMISSIONS.has(fixRun.viewerPermission.toUpperCase())) {
-      await run('git', ['push', '-u', 'origin', fixRun.workBranch], fixRun.localPath, 120_000);
-    } else {
-      const repoName = fixRun.repository.split('/')[1];
-      forkRepository = `${connection.login}/${repoName}`;
-      try {
-        await run('gh', ['repo', 'view', forkRepository, '--json', 'nameWithOwner'], undefined, 20_000);
-      } catch {
-        await run('gh', ['repo', 'fork', fixRun.repository, '--clone=false'], undefined, 120_000);
-      }
-      try {
-        await run('git', ['remote', 'remove', 'fork'], fixRun.localPath, 10_000);
-      } catch {
-        // No previous fork remote.
-      }
-      await run('git', ['remote', 'add', 'fork', `https://github.com/${forkRepository}.git`], fixRun.localPath, 10_000);
-      await run('git', ['push', '-u', 'fork', fixRun.workBranch], fixRun.localPath, 120_000);
-      head = `${connection.login}:${fixRun.workBranch}`;
-    }
-
-    const prUrl = await run('gh', [
-      'pr', 'create',
-      '--repo', fixRun.repository,
-      '--base', fixRun.baseBranch,
-      '--head', head,
-      '--title', title,
-      '--body', body,
-    ], fixRun.localPath, 120_000);
-    return updateGitHubFixRun(id, {
-      status: 'pr_created',
-      prUrl: prUrl.split('\n').find(line => line.startsWith('https://')) || prUrl,
-      ...(forkRepository ? { forkRepository } : {}),
-      error: null,
-    })!;
+    return this.delivery.publish(fixRun, input, actorId, connection.login);
   }
 
   async cleanup(id: string): Promise<void> {

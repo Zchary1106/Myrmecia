@@ -112,6 +112,35 @@ export function releaseUndispatchedBudget(workspaceId: string, key: string): voi
   getDb().run(`UPDATE agent_budget_reservations SET status = 'released' WHERE workspace_id = ? AND reservation_key = ? AND status = 'reserved'`, workspaceId, key);
 }
 
+/** Failed SDK requests may have measured partial usage but an unknown final tail.
+ * Retain at least that lower bound as a conservative hold, never settle it as a complete receipt. */
+export function retainFailedRequestBudget(data: {
+  workspaceId: string; key: string; eventKey: string; observedTokensLowerBound: number;
+}): void {
+  if (!data.eventKey || !amount(data.observedTokensLowerBound)) throw new Error('BUDGET_USAGE_INVALID');
+  const db = getDb();
+  const row = db.get<any>('SELECT * FROM agent_budget_reservations WHERE workspace_id=? AND reservation_key=?',
+    data.workspaceId, data.key);
+  if (!row) throw new Error('BUDGET_RESERVATION_MISSING');
+  const fingerprint = hash({ kind: 'failed-request-lower-bound', ...data });
+  fencedRunWrite(row.task_id, () => db.transaction(() => {
+    const created = db.run(`INSERT INTO agent_budget_receipts(workspace_id,reservation_key,event_key,fingerprint)
+      VALUES (?,?,?,?) ON CONFLICT(workspace_id,reservation_key,event_key) DO NOTHING`,
+      data.workspaceId, data.key, data.eventKey, fingerprint);
+    if (created.changes !== 1) {
+      const prior = db.get<any>('SELECT fingerprint FROM agent_budget_receipts WHERE workspace_id=? AND reservation_key=? AND event_key=?',
+        data.workspaceId, data.key, data.eventKey);
+      if (prior?.fingerprint !== fingerprint) throw new Error('BUDGET_USAGE_IDEMPOTENCY_CONFLICT');
+      return;
+    }
+    const current = db.get<any>('SELECT * FROM agent_budget_reservations WHERE workspace_id=? AND reservation_key=?',
+      data.workspaceId, data.key)!;
+    if (current.status !== 'dispatched' || current.observed_tokens !== null) throw new Error('BUDGET_FAILED_REQUEST_NOT_PENDING');
+    db.run('UPDATE agent_budget_reservations SET tokens=MAX(tokens,?) WHERE workspace_id=? AND reservation_key=?',
+      data.observedTokensLowerBound, data.workspaceId, data.key);
+  }));
+}
+
 export function markBudgetDispatched(workspaceId: string, key: string): void {
   const row = getDb().get<any>('SELECT task_id, status FROM agent_budget_reservations WHERE workspace_id = ? AND reservation_key = ?', workspaceId, key);
   if (!row) throw new Error('BUDGET_RESERVATION_MISSING');

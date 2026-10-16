@@ -339,6 +339,45 @@ remote undo, and a detached job cannot be declared stopped without adapter
 support. External CLI internal tool-call visibility and checkpoint recovery are
 not equivalent to the built-in TS loop.
 
+### Evidence-backed development delivery
+
+Default Dev implement/refactor steps require real tests; missing tests are
+unavailable, not a fabricated pass. Package-scoped and bounded JS/Python/Go/Rust
+verification commands are supported. Workspace search covers source languages,
+configuration and documentation with explicit scan limits.
+
+Complete-system and new UI tasks use host-controlled requests:
+`design → core → ui → host verification → delivery`, with shorter paths for
+backend-only and UI-only work. All stages share one task/execution, cumulative
+budgets, and the original deadline. Task-bound design files and declared source
+files are checked before advancing; a model's final answer is not acceptance.
+
+The staged host verifier currently requires explicit, directory- and
+`package.json`-hash-bound authorization for exactly `npm test`; the broader
+verification-command whitelist above does not automatically authorize it.
+At most one repair can modify declared implementation files, with pinned
+test/configuration inputs protected and delivery restricted to read-only
+checks. Unsupported test runners or uncertain outcomes require reconciliation.
+These checks do not establish design quality or browser/visual acceptance.
+
+GitHub fix delivery previews tracked and new files, binds verification evidence
+to the reviewed revision, and requires explicit human acceptance before staging
+only the reviewed file list. Fork publication requires separate approval.
+Interrupted commit/push/PR operations retain durable receipts and require
+reconciliation instead of blindly replaying writes. These checks do not prove
+live model quality, remote CI success, or OS-level isolation. See the
+[development delivery guide](docs/DEVELOPMENT-DELIVERY.md).
+
+### Account-backed model selection
+
+Copilot execution choices come from the current SDK account discovery, not the
+entire model registry. Historical, builtin, locally disabled, and
+organization-disabled entries are not selectable account choices. Discovery
+failure blocks submission and offers refresh; unavailable explicit/default
+models are rejected rather than silently replaced. Discovery alone does not
+prove inference access, quota, or billing. See the
+[model catalog guide](docs/MODEL-CATALOG.md).
+
 ## Screenshots
 
 These screenshots and the seeded demo capture earlier dashboard styling. They
@@ -727,18 +766,26 @@ myrmecia/
 Verification is scoped: implemented code, isolated tests, live model execution,
 browser rendering, CI, and signed desktop releases are different checks.
 
-Runtime V2 local results and command exit codes are recorded in
-[`artifacts/agent-runtime-v2/verification.md`](artifacts/agent-runtime-v2/verification.md),
-not inferred from the last source commit (this worktree includes uncommitted
-implementation). Separate evidence covers the full test/build checks, the
-12-category fixture matrix, real-browser/real-backend scripted-model flows,
-dedicated Redis recovery and Docker enforcement.
+The [2026-10-16 local verification snapshot](docs/verification/2026-10-16-development-runtime.md)
+records 1,300 passing backend tests (six skipped), 240 passing dashboard tests,
+and successful shared/server/dashboard builds. The skipped cases require real
+Docker, Redis/BullMQ, or public HTTPS clone access; they are not passes.
+This publication check did not rerun those integrations or browser acceptance.
 
-The separate opt-in live smoke passed two read-only Copilot cases (chat and a
-real scoped file-read tool call). It never shares fixture scores and does not
-establish live MCP, SDK-resume, remote CI or signed/notarized packaging
-acceptance. Seeded demos and deterministic transports must not be described
-as live external-service evidence.
+The latest bounded autonomous-development trial **failed during design**:
+observed SDK usage reached 69,785 tokens against its 50,000-token design-stage
+allowance, within an unchanged 200,000-token task ceiling. No new implementation,
+host test, repair, QA/review, or browser acceptance was reached. Repeated context
+and pre-design exploration remain follow-up work. Passing regression tests is
+not evidence that Myrmecia can autonomously deliver a complete application or
+replace a primary development tool.
+
+Historical opt-in read-only Copilot smoke checks and deterministic fixture
+benchmarks are separate from this snapshot. Seeded demos and scripted
+transports must not be described as live external-service evidence. Remote CI,
+signed/notarized packaging, and production readiness are not established by
+these local checks. Runtime V2 remains opt-in; a managed directory is not
+OS/process/network/credential isolation.
 
 Known conversation polish gaps: ordinary greetings can still inherit a Domain's
 extra disclaimer, and refreshing returns to Home rather than restoring the

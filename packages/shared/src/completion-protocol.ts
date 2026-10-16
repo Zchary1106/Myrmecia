@@ -4,7 +4,7 @@ export type CompletionCriterion =
   | { id: string; label: string; required: boolean; verifier: 'output_not_contains'; text: string }
   | { id: string; label: string; required: boolean; verifier: 'output_json_schema'; schema: Record<string, unknown> }
   | { id: string; label: string; required: boolean; verifier: 'human_review'; rubric: string }
-  | { id: string; label: string; required: boolean; verifier: 'test_command'; command: 'pnpm test' | 'pnpm build' | 'npm test'; timeoutMs?: number }
+  | { id: string; label: string; required: boolean; verifier: 'test_command'; command: string; timeoutMs?: number }
   | { id: string; label: string; required: boolean; verifier: 'external'; verifierId: string };
 
 export interface CompletionCriterionResult {

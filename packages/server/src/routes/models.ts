@@ -6,7 +6,6 @@ import { actorFromRequest, HttpError, notFound, parseBody, parseQuery, requireOp
 import {
   getModel,
   getModelRoute,
-  COPILOT_COMPATIBILITY_MODEL_IDS,
   createCustomModel,
   deleteCustomModel,
   listModelRoutes,
@@ -17,9 +16,8 @@ import {
   upsertModelRoute,
 } from '../models/model-registry.js';
 import { getModelGateway, readProviders, resetModelGateway, shutdownModelGateway } from '../models/gateway.js';
+import { discoverCopilotModels } from '../models/provider-model-discovery.js';
 import type { ModelProviderSettings, ProviderAccount, ProviderModelOption } from '../types.js';
-
-const COPILOT_COMPATIBILITY_MODEL_ID_SET = new Set<string>(COPILOT_COMPATIBILITY_MODEL_IDS);
 
 const listModelsQuerySchema = z.object({
   enabled: z.enum(['true', 'false']).optional(),
@@ -72,7 +70,7 @@ function registryFallbackModels(provider: string): ProviderModelOption[] {
     .filter(model => provider === 'deepseek'
       ? model.provider === 'deepseek'
       : provider === 'copilot'
-      ? model.provider === 'copilot' || COPILOT_COMPATIBILITY_MODEL_ID_SET.has(model.id)
+      ? model.provider === 'copilot'
       : model.provider !== 'deepseek' && model.provider !== 'copilot')
     .map(model => ({
       id: model.id,
@@ -89,88 +87,6 @@ function isChatModel(modelId: string): boolean {
   return !/(embedding|embed|moderation|whisper|tts|dall[-.]e|rerank|speech|audio)/i.test(modelId);
 }
 
-async function discoverCopilotModels(): Promise<ProviderModelOption[]> {
-  const discovered = await getModelGateway().listProviderModels('copilot');
-  const models = discovered.map(model => ({
-    id: model.id,
-    name: model.name,
-    supportsReasoningEffort: Boolean(model.supportedReasoningEfforts?.length),
-    supportedReasoningEfforts: model.supportedReasoningEfforts as ProviderModelOption['supportedReasoningEfforts'],
-    maxTokens: model.maxTokens,
-    source: 'provider' as const,
-    policyState: model.policy?.state,
-    policyTerms: model.policy?.terms,
-    billingMultiplier: model.billing?.multiplier,
-    selectable: model.policy?.state !== 'disabled',
-  }));
-  syncProviderModels('copilot', discovered.map(model => ({
-    ...model,
-    supportsReasoningEffort: Boolean(model.supportedReasoningEfforts?.length),
-  })));
-  return models;
-}
-
-function cachedCopilotModels(): ProviderModelOption[] {
-  return listModels({ enabled: true })
-    .filter(model => model.provider === 'copilot')
-    .map(model => ({
-      id: model.id,
-      name: model.displayName,
-      supportsReasoningEffort: model.capabilityTags.includes('reasoning-effort'),
-      supportedReasoningEfforts: [],
-      maxTokens: model.maxTokens,
-      source: 'registry' as const,
-      policyState: (model.costProfile.policy as { state?: ProviderModelOption['policyState'] } | undefined)?.state,
-      policyTerms: (model.costProfile.policy as { terms?: string } | undefined)?.terms,
-      billingMultiplier: (model.costProfile.billing as { multiplier?: number } | undefined)?.multiplier,
-      selectable: (model.costProfile.policy as { state?: string } | undefined)?.state !== 'disabled',
-    }));
-}
-
-function compatibilityCopilotModels(): ProviderModelOption[] {
-  const ids = new Set<string>(COPILOT_COMPATIBILITY_MODEL_IDS);
-  return listModels({ enabled: true })
-    .filter(model => ids.has(model.id))
-    .map(model => ({
-      id: model.id,
-      name: model.displayName,
-      supportsReasoningEffort: model.capabilityTags.includes('reasoning') || model.capabilityTags.includes('reasoning-effort'),
-      supportedReasoningEfforts: [],
-      maxTokens: model.maxTokens,
-      source: 'registry' as const,
-      policyState: 'unconfigured' as const,
-      policyTerms: 'Compatibility model. GitHub Copilot may remap the request when the account model catalog is temporarily unavailable.',
-      selectable: true,
-    }));
-}
-
-function mergeProviderModels(primary: ProviderModelOption[], fallback: ProviderModelOption[]): ProviderModelOption[] {
-  const merged = new Map(fallback.map(model => [model.id, model]));
-  for (const model of primary) merged.set(model.id, model);
-  return [...merged.values()].sort((left, right) => {
-    if (left.id === 'auto') return -1;
-    if (right.id === 'auto') return 1;
-    return left.name.localeCompare(right.name);
-  });
-}
-
-async function availableCopilotModels(): Promise<{ models: ProviderModelOption[]; warning?: string }> {
-  const liveModels = await discoverCopilotModels();
-  const onlyAuto = liveModels.length === 1 && liveModels[0]?.id === 'auto';
-  if (!onlyAuto) return { models: liveModels };
-
-  const models = mergeProviderModels(
-    liveModels,
-    mergeProviderModels(cachedCopilotModels(), compatibilityCopilotModels()),
-  );
-  return {
-    models,
-    ...(models.length > liveModels.length
-      ? { warning: 'Copilot model discovery temporarily returned only Auto; showing the last discovered account models.' }
-      : {}),
-  };
-}
-
 async function providerSettings(): Promise<ModelProviderSettings> {
   const provider = configuredProvider();
   const selectedModelId = provider === 'copilot'
@@ -179,25 +95,23 @@ async function providerSettings(): Promise<ModelProviderSettings> {
 
   if (provider === 'copilot') {
     try {
-      const { models, warning } = await availableCopilotModels();
+      const models = await discoverCopilotModels();
       const account = await getModelGateway().copilotAuthStatus();
       const accounts = await listGithubAccounts();
       return {
         provider,
-        selectedModelId: models.some(model => model.id === selectedModelId && model.selectable)
-          ? selectedModelId
-          : models.find(model => model.selectable)?.id || selectedModelId,
+        selectedModelId,
         models,
         account,
         accounts,
-        source: warning ? 'registry' : 'provider',
-        ...(warning ? { error: warning } : {}),
+        source: 'provider',
       };
     } catch (err) {
-      const fallbackModels = cachedCopilotModels();
       let accounts: ProviderAccount[] = [];
       try { accounts = await listGithubAccounts(); } catch { /* preserve the model discovery error */ }
-      return { provider, selectedModelId, models: fallbackModels, accounts, account: { authenticated: false }, source: 'registry', error: err instanceof Error ? err.message : 'Unable to discover Copilot models.' };
+      let account: ModelProviderSettings['account'];
+      try { account = await getModelGateway().copilotAuthStatus(); } catch { /* discovery failure is not proof of logout */ }
+      return { provider, selectedModelId, models: [], accounts, account, source: 'registry', error: err instanceof Error ? err.message : 'Unable to discover Copilot models. Refresh to retry; cached models cannot be selected.' };
     }
   }
 
@@ -392,7 +306,12 @@ export function createModelRoutes(): Router {
         throw new HttpError(409, 'PROVIDER_NOT_ACTIVE', 'GitHub Copilot is not the active model provider');
       }
       const { modelId } = parseBody(providerModelSchema, req);
-      const { models, warning } = await availableCopilotModels();
+      let models: ProviderModelOption[];
+      try {
+        models = await discoverCopilotModels();
+      } catch {
+        throw new HttpError(503, 'MODEL_DISCOVERY_UNAVAILABLE', 'Unable to verify the current Copilot account models. Refresh the model list and retry.');
+      }
       const selected = models.find(model => model.id === modelId);
       if (!selected) notFound('MODEL_NOT_FOUND', 'Model is not available for the signed-in Copilot account');
       if (!selected.selectable) {
@@ -420,7 +339,6 @@ export function createModelRoutes(): Router {
         models,
         account,
         accounts,
-        ...(warning ? { error: warning } : {}),
       } satisfies ModelProviderSettings);
     } catch (err) {
       sendError(res, err);

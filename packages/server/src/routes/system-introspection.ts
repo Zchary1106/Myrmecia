@@ -11,6 +11,8 @@ import { getDatabaseDiagnostics } from '../db/database.js';
 import { isApiAuthEnabled } from '../auth/token-auth.js';
 import { workspaceIdFromRequest } from '../auth/tenant.js';
 import { actorFromRequest, requireOperatorRole } from './http.js';
+import { runtimeV2Enabled } from '../agents/runtime-version.js';
+import { executionWorldMode } from '../agents/execution-world.js';
 import type {
   ObservabilitySummary,
   PipelineStatus,
@@ -106,6 +108,18 @@ export function buildRuntimeDiagnostics(req: Request): RuntimeDiagnostics {
   const redisConfigured = !!process.env.REDIS_URL || !!process.env.REDIS_HOST;
   const authEnabled = isApiAuthEnabled();
   const actor = actorFromRequest(req);
+  let executionWorld: 'host_policy' | 'docker_isolated' | 'invalid' = 'invalid';
+  try { executionWorld = executionWorldMode(); } catch { /* Report invalid configuration without fabricating isolation. */ }
+  const warnings = [
+    ...(!runtimeV2Enabled() ? ['Runtime V2 is implemented but not enabled for this process.'] : []),
+    ...(executionWorld === 'host_policy' ? ['Host policy/path checks do not isolate filesystem, processes, network or credentials.'] : []),
+    ...(executionWorld === 'docker_isolated' ? ['Docker isolation is configured; backend availability/enforcement must be verified per execution. External MCP/Agent internals are not covered.'] : []),
+    ...(executionWorld === 'invalid' ? ['Execution world configuration is invalid; execution must fail closed.'] : []),
+    ...(!authEnabled ? ['Local mode has no API authentication; do not expose this service to untrusted users.'] : []),
+    ...(!redisConfigured ? ['Queue is in-memory; do not claim distributed Redis recovery is active.'] : []),
+    'Automatic continuation requires a confirmed read-only checkpoint. Unknown writes require explicit reconciliation.',
+    'Pause waits for a complete model/tool turn; provider-owned internal loops may remain opaque.',
+  ];
   return {
     auth: {
       enabled: authEnabled,
@@ -129,6 +143,9 @@ export function buildRuntimeDiagnostics(req: Request): RuntimeDiagnostics {
       pid: process.pid,
       uptime: process.uptime(),
       environment: process.env.NODE_ENV || 'development',
+      capabilities: { runtimeVersion: runtimeV2Enabled() ? 'v2' : 'legacy', executionWorld,
+        isolation: executionWorld === 'host_policy' || executionWorld === 'invalid' ? 'none' : 'configured_not_verified',
+        automaticRecovery: 'read_only_checkpoints', pauseBoundary: 'complete_turn', warnings },
     },
   };
 }

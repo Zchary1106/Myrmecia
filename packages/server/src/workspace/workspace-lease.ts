@@ -42,6 +42,17 @@ export function assertWorkspaceToolAllowed(tool?: string): void {
   if (lease.mode === 'shared_readonly' && tool && !['file_read', 'file_list'].includes(tool)) throw new Error('WORKSPACE_READONLY_TOOL_DENIED');
 }
 export function currentWorkspaceAccessMode(): string | undefined { return current.getStore()?.mode; }
+/** In-execution verification must use this exact writer, never borrow another task's lease. */
+export function assertCurrentWorkspaceOwner(taskId: string, workdir: string): void {
+  const lease = current.getStore();
+  if (!lease || lease.taskId !== taskId || lease.root !== canonicalRoot(workdir)) throw new Error('TEST_AUTH_LEASE_REQUIRED');
+  assertWorkspaceToolAllowed('shell_exec');
+}
+/** Seal an uncertain host write; expiry never authorizes a new writer. */
+export function markCurrentWorkspaceLeaseUncertain(): void {
+  const lease = current.getStore();
+  if (lease) getDb().run("UPDATE workspace_leases SET state='uncertain' WHERE id=? AND fence=?", lease.id, lease.fence);
+}
 export function releaseWorkspaceLease(lease: WorkspaceLease): void {
   getDb().run("UPDATE workspace_leases SET state='released' WHERE id=? AND fence=?", lease.id, lease.fence);
 }
@@ -58,7 +69,8 @@ export async function withWorkspaceLease<T>(task: Task, execute: () => Promise<T
   try { return await current.run(lease, execute); }
   finally {
     const uncertain = getDb().get("SELECT 1 FROM agent_tool_invocations WHERE task_id=? AND outcome IN ('running','unknown')", task.id)
-      || getDb().get("SELECT 1 FROM agent_provider_sessions WHERE task_id=? AND status='pending'", task.id);
+      || getDb().get("SELECT 1 FROM agent_provider_sessions WHERE task_id=? AND status='pending'", task.id)
+      || getDb().get("SELECT 1 FROM workspace_leases WHERE id=? AND fence=? AND state='uncertain'", lease.id, lease.fence);
     if (uncertain) getDb().run("UPDATE workspace_leases SET state='uncertain' WHERE id=? AND fence=?", lease.id, lease.fence);
     else releaseWorkspaceLease(lease);
     const binding = getWorkspaceBinding(task.id);

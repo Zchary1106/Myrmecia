@@ -18,6 +18,25 @@ export interface AgentOutputValidation {
   checks: { name: string; passed: boolean; message?: string }[];
 }
 
+/** Host-owned development milestones; completion is still not user acceptance. */
+export interface DevelopmentStageState {
+  schemaVersion: 1;
+  revision: number;
+  phase: 'design' | 'core' | 'ui' | 'implementation' | 'verification' | 'repair' | 'delivery' | 'complete';
+  startedTokens: number;
+  repairAttempts: number;
+  instructions: string[];
+  designArtifacts: Array<{ path: string; sha256: string }>;
+  verifiedArtifacts: Array<{ path: string; sha256: string }>;
+  verificationInputs?: Array<{ path: string; sha256: string }>;
+  testEntryPatterns?: string[];
+  repairSupported?: boolean;
+  receiptId?: string;
+  feedback?: string;
+  history: Array<{ phase: string; status: 'passed' | 'failed'; summary: string }>;
+  browserAcceptance: 'unverified';
+}
+
 export interface AgentRunState {
   schemaVersion: 1;
   phase: AgentRunPhase;
@@ -39,6 +58,7 @@ export interface AgentRunState {
   /** Separate host requests from observable provider-internal model turns. */
   metrics?: TurnMetrics;
   providerContinuity?: 'fresh' | 'resumed';
+  developmentStage?: DevelopmentStageState;
   executionWorld?: {
     mode: 'host_policy' | 'docker_isolated';
     filesystemIsolation: boolean; processIsolation: boolean; networkIsolation: boolean; credentialIsolation: boolean;

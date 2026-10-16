@@ -9,7 +9,7 @@ import { TaskQueue } from '../queue/task-queue.js';
 import { HttpError, notFound, parseBody, parseQuery, requireConfirmation, requireOperatorRole, sendError } from './http.js';
 import { requestCanAccessWorkspace, workspaceIdFromRequest } from '../auth/tenant.js';
 import type { Task } from '../types.js';
-import { getModel } from '../models/model-registry.js';
+import { validateModelId, validateRequestedModelId } from './model-selection.js';
 import { getLatestTaskCheckpoint, listTaskCheckpoints } from '../db/models/execution-context.js';
 import { checkpointExecutionContext, loadExecutionContext, persistExecutionContext, persistInheritedExecutionContext } from '../agents/execution-context.js';
 import { listAgents, getAgent } from '../db/models/agent.js';
@@ -26,6 +26,7 @@ import { getExternalAgentRuntime } from '../agents/external-agent-runtime.js';
 import { eventBus } from '../events/event-bus.js';
 import { completionCriteriaSchema } from '../agents/completion-gate.js';
 import { getWorkspaceBinding } from '../db/models/managed-workspace.js';
+import { grantTaskTestAuthorization, taskTestAuthorization, revokeTaskTestAuthorization } from '../testing/task-test-authorization.js';
 
 const taskStatusSchema = z.enum(['pending', 'queued', 'assigned', 'running', 'waiting_for_tool', 'review', 'done', 'failed', 'cancelled']);
 const taskModeSchema = z.enum(['master', 'direct', 'pipeline']);
@@ -82,13 +83,6 @@ function validateWorkspacePath(value: string | undefined): string | undefined {
   return workspacePath;
 }
 
-function validateModelId(value: string | undefined): string | undefined {
-  if (!value || value === 'auto') return undefined;
-  const model = getModel(value);
-  if (!model || !model.enabled) throw new HttpError(400, 'INVALID_MODEL', 'Selected model is not enabled');
-  return model.id;
-}
-
 function getAccessibleTask(req: any, taskId: string): Task {
   const task = getTask(taskId);
   if (!task || !requestCanAccessWorkspace(req, task.workspaceId)) {
@@ -99,6 +93,31 @@ function getAccessibleTask(req: any, taskId: string): Task {
 
 export function createTaskRoutes(taskQueue: TaskQueue): Router {
   const router = Router();
+  router.get('/:id/test-authorization', (req, res) => {
+    try {
+      res.setHeader('Cache-Control', 'no-store');
+      res.json({ authorization: taskTestAuthorization(getAccessibleTask(req, String(req.params.id))) || null });
+    } catch (error) { sendError(res, error instanceof HttpError ? error : new HttpError(409, 'TEST_AUTH_SCOPE_CHANGED', String(error))); }
+  });
+  router.post('/:id/test-authorization', (req, res) => {
+    try {
+      const actor = requireOperatorRole(req, 'task.test.authorize', ['admin', 'operator']);
+      const task = getAccessibleTask(req, String(req.params.id));
+      requireConfirmation(req, 'task.test.authorize');
+      const body = parseBody(z.object({ command: z.literal('npm test'), confirm: z.boolean().optional(),
+        confirmation: z.string().optional() }).strict(), req);
+      res.status(201).json({ authorization: grantTaskTestAuthorization(task, actor, body.command) });
+    } catch (error) { sendError(res, error instanceof HttpError ? error : new HttpError(409, 'TEST_AUTH_DENIED', String(error))); }
+  });
+  router.post('/:id/test-authorization/revoke', (req, res) => {
+    try {
+      const actor = requireOperatorRole(req, 'task.test.revoke', ['admin', 'operator']);
+      const task = getAccessibleTask(req, String(req.params.id));
+      requireConfirmation(req, 'task.test.revoke');
+      revokeTaskTestAuthorization(task, actor);
+      res.json({ revoked: true });
+    } catch (error) { sendError(res, error instanceof HttpError ? error : new HttpError(409, 'TEST_AUTH_DENIED', String(error))); }
+  });
   router.get('/:id/controls', (req, res) => {
     try {
       requireOperatorRole(req, 'task.controls', ['admin', 'operator']);
@@ -221,6 +240,7 @@ export function createTaskRoutes(taskQueue: TaskQueue): Router {
           priority: previous.priority, workspaceId: root.workspaceId, workdir,
           workspacePath: workdir, modelId: context.modelId, reasoningEffort: context.reasoningEffort,
           contextLength: context.contextLength, domainId: previous.domainId,
+          completionCriteria: previous.completionCriteria?.length ? previous.completionCriteria : root.completionCriteria,
         });
         persistInheritedExecutionContext(context, task);
         createOperatorAction({
@@ -266,6 +286,7 @@ export function createTaskRoutes(taskQueue: TaskQueue): Router {
         reasoningEffort: context.reasoningEffort,
         contextLength: context.contextLength,
         domainId: previous.domainId,
+        completionCriteria: previous.completionCriteria?.length ? previous.completionCriteria : root.completionCriteria,
         });
         persistInheritedExecutionContext(context, task);
         const debugRoot = getDb().get<{ root_task_id: string }>('SELECT root_task_id FROM agent_debug_task_history WHERE workspace_id = ? AND task_id = ?',
@@ -296,7 +317,7 @@ export function createTaskRoutes(taskQueue: TaskQueue): Router {
       const actor = requireOperatorRole(req, 'task.create', ['admin', 'operator']);
       const workspaceId = workspaceIdFromRequest(req);
       const workspacePath = validateWorkspacePath(requestedWorkspacePath);
-      const selectedModelId = validateModelId(modelId);
+      const selectedModelId = await validateRequestedModelId(modelId);
       const task = await taskQueue.enqueue({
         title,
         description: description || title,

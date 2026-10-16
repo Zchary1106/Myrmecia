@@ -8,7 +8,7 @@ import { CopilotProvider } from '../src/models/copilot-provider.js';
 import { closeDb, getDb } from '../src/db/database.js';
 import { createAgent } from '../src/db/models/agent.js';
 import { createTask, getTask } from '../src/db/models/task.js';
-import { createExecution, getExecution, updateExecution } from '../src/db/models/execution.js';
+import { createExecution, getExecution, listExecutions, updateExecution } from '../src/db/models/execution.js';
 import { createRunTrace, createTraceSpan } from '../src/db/models/trace.js';
 import { syncBuiltinModels } from '../src/models/model-registry.js';
 import { syncBuiltinTools } from '../src/tools/tool-registry.js';
@@ -21,8 +21,18 @@ import { persistExecutionContext } from '../src/agents/execution-context.js';
 import { listExecutionArtifacts } from '../src/db/models/execution-artifact.js';
 import { messageBus } from '../src/agents/message-bus.js';
 import { clearPauseControl, setPauseControl, UserPauseReached } from '../src/agents/pause-control.js';
+import { attachFailedRequestUsage } from '../src/models/failed-request-usage.js';
+import { AgentRunStopped } from '../src/agents/run-state.js';
+import { listLedgerEntries } from '../src/db/models/execution-ledger.js';
+import { budgetUsage, setBudgetPolicy } from '../src/agents/budget-service.js';
+import { writeDesignFixtures } from './fixtures/development-design.js';
 
 const transport = vi.hoisted(() => ({ complete: vi.fn(), mode: 'host_loop' as 'host_loop' | 'provider_loop' }));
+const verifier = vi.hoisted(() => ({ run: vi.fn() }));
+const matcher = vi.hoisted(() => ({ match: vi.fn(async () => ({ skillId: null, confidence: 0 })) }));
+vi.mock('../src/testing/task-test-authorization.js', () => ({
+  runAuthorizedDevelopmentTest: verifier.run,
+}));
 vi.mock('../src/models/gateway.js', () => ({
   getModelGateway: () => ({
     completeForModel: transport.complete, supportsTools: () => true,
@@ -31,11 +41,11 @@ vi.mock('../src/models/gateway.js', () => ({
   }),
 }));
 vi.mock('../src/skills/skill-matcher.js', () => ({
-  matchSkillForTask: async () => ({ skillId: null, confidence: 0 }),
+  matchSkillForTask: matcher.match,
 }));
 
 let directory: string;
-const envKeys = ['DB_PATH', 'AGENT_MAX_EXECUTION_TOKENS', 'AGENT_MAX_CONTEXT_TOKENS', 'AGENT_MAX_RESPONSE_TOKENS', 'MYRMECIA_MODEL_PROVIDER', 'MCP_TOOLS_ENABLED', 'MYRMECIA_RUNTIME_V2', 'MYRMECIA_BOUNDED_CONTINUATION', 'MYRMECIA_RUNTIME_SLICE_MS'] as const;
+const envKeys = ['DB_PATH', 'AGENT_MAX_EXECUTION_TOKENS', 'AGENT_MAX_CONTEXT_TOKENS', 'AGENT_MAX_RESPONSE_TOKENS', 'AGENT_TOOL_TIMEOUT_MS', 'MYRMECIA_MODEL_PROVIDER', 'MCP_TOOLS_ENABLED', 'MYRMECIA_RUNTIME_V2', 'MYRMECIA_BOUNDED_CONTINUATION', 'MYRMECIA_RUNTIME_SLICE_MS'] as const;
 let original: Record<string, string | undefined>;
 beforeEach(() => {
   original = Object.fromEntries(envKeys.map(key => [key, process.env[key]]));
@@ -48,6 +58,8 @@ beforeEach(() => {
   process.env.MCP_TOOLS_ENABLED = 'true';
   process.env.MYRMECIA_RUNTIME_V2 = 'true';
   transport.complete.mockReset();
+  verifier.run.mockReset();
+  matcher.match.mockClear();
   transport.mode = 'host_loop';
   llmCache.clear();
   syncBuiltinModels();
@@ -78,6 +90,87 @@ function start(input: string, allowedTools: string[] = [], skill?: Parameters<Ts
 }
 
 describe('Runtime V2 baseline against production entry points', () => {
+  it.each([['false', 'host_loop'], ['true', 'host_loop'], ['false', 'provider_loop'], ['true', 'provider_loop']] as const)('separates development requests, host verification and bounded repair with a shared budget, V2=%s mode=%s', async (enabled, mode) => {
+    process.env.MYRMECIA_RUNTIME_V2 = enabled;
+    transport.mode = mode;
+    process.env.AGENT_TOOL_TIMEOUT_MS = '1000';
+    const phases: string[] = [];
+    const allowances: number[] = [];
+    const deadlines: number[] = [];
+    let index = 0;
+    transport.complete.mockImplementation(async (_model, params, options) => {
+      const phase = String(params.messages[0].content).match(/development stage v1: (\w+)/)?.[1];
+      phases.push(phase!);
+      allowances.push(options.contextBudget.inputTokens + options.contextBudget.outputTokens);
+      deadlines.push(Date.now() + options.timeoutMs);
+      if (index++ === 0) {
+        const task = listExecutions()[0].taskId;
+        writeDesignFixtures(directory, task);
+        writeFileSync(join(directory, 'package.json'), '{"scripts":{"test":"node --test test/*.test.mjs"}}');
+        messageBus.send(null, listExecutions()[0].id, 'text', 'Retain user chosen storage format');
+      }
+      if (phase === 'delivery') expect(JSON.stringify(params.messages)).toContain('Retain user chosen storage format');
+      return fixtureCompletion(`Finished ${phase}.`);
+    });
+    verifier.run.mockResolvedValueOnce({ command: 'npm test', cwd: directory, exitCode: 1,
+      stdout: 'AssertionError: incomplete PATCH', stderr: '', receiptId: 'tr-failed' });
+    verifier.run.mockResolvedValueOnce({ command: 'npm test', cwd: directory, exitCode: 0,
+      stdout: '# tests 4\n# pass 4\n# fail 0\n', stderr: '', receiptId: 'tr-passed' });
+    const f = start('Build a complete application with frontend UI', [], undefined, new AbortController(), 8);
+    const result = await f.promise;
+    expect(phases).toEqual(['design', 'core', 'ui', 'repair', 'delivery']);
+    expect(allowances).toEqual([0, 20, 40, 60, 80]);
+    expect(Math.max(...deadlines) - Math.min(...deadlines)).toBeLessThan(150);
+    expect(result).toMatchObject({ numTurns: 5, inputTokens: 50, outputTokens: 50, output: 'Finished delivery.' });
+    expect(verifier.run).toHaveBeenCalledTimes(2);
+    expect(matcher.match).not.toHaveBeenCalled(); // no unbudgeted matching request outside the phase loop
+    for (const [task, options] of verifier.run.mock.calls) {
+      expect(task.id).toBe(f.task.id);
+      expect(options.signal).toBe(f.controller.signal);
+      expect(options.deadline).toBeGreaterThan(Date.now());
+      expect(options.deadline).toBeLessThanOrEqual(Date.now() + 1000);
+    }
+    expect(getExecution(f.execution.id)?.runState?.developmentStage).toMatchObject({
+      phase: 'complete', repairAttempts: 1, receiptId: 'tr-passed', browserAcceptance: 'unverified',
+    });
+    const checkpoints = getDb().all<any>("SELECT payload FROM agent_session_events WHERE event_key LIKE 'checkpoint:%'");
+    if (enabled === 'true') expect(checkpoints.some(row => JSON.parse(row.payload).developmentStage?.phase === 'repair')).toBe(true);
+  });
+  it.each(['false', 'true'])('never completes a complete-system request on an unsupported model claim, V2=%s', async enabled => {
+    process.env.MYRMECIA_RUNTIME_V2 = enabled;
+    transport.complete.mockResolvedValue(fixtureCompletion('The full application is done and tested.'));
+    await expect(start('Build a complete application with frontend UI', [], undefined, new AbortController(), 8).promise)
+      .rejects.toThrow('DEVELOPMENT_STAGE_INCOMPLETE');
+    expect(transport.complete).toHaveBeenCalledOnce();
+    expect(verifier.run).not.toHaveBeenCalled();
+  });
+  it.each(['false', 'true'])('retains observed failed SDK usage without settling its unknown tail, V2=%s', async enabled => {
+    process.env.MYRMECIA_RUNTIME_V2 = enabled;
+    transport.mode = 'provider_loop';
+    const error = new AgentRunStopped('token_budget', 'COPILOT_TOKEN_BUDGET: test allowance exceeded');
+    transport.complete.mockImplementationOnce(async () => {
+      attachFailedRequestUsage(error, {
+        prompt_tokens: 200000, completion_tokens: 10000, total_tokens: 210000,
+        provider: 'copilot', actual_model_id: 'fixture-actual',
+        input_tokens_observed: true, output_tokens_observed: true,
+        cost_type: 'subscription', cost_usd: null,
+      });
+      throw error;
+    });
+    const run = start('Fix a single file. Only modify note.txt', []);
+    // The production AgentRuntime installs this cap; direct loop fixtures must do it explicitly.
+    setBudgetPolicy({ workspaceId: 'default', scope: 'task', scopeId: run.task.id,
+      period: 'lifetime', maxTokens: 200000 });
+    await expect(run.promise).rejects.toBe(error);
+    expect(getExecution(run.execution.id)?.progress.tokenCount).toBe(210000);
+    expect(listLedgerEntries({ executionId: run.execution.id })
+      .find(entry => entry.type === 'model.partial_usage')?.metadata).toMatchObject({
+      inputTokensLowerBound: 200000, outputTokensLowerBound: 10000, complete: false,
+    });
+    const usage = budgetUsage('default', run.agent.id, run.task.id).find(summary => summary.scope === 'task');
+    expect(usage).toMatchObject({ reserved: { tokens: 210000 }, remaining: { tokens: 0 }, unknownTokens: 1 });
+    expect(getDb().get<any>('SELECT status FROM agent_budget_reservations WHERE kind=?', 'model')?.status).toBe('dispatched');
+  });
   it.each(['false', 'true'])('keeps streaming pause requested until a complete observed turn, V2=%s', async enabled => {
     process.env.MYRMECIA_RUNTIME_V2 = enabled;
     writeFileSync(join(directory, 'stream-evidence.txt'), 'complete retained observation');
@@ -108,10 +201,13 @@ describe('Runtime V2 baseline against production entry points', () => {
   it.each(['false', 'true'])('pauses the real TS loop at an observed tool boundary and resumes without repeating the read, V2=%s', async enabled => {
     process.env.MYRMECIA_RUNTIME_V2 = enabled;
     writeFileSync(join(directory, 'pause-evidence.txt'), 'retained fixture observation');
-    let taskId = '';
     const scripted = createScriptedProvider([
       params => {
-        setPauseControl('task', taskId, 'requested', 'running');
+        // A verification request need not await skill matching before transport dispatch.
+        // Read the already-persisted execution instead of relying on start() having returned.
+        const execution = listExecutions()[0];
+        expect(execution?.taskId).toBeTruthy();
+        setPauseControl('task', execution.taskId, 'requested', 'running');
         return fixtureCompletion('', 'tool_calls', [{ id: 'pause-read-1', type: 'function',
           function: { name: params.tools[0].function.name, arguments: '{"path":"pause-evidence.txt"}' } }]);
       },
@@ -123,7 +219,6 @@ describe('Runtime V2 baseline against production entry points', () => {
     ]);
     transport.complete.mockImplementation(scripted.completeForModel);
     const f = start('Inspect the fixture evidence, then report.', ['file_read']);
-    taskId = f.task.id;
     await expect(f.promise).rejects.toThrow(UserPauseReached);
     expect(scripted.requests).toHaveLength(1);
     updateExecution(f.execution.id, { status: 'failed', runState: {

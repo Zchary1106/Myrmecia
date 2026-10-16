@@ -3,7 +3,8 @@ import { api, type TeamDTO, type TeamRunDTO, type TeamBoardItem, type TeamInputD
 import { wsClient } from '../lib/ws';
 import { useStore } from '../stores/store';
 import { cn } from '../lib/utils';
-import type { GitHubConnectionStatus, GitHubFixDiff, GitHubFixRun } from '@myrmecia/shared';
+import type { GitHubConnectionStatus, GitHubFixRun } from '@myrmecia/shared';
+import { GitHubDeliveryReview } from '../components/github/GitHubDeliveryReview';
 import { Activity, Bot, ChevronRight, Plus, Search, Users, Workflow } from 'lucide-react';
 
 const CORE_BUILTIN_TEAM_IDS = new Set(['feature', 'quality', 'social-three-lanes']);
@@ -38,10 +39,6 @@ export function TeamsPage() {
   const [repository, setRepository] = useState('');
   const [issue, setIssue] = useState('');
   const [baseBranch, setBaseBranch] = useState('');
-  const [githubDiff, setGitHubDiff] = useState<GitHubFixDiff | null>(null);
-  const [showDiff, setShowDiff] = useState(false);
-  const [confirmPhrase, setConfirmPhrase] = useState('');
-  const [creatingPr, setCreatingPr] = useState(false);
   const [runs, setRuns] = useState<TeamRunDTO[]>([]);
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [run, setRun] = useState<TeamRunDTO | null>(null);
@@ -156,18 +153,6 @@ export function TeamsPage() {
     [githubRuns, activeRunId],
   );
 
-  useEffect(() => {
-    if (!activeGitHubRun) {
-      setGitHubDiff(null);
-      setShowDiff(false);
-      setConfirmPhrase('');
-      return;
-    }
-    if (activeGitHubRun.status !== 'preparing') {
-      api.githubFixes.diff(activeGitHubRun.id).then(setGitHubDiff).catch(() => {});
-    }
-  }, [activeGitHubRun?.id, activeGitHubRun?.status]);
-
   const dispatch = async () => {
     const description = goal.trim();
     if (!team) return;
@@ -197,32 +182,6 @@ export function TeamsPage() {
     finally { setBusy(false); }
   };
 
-  const refreshDiff = async () => {
-    if (!activeGitHubRun) return;
-    try {
-      setGitHubDiff(await api.githubFixes.diff(activeGitHubRun.id));
-    } catch (e: any) {
-      setError(e.message);
-    }
-  };
-
-  const createPullRequest = async () => {
-    if (!activeGitHubRun || confirmPhrase !== 'CREATE PR') return;
-    setCreatingPr(true); setError('');
-    try {
-      const updated = await api.githubFixes.createPullRequest(activeGitHubRun.id, {
-        confirm: true,
-        title: activeGitHubRun.issueTitle ? `fix: ${activeGitHubRun.issueTitle}` : undefined,
-      });
-      setGitHubRuns(current => current.map(item => item.id === updated.id ? updated : item));
-      setConfirmPhrase('');
-    } catch (e: any) {
-      setError(e.message);
-    } finally {
-      setCreatingPr(false);
-    }
-  };
-
   const sendMessage = async () => {
     if (!activeRunId || !selectedTask || !message.trim()) return;
     const item = board.find(b => b.taskId === selectedTask);
@@ -248,8 +207,6 @@ export function TeamsPage() {
     setRun(null);
     setBoard([]);
     setSelectedTask(null);
-    setShowDiff(false);
-    setGitHubDiff(null);
   };
 
   const selectRun = (nextRun: TeamRunDTO) => {
@@ -459,49 +416,8 @@ export function TeamsPage() {
                 </div>
               )}
 
-              {activeGitHubRun && (
-                <div className="border-t border-border bg-background/30 p-3 space-y-2">
-                  <div className="flex min-w-0 flex-wrap items-center gap-2">
-                    <span className="rounded-full bg-blue-500/10 px-2 py-0.5 text-[10px] text-blue-300">{activeGitHubRun.status}</span>
-                    <span className="min-w-0 flex-1 truncate text-[10px] text-gray-500" title={activeGitHubRun.localPath}>{activeGitHubRun.localPath}</span>
-                    <button type="button" onClick={() => { setShowDiff(value => !value); if (!showDiff) void refreshDiff(); }}
-                      className="ml-auto rounded-lg border border-border px-2 py-1 text-[10px] text-gray-400 hover:text-white">
-                      {showDiff ? 'Hide diff' : 'Review diff'}
-                    </button>
-                  </div>
-                  {activeGitHubRun.issueUrl && (
-                    <a href={activeGitHubRun.issueUrl} target="_blank" rel="noreferrer" className="block text-[10px] text-blue-300 hover:underline">
-                      Issue #{activeGitHubRun.issueNumber}: {activeGitHubRun.issueTitle}
-                    </a>
-                  )}
-                  {activeGitHubRun.error && <div className="text-[10px] text-red-300">{activeGitHubRun.error}</div>}
-                  {showDiff && (
-                    <div className="space-y-2">
-                      {githubDiff?.stat && <pre className="max-h-20 overflow-auto rounded-lg border border-border bg-[#090b10] p-2 text-[10px] text-gray-400">{githubDiff.stat}</pre>}
-                      <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-border bg-[#090b10] p-2 font-mono text-[10px] leading-4 text-gray-300">
-                        {githubDiff?.patch || githubDiff?.status || 'No changes yet.'}
-                      </pre>
-                    </div>
-                  )}
-                  {activeGitHubRun.status === 'ready' && githubDiff?.hasChanges && (
-                    <div className="flex flex-col gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 p-2 sm:flex-row sm:items-center">
-                      <input value={confirmPhrase} onChange={e => setConfirmPhrase(e.target.value)}
-                        placeholder="Type CREATE PR"
-                        className="min-w-0 flex-1 rounded-lg border border-border bg-background px-2 py-1.5 text-[11px] text-gray-200 focus:border-amber-400 focus:outline-none" />
-                      <button type="button" onClick={createPullRequest}
-                        disabled={confirmPhrase !== 'CREATE PR' || creatingPr}
-                        className="rounded-lg bg-amber-500/90 px-3 py-1.5 text-[11px] font-semibold text-black disabled:opacity-40">
-                        {creatingPr ? 'Creating…' : 'Create PR'}
-                      </button>
-                    </div>
-                  )}
-                  {activeGitHubRun.prUrl && (
-                    <a href={activeGitHubRun.prUrl} target="_blank" rel="noreferrer" className="inline-flex text-[10px] font-semibold text-purple-300 hover:underline">
-                      Open pull request ↗
-                    </a>
-                  )}
-                </div>
-              )}
+              {activeGitHubRun && <GitHubDeliveryReview key={activeGitHubRun.id} run={activeGitHubRun}
+                onPublished={updated => setGitHubRuns(current => current.map(item => item.id === updated.id ? updated : item))} />}
             </>
           )}
         </div>

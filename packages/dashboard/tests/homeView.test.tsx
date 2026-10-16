@@ -67,6 +67,65 @@ afterEach(async () => {
 });
 
 describe('Home workspace', () => {
+  it('provides a wider home composer and a larger responsive model settings panel', async () => {
+    vi.mocked(api.models.providerSettings).mockResolvedValue(providerSettings);
+    await act(async () => root.render(<HomeView />));
+    expect(container.querySelector('[data-home-content]')?.classList.contains('max-w-[1040px]')).toBe(true);
+    const input = container.querySelector<HTMLTextAreaElement>('[aria-label="Describe work for your Agent Team"]')!;
+    expect(input.rows).toBe(4);
+    expect(input.classList.contains('min-h-[128px]')).toBe(true);
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Model settings"]')!.click());
+    expect(container.querySelector('#model-options')?.classList.contains('sm:w-[380px]')).toBe(true);
+    expect(container.querySelector('#model-options')?.classList.contains('w-full')).toBe(true);
+  });
+
+  it('does not expose registry fallbacks or submit when account model discovery fails', async () => {
+    const dispatch = vi.spyOn(api.supervisor, 'dispatch');
+    vi.mocked(api.models.providerSettings).mockResolvedValue({
+      provider: 'copilot', source: 'registry', error: 'Offline',
+      models: [{ id: 'fake-fallback', name: 'Fake Fallback', supportsReasoningEffort: false, selectable: true }],
+    });
+    await act(async () => root.render(<HomeView />));
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Model settings"]')!.click());
+    expect(container.querySelector('[aria-label="Model choice"]')?.textContent).not.toContain('Fake Fallback');
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('不会使用历史模型');
+    await enterGoal();
+    await submitGoal();
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(container.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled).toBe(true);
+    vi.mocked(api.models.providerSettings).mockResolvedValue(providerSettings);
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Refresh available models"]')!.click());
+    expect(container.querySelector('[aria-label="Model choice"]')?.textContent).toContain('GPT-5.6 Terra');
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(container.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled).toBe(false);
+  });
+
+  it('does not show builtin or stale registry models after a network error', async () => {
+    useStore.setState({ models: [{ id: 'stale-model', displayName: 'Stale Model', enabled: true, capabilityTags: [] } as any] });
+    await act(async () => root.render(<HomeView />));
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Model settings"]')!.click());
+    expect(container.querySelector('[aria-label="Model choice"]')?.textContent).not.toContain('Stale Model');
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('获取失败');
+  });
+
+  it('blocks routing through an unavailable provider default until an available model is selected', async () => {
+    vi.mocked(api.models.providerSettings).mockResolvedValue({ ...providerSettings, selectedModelId: 'old-default' });
+    const dispatch = vi.spyOn(api.supervisor, 'dispatch');
+    await act(async () => root.render(<HomeView />));
+    await enterGoal();
+    await submitGoal();
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('默认模型 old-default 当前不可用');
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Model settings"]')!.click());
+    await act(async () => {
+      const choice = container.querySelector<HTMLSelectElement>('[aria-label="Model choice"]')!;
+      choice.value = 'gpt-5.6-terra';
+      choice.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(container.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled).toBe(false);
+  });
+
   it('submits the model chosen in the composer instead of the provider default', async () => {
     vi.mocked(api.models.providerSettings).mockResolvedValue(providerSettings);
     const dispatch = vi.spyOn(api.supervisor, 'dispatch').mockResolvedValue({

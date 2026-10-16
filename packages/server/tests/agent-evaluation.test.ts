@@ -196,10 +196,10 @@ describe('saved bounded Agent evaluations', () => {
     const task = createTask({ title: 'Verifier', description: '', input: 'Verify', mode: 'direct', workdir: root,
       workspacePath: root, completionCriteria: [{ id: 'test', label: 'Tests', required: true, verifier: 'test_command', command: 'pnpm test', timeoutMs: 1000 }] });
     const execution = createExecution({ taskId: task.id, agentDefId: 'fixture' });
-    const tool = vi.spyOn(sandbox, 'executeTool').mockResolvedValue({ status: 'done', output: 'Fixture tests passed' });
+    const tool = vi.spyOn(sandbox, 'executeTool').mockResolvedValue({ status: 'done', output: '# tests 1\n# pass 1\nEXIT_CODE:0' });
     const report = await verifyCompletionCriteria(task, execution.id, 'Expected');
     expect(report.status).toBe('passed'); expect(report.criteria[0].evidence[0].ref).toMatch(/^artifact:\/\//);
-    expect(tool).toHaveBeenCalledWith('shell_exec', { command: 'pnpm test' }, root,
+    expect(tool).toHaveBeenCalledWith('shell_exec', { command: "'pnpm' 'test'" }, root,
       expect.objectContaining({ timeoutMs: 1000, maxOutputChars: 8000, allowedTools: ['shell_exec'] }));
   });
   it('collects terminal evidence through the real in-memory queue event path without starting another case', async () => {

@@ -22,6 +22,42 @@ function agent(o: Partial<AgentDefinition> = {}): AgentDefinition {
 }
 
 describe('buildAgentSystemPrompt', () => {
+  it('appends the host delivery protocol after a custom skill and runtime overrides', () => {
+    const prompt = buildAgentSystemPrompt(agent(), ['file_read', 'file_write'], 'CUSTOM_SKILL_BODY', {
+      id: 'task-design', mode: 'direct', input: 'Build a complete task management system', description: '',
+    });
+    expect(prompt).toContain('CUSTOM_SKILL_BODY');
+    expect(prompt.indexOf('Host development delivery protocol')).toBeGreaterThan(prompt.indexOf('Runtime Profile Override'));
+    expect(prompt).toContain('taskId: task-design');
+    expect(prompt).toContain('docs/development-plan.json');
+    expect(prompt).toContain('docs/ui-design.json');
+    expect(prompt).toContain('Schema validity is not design quality');
+    expect(prompt).toContain('grants no tool permissions');
+  });
+
+  it('does not force system design on a single-file task, verification or QA', () => {
+    for (const [owner, input] of [
+      [agent(), 'Only modify src/app.ts to redesign the UI'],
+      [agent(), 'Only review the complete system'],
+      [agent({ role: 'qa' }), 'Build a complete system'],
+    ] as const) {
+      const prompt = buildAgentSystemPrompt(owner, [], 'CUSTOM_SKILL_BODY', {
+        id: 'scoped-task', mode: 'direct', input, description: '',
+      });
+      expect(prompt).toContain('CUSTOM_SKILL_BODY');
+      expect(prompt).not.toContain('docs/development-plan.json');
+      expect(prompt).not.toContain('docs/ui-design.json');
+    }
+  });
+  it('puts explicit verification instructions after the implementation-oriented custom skill', () => {
+    const prompt = buildAgentSystemPrompt(agent(), [], 'Implement the full system and refactor it.', {
+      id: 'review-task', mode: 'direct', input: 'Only review this complete system', description: '',
+    });
+    expect(prompt).toContain('Host development verification protocol');
+    expect(prompt).toContain("Do not execute a skill's code-writing");
+    expect(prompt.indexOf('verification protocol')).toBeGreaterThan(prompt.indexOf('Implement the full system'));
+  });
+
   it('separates routing, explicit instructions and responsibility from verified evidence', () => {
     const prompt = buildAgentSystemPrompt(agent({ whenToUse: 'Routing only', config: {
       systemInstructions: 'Use concise Chinese',

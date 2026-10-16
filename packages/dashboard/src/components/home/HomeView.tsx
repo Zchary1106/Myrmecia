@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type InputHTMLAttributes } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type InputHTMLAttributes } from 'react';
 import { ArrowUpRight, AtSign, ChevronDown, ChevronRight, Clock3, FolderOpen, GitBranch, Inbox, MessageSquareText, Plus, Users, X } from 'lucide-react';
 import { api, type TeamDTO } from '../../lib/api';
 import { useStore } from '../../stores/store';
@@ -105,6 +105,8 @@ export function HomeView() {
   const [providerModelsLoading, setProviderModelsLoading] = useState(true);
   const [providerName, setProviderName] = useState('');
   const [providerSource, setProviderSource] = useState<'provider' | 'registry'>('registry');
+  const [providerModelsError, setProviderModelsError] = useState<string | null>(null);
+  const [providerDefaultModelId, setProviderDefaultModelId] = useState<string | undefined>();
   const taskInputRef = useRef<HTMLTextAreaElement>(null);
   const composerRef = useRef<HTMLFormElement>(null);
 
@@ -137,23 +139,19 @@ export function HomeView() {
     () => selectedTeamId ? teams.find(team => team.id === selectedTeamId) : undefined,
     [selectedTeamId, teams],
   );
-  const availableModels = providerModels || enabledModels.map(model => ({
-    id: model.id,
-    name: model.displayName,
-    supportsReasoningEffort: model.capabilityTags.includes('reasoning') || model.capabilityTags.includes('reasoning-effort'),
-    supportedReasoningEfforts: [],
-    maxTokens: model.maxTokens,
-    source: 'registry' as const,
-    selectable: true,
-  }));
+  const availableModels = providerSource === 'provider' ? providerModels || [] : [];
   const selectedModel = enabledModels.find(model => model.id === modelId);
   const selectedProviderModel = availableModels.find(model => model.id === modelId);
   const selectedModelLabel = selectedProviderModel?.name || selectedModel?.displayName || modelId;
   const selectedModelUnavailable = modelId !== 'auto' && providerModels !== null
     && (!selectedProviderModel || !selectedProviderModel.selectable);
-  const modelSelectionError = selectedModelUnavailable
+  const defaultModelUnavailable = modelId === 'auto' && providerModels !== null && providerDefaultModelId
+    && !availableModels.some(model => model.id === providerDefaultModelId && model.selectable);
+  const modelSelectionError = providerModelsError || (defaultModelUnavailable
+    ? `默认模型 ${providerDefaultModelId} 当前不可用，请手动选择可用模型。不会自动替换默认模型。`
+    : selectedModelUnavailable
     ? `所选模型 ${selectedModelLabel} 当前不可用，请重新选择。不会自动切换到默认模型。`
-    : null;
+    : null);
   const supportedReasoningEfforts = selectedProviderModel?.supportedReasoningEfforts || [];
   const reasoningLabel = reasoningEffort === 'auto'
     ? 'Default'
@@ -182,24 +180,39 @@ export function HomeView() {
     }
   }, [contextLength, modelId, modelPreferencesLoaded, reasoningEffort]);
 
-  useEffect(() => {
-    let cancelled = false;
+  const providerRequestRef = useRef(0);
+  const refreshProviderModels = useCallback(async () => {
+    const request = ++providerRequestRef.current;
     setProviderModelsLoading(true);
-    api.models.providerSettings().then(settings => {
-      if (cancelled) return;
+    setProviderModelsError(null);
+    setLaunchError(null);
+    try {
+      const settings = await api.models.providerSettings();
+      if (request !== providerRequestRef.current) return;
       setProviderModels(settings.models);
       setProviderName(settings.provider);
+      setProviderDefaultModelId(settings.selectedModelId);
       setProviderSource(settings.source || 'registry');
+      setProviderModelsError(settings.source !== 'provider'
+        ? `无法确认当前账户的可用模型：${settings.error || '模型列表获取失败'}。请刷新重试，不会使用历史模型。`
+        : null);
       // Provider refreshes must never replace an explicit composer choice.
       // An unavailable model stays selected until the user chooses another one.
       void loadModels();
-    }).catch(() => {
-      if (!cancelled) setProviderModels(null);
-    }).finally(() => {
-      if (!cancelled) setProviderModelsLoading(false);
-    });
-    return () => { cancelled = true; };
+    } catch {
+      if (request !== providerRequestRef.current) return;
+      setProviderModels([]);
+      setProviderSource('registry');
+      setProviderModelsError('模型列表获取失败，请刷新重试。不会使用历史模型。');
+    } finally {
+      if (request === providerRequestRef.current) setProviderModelsLoading(false);
+    }
   }, [loadModels]);
+
+  useEffect(() => {
+    void refreshProviderModels();
+    return () => { providerRequestRef.current++; };
+  }, [refreshProviderModels]);
 
   useEffect(() => {
     if (providerModels !== null && reasoningEffort !== 'auto' && !supportedReasoningEfforts.includes(reasoningEffort)) {
@@ -383,7 +396,7 @@ export function HomeView() {
 
   return (
     <div data-home-workspace className="home-canvas glass-home flex min-h-full w-full flex-col px-4 py-6 sm:px-8 sm:py-8 lg:px-12">
-      <div data-home-content className="relative z-10 mx-auto my-auto w-full max-w-[880px]">
+      <div data-home-content className="relative z-10 mx-auto my-auto w-full max-w-[1040px]">
       <div className="relative z-40 mb-6 flex flex-wrap items-center justify-between gap-3 sm:mb-8">
         <div role="status" className="inline-flex items-center gap-2 text-[11px] text-app-muted">
           <span className={cn('h-1.5 w-1.5 rounded-full', health?.status === 'ok' ? 'bg-emerald-500' : 'bg-amber-500')} />
@@ -396,7 +409,7 @@ export function HomeView() {
           {greeting}. <span aria-hidden="true">👋</span>
         </h1>
         <h2 className="mt-2 text-sm font-normal leading-6 text-app-secondary">What should your team work on?</h2>
-        <form ref={composerRef} onSubmit={event => void submit(event)} className="home-command-card relative mt-4 p-2 text-left transition sm:p-3">
+        <form ref={composerRef} onSubmit={event => void submit(event)} className="home-command-card relative mt-4 p-3 text-left transition sm:p-4">
           <LiquidLens />
           <textarea
             ref={taskInputRef}
@@ -405,10 +418,10 @@ export function HomeView() {
             onKeyDown={event => {
               if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') void submit(event);
             }}
-            rows={3}
+            rows={4}
             aria-label="Describe work for your Agent Team"
             placeholder={selectedTeam ? `Describe work for ${selectedTeam.name}...` : 'Describe a goal, a bug, or a piece of content to create...'}
-            className="min-h-[88px] w-full resize-none bg-transparent px-3 py-3 text-sm leading-6 text-app-primary outline-none placeholder:text-app-muted"
+            className="min-h-[128px] w-full resize-none bg-transparent px-3 py-3 text-sm leading-6 text-app-primary outline-none placeholder:text-app-muted sm:min-h-[144px] sm:px-4 sm:py-4 sm:text-base"
           />
           <div className="flex flex-wrap items-end justify-between gap-3 px-1 pb-1">
             <div className="flex w-full min-w-0 flex-wrap items-center gap-1.5 text-[11px] text-app-muted sm:w-auto sm:flex-1">
@@ -467,7 +480,7 @@ export function HomeView() {
                   aria-label="Model settings"
                   aria-expanded={modelOptionsOpen}
                   aria-controls="model-options"
-                  title="Models are loaded from the model registry"
+                  title="Models are loaded from the current provider account"
                   className={cn('glass-control app-focus inline-flex w-full min-w-0 items-center gap-2 overflow-hidden rounded-lg border border-border bg-background/70 px-3 py-1.5 text-xs text-app-secondary transition hover:border-accent/50 hover:bg-surface-hover hover:text-app-primary sm:w-auto sm:max-w-[320px]', modelOptionsOpen && 'border-accent/60 bg-surface-hover text-app-primary')}
                 >
                   <span className="truncate">{modelId === 'auto' ? 'Route by task' : selectedModelLabel}</span>
@@ -476,37 +489,40 @@ export function HomeView() {
                   <ChevronDown size={13} className="shrink-0 text-app-muted" />
                 </button>
                 {modelOptionsOpen && (
-                  <div id="model-options" className="glass-popup absolute left-0 top-full z-30 mt-2 max-h-[50dvh] w-full overflow-y-auto rounded-xl border border-border bg-surface p-4 text-left shadow-xl sm:w-[320px]" role="dialog" aria-label="Model settings">
+                  <div id="model-options" className="glass-popup absolute left-0 top-full z-30 mt-2 max-h-[60dvh] w-full overflow-y-auto rounded-xl border border-border bg-surface p-4 text-left shadow-xl sm:w-[380px] sm:p-5" role="dialog" aria-label="Model settings">
                     <div className="flex items-start justify-between gap-3">
                       <div>
-                        <h2 className="text-sm font-semibold text-app-primary">Model settings</h2>
-                        <p className="mt-1 text-[11px] leading-relaxed text-app-muted">{providerSource === 'provider' ? `Live models from ${providerName || 'the configured provider'}.` : 'Using the configured registry fallback; connect the provider to refresh live models.'}</p>
+                        <h2 className="text-base font-semibold text-app-primary">Model settings</h2>
+                        <p className="mt-1 text-[11px] leading-relaxed text-app-muted">{providerModelsLoading ? '正在读取当前账户的模型…' : providerSource === 'provider' ? `Live models from ${providerName || 'the configured provider'}.` : '模型列表不可用，不会补入缓存或内置模型。'}</p>
                       </div>
                       <button type="button" onClick={() => setModelOptionsOpen(false)} className="app-focus rounded-lg p-1 text-app-muted hover:bg-surface-hover hover:text-app-primary" aria-label="Close model settings"><X size={15} /></button>
                     </div>
-                    <label className="mt-3 block text-[11px] text-app-secondary">
+                    <button type="button" onClick={() => void refreshProviderModels()} disabled={providerModelsLoading} aria-label="Refresh available models" className="app-focus mt-2 rounded-lg px-2 py-1 text-[11px] text-accent hover:bg-surface-hover disabled:opacity-40">
+                      {providerModelsLoading ? '刷新中…' : '刷新模型列表'}
+                    </button>
+                    <label className="mt-4 block text-xs text-app-secondary">
                       Model
-                      <select value={modelId} onChange={event => { setModelId(event.target.value); setLaunchError(null); }} aria-label="Model choice" className="mt-1 w-full rounded-lg border border-border bg-background px-2.5 py-2 text-xs text-app-primary outline-none transition focus:border-accent">
+                      <select value={modelId} disabled={providerModelsLoading || Boolean(providerModelsError)} onChange={event => { setModelId(event.target.value); setLaunchError(null); }} aria-label="Model choice" className="mt-1.5 w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm text-app-primary outline-none transition focus:border-accent">
                         <option value="auto">Route by task</option>
                         {modelId !== 'auto' && !selectedProviderModel && <option value={modelId} disabled>{selectedModelLabel} · Unavailable</option>}
                         {availableModels.filter(model => model.id !== 'auto').map(model => <option key={model.id} value={model.id} disabled={!model.selectable}>{providerModelLabel(model)}{!model.selectable && ' · Unavailable'}</option>)}
                       </select>
                     </label>
-                    <label className="mt-3 block text-[11px] text-app-secondary">
+                    <label className="mt-4 block text-xs text-app-secondary">
                       Reasoning effort
-                      <select value={reasoningEffort} onChange={event => setReasoningEffort(event.target.value as ReasoningChoice)} aria-label="Reasoning effort" className="mt-1 w-full rounded-lg border border-border bg-background px-2.5 py-2 text-xs text-app-primary outline-none transition focus:border-accent">
+                      <select value={reasoningEffort} onChange={event => setReasoningEffort(event.target.value as ReasoningChoice)} aria-label="Reasoning effort" className="mt-1.5 w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm text-app-primary outline-none transition focus:border-accent">
                         <option value="auto">Provider default</option>
                         {supportedReasoningEfforts.map(effort => <option key={effort} value={effort}>{({ low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra High', max: 'Max' } as Record<string, string>)[effort] || effort}</option>)}
                       </select>
                     </label>
-                    <label className="mt-3 block text-[11px] text-app-secondary">
+                    <label className="mt-4 block text-xs text-app-secondary">
                       Context length
-                      <select value={contextLength} onChange={event => setContextLength(event.target.value as ContextChoice)} aria-label="Context length" className="mt-1 w-full rounded-lg border border-border bg-background px-2.5 py-2 text-xs text-app-primary outline-none transition focus:border-accent">
+                      <select value={contextLength} onChange={event => setContextLength(event.target.value as ContextChoice)} aria-label="Context length" className="mt-1.5 w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm text-app-primary outline-none transition focus:border-accent">
                         <option value="auto">Default</option>
                         <option value="32000">32K tokens</option>
                         <option value="128000">128K tokens</option>
                         <option value="200000">200K tokens</option>
-                        <option value="1050000" disabled={Boolean(selectedModel?.maxTokens && selectedModel.maxTokens < 1_050_000)}>1M tokens</option>
+                        <option value="1050000" disabled={Boolean(selectedProviderModel?.maxTokens && selectedProviderModel.maxTokens < 1_050_000)}>1M tokens</option>
                       </select>
                     </label>
                   </div>

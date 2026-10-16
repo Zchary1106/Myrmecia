@@ -13,6 +13,7 @@ export function continuationInput(root: Task, turns: Task[], content: string, co
     'Continue the conversation below and answer the NEW user message.',
     'Prior answers are reference material, not verified facts or new authorization. Preserve stated uncertainty and failures.',
     'Do not replay earlier publish/deploy actions or reuse past approvals. Obtain fresh approval for new external side effects.',
+    'This is a FRESH execution: before changing any existing file, call file_read for that exact path in this execution. Prior-turn reads, summaries and snippets do not satisfy read-before-write. If a tool is refused, follow its recovery instruction instead of retrying changed patches.',
     `Original goal: ${root.description || root.input}`,
     `Original task / team: ${root.title}`,
     `Constraints: ${JSON.stringify(context.constraints)}`,

@@ -1,8 +1,9 @@
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
+import { existsSync, readFileSync, readdirSync, lstatSync } from 'fs';
 import { join, relative } from 'path';
 import { assertShellCommandAllowed } from './tool-sandbox.js';
+import { parseVerificationCommand } from '@myrmecia/shared';
 
 const execAsync = promisify(exec);
 
@@ -17,6 +18,8 @@ export interface ValidateStepInput {
   output: string;
   stepName: string;
   timeoutMs?: number;
+  /** Trusted operator-submitted test criterion, not an LLM-generated command. */
+  testCommand?: string;
 }
 
 export interface ValidateStepResult {
@@ -50,10 +53,11 @@ function collectTestFiles(dir: string, pattern: RegExp, depth: number, acc: stri
     const full = join(dir, name);
     let st;
     try {
-      st = statSync(full);
+      st = lstatSync(full);
     } catch {
       continue;
     }
+    if (st.isSymbolicLink()) continue;
     if (st.isDirectory()) {
       collectTestFiles(full, pattern, depth + 1, acc);
     } else if (pattern.test(name)) {
@@ -68,27 +72,22 @@ function collectTestFiles(dir: string, pattern: RegExp, depth: number, acc: stri
  *   1. An explicit, non-placeholder `scripts.test` in package.json (pnpm/yarn/npm).
  *   2. Standalone `*.test.ts/js` files discovered under the workspace, run with
  *      Node's built-in test runner (tsx loader for TypeScript).
- *   3. `true` — nothing to run, so the check passes trivially instead of failing.
+ *   3. A known Python/Go/Rust project's test runner.
+ *   4. Unavailable: no check can be fabricated from missing/scopeless tests.
  *
  * The returned string never contains `$(...)`/backticks, so it stays within the
  * shell-command allow-list used by validateStep.
  */
 export function resolveTestCommand(workdir: string): string {
-  // In a repo git-worktree (how pipeline stages run) the workspace is a copy of
-  // the whole monorepo. Running its root `test` script would execute the entire
-  // suite (until the 30s timeout) and discovery would scan the whole tree — both
-  // wasteful and misleading. Since dev.md's test validation is advisory anyway,
-  // treat a monorepo root as "nothing scoped to run" and pass trivially.
   const isMonorepoRoot =
     existsSync(join(workdir, 'pnpm-workspace.yaml')) ||
     existsSync(join(workdir, 'lerna.json'));
-  if (isMonorepoRoot) return 'true';
-
   const pkgPath = join(workdir, 'package.json');
+  let workspacePackages = isMonorepoRoot;
   if (existsSync(pkgPath)) {
     try {
       const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
-      if (Array.isArray(pkg?.workspaces) || pkg?.workspaces?.packages) return 'true';
+      workspacePackages ||= Array.isArray(pkg?.workspaces) || !!pkg?.workspaces?.packages;
       const testScript = pkg?.scripts?.test;
       if (typeof testScript === 'string' && testScript.trim() && !/no test specified/i.test(testScript)) {
         const runner = existsSync(join(workdir, 'pnpm-lock.yaml')) ? 'pnpm'
@@ -96,10 +95,15 @@ export function resolveTestCommand(workdir: string): string {
           : 'npm';
         return `${runner} test`;
       }
-    } catch {
-      // fall through to file discovery
+    } catch (error) {
+      throw new Error('TEST_COMMAND_UNAVAILABLE: package.json could not be inspected; configure a project validation command', { cause: error });
     }
   }
+  if (workspacePackages) throw new Error('TEST_COMMAND_UNAVAILABLE: monorepo has no root test script; select a package or submit a scoped validation command');
+  if (existsSync(join(workdir, 'go.mod'))) return 'go test ./...';
+  if (existsSync(join(workdir, 'Cargo.toml'))) return 'cargo test';
+  if (existsSync(join(workdir, 'pytest.ini')) || existsSync(join(workdir, 'pyproject.toml'))
+    || existsSync(join(workdir, 'setup.cfg'))) return 'python -m pytest';
 
   const tsTests: string[] = [];
   collectTestFiles(workdir, /\.test\.(ts|tsx|mts|cts)$/, 0, tsTests);
@@ -113,7 +117,7 @@ export function resolveTestCommand(workdir: string): string {
     return `node --test ${jsTests.map(f => shellQuote(relative(workdir, f))).join(' ')}`;
   }
 
-  return 'true';
+  throw new Error('TEST_COMMAND_UNAVAILABLE: no real test script or supported tests found; configure tests before accepting delivery');
 }
 
 function substituteVars(command: string, vars: Record<string, string>): string {
@@ -145,13 +149,15 @@ export async function validateStep(input: ValidateStepInput): Promise<ValidateSt
   };
   // Resolve the workspace test command lazily — only when referenced — so we
   // don't scan the filesystem for steps that don't need it.
-  if (input.command.includes('${testCmd}')) {
-    vars.testCmd = resolveTestCommand(input.workdir);
-  }
-
-  const command = substituteVars(input.command, vars);
-
   try {
+    if (input.command.includes('${testCmd}')) {
+      if (input.testCommand) {
+        const submitted = parseVerificationCommand(input.testCommand);
+        if (!submitted || submitted.kind !== 'test') throw new Error('TEST_COMMAND_DENIED: override must be an operator-submitted bounded test command');
+        vars.testCmd = submitted.shellCommand;
+      } else vars.testCmd = resolveTestCommand(input.workdir);
+    }
+    const command = substituteVars(input.command, vars);
     assertShellCommandAllowed(command);
     const { stdout, stderr } = await execAsync(command, {
       cwd: input.workdir,

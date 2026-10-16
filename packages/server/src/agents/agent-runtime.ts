@@ -269,6 +269,9 @@ export class AgentRuntime {
           `AGENT_EMPTY_OUTPUT: output validation failed: ${validation.checks.filter(check => !check.passed).map(check => check.message).join('; ')}`, safeOutput);
       }
       assertExecutionTokenBudget(safeResult.inputTokens, safeResult.outputTokens, safeResult.output, 'agent execution');
+      if (safeResult.stopReason !== 'needs_input') {
+        middleware.validateDevelopmentDelivery(task.workdir || process.cwd(), safeResult.output);
+      }
 
       if (!runtimeV2Enabled() && safeResult.costUSD != null) guardrails.trackCost(task.id, safeResult.costUSD);
       middleware.afterExecution({
@@ -457,7 +460,11 @@ export class AgentRuntime {
       const stopReason = classifyAgentStop(err, priorStatus === 'cancelled');
       const cancelled = stopReason === 'cancelled';
       updateAgentRun(execution.id, cancelled ? 'cancelled' : stopReason === 'interrupted' ? 'interrupted' : 'failed', { stopReason });
-      updateExecution(execution.id, { status: cancelled ? 'cancelled' : 'failed', progress: getProgressSnapshot(tracker), completedAt: new Date().toISOString() });
+      const failureProgress = getProgressSnapshot(tracker);
+      // A provider-owned loop can publish partial measured usage before throwing.
+      // The host tracker has no successful model result in that case; do not reset it to zero.
+      failureProgress.tokenCount = Math.max(failureProgress.tokenCount, getExecution(execution.id)?.progress.tokenCount || 0);
+      updateExecution(execution.id, { status: cancelled ? 'cancelled' : 'failed', progress: failureProgress, completedAt: new Date().toISOString() });
       addExecutionMessage({ executionId: execution.id, type: 'error', content: errorMsg });
 
       // If the task was already settled (cancelled by the user or the dependency

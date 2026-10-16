@@ -4,6 +4,7 @@ import { api } from '../lib/api';
 import { cn } from '../lib/utils';
 import { useStore } from '../stores/store';
 import { AuditDrawer } from '../components/audit/AuditDrawer';
+import { currentAccountModels } from '../lib/modelCatalog';
 
 type Section = 'providers' | 'models' | 'routing' | 'health';
 type RuntimeProvider = MyrmeciaRuntimeConfiguration['provider'];
@@ -38,14 +39,16 @@ export function ModelsPage() {
     setProviderSettings(settings);
     setProviderModelId(settings.selectedModelId || settings.models[0]?.id || '');
     setAccountLogin(settings.account?.login || settings.accounts?.find(account => account.active)?.login || '');
-    if (settings.error) setNotice(settings.error);
+    setNotice(settings.error || (settings.selectedModelId && !settings.models.some(model => model.id === settings.selectedModelId && model.selectable)
+      ? `所选默认模型 ${settings.selectedModelId} 当前不可用，请重新选择；不会自动切换模型。` : null));
+    await loadModels();
   };
   const refresh = async () => {
     setLoading(true); setError(null);
     try {
       const nextRuntime = await desktop?.getRuntimeConfig();
       if (nextRuntime) { setRuntime(nextRuntime); setProvider(nextRuntime.provider); setBaseUrl(nextRuntime.baseUrl); setRuntimeModel(nextRuntime.model); }
-      await Promise.all([loadModels(), loadModelRoutes(), loadProviderSettings()]);
+      await Promise.all([loadModelRoutes(), loadProviderSettings()]);
     } catch (err) { setError(err instanceof Error ? err.message : 'Unable to load model configuration.'); }
     finally { setLoading(false); }
   };
@@ -53,11 +56,12 @@ export function ModelsPage() {
   useEffect(() => { setRouteDrafts(Object.fromEntries(modelRoutes.map(route => [route.routeKey, { defaultModelId: route.defaultModelId, fallbackGroup: route.fallbackGroup }]))); }, [modelRoutes]);
 
   const groups = useMemo(() => Array.from(new Set(models.map(model => model.fallbackGroup))).sort(), [models]);
-  const enabledModels = useMemo(() => models.filter(model => model.enabled), [models]);
+  const enabledModels = useMemo(() => currentAccountModels(models, providerSettings), [models, providerSettings]);
+  const archivedModels = models.filter(model => !enabledModels.some(current => current.id === model.id));
   const filteredModels = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    return models.filter(model => (group === 'all' || model.fallbackGroup === group) && (!needle || [model.id, model.displayName, model.description, model.provider, model.fallbackGroup, model.healthStatus, ...model.capabilityTags].join(' ').toLowerCase().includes(needle)));
-  }, [models, query, group]);
+    return enabledModels.filter(model => (group === 'all' || model.fallbackGroup === group) && (!needle || [model.id, model.displayName, model.description, model.provider, model.fallbackGroup, model.healthStatus, ...model.capabilityTags].join(' ').toLowerCase().includes(needle)));
+  }, [enabledModels, query, group]);
   const selectedProviderModel = providerSettings?.models.find(model => model.id === providerModelId);
 
   const saveRuntime = async () => {
@@ -118,6 +122,20 @@ export function ModelsPage() {
       {section === 'routing' && <section className="rounded-2xl border border-border bg-surface p-5"><SectionHeading title="Role routing" detail="Advanced: a task uses an explicit model first, then its role route, the global route, and finally a fallback group. The active Copilot provider model remains primary when Copilot is selected." />{modelRoutes.length ? <div className="mt-5 grid gap-3 xl:grid-cols-2">{modelRoutes.map(route => <RouteCard key={route.routeKey} route={route} draft={routeDrafts[route.routeKey] || { defaultModelId: route.defaultModelId, fallbackGroup: route.fallbackGroup }} enabledModels={enabledModels} saving={savingId === route.routeKey} onChange={updates => updateRouteDraft(route.routeKey, updates)} onSave={() => void saveRoute(route)} />)}</div> : <EmptyState title="No role routes configured" detail="Routes will appear once the server has initialized the model routing registry." />}</section>}
       {section === 'health' && <section className="rounded-2xl border border-border bg-surface p-5"><SectionHeading title="Health checks" detail="Run a real provider health check for a registered model. Results are stored with the model record." />{models.length ? <div className="mt-5 space-y-2">{models.map(model => <HealthRow key={model.id} model={model} saving={savingId === model.id} onCheck={() => void healthCheck(model)} />)}</div> : <EmptyState title="No registered models" detail="Connect a provider or add a registry model before running health checks." />}</section>}
     </>}
+    {section === 'models' && (
+      <details className="mt-5 rounded-2xl border border-border bg-surface p-5">
+        <summary className="cursor-pointer text-sm font-medium text-app-secondary">历史、内置及其他 Provider 模型（{archivedModels.length}）</summary>
+        <p className="mt-2 text-xs text-app-muted">这些记录用于配置与历史查询，不代表当前账户可调用，也不会加入任务的模型选择列表。</p>
+        <div className="mt-4 grid gap-2 md:grid-cols-2">
+          {archivedModels.map(model => (
+            <div key={model.id} className="rounded-lg border border-border px-3 py-2">
+              <div className="text-xs text-app-secondary">{model.displayName}</div>
+              <div className="mt-1 text-[10px] text-app-muted">{model.provider} · {model.id} · 未验证或当前不可用</div>
+            </div>
+          ))}
+        </div>
+      </details>
+    )}
   </main>;
 }
 

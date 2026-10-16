@@ -939,6 +939,16 @@ CREATE INDEX IF NOT EXISTS idx_github_fix_runs_workspace
 CREATE INDEX IF NOT EXISTS idx_github_fix_runs_task
   ON github_fix_runs(task_id);
 
+-- Migration: 202610120001_github_reviewed_delivery
+CREATE TABLE IF NOT EXISTS github_fix_deliveries (
+  run_id TEXT PRIMARY KEY REFERENCES github_fix_runs(id) ON DELETE CASCADE,
+  workspace_id TEXT NOT NULL,
+  operation_id TEXT NOT NULL,
+  state TEXT NOT NULL,
+  data_json TEXT NOT NULL DEFAULT '{}',
+  updated_at TEXT NOT NULL
+);
+
 -- Migration: 202608160001_domain_pack_versioning
 CREATE TABLE IF NOT EXISTS domain_packs (
   id TEXT PRIMARY KEY, name TEXT NOT NULL, emoji TEXT NOT NULL DEFAULT '📘',
@@ -1269,4 +1279,70 @@ CREATE TABLE IF NOT EXISTS execution_artifact_snapshots (
   artifact_id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, execution_id TEXT NOT NULL,
   snapshot_path TEXT NOT NULL, sha256 TEXT NOT NULL, size_bytes INTEGER NOT NULL,
   state TEXT NOT NULL, created_at TEXT NOT NULL
+);
+
+-- Migration: 202610130001_workspace_preparation_requests
+-- Earlier installations already recorded workspace_lifecycle before this table
+-- was added to that migration. A new ID upgrades them without replaying history.
+CREATE TABLE IF NOT EXISTS workspace_preparation_requests (
+  task_id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, options JSON NOT NULL
+);
+
+-- Migration: 202610130002_budget_dispatch_status
+-- The previously recorded budget migration did not allow in-flight dispatch.
+-- The migration runner wraps this full copy/swap and its ledger entry in one
+-- transaction. Keep all estimates, observed usage, keys and receipt linkage.
+CREATE TABLE agent_budget_reservations_dispatch_upgrade (
+  workspace_id TEXT NOT NULL,
+  reservation_key TEXT NOT NULL,
+  task_id TEXT NOT NULL,
+  agent_id TEXT NOT NULL,
+  period TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  fingerprint TEXT NOT NULL,
+  tokens INTEGER NOT NULL,
+  tool_calls INTEGER NOT NULL,
+  runtime_ms INTEGER NOT NULL,
+  cost_type TEXT NOT NULL,
+  cost_usd REAL,
+  observed_tokens INTEGER,
+  observed_runtime_ms INTEGER,
+  observed_cost_usd REAL,
+  status TEXT NOT NULL CHECK(status IN ('reserved','dispatched','settled','released')),
+  PRIMARY KEY(workspace_id, reservation_key)
+);
+INSERT INTO agent_budget_reservations_dispatch_upgrade (
+  workspace_id, reservation_key, task_id, agent_id, period, kind, fingerprint,
+  tokens, tool_calls, runtime_ms, cost_type, cost_usd, observed_tokens,
+  observed_runtime_ms, observed_cost_usd, status
+)
+SELECT workspace_id, reservation_key, task_id, agent_id, period, kind, fingerprint,
+  tokens, tool_calls, runtime_ms, cost_type, cost_usd, observed_tokens,
+  observed_runtime_ms, observed_cost_usd, status
+FROM agent_budget_reservations;
+DROP TABLE agent_budget_reservations;
+ALTER TABLE agent_budget_reservations_dispatch_upgrade RENAME TO agent_budget_reservations;
+CREATE INDEX idx_agent_budget_scope ON agent_budget_reservations(workspace_id, task_id, agent_id, period);
+
+-- Migration: 202610130003_scoped_task_test_authorization
+CREATE TABLE IF NOT EXISTS task_test_authorizations (
+  id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, root_task_id TEXT NOT NULL,
+  command TEXT NOT NULL CHECK(command='npm test'), workdir TEXT NOT NULL,
+  root_identity TEXT NOT NULL, package_sha256 TEXT NOT NULL, actor_id TEXT NOT NULL,
+  expires_at INTEGER NOT NULL, revoked INTEGER NOT NULL DEFAULT 0 CHECK(revoked IN (0,1)),
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_task_test_authorization_scope
+  ON task_test_authorizations(workspace_id, root_task_id, created_at);
+CREATE TABLE IF NOT EXISTS task_test_receipts (
+  id TEXT PRIMARY KEY, authorization_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
+  task_id TEXT NOT NULL, command TEXT NOT NULL, workdir TEXT NOT NULL,
+  package_sha256 TEXT NOT NULL, status TEXT NOT NULL, exit_code INTEGER,
+  stdout TEXT NOT NULL DEFAULT '', stderr TEXT NOT NULL DEFAULT '',
+  started_at TEXT NOT NULL, completed_at TEXT
+);
+CREATE TABLE IF NOT EXISTS quality_input_artifacts (
+  workspace_id TEXT NOT NULL, task_id TEXT NOT NULL, input_name TEXT NOT NULL,
+  artifact_id TEXT NOT NULL, source_task_id TEXT NOT NULL,
+  PRIMARY KEY(workspace_id, task_id, input_name)
 );

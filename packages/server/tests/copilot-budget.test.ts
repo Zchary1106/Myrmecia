@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CopilotProvider, type CopilotClientLike, type CopilotSessionLike } from '../src/models/copilot-provider.js';
+import { AgentRunStopped } from '../src/agents/run-state.js';
+import { AsyncLocalStorage, AsyncResource } from 'node:async_hooks';
+import { failedRequestUsage } from '../src/models/failed-request-usage.js';
 
 afterEach(() => vi.useRealTimers());
 
@@ -29,6 +32,71 @@ const params = {
 };
 
 describe('Copilot execution budgets', () => {
+  it('restores each request context for tools and deltas on a reused SDK transport', async () => {
+    const context = new AsyncLocalStorage<string>();
+    let transport!: AsyncResource;
+    const seen: string[] = [];
+    const provider = new CopilotProvider({}, () => ({
+      start: async () => { transport = new AsyncResource('shared-sdk-fixture'); },
+      stop: async () => [],
+      createSession: async config => {
+        const handlers = new Map<string, (event: any) => void>();
+        return {
+          on: (event, handler) => { handlers.set(event, handler); return () => { handlers.delete(event); }; },
+          abort: async () => {}, disconnect: async () => {},
+          sendAndWait: async () => {
+            await transport.runInAsyncScope(config.tools![0].handler, undefined, {},
+              { toolCallId: 'fixture', toolName: 'search' });
+            transport.runInAsyncScope(handlers.get('assistant.message_delta')!, undefined,
+              { data: { deltaContent: 'answer' } });
+            return { data: { content: 'answer' } };
+          },
+        };
+      },
+    }));
+    try {
+      for (const scope of ['first', 'second']) {
+        await context.run(scope, () => provider.complete(params, {
+          onToolCall: async () => { seen.push(`tool:${context.getStore()}`); return 'data'; },
+          onDelta: () => { seen.push(`delta:${context.getStore()}`); },
+        }));
+      }
+      expect(seen).toEqual(['tool:first', 'delta:first', 'tool:second', 'delta:second']);
+    } finally { transport.emitDestroy(); await provider.stop(); }
+  });
+  it('aborts the inner SDK loop on a terminal host tool refusal', async () => {
+    const h = harness();
+    const stop = new AgentRunStopped('tool_unavailable', 'TOOL_REJECTION_LIMIT: read the file');
+    const pending = h.provider.complete(params, { onToolCall: async () => { throw stop; } });
+    const failure = expect(pending).rejects.toBe(stop);
+    await vi.waitFor(() => expect(h.tools()).toBeDefined());
+    await expect(h.tools()[0].handler({}, { toolCallId: 'refused', toolName: 'search' })).rejects.toBe(stop);
+    h.finish();
+    await failure;
+    expect(h.session.abort).toHaveBeenCalledOnce();
+    await expect(h.tools()[0].handler({}, { toolCallId: 'late', toolName: 'search' })).rejects.toThrow('aborted');
+    expect(h.handlers.size).toBe(0);
+  });
+
+  it('enforces observed token usage inside SDK turns including prior host usage', async () => {
+    const h = harness();
+    const pending = h.provider.complete(params, { onToolCall: async () => 'data',
+      contextBudget: { limits: { maxExecutionTokens: 100 }, inputTokens: 20, outputTokens: 10 } });
+    const failure = expect(pending).rejects.toMatchObject({ reason: 'token_budget' });
+    const stopped = pending.catch(error => error);
+    await vi.waitFor(() => expect(h.handlers.has('assistant.usage')).toBe(true));
+    h.handlers.get('assistant.usage')!({ data: { inputTokens: 40, outputTokens: 5 } });
+    expect(h.session.abort).not.toHaveBeenCalled();
+    h.handlers.get('assistant.usage')!({ data: { inputTokens: 30, outputTokens: 1 } });
+    h.finish();
+    await failure;
+    expect(failedRequestUsage(await stopped)).toMatchObject({
+      prompt_tokens: 70, completion_tokens: 6, total_tokens: 76,
+      input_tokens_observed: true, output_tokens_observed: true, cost_type: 'subscription', cost_usd: null,
+    });
+    expect(h.session.abort).toHaveBeenCalledOnce();
+    expect(h.handlers.size).toBe(0);
+  });
   it('does not hang forever after successful output when SDK disconnect never settles', async () => {
     vi.useFakeTimers();
     const session: CopilotSessionLike = {

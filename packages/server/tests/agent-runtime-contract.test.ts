@@ -7,11 +7,12 @@ import { AgentRunStopped } from '../src/agents/run-state.js';
 import { closeDb } from '../src/db/database.js';
 import { createAgent } from '../src/db/models/agent.js';
 import { createTask, getTask, updateTask } from '../src/db/models/task.js';
-import { listExecutions } from '../src/db/models/execution.js';
+import { listExecutions, updateExecution } from '../src/db/models/execution.js';
 import { listExecutionArtifacts } from '../src/db/models/execution-artifact.js';
 import { readArtifactSnapshot } from '../src/artifacts/artifact-snapshot-store.js';
 import { tsAgentLoop } from '../src/agents/ts-agent-loop.js';
 import type { RuntimeAdapterResult } from '../src/agents/runtime-adapter.js';
+import { writeDesignFixtures } from './fixtures/development-design.js';
 
 let directory: string;
 const originalExecutor = process.env.AGENT_EXECUTOR;
@@ -31,17 +32,51 @@ const result = (output = 'Final answer'): RuntimeAdapterResult => ({
   output, costUSD: null, inputTokens: 10, outputTokens: 10, numTurns: 1, durationMs: 10,
 });
 
-async function execute(adapter: (taskId: string) => Promise<RuntimeAdapterResult>) {
+async function execute(adapter: (taskId: string) => Promise<RuntimeAdapterResult>, input = 'fixture') {
   const runtime = new AgentRuntime();
   vi.spyOn(runtime as any, 'recordTrajectory').mockImplementation(() => {});
   const agent = createAgent({ id: 'contract-agent', name: 'Fixture', role: 'dev' });
-  const task = createTask({ title: 'fixture', description: 'fixture', mode: 'direct', input: 'fixture',
+  const task = createTask({ title: input, description: input, mode: 'direct', input,
     workspaceId: 'default', workspacePath: directory, workdir: directory, assigneeId: agent.id });
   runtime.registerRuntimeAdapter({ name: 'contract-fixture', canHandle: () => true, execute: ctx => adapter(ctx.task.id) });
   return { task, promise: runtime.execute(agent, task) };
 }
 
 describe('Agent Runtime completion contract', () => {
+  it('rejects a system adapter claiming success without real design/source files and preserves its output', async () => {
+    const { task, promise } = await execute(async () => result('Claimed complete product'), 'Build a complete system');
+    await expect(promise).rejects.toThrow('DEVELOPMENT_DELIVERY_INCOMPLETE');
+    expect(getTask(task.id)).toMatchObject({ status: 'failed', output: 'Claimed complete product' });
+    expect(listExecutions({ taskId: task.id })[0].runState?.stopReason).toBe('failed');
+  });
+
+  it('rejects designed but unimplemented modules before marking a system done', async () => {
+    const { task, promise } = await execute(async taskId => {
+      writeDesignFixtures(directory, taskId, false);
+      return result('Plan only, no source');
+    }, 'Build a complete system');
+    await expect(promise).rejects.toThrow('declared implementation source');
+    expect(getTask(task.id)?.status).toBe('failed');
+  });
+
+  it('allows real task-bound design/source delivery but still leaves acceptance pending', async () => {
+    const { task, promise } = await execute(async taskId => {
+      writeDesignFixtures(directory, taskId);
+      return result('Files delivered. Browser/visual acceptance unverified.');
+    }, 'Build a complete system');
+    await promise;
+    expect(getTask(task.id)?.status).toBe('done');
+    expect(listExecutions({ taskId: task.id })[0].runState?.acceptance).toBe('pending');
+  });
+
+  it('permits a system clarification without requiring design files for work not yet authorized', async () => {
+    const { task, promise } = await execute(async () => result(
+      '{"kind":"myrmecia.request_input","question":"Should this application persist data locally or remotely?"}',
+    ), 'Build a complete system');
+    expect((await promise).stopReason).toBe('needs_input');
+    expect(getTask(task.id)?.status).toBe('review');
+  });
+
   it('requests a required scoped document before calling the model/adapter', async () => {
     const runtime = new AgentRuntime();
     vi.spyOn(runtime as any, 'recordTrajectory').mockImplementation(() => {});
@@ -113,6 +148,19 @@ describe('Agent Runtime completion contract', () => {
     await expect(promise).rejects.toThrow('AGENT_MAX_TURNS');
     expect(getTask(task.id)).toMatchObject({ status: 'failed', output: 'Partial findings' });
     expect(listExecutions({ taskId: task.id })[0].runState?.stopReason).toBe('max_turns');
+  });
+
+  it('keeps a provider partial usage lower bound when the host tracker has no completed model result', async () => {
+    const error = new AgentRunStopped('token_budget', 'Observed SDK usage reached the limit');
+    const { task, promise } = await execute(async taskId => {
+      const run = listExecutions({ taskId })[0];
+      updateExecution(run.id, { progress: { ...run.progress, tokenCount: 210000 } });
+      throw error;
+    });
+    await expect(promise).rejects.toBe(error);
+    expect(listExecutions({ taskId: task.id })[0]).toMatchObject({
+      status: 'failed', progress: { tokenCount: 210000 }, runState: { stopReason: 'token_budget' },
+    });
   });
 
   it('does not publish a late successful result after user cancellation', async () => {

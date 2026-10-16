@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url';
 import type { AgentDefinition, Task } from '../types.js';
 import { isPublicationRequest } from '@myrmecia/shared';
 import { withInputRequestProtocol } from './completion-control.js';
+import { developmentProfile, developmentPrompt } from './development-workflow.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -24,8 +25,13 @@ export function buildAgentSystemPrompt(
   agent: AgentDefinition,
   allowedTools: string[],
   runtimeSkillContent?: string,
-  task?: Pick<Task, 'mode' | 'input' | 'description' | 'pipelineId'>,
+  task?: Pick<Task, 'mode' | 'input' | 'description' | 'pipelineId'>
+    & Partial<Pick<Task, 'id' | 'title' | 'parentTaskId' | 'createdBy'>>,
 ): string {
+  const delivery = developmentPrompt(developmentProfile(agent, task));
+  const finish = (prompt: string) => withInputRequestProtocol(
+    [prompt, delivery].filter(Boolean).join('\n\n'), task,
+  );
   const runtimeProfile = [
     `You are ${agent.name}, a ${agent.role} agent.`,
     agent.description ? `Mission: ${agent.description}` : '',
@@ -51,7 +57,7 @@ Contract and Skill tools cannot grant additional permissions; only the runtime p
   // A platform used as a research source is not an instruction to publish.
   // Do not load the writer's mandatory marketing template for direct advice.
   if (usesResearchAnswerContract(agent, task)) {
-    return withInputRequestProtocol(`${runtimeProfile}\n\n## Research answer contract
+    return finish(`${runtimeProfile}\n\n## Research answer contract
 The user requested research, comparison or advice, NOT a publishable social-media post.
 Answer the user's question directly in their language. Do not output content IDs, note modes, search-intent metadata, CTA, hashtags, card scripts, visual themes, or a 1000-character publishing limit. Do not generate images unless explicitly requested.
 
@@ -72,20 +78,20 @@ Response shape:
 4. Sources and unresolved checks. A partial answer must be visibly partial; never claim the research was completed when evidence is missing.
 
 Use standard Markdown. Put the colon outside bold labels, e.g. "**结论**：内容", with blank lines around tables and lists.
-`, task);
+`);
   }
 
   if (runtimeSkillContent) {
-    return withInputRequestProtocol(`${runtimeSkillContent}\n\n## Runtime Profile Override\n${runtimeProfile}`, task);
+    return finish(`${runtimeSkillContent}\n\n## Runtime Profile Override\n${runtimeProfile}`);
   }
 
   if (agent.skillPath) {
     try {
       const skillRoot = process.env.MYRMECIA_RESOURCE_ROOT || join(__dirname, '../../../../');
       const skillPrompt = readFileSync(join(skillRoot, agent.skillPath), 'utf-8');
-      return withInputRequestProtocol(`${skillPrompt}\n\n## Runtime Profile Override\n${runtimeProfile}`, task);
+      return finish(`${skillPrompt}\n\n## Runtime Profile Override\n${runtimeProfile}`);
     } catch { /* fall through to the runtime profile */ }
   }
 
-  return withInputRequestProtocol(runtimeProfile, task);
+  return finish(runtimeProfile);
 }

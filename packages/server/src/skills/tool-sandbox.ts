@@ -4,15 +4,16 @@
  */
 import { exec, execFile } from 'child_process';
 import { promisify } from 'util';
-import { readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, lstatSync, existsSync } from 'fs';
 import { resolve, normalize, dirname, relative, isAbsolute, join, extname } from 'path';
 import sharp from 'sharp';
 import { parse as parseYaml } from 'yaml';
 import { guardrails } from '../agents/safety-guardrails.js';
 import { getRuntimeLimits } from '../agents/runtime-limits.js';
 import { executionWorldMode, resolveExecutionWorld } from '../agents/execution-world.js';
-import { safeWorkspacePath, readWorkspaceBytes, writeWorkspaceBytes, workspaceCommandEnvironment } from '../workspace/path-policy.js';
+import { safeWorkspacePath, readWorkspaceBytes, writeWorkspaceBytes, workspaceCommandEnvironment, excludedWorkspacePath } from '../workspace/path-policy.js';
 import { assertWorkspaceToolAllowed } from '../workspace/workspace-lease.js';
+import { builtinInputErrors } from '../tools/builtin-input.js';
 import { assertLocalShellAllowed, assertNetworkToolAllowed } from '../agents/sandbox-profile.js';
 import { formatToolGuardianDecision, formatToolGuardianWarnings, redactSecrets, reviewToolCall } from './tool-guardian.js';
 import {
@@ -33,6 +34,8 @@ import {
 } from '../db/models/social-workflow.js';
 import { environmentFetch, safeNetworkError } from '../lib/environment-fetch.js';
 import { BUILTIN_TOOLS } from '../tools/tool-registry.js';
+import { searchWorkspace } from './workspace-search.js';
+import { workspaceFileReadOutput } from './workspace-file-read.js';
 
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
@@ -88,13 +91,13 @@ export function isSandboxTool(toolName: string): boolean {
 
 export function buildSandboxToolDefinition(toolName: string, modelToolName = toolName) {
   const descriptionByTool: Record<string, string> = {
-    file_read: 'Read a UTF-8 file from the task workspace.',
+    file_read: 'Read a workspace UTF-8 file. Long files return a lossless JSON page with content, nextOffset, sha256 and eof. Continue with offset=nextOffset and expectedSha256=sha256 until eof; do not repeatedly reread the first page. Short files remain plain text.',
     file_write: 'Create or overwrite a UTF-8 file inside the task workspace.',
     file_list: 'List files/directories in the task workspace (recursive, capped).',
     apply_patch: 'Make a surgical edit: replace one exact occurrence of old_str with new_str in a workspace file (token-efficient vs. rewriting the whole file).',
     shell_exec: 'Run a shell command in the task workspace with guardrail checks and a timeout.',
-    grep: 'Search workspace text files for a pattern.',
-    search: 'Search workspace text files for a pattern.',
+    grep: 'Search bounded workspace text files across languages. Literal by default; optional regex runs in a time/memory-bounded worker. Excludes secrets, dependencies and symlinks; partial scans are labeled.',
+    search: 'Search bounded workspace text files across languages. Literal by default; optional regex runs in a time/memory-bounded worker. Excludes secrets, dependencies and symlinks; partial scans are labeled.',
     'web.fetch': 'Fetch an absolute http/https URL and return compact text.',
     'web.search': 'Search the public web and return compact result titles and URLs.',
     'web.extract': 'Fetch a page and return structured text with source citations.',
@@ -112,7 +115,12 @@ export function buildSandboxToolDefinition(toolName: string, modelToolName = too
     'image.generate_wechat_cover': 'Render a 900x383 PNG cover for a WeChat Official Account article and return its absolute path.',
   };
   const schemaByTool: Record<string, { properties: Record<string, unknown>; required?: string[] }> = {
-    file_read: { properties: { path: { type: 'string', description: 'Workspace-relative file path' } }, required: ['path'] },
+    file_read: { properties: {
+      path: { type: 'string', description: 'Workspace-relative file path' },
+      offset: { type: 'integer', minimum: 0, description: 'Character offset from the previous page nextOffset' },
+      maxChars: { type: 'integer', minimum: 1, maximum: 1600, description: 'Bounded content per page (default 1200)' },
+      expectedSha256: { type: 'string', pattern: '^[a-f0-9]{64}$', description: 'Previous page hash; fail if the file changed between pages' },
+    }, required: ['path'] },
     file_write: { properties: { path: { type: 'string' }, content: { type: 'string' } }, required: ['path', 'content'] },
     file_list: { properties: { path: { type: 'string', description: 'Optional subdirectory (default workspace root)' } } },
     apply_patch: {
@@ -243,7 +251,7 @@ export function buildSandboxToolDefinition(toolName: string, modelToolName = too
       required: ['title'],
     },
   };
-  const catalogSchema = BUILTIN_TOOLS.find(tool => tool.id === toolName)?.inputSchema;
+  const catalogSchema = BUILTIN_TOOLS.find(tool => tool.id === (toolName === 'search' ? 'grep' : toolName))?.inputSchema;
   const schema = schemaByTool[toolName] || (catalogSchema ? {
     properties: catalogSchema.properties as Record<string, unknown>,
     required: catalogSchema.required as string[] | undefined,
@@ -444,6 +452,9 @@ export async function executeTool(
     return { output: `Tool "${toolName}" is not allowed for this execution.`, status: 'failed' };
   }
 
+  const inputErrors = builtinInputErrors(toolName, toolInput);
+  if (inputErrors.length) return { status: 'failed', output: `TOOL_INPUT_INVALID: ${inputErrors.join('; ')}` };
+
   const guardianDecision = reviewToolCall(toolName, toolInput);
   if (!guardianDecision.allowed) {
     return { output: capOutput(formatToolGuardianDecision(guardianDecision), Math.min(maxOutputChars, 4_000)), status: 'failed' };
@@ -500,8 +511,9 @@ export async function executeTool(
   if (toolName === 'file_read') {
     try {
       const filePath = assertSafePath(workdir, String(toolInput.path || toolInput.file_path || ''));
+      if (excludedWorkspacePath(relative(workdir, filePath))) throw new Error('WORKSPACE_FILE_READ_EXCLUDED');
       const content = readWorkspaceBytes(workdir, filePath).toString('utf8');
-      return { output: capOutput(content, maxOutputChars), status: 'done' };
+      return { output: workspaceFileReadOutput(content, relative(workdir, filePath), toolInput, maxOutputChars), status: 'done' };
     } catch (err: any) {
       return { output: `Read failed: ${err.message}`, status: 'failed' };
     }
@@ -509,16 +521,10 @@ export async function executeTool(
 
   if (toolName === 'grep' || toolName === 'search') {
     try {
-      const pattern = String(toolInput.pattern || toolInput.query || '');
-      if (!pattern.trim()) throw new Error('grep requires a non-empty pattern');
-      const { stdout } = await execFileAsync(
-        'grep',
-        ['-R', '-n', '-I', '--include=*.ts', '--include=*.tsx', '--include=*.js', '--include=*.jsx', pattern, '.'],
-        { cwd: workdir, encoding: 'utf-8', timeout: Math.min(timeoutMs, 10_000), maxBuffer: Math.max(maxOutputChars * 4, 16_384) },
-      );
-      return { output: capOutput(stdout || 'No matches', Math.min(maxOutputChars, 4_000)), status: 'done' };
+      const result = await searchWorkspace(workdir, toolInput, { signal: options.signal, timeoutMs, maxOutputChars });
+      return { ...result, output: capOutput(result.output, maxOutputChars) };
     } catch (err: any) {
-      return { output: capOutput(err.stdout || 'No matches', Math.min(maxOutputChars, 2_000)), status: err.code === 1 ? 'done' : 'failed' };
+      return { output: capOutput(`Search failed: ${err.message}`, Math.min(maxOutputChars, 2_000)), status: 'failed' };
     }
   }
 
@@ -534,8 +540,10 @@ export async function executeTool(
           if (SKIP.has(name)) continue;
           const full = join(dir, name);
           let st;
-          try { st = statSync(full); } catch { continue; }
           const rel = relative(workdir, full);
+          if (excludedWorkspacePath(rel)) continue;
+          try { st = lstatSync(full); } catch { continue; }
+          if (st.isSymbolicLink()) continue;
           if (st.isDirectory()) { entries.push(rel + '/'); walk(full, depth + 1); }
           else entries.push(rel);
           if (entries.length >= 500) return;

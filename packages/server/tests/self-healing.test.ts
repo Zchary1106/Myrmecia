@@ -68,6 +68,27 @@ describe('SelfHealingEngine — decomposition guard', () => {
     expect(isNonRetryableExecutionError('You have exceeded your monthly quota (Request ID: test)')).toBe(true);
     expect(isNonRetryableExecutionError('insufficient_quota')).toBe(true);
   });
+  it.each(['DEVELOPMENT_EXPLORATION_LIMIT', 'DEVELOPMENT_DESIGN_INCOMPLETE', 'DEVELOPMENT_DELIVERY_INCOMPLETE',
+    'DEVELOPMENT_VERIFICATION_FAILED', 'DEVELOPMENT_STAGE_INCOMPLETE', 'DEVELOPMENT_STEER_AFTER_VERIFICATION',
+    'TEST_AUTH_REQUIRED', 'TEST_AUTH_SCOPE_CHANGED', 'TEST_RUNNER_UNAVAILABLE'])
+    ('does not blindly restart a deterministic development gate failure: %s', async code => {
+      const engine = new SelfHealingEngine();
+      const task = createTask({ title: 'delivery', description: '', input: 'fixture', mode: 'direct', maxRetries: 2 });
+      const error = `${code}: Preserve partial work and inspect the missing evidence`;
+      updateTask(task.id, { status: 'failed', error });
+      expect(isNonRetryableExecutionError(error)).toBe(true);
+      await (engine as any).onTaskFailed(task.id, error);
+      expect(getTask(task.id)).toMatchObject({ status: 'failed', retryCount: 0, error });
+    });
+  it('leaves an SDK observed-token allowance stop terminal instead of spending the allowance again', async () => {
+    const engine = new SelfHealingEngine();
+    const task = createTask({ title: 'SDK budget', description: '', input: 'fixture', mode: 'direct', maxRetries: 2 });
+    const error = 'COPILOT_TOKEN_BUDGET: observed SDK usage exceeded execution allowance (211217/200000)';
+    updateTask(task.id, { status: 'failed', error });
+    expect(isNonRetryableExecutionError(error)).toBe(true);
+    await (engine as any).onTaskFailed(task.id, error);
+    expect(getTask(task.id)).toMatchObject({ status: 'failed', retryCount: 0, error });
+  });
 
   it('honors maxRetries including zero and does not increment exhausted retries', async () => {
     const engine = new SelfHealingEngine();

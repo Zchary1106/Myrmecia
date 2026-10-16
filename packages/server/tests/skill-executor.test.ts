@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterAll } from 'vitest';
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'fs';
+import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { SkillExecutor } from '../src/skills/skill-executor.js';
@@ -117,14 +117,15 @@ describe('step-validator', () => {
   it('substitutes ${testCmd} with the resolved workspace test command', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'rtc-val-'));
     try {
-      // No package.json and no test files → resolves to `true` → exits 0.
+      // Missing tests are unavailable, never a fabricated passing check.
       const result = await validateStep({
         command: 'cd ${workdir} && ${testCmd}',
         workdir: dir,
         output: '',
         stepName: 'implement',
       });
-      expect(result.pass).toBe(true);
+      expect(result.pass).toBe(false);
+      expect(result.error).toContain('TEST_COMMAND_UNAVAILABLE');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -139,6 +140,22 @@ describe('step-validator', () => {
     });
     expect(result.pass).toBe(false);
     expect(result.error).toContain('File deletion is disabled');
+  });
+  it('rejects arbitrary/build-only test overrides instead of bypassing required tests', async () => {
+    for (const testCommand of ['true', 'pnpm build', 'npm test; npm publish']) {
+      const result = await validateStep({ command: '${testCmd}', testCommand, workdir: '/tmp', output: '', stepName: 'implement' });
+      expect(result.pass).toBe(false); expect(result.error).toContain('TEST_COMMAND_DENIED');
+    }
+  });
+  it('uses an operator-scoped test command without requiring a monorepo root test script', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'rtc-scoped-'));
+    try {
+      writeFileSync(join(dir, 'pnpm-workspace.yaml'), 'packages: [packages/*]');
+      writeFileSync(join(dir, 'check.test.js'), 'const {test}=require("node:test"); test("scoped fixture",()=>{});');
+      const result = await validateStep({ command: 'cd ${workdir} && ${testCmd}', testCommand: 'node --test check.test.js',
+        workdir: dir, output: '', stepName: 'implement' });
+      expect(result.pass).toBe(true); expect(result.stdout).toContain('scoped fixture');
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });
 
@@ -360,8 +377,7 @@ describe('resolveTestCommand', () => {
     const dir = mkTmp();
     writeFileSync(join(dir, 'package.json'),
       JSON.stringify({ scripts: { test: 'echo "Error: no test specified" && exit 1' } }));
-    // No real test script and no test files → nothing to run.
-    expect(resolveTestCommand(dir)).toBe('true');
+    expect(() => resolveTestCommand(dir)).toThrow('TEST_COMMAND_UNAVAILABLE');
   });
 
   it('discovers standalone TypeScript test files', () => {
@@ -394,30 +410,51 @@ describe('resolveTestCommand', () => {
     expect(cmd).toContain('index.test.js');
   });
 
-  it('returns "true" when there is nothing to run', () => {
+  it('refuses a fabricated pass when there is nothing to run', () => {
     const dir = mkTmp();
-    expect(resolveTestCommand(dir)).toBe('true');
+    expect(() => resolveTestCommand(dir)).toThrow('TEST_COMMAND_UNAVAILABLE');
   });
 
-  it('does not run the whole suite from a monorepo root (pnpm-workspace.yaml)', () => {
+  it('uses an explicitly configured root test script in a monorepo', () => {
     const dir = mkTmp();
     writeFileSync(join(dir, 'pnpm-workspace.yaml'), "packages:\n  - 'packages/*'\n");
     writeFileSync(join(dir, 'package.json'), JSON.stringify({ scripts: { test: 'vitest run' } }));
     writeFileSync(join(dir, 'pnpm-lock.yaml'), 'lockfileVersion: 9\n');
-    expect(resolveTestCommand(dir)).toBe('true');
+    expect(resolveTestCommand(dir)).toBe('pnpm test');
   });
 
-  it('treats a package.json with a workspaces array as a monorepo root', () => {
+  it('honors a root test script with a workspaces array', () => {
     const dir = mkTmp();
     writeFileSync(join(dir, 'package.json'), JSON.stringify({ workspaces: ['packages/*'], scripts: { test: 'jest' } }));
-    expect(resolveTestCommand(dir)).toBe('true');
+    expect(resolveTestCommand(dir)).toBe('npm test');
   });
 
   it('skips node_modules when discovering tests', () => {
     const dir = mkTmp();
     mkdirSync(join(dir, 'node_modules', 'dep'), { recursive: true });
     writeFileSync(join(dir, 'node_modules', 'dep', 'a.test.js'), 'test("x", () => {});');
-    expect(resolveTestCommand(dir)).toBe('true');
+    expect(() => resolveTestCommand(dir)).toThrow('TEST_COMMAND_UNAVAILABLE');
+  });
+
+  it('requires explicit package scope for a monorepo without a root test script', () => {
+    const dir = mkTmp();
+    writeFileSync(join(dir, 'pnpm-workspace.yaml'), 'packages: [packages/*]');
+    expect(() => resolveTestCommand(dir)).toThrow('select a package');
+  });
+
+  it.each([['go.mod', 'go test ./...'], ['Cargo.toml', 'cargo test'], ['pytest.ini', 'python -m pytest']])(
+    'detects the project runner from %s', (file, command) => {
+      const dir = mkTmp(); writeFileSync(join(dir, file), '');
+      expect(resolveTestCommand(dir)).toBe(command);
+    });
+
+  it('keeps the default developer test gates mandatory', () => {
+    const content = readFileSync(new URL('../../../agents/dev.md', import.meta.url), 'utf8');
+    const parsed = parseSkillContent(content);
+    expect(parsed.config?.steps.filter(step => step.validation?.command.includes('${testCmd}')))
+      .toHaveLength(2);
+    expect(parsed.config?.steps.filter(step => step.validation?.command.includes('${testCmd}'))
+      .every(step => !step.validation?.optional)).toBe(true);
   });
 });
 

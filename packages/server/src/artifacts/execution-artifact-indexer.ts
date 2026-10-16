@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, realpathSync, statSync, type Stats } from 'node:fs';
-import { basename, extname, join, relative, resolve } from 'node:path';
+import { basename, extname, isAbsolute, join, relative, resolve } from 'node:path';
 import type { Task } from '../types.js';
 import { getExecutionArtifact, upsertExecutionArtifact } from '../db/models/execution-artifact.js';
 import { getDb } from '../db/database.js';
@@ -11,6 +11,8 @@ import { assertWorkspaceToolAllowed } from '../workspace/workspace-lease.js';
 import { readWorkspaceBaseline } from '../workspace/workspace-baseline.js';
 import { execFileSync } from 'node:child_process';
 import { snapshotHash } from './artifact-snapshot-store.js';
+import { getTask } from '../db/models/task.js';
+import { getExecution } from '../db/models/execution.js';
 
 const EXCLUDED_DIRECTORIES = new Set(['.git', 'node_modules', '.agent-factory', 'dist', 'build', '.next']);
 const MAX_FILES = 250;
@@ -110,12 +112,24 @@ export function indexExecutionArtifacts(data: {
 }): number {
   assertWorkspaceToolAllowed();
   const root = data.task.workdir || data.task.workspacePath;
+  const persisted = getTask(data.task.id);
+  const submittedRoot = persisted?.workdir || persisted?.workspacePath;
+  const execution = persisted ? getExecution(data.executionId) : undefined;
+  if (persisted) {
+    if ((persisted.workspaceId || 'default') !== (data.task.workspaceId || 'default')
+      || (submittedRoot && (!root || realpathSync(resolve(root)) !== realpathSync(resolve(submittedRoot))))
+      || (execution && (execution.taskId !== persisted.id
+        || execution.workspaceId !== (persisted.workspaceId || 'default')))) {
+      throw new Error('ARTIFACT_CAPTURE_SCOPE_DENIED');
+    }
+  }
   const indexed: ReturnType<typeof upsertExecutionArtifact>[] = [];
   const binding = getWorkspaceBinding(data.task.id);
   if (binding) {
     const workspace = getManagedWorkspace(binding.filesystemWorkspaceId);
     if (!workspace || workspace.workspaceId !== (data.task.workspaceId || 'default')) throw new Error('ARTIFACT_CAPTURE_SCOPE_DENIED');
     assertWorkspaceIdentity(workspace);
+    if (!root || realpathSync(resolve(root)) !== workspace.canonicalPath) throw new Error('ARTIFACT_CAPTURE_SCOPE_DENIED');
   }
   if (Buffer.byteLength(data.output) > WORKSPACE_LIMITS.fileBytes) {
     if (binding) touchWorkspace(binding.filesystemWorkspaceId, 'failed');
@@ -174,6 +188,29 @@ export function indexExecutionArtifacts(data: {
       }
       let files: string[] = [];
       try { files = collectFiles(realRoot, data.startedAtMs, data.baseline, exclusions); } catch (error: any) { errors.push(error.message); }
+      const criterionRequested = new Set<string>();
+      const unchangedRequired = new Set<string>();
+      // A recovery/validation run can deliver an existing file without rewriting it.
+      // Authority comes from the persisted contract; capture new bytes, not old artifact IDs.
+      for (const criterion of submittedRoot && execution ? persisted?.completionCriteria || [] : []) {
+        if (criterion.verifier !== 'artifact' || !criterion.required) continue;
+        const rel = criterion.relativePath;
+        if (isAbsolute(rel) || rel.includes('\0') || rel.split(/[\\/]/).includes('..')
+          || excludedWorkspacePath(rel)) { exclusions.push(rel); continue; }
+        try {
+          const path = safeWorkspacePath(realRoot, rel);
+          if (!existsSync(path)) continue; // The verifier must report missing artifacts.
+          if (!statSync(path).isFile()) continue;
+          const normalized = relative(realRoot, path);
+          if (normalized.split(/[\\/]/).length - 1 > MAX_DEPTH) throw new Error('ARTIFACT_DEPTH_QUOTA');
+          criterionRequested.add(normalized);
+          if (!files.includes(path)) {
+            if (files.length >= MAX_FILES) throw new Error('ARTIFACT_FILE_COUNT_QUOTA');
+            unchangedRequired.add(normalized);
+            files.push(path);
+          }
+        } catch (error: any) { errors.push(`${rel}: ${error.message}`); }
+      }
       for (const path of files) {
         try {
           const realPath = realpathSync(path);
@@ -195,7 +232,9 @@ export function indexExecutionArtifacts(data: {
             relativePath: rel,
             rootPath: realRoot,
             sizeBytes: stats.size,
-            metadata: { modifiedAt: stats.mtime.toISOString(), captureState: 'pending' },
+            metadata: { modifiedAt: stats.mtime.toISOString(), captureState: 'pending',
+              ...(criterionRequested.has(rel) ? { criterionRequested: true } : {}),
+              ...(unchangedRequired.has(rel) ? { carriedFromWorkspace: true } : {}) },
           }), bytes);
         } catch (error: any) { errors.push(error.message); }
       }

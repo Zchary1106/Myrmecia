@@ -7,12 +7,16 @@ import { appendExecutionAuditEvent } from '../audit/execution-audit.js';
 import { eventBus } from '../events/event-bus.js';
 import type { RuntimeLimits } from './runtime-limits.js';
 import { assertRuntimeKnowledgeCurrent } from '../knowledge/runtime-knowledge.js';
+import { DevelopmentWorkflow, checkDevelopmentArtifacts } from './development-workflow.js';
+import { AgentRunStopped } from './run-state.js';
+import { builtinInputErrors } from '../tools/builtin-input.js';
 
 type ToolStatus = 'done' | 'failed';
 
 export interface ToolMiddlewareDecision {
   allowed: boolean;
   reason?: string;
+  terminal?: boolean;
 }
 
 function stableValue(value: unknown): unknown {
@@ -32,7 +36,8 @@ function fingerprint(toolName: string, input: Record<string, unknown>): string {
 }
 
 function targetPath(input: Record<string, unknown>, workdir: string): string | undefined {
-  const path = typeof input.path === 'string' ? input.path.trim() : '';
+  const raw = input.path ?? input.file_path;
+  const path = typeof raw === 'string' ? raw.trim() : '';
   return path ? resolve(workdir, path) : undefined;
 }
 
@@ -43,23 +48,29 @@ function targetPath(input: Record<string, unknown>, workdir: string): string | u
 export class ExecutionMiddlewareChain {
   private readonly readPaths = new Set<string>();
   private readonly failureCounts = new Map<string, number>();
+  private readonly unreadWriteRefusals = new Map<string, number>();
+  private unreadWriteRefusalCount = 0;
   private lastFingerprint = '';
   private repeatedCalls = 0;
   private turnCount = 0;
   private adapterName = 'unknown';
+  private readonly development: DevelopmentWorkflow;
 
   constructor(
     private readonly agent: AgentDefinition,
     private readonly task: Task,
     private readonly executionId: string,
     private readonly limits: RuntimeLimits,
-  ) {}
+  ) {
+    this.development = new DevelopmentWorkflow(agent, task);
+  }
 
   beforeExecution(adapterName: string): void {
     this.adapterName = adapterName;
     this.note('middleware.started', 'allowed', `Execution middleware enabled for ${adapterName}`, {
       adapterName,
       limits: this.limits,
+      developmentProfile: this.development.profile,
     });
   }
 
@@ -94,6 +105,13 @@ export class ExecutionMiddlewareChain {
     if (this.repeatedCalls >= 3) {
       const reason = `Loop detector blocked repeated call #${this.repeatedCalls} to ${toolName}; change strategy or input.`;
       this.note('middleware.loop_detected', 'blocked', reason, { toolName, repeatedCalls: this.repeatedCalls }, 'block');
+      return { allowed: false, reason, terminal: true };
+    }
+
+    const inputErrors = builtinInputErrors(toolName, input);
+    if (inputErrors.length) {
+      const reason = `TOOL_INPUT_INVALID: ${inputErrors.join('; ')}. Correct the required parameters; no tool effects were executed.`;
+      this.note('middleware.tool_input_invalid', 'blocked', reason, { toolName, executed: false }, 'warn');
       return { allowed: false, reason };
     }
 
@@ -106,13 +124,26 @@ export class ExecutionMiddlewareChain {
     if (toolName === 'file_write' || toolName === 'apply_patch') {
       const path = targetPath(input, workdir);
       if (path && existsSync(path) && !this.readPaths.has(path)) {
-        const reason = `Read-before-write gate: inspect ${String(input.path)} with file_read before modifying it.`;
-        this.note('middleware.read_before_write', 'blocked', reason, { toolName, path: input.path }, 'block');
-        return { allowed: false, reason };
+        const refusals = (this.unreadWriteRefusals.get(path) || 0) + 1;
+        this.unreadWriteRefusals.set(path, refusals);
+        this.unreadWriteRefusalCount++;
+        const terminal = refusals >= 3 || this.unreadWriteRefusalCount >= 6;
+        const reason = JSON.stringify({
+          error: terminal ? 'TOOL_REJECTION_LIMIT' : 'READ_BEFORE_WRITE',
+          message: `Read-before-write gate: inspect ${String(input.path ?? input.file_path)} with file_read in THIS execution before modifying it.`,
+          recovery: { tool: 'file_read', input: { path: input.path ?? input.file_path } },
+          priorTurnReadsAreNotCurrent: true, terminal,
+        });
+        this.note('middleware.read_before_write', 'blocked', reason,
+          { toolName, path: input.path, refusals, terminal }, 'block');
+        return { allowed: false, reason, terminal };
       }
     }
 
-    return { allowed: true };
+    const development = this.development.beforeTool(toolName, input, workdir);
+    if (!development.allowed) this.note('middleware.development_gate', 'blocked', development.reason!,
+      { toolName, terminal: development.terminal, profile: this.development.profile.kind }, 'warn');
+    return development;
   }
 
   afterToolCall(
@@ -123,10 +154,15 @@ export class ExecutionMiddlewareChain {
     workdir: string,
     durationMs: number,
   ): void {
+    this.development.afterTool(toolName, status, output, input);
     const path = targetPath(input, workdir);
     if (status === 'done') {
       this.failureCounts.delete(toolName);
-      if (toolName === 'file_read' && path) this.readPaths.add(path);
+      if (toolName === 'file_read' && path) {
+        this.readPaths.add(path);
+        this.unreadWriteRefusals.delete(path);
+        this.unreadWriteRefusalCount = 0;
+      }
     } else {
       this.failureCounts.set(toolName, (this.failureCounts.get(toolName) || 0) + 1);
     }
@@ -136,6 +172,21 @@ export class ExecutionMiddlewareChain {
       durationMs,
       outputSummary: output.slice(0, 240),
     });
+  }
+
+  /** Guidance is separate from the immutable raw tool output/receipt. */
+  modelToolResult(output: string): string {
+    return this.development.modelResult(output);
+  }
+
+  validateDevelopmentDelivery(workdir: string, partialOutput = ''): void {
+    if (!this.development.profile.designPaths.length) return;
+    const check = checkDevelopmentArtifacts(this.development.profile, workdir, true);
+    this.note('middleware.development_delivery', check.valid ? 'passed' : 'blocked',
+      check.valid ? 'Design schema and declared implementation files verified; tests and visual acceptance are separate'
+        : `DEVELOPMENT_DELIVERY_INCOMPLETE: ${check.errors.join('; ')}`,
+      { ...check, uiVisualAcceptance: 'not_verified_by_this_gate' }, check.valid ? 'info' : 'block');
+    if (!check.valid) throw new AgentRunStopped('failed', `DEVELOPMENT_DELIVERY_INCOMPLETE: ${check.errors.join('; ')}`, partialOutput);
   }
 
   afterExecution(metadata: Record<string, unknown>): void {

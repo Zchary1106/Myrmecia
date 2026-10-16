@@ -4,6 +4,7 @@ import {
   type RuntimeEventIdentity, type RuntimeMessage, type RuntimeRequest, type RuntimeResponse,
 } from '@myrmecia/shared';
 import type { ProviderSessionOptions } from './provider-session.js';
+import type { CopilotContextBudget } from './copilot-provider.js';
 
 export interface GatewayTransport {
   providerFor(modelId: string): string;
@@ -11,6 +12,7 @@ export interface GatewayTransport {
   completeForModel(modelId: string, params: any, options?: {
     signal?: AbortSignal; timeoutMs?: number; idleTimeoutMs?: number;
     providerSession?: ProviderSessionOptions;
+    contextBudget?: CopilotContextBudget;
     onDelta?: (text: string) => void;
     onToolCall?: (call: { id: string; function: { name: string; arguments: string }; signal?: AbortSignal }) => Promise<string>;
   }): Promise<any>;
@@ -24,6 +26,7 @@ export interface ProviderDriverOptions {
   timeoutMs?: number;
   idleTimeoutMs?: number;
   providerSession?: ProviderSessionOptions;
+  contextBudget?: CopilotContextBudget;
 }
 
 type EventPayload<T = RuntimeEvent> = T extends RuntimeEvent ? Omit<T, keyof RuntimeEventIdentity> : never;
@@ -116,6 +119,7 @@ export class ProviderDriver {
     try {
       const legacy = await this.transport.completeForModel(this.modelId, params, {
         signal, timeoutMs: this.options.timeoutMs, idleTimeoutMs: this.options.idleTimeoutMs, providerSession: this.options.providerSession,
+        contextBudget: this.options.contextBudget,
         ...(this.options.onDelta || this.options.onEvent ? { onDelta: (text: string) => {
           if (signal.aborted) return;
           this.options.onDelta?.(text);
